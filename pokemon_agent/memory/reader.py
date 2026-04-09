@@ -8,7 +8,7 @@ and data decoding required for that title.
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List
 
 from pokemon_agent.emulator import Emulator
 
@@ -77,6 +77,34 @@ class GameMemoryReader(ABC):
             for i in range(8):
                 bits.append(bool(b & (1 << i)))
         return bits
+
+    # -- optional navigation helpers ---------------------------------------
+
+    def read_coordinates(self) -> tuple[int, int]:
+        """Return the player's map coordinates as ``(x, y)``."""
+        raise NotImplementedError(
+            f"{self.__class__.__name__}.read_coordinates() is not implemented."
+        )
+
+    def read_tileset(self) -> str:
+        """Return the current map's tileset name."""
+        raise NotImplementedError(
+            f"{self.__class__.__name__}.read_tileset() is not implemented."
+        )
+
+    def read_warps(self) -> List[Dict[str, Any]]:
+        """Return warp definitions for the current map."""
+        raise NotImplementedError(
+            f"{self.__class__.__name__}.read_warps() is not implemented."
+        )
+
+    def read_signs(self) -> List[Dict[str, int]]:
+        """Return background sign events for the current map."""
+        return []
+
+    def read_talk_over_tiles(self) -> List[int]:
+        """Return tiles that allow talking past the front tile, e.g. counters."""
+        return []
 
     # -- abstract interface -------------------------------------------------
 

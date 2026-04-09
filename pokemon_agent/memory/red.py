@@ -10,11 +10,9 @@ Gen 1 text uses a custom character encoding (0x50 = terminator,
 
 from __future__ import annotations
 
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List
 
-from pokemon_agent.emulator import Emulator
 from pokemon_agent.memory.reader import GameMemoryReader
-
 
 # ===================================================================
 # RAM addresses (WRAM)
@@ -31,8 +29,10 @@ ADDR_MAP_ID        = 0xD35E   # current map number (wCurMap)
 ADDR_MAP_Y         = 0xD361   # player Y on map  (wYCoord)
 ADDR_MAP_X         = 0xD362   # player X on map  (wXCoord)
 ADDR_MAP_BANK      = 0xD35E   # same byte is map id
-ADDR_FACING        = 0xC109   # sprite facing   (wSpritePlayerStateData1FacingDirection: 0=down,4=up,8=left,0xC=right)
-# Note: 0xD367 (wPlayerDirection) retains the direction from map entry; 
+ADDR_MAP_TILESET   = 0xD367   # current map tileset (wCurMapTileset)
+ADDR_MAP_HEIGHT    = 0xD368   # current map height in blocks
+ADDR_MAP_WIDTH     = 0xD369   # current map width in blocks
+ADDR_FACING        = 0xC109   # live sprite facing direction
 # 0xC109 is the live sprite state that updates as the player moves.
 
 # -- Party --
@@ -43,6 +43,7 @@ ADDR_PARTY_OT      = 0xD273   # 11 bytes per OT × 6
 ADDR_PARTY_NICKS   = 0xD2B5   # 11 bytes per nick × 6
 
 PARTY_MON_SIZE     = 44
+BATTLE_MON_SIZE    = 29
 
 # -- Bag --
 ADDR_BAG_COUNT     = 0xD31D
@@ -56,12 +57,15 @@ ADDR_PC_ITEMS      = 0xD53B
 ADDR_BATTLE_TYPE   = 0xD057   # 0=none, 1=wild, 2=trainer
 ADDR_ENEMY_COUNT   = 0xD89C
 ADDR_ENEMY_SPECIES = 0xD89D
-ADDR_ENEMY_DATA    = 0xD8A4   # 44 bytes per mon
+ADDR_ENEMY_DATA    = 0xD8A4   # 44 bytes per mon (party struct)
+ADDR_ENEMY_MON     = 0xCFE5   # active enemy battle mon (live HP/stats)
 
 # -- Dialog --
 ADDR_TEXT_BOX_ID   = 0xD125   # wTextBoxID
 ADDR_JOY_IGNORE    = 0xD730   # bit 5 = joypad disabled (in dialogue)
 ADDR_TEXT_PROGRESS  = 0xC4F2  # approximate; nonzero when text printing
+ADDR_WINDOW_Y      = 0xFF4A   # hWY / rWY, window Y position (0x90 = hidden)
+ADDR_WINDOW_X      = 0xFF4B   # hWX / rWX, window X position
 
 # -- Pokedex --
 ADDR_DEX_OWNED     = 0xD2F7   # 19 bytes (152 bits, only 151 used)
@@ -78,6 +82,16 @@ ADDR_EVENT_FLAGS   = 0xD747   # large bitfield (wEventFlags)
 ADDR_OAK_PARCEL    = 0xD74E   # bit 1 = has parcel
 ADDR_POKEDEX_FLAG  = 0xD74B   # bit 5 = has pokedex
 ADDR_TOWN_MAP_FLAG = 0xD5F3   # bit 0 = has town map
+
+# -- Warps --
+ADDR_WARP_COUNT    = 0xD3AE   # current map warp count (wNumberOfWarps)
+ADDR_WARP_ENTRIES  = 0xD3AF   # current map warp entries (Y, X, warp ID, map ID)
+
+# -- Signs / background events --
+ADDR_SIGN_COUNT    = 0xD4B0   # current map sign count (wNumSigns)
+ADDR_SIGN_COORDS   = 0xD4B1   # current map sign coordinates (wSignCoords; Y, X)
+ADDR_SIGN_TEXT_IDS = 0xD4D1   # current map sign text ids (wSignTextIDs)
+MAX_SIGNS          = 16
 
 
 # ===================================================================
@@ -204,13 +218,33 @@ SPECIES_NAMES: Dict[int, str] = {
     151: "Mew",
 }
 
-# Internal-index -> Pokedex-number mapping (Gen 1 uses an internal index
-# that differs from dex number).  The *pokered* decomp lists them.
-# For simplicity the reader uses the species byte directly as the dex number
-# because the RAM party struct stores the **Pokedex** (national) number in
-# Red/Blue USA Rev-A for the *species* field at offset 0 of each party slot.
-# (Earlier docs call it "internal index" but in the party struct the first
-# byte is the **species/dex** number.)
+# Gen 1 party and battle structs store an internal species index, not the
+# Pokédex number. Translate that internal index through pokered's dex order.
+INTERNAL_SPECIES_TO_DEX: Dict[int, int] = {
+    1: 112, 2: 115, 3: 32, 4: 35, 5: 21, 6: 100, 7: 34, 8: 80, 9: 2, 10: 103,
+    11: 108, 12: 102, 13: 88, 14: 94, 15: 29, 16: 31, 17: 104, 18: 111,
+    19: 131, 20: 59, 21: 151, 22: 130, 23: 90, 24: 72, 25: 92, 26: 123,
+    27: 120, 28: 9, 29: 127, 30: 114, 31: 0, 32: 0, 33: 58, 34: 95, 35: 22,
+    36: 16, 37: 79, 38: 64, 39: 75, 40: 113, 41: 67, 42: 122, 43: 106,
+    44: 107, 45: 24, 46: 47, 47: 54, 48: 96, 49: 76, 50: 0, 51: 126, 52: 0,
+    53: 125, 54: 82, 55: 109, 56: 0, 57: 56, 58: 86, 59: 50, 60: 128, 61: 0,
+    62: 0, 63: 0, 64: 83, 65: 48, 66: 149, 67: 0, 68: 0, 69: 0, 70: 84,
+    71: 60, 72: 124, 73: 146, 74: 144, 75: 145, 76: 132, 77: 52, 78: 98,
+    79: 0, 80: 0, 81: 0, 82: 37, 83: 38, 84: 25, 85: 26, 86: 0, 87: 0,
+    88: 147, 89: 148, 90: 140, 91: 141, 92: 116, 93: 117, 94: 0, 95: 0,
+    96: 27, 97: 28, 98: 138, 99: 139, 100: 39, 101: 40, 102: 133, 103: 136,
+    104: 135, 105: 134, 106: 66, 107: 41, 108: 23, 109: 46, 110: 61, 111: 62,
+    112: 13, 113: 14, 114: 15, 115: 0, 116: 85, 117: 57, 118: 51, 119: 49,
+    120: 87, 121: 0, 122: 0, 123: 10, 124: 11, 125: 12, 126: 68, 127: 0,
+    128: 55, 129: 97, 130: 42, 131: 150, 132: 143, 133: 129, 134: 0, 135: 0,
+    136: 89, 137: 0, 138: 99, 139: 91, 140: 0, 141: 101, 142: 36, 143: 110,
+    144: 53, 145: 105, 146: 0, 147: 93, 148: 63, 149: 65, 150: 17, 151: 18,
+    152: 121, 153: 1, 154: 3, 155: 73, 156: 0, 157: 118, 158: 119, 159: 0,
+    160: 0, 161: 0, 162: 0, 163: 77, 164: 78, 165: 19, 166: 20, 167: 33,
+    168: 30, 169: 74, 170: 137, 171: 142, 172: 0, 173: 81, 174: 0, 175: 0,
+    176: 4, 177: 7, 178: 5, 179: 8, 180: 6, 181: 0, 182: 0, 183: 0, 184: 0,
+    185: 43, 186: 44, 187: 45, 188: 69, 189: 70, 190: 71,
+}
 
 MOVE_NAMES: Dict[int, str] = {
     0: "(none)",
@@ -469,6 +503,47 @@ FACING_NAMES: Dict[int, str] = {
     0x0C: "right",
 }
 
+TILESET_NAMES: Dict[int, str] = {
+    0x00: "OVERWORLD",
+    0x01: "REDS_HOUSE_1",
+    0x02: "MART",
+    0x03: "FOREST",
+    0x04: "REDS_HOUSE_2",
+    0x05: "DOJO",
+    0x06: "POKECENTER",
+    0x07: "GYM",
+    0x08: "HOUSE",
+    0x09: "FOREST_GATE",
+    0x0A: "MUSEUM",
+    0x0B: "UNDERGROUND",
+    0x0C: "GATE",
+    0x0D: "SHIP",
+    0x0E: "SHIP_PORT",
+    0x0F: "CEMETERY",
+    0x10: "INTERIOR",
+    0x11: "CAVERN",
+    0x12: "LOBBY",
+    0x13: "MANSION",
+    0x14: "LAB",
+    0x15: "CLUB",
+    0x16: "FACILITY",
+    0x17: "PLATEAU",
+}
+
+TALK_OVER_TILES: Dict[str, set[int]] = {
+    "MART": {0x18, 0x19, 0x1E},
+    "DOJO": {0x3A},
+    "POKECENTER": {0x18, 0x19, 0x1E},
+    "GYM": {0x3A},
+    "FOREST_GATE": {0x17, 0x32},
+    "MUSEUM": {0x17, 0x32},
+    "GATE": {0x17, 0x32},
+    "CEMETERY": {0x12},
+    "LOBBY": {0x15, 0x36},
+    "CLUB": {0x07, 0x17},
+    "FACILITY": {0x12},
+}
+
 BADGE_NAMES = [
     "Boulder", "Cascade", "Thunder", "Rainbow",
     "Soul", "Marsh", "Volcano", "Earth",
@@ -516,6 +591,27 @@ class RedBlueMemoryReader(GameMemoryReader):
             parts.append("PAR")
         return "/".join(parts) if parts else "OK"
 
+    def _decode_species(self, species_id: int) -> Dict[str, Any]:
+        """Decode a Gen 1 internal species index to stable species metadata."""
+        pokedex_id = INTERNAL_SPECIES_TO_DEX.get(species_id)
+        if pokedex_id is None:
+            return {
+                "species_id": species_id,
+                "pokedex_id": None,
+                "species": f"???({species_id})",
+            }
+        if pokedex_id == 0:
+            return {
+                "species_id": species_id,
+                "pokedex_id": None,
+                "species": "MissingNo.",
+            }
+        return {
+            "species_id": species_id,
+            "pokedex_id": pokedex_id,
+            "species": SPECIES_NAMES[pokedex_id],
+        }
+
     def _read_pokemon(self, base: int, nick_addr: int) -> Dict[str, Any]:
         """Parse a 44-byte party Pokemon structure at *base*.
 
@@ -552,8 +648,7 @@ class RedBlueMemoryReader(GameMemoryReader):
           42: special (2, big-endian)
         """
         data = self.emu.read_range(base, PARTY_MON_SIZE)
-        species_id = data[0]
-        species_name = SPECIES_NAMES.get(species_id, f"???({species_id})")
+        species = self._decode_species(data[0])
         nickname = self._decode_text(nick_addr, 11)
 
         moves = []
@@ -568,8 +663,7 @@ class RedBlueMemoryReader(GameMemoryReader):
                 })
 
         return {
-            "species_id": species_id,
-            "species": species_name,
+            **species,
             "nickname": nickname,
             "level": data[33],
             "hp": (data[1] << 8) | data[2],
@@ -588,6 +682,34 @@ class RedBlueMemoryReader(GameMemoryReader):
             },
             "ot_id": (data[12] << 8) | data[13],
             "experience": (data[14] << 16) | (data[15] << 8) | data[16],
+        }
+
+    def _read_enemy_battle_mon(self) -> Dict[str, Any]:
+        """Parse the live active enemy battle struct at ``wEnemyMon``.
+
+        ``wEnemyMon`` uses Gen 1's ``battle_struct`` layout:
+        - level is at offset 14
+        - max HP starts at offset 15
+        - PP lives after the stats block
+
+        This is different from the 44-byte party struct used in party data.
+        """
+        data = self.emu.read_range(ADDR_ENEMY_MON, BATTLE_MON_SIZE)
+        species = self._decode_species(data[0])
+
+        moves: List[str] = []
+        for index in range(4):
+            move_id = data[8 + index]
+            if move_id != 0:
+                moves.append(MOVE_NAMES.get(move_id, f"???({move_id})"))
+
+        return {
+            **species,
+            "level": data[14],
+            "hp": (data[1] << 8) | data[2],
+            "max_hp": (data[15] << 8) | data[16],
+            "status": self._decode_status(data[4]),
+            "moves": moves,
         }
 
     # -- public interface ---------------------------------------------------
@@ -658,50 +780,99 @@ class RedBlueMemoryReader(GameMemoryReader):
             "type": type_name,
         }
         if battle_type != 0:
-            # read first enemy mon (simplified)
-            enemy_species = self.emu.read_u8(ADDR_ENEMY_SPECIES)
-            enemy_data = self.emu.read_range(ADDR_ENEMY_DATA, PARTY_MON_SIZE)
-            enemy_level = enemy_data[33] if len(enemy_data) > 33 else enemy_data[3]
-            enemy_hp = (enemy_data[1] << 8) | enemy_data[2]
-            enemy_max_hp = ((enemy_data[34] << 8) | enemy_data[35]) if len(enemy_data) > 35 else 0
-            enemy_status = self._decode_status(enemy_data[4])
-
-            moves = []
-            for j in range(4):
-                mid = enemy_data[8 + j]
-                if mid != 0:
-                    moves.append(MOVE_NAMES.get(mid, f"???({mid})"))
-
-            result["enemy"] = {
-                "species_id": enemy_species,
-                "species": SPECIES_NAMES.get(enemy_species, f"???({enemy_species})"),
-                "level": enemy_level,
-                "hp": enemy_hp,
-                "max_hp": enemy_max_hp,
-                "status": enemy_status,
-                "moves": moves,
-            }
+            result["enemy"] = self._read_enemy_battle_mon()
         return result
 
     def read_dialog(self) -> Dict[str, Any]:
         """Read dialogue / text box state.
 
-        Uses wJoyIgnore as the primary indicator — bit 5 is set by the
-        game engine when joypad input is disabled (during text scroll,
-        NPC dialog, etc.).  wTextBoxID is unreliable because it can
-        retain stale non-zero values after dialog ends (e.g. after
-        Oak's intro sequence).
+        A Gen 1 prompt has two phases:
+        - text is actively printing, during which ``wJoyIgnore`` masks input
+        - text is fully drawn and waiting for A/B, during which the dialogue
+          window remains visible even if ``wJoyIgnore`` has already been cleared
+
+        ``wTextBoxID`` alone is unreliable because it can remain non-zero after
+        the prompt closes, so the active flag is derived from either:
+        - ``wJoyIgnore`` bit 5 while text is printing, or
+        - the dialogue window still being visible on-screen.
         """
         text_box = self.emu.read_u8(ADDR_TEXT_BOX_ID)
         joy_ignore = self.emu.read_u8(ADDR_JOY_IGNORE)
-        # Only use wJoyIgnore for the "active" flag — it's the game
-        # engine's actual input-lock signal. wTextBoxID is kept for
-        # informational purposes but not used for the active check.
-        in_dialog = bool(joy_ignore & 0x20)
+        window_y = self.emu.read_u8(ADDR_WINDOW_Y)
+        window_x = self.emu.read_u8(ADDR_WINDOW_X)
+        printing = bool(joy_ignore & 0x20)
+        window_visible = window_y < 0x90
+        waiting_for_input = window_visible and text_box != 0 and not printing
+        in_dialog = printing or waiting_for_input
         return {
             "active": in_dialog,
             "text_box_id": text_box,
             "joy_ignore": joy_ignore,
+            "window_visible": window_visible,
+            "window_y": window_y,
+            "window_x": window_x,
+            "printing": printing,
+            "waiting_for_input": waiting_for_input,
+        }
+
+    def read_coordinates(self) -> tuple[int, int]:
+        """Read the player's current map coordinates as ``(x, y)``."""
+        return (
+            self.emu.read_u8(ADDR_MAP_X),
+            self.emu.read_u8(ADDR_MAP_Y),
+        )
+
+    def read_facing(self) -> str:
+        """Read the player's live facing direction."""
+        facing_byte = self.emu.read_u8(ADDR_FACING)
+        return FACING_NAMES.get(facing_byte, f"unknown(0x{facing_byte:02X})")
+
+    def read_tileset(self) -> str:
+        """Read the current map's tileset."""
+        tileset_id = self.emu.read_u8(ADDR_MAP_TILESET)
+        return TILESET_NAMES.get(tileset_id, f"UNKNOWN_TILESET({tileset_id})")
+
+    def read_warps(self) -> List[Dict[str, int]]:
+        """Read warp entries for the current map."""
+        count = self.emu.read_u8(ADDR_WARP_COUNT)
+        count = min(count, 32)
+        warps: List[Dict[str, int]] = []
+        for index in range(count):
+            base = ADDR_WARP_ENTRIES + index * 4
+            warps.append(
+                {
+                    "y": self.emu.read_u8(base),
+                    "x": self.emu.read_u8(base + 1),
+                    "warp_id": self.emu.read_u8(base + 2),
+                    "target_map_id": self.emu.read_u8(base + 3),
+                }
+            )
+        return warps
+
+    def read_signs(self) -> List[Dict[str, int]]:
+        """Read sign/background-event coordinates for the current map."""
+        count = min(self.emu.read_u8(ADDR_SIGN_COUNT), MAX_SIGNS)
+        signs: List[Dict[str, int]] = []
+        for index in range(count):
+            coord_base = ADDR_SIGN_COORDS + index * 2
+            signs.append(
+                {
+                    "y": self.emu.read_u8(coord_base),
+                    "x": self.emu.read_u8(coord_base + 1),
+                    "text_id": self.emu.read_u8(ADDR_SIGN_TEXT_IDS + index),
+                }
+            )
+        return signs
+
+    def read_talk_over_tiles(self) -> List[int]:
+        """Read tiles that permit talking over the front tile, like counters."""
+        return sorted(TALK_OVER_TILES.get(self.read_tileset(), set()))
+
+    def read_map_dimensions(self) -> Dict[str, int]:
+        """Read current map dimensions in block coordinates."""
+        return {
+            "width": self.emu.read_u8(ADDR_MAP_WIDTH),
+            "height": self.emu.read_u8(ADDR_MAP_HEIGHT),
         }
 
     def read_map_info(self) -> Dict[str, Any]:
