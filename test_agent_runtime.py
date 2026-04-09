@@ -437,3 +437,50 @@ async def test_realtime_loop_advances_emulator_frames(monkeypatch):
 
     assert emulator.frame_count > 1234
     assert server._realtime_ticks > 0
+
+
+@pytest.mark.asyncio
+async def test_live_artifact_loop_refreshes_workspace_and_broadcasts(monkeypatch, tmp_path: Path):
+    emulator = FakeEmulator()
+    store = NavigationStore(tmp_path / "navigation.json")
+    snapshot = make_snapshot()
+    navigation = make_navigation_payload(store, snapshot)
+    runtime = AgentRuntime(
+        data_dir=tmp_path / "data",
+        workspace_dir=tmp_path / "workspace",
+    )
+
+    events: list[dict] = []
+
+    async def fake_broadcast(event: dict) -> None:
+        events.append(event)
+
+    monkeypatch.setattr(server, "_runtime", runtime)
+    monkeypatch.setattr(server, "_emulator", emulator)
+    monkeypatch.setattr(server, "_navigation_store", store)
+    monkeypatch.setattr(server, "_emulator_lock", asyncio.Lock())
+    monkeypatch.setattr(server, "_live_artifact_frames_per_second", 120)
+    monkeypatch.setattr(server, "_live_artifact_last_sync_at", None)
+    monkeypatch.setattr(
+        server,
+        "_get_state_dict",
+        lambda: make_state(map_name="Route 1", map_id=12),
+    )
+    monkeypatch.setattr(server, "_get_live_navigation_payload_sync", lambda goal=None: navigation)
+    monkeypatch.setattr(server, "broadcast", fake_broadcast)
+
+    task = asyncio.create_task(server._live_artifact_loop())
+    try:
+        await asyncio.sleep(0.05)
+    finally:
+        task.cancel()
+        with contextlib.suppress(asyncio.CancelledError):
+            await task
+
+    assert Path(runtime.artifacts["latest_frame"]).exists()
+    assert Path(runtime.artifacts["latest_frame_annotated"]).exists()
+    assert server._live_artifact_last_sync_at is not None
+    assert any(event.get("type") == "screenshot" for event in events)
+    screenshot_events = [event for event in events if event.get("type") == "screenshot"]
+    assert screenshot_events[-1]["data"]["source"] == "live_sync"
+    assert screenshot_events[-1]["data"]["frame_timestamp"]

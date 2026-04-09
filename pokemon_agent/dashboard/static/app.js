@@ -12,6 +12,7 @@
     const els = {
         statusDot: $('statusDot'),
         statusText: $('statusText'),
+        statusChip: $('statusChip'),
         piStatusChip: $('piStatusChip'),
         piStatusDot: $('piStatusDot'),
         piStatusText: $('piStatusText'),
@@ -79,9 +80,20 @@
         knowledgeSummary: $('knowledgeSummary'),
         workspaceSummary: $('workspaceSummary'),
         timeline: $('timeline'),
+        timelineSpark: $('timelineSpark'),
+        timelineFilters: $('timelineFilters'),
+        timelineCounts: $('timelineCounts'),
         rawObservation: $('rawObservation'),
         rawNavigation: $('rawNavigation'),
         rawSupervisor: $('rawSupervisor'),
+        hudFrameHp: $('hudFrameHp'),
+        hudFrameHpBar: $('hudFrameHpBar'),
+        hudFrameMap: $('hudFrameMap'),
+        hudFrameCoord: $('hudFrameCoord'),
+        hudFrameFacing: $('hudFrameFacing'),
+        hudFrameBadges: $('hudFrameBadges'),
+        hudFrameProgress: $('hudFrameProgress'),
+        hudFrameProgressBar: $('hudFrameProgressBar'),
     };
 
     let ws = null;
@@ -93,7 +105,34 @@
     let controlSeeded = false;
     let latestRecovery = {};
     let latestSaves = [];
+    let latestTimelineEvents = [];
+    let sessionOriginMs = null;
     const transcriptKeys = new Set();
+    const timelineFilters = new Set(['all']);
+    const EVENT_CATEGORIES = [
+        { key: 'all',        label: 'ALL' },
+        { key: 'action',     label: 'ACTION' },
+        { key: 'decision',   label: 'DECISION' },
+        { key: 'battle',     label: 'BATTLE' },
+        { key: 'checkpoint', label: 'CHECKPOINT' },
+        { key: 'save',       label: 'SAVE' },
+        { key: 'objective',  label: 'OBJECTIVE' },
+        { key: 'warn',       label: 'WARN' },
+        { key: 'error',      label: 'ERROR' },
+    ];
+    const EVENT_COLOR_VAR = {
+        action:     'var(--hud-cyan)',
+        decision:   'var(--hud-text)',
+        battle:     'var(--hud-bad)',
+        checkpoint: 'var(--hud-good)',
+        save:       'var(--hud-good)',
+        load:       'var(--hud-plasma)',
+        recovery:   'var(--hud-plasma)',
+        objective:  'var(--hud-hazard)',
+        warn:       'var(--hud-warn)',
+        error:      'var(--hud-bad)',
+        screenshot: 'var(--hud-muted)',
+    };
 
     function api(path) {
         return `${window.location.protocol}//${window.location.host}${path}`;
@@ -106,15 +145,18 @@
 
     function setStatus(connected, label) {
         els.statusDot.classList.toggle('connected', connected);
-        els.statusText.textContent = label;
+        if (els.statusChip) {
+            els.statusChip.dataset.status = connected ? 'running' : 'error';
+        }
+        els.statusText.textContent = (label || '').toUpperCase();
     }
 
     function setPiStatus(status, label) {
         const normalized = status || 'idle';
         els.piStatusChip.dataset.status = normalized;
-        els.piStatusDot.className = 'status-dot';
+        els.piStatusDot.className = 'hud-dot status-dot';
         if (normalized === 'running' || normalized === 'starting') {
-            els.piStatusDot.classList.add('running');
+            els.piStatusDot.classList.add('running', 'connected');
         } else if (normalized === 'error') {
             els.piStatusDot.classList.add('error');
         } else if (normalized === 'stopping') {
@@ -122,7 +164,7 @@
         } else {
             els.piStatusDot.classList.add('idle');
         }
-        els.piStatusText.textContent = label;
+        els.piStatusText.textContent = (label || '').toUpperCase();
     }
 
     function formatJSON(value) {
@@ -147,6 +189,85 @@
         if (!text) return '';
         if (text.length <= limit) return text;
         return `${text.slice(0, limit - 1).trimEnd()}…`;
+    }
+
+    function escapeHtml(value) {
+        return String(value ?? '')
+            .replace(/&/g, '&amp;')
+            .replace(/</g, '&lt;')
+            .replace(/>/g, '&gt;')
+            .replace(/"/g, '&quot;')
+            .replace(/'/g, '&#39;');
+    }
+
+    function parseTs(value) {
+        if (!value) return NaN;
+        if (typeof value === 'number') return value;
+        const t = new Date(value).getTime();
+        return Number.isNaN(t) ? NaN : t;
+    }
+
+    function relTime(ts, originMs) {
+        const t = parseTs(ts);
+        if (Number.isNaN(t) || !originMs) return '--:--';
+        const seconds = Math.max(0, Math.round((t - originMs) / 1000));
+        const hh = Math.floor(seconds / 3600);
+        const mm = Math.floor((seconds % 3600) / 60);
+        const ss = seconds % 60;
+        const pad = (n) => String(n).padStart(2, '0');
+        if (hh > 0) return `T+${hh}:${pad(mm)}:${pad(ss)}`;
+        return `T+${pad(mm)}:${pad(ss)}`;
+    }
+
+    function deltaTime(currTs, prevTs) {
+        const c = parseTs(currTs);
+        const p = parseTs(prevTs);
+        if (Number.isNaN(c) || Number.isNaN(p)) return '';
+        const diffMs = c - p;
+        if (diffMs < 0) return '';
+        if (diffMs < 1000) return `Δ ${diffMs}ms`;
+        if (diffMs < 60000) return `Δ ${(diffMs / 1000).toFixed(1)}s`;
+        const minutes = Math.floor(diffMs / 60000);
+        const seconds = Math.round((diffMs % 60000) / 1000);
+        return `Δ ${minutes}m${seconds}s`;
+    }
+
+    function eventCategory(type) {
+        const t = String(type || '').toLowerCase();
+        if (!t) return 'default';
+        if (t.includes('error') || t.includes('fail') || t.includes('crash')) return 'error';
+        if (t.includes('warn') || t.includes('stuck')) return 'warn';
+        if (t.includes('objective') || t.includes('goal') || t.includes('progress')) return 'objective';
+        if (t.includes('checkpoint')) return 'checkpoint';
+        if (t.includes('save')) return 'save';
+        if (t.includes('load') || t.includes('recovery') || t.includes('restore')) return 'recovery';
+        if (t.includes('battle') || t.includes('combat') || t.includes('faint')) return 'battle';
+        if (t.includes('decision') || t.includes('plan') || t.includes('intent')) return 'decision';
+        if (t.includes('screenshot') || t.includes('frame')) return 'screenshot';
+        if (t.includes('action') || t.includes('tool') || t.includes('move') || t.includes('navigate')) return 'action';
+        return 'action';
+    }
+
+    function eventIcon(category) {
+        switch (category) {
+            case 'action':     return '◉';
+            case 'decision':   return '◈';
+            case 'battle':     return '⬢';
+            case 'checkpoint': return '★';
+            case 'save':       return '★';
+            case 'load':       return '↺';
+            case 'recovery':   return '↺';
+            case 'objective':  return '⚑';
+            case 'warn':       return '⚠';
+            case 'error':      return '✕';
+            case 'screenshot': return '▸';
+            default:           return '⟡';
+        }
+    }
+
+    function kvPill(label, value) {
+        if (value === null || value === undefined || value === '') return '';
+        return `<span class="hud-kv-pill">${escapeHtml(label)} <strong>${escapeHtml(value)}</strong></span>`;
     }
 
     function defaultSaveName() {
@@ -194,10 +315,18 @@
 
     function renderKeyValueCards(node, pairs) {
         node.innerHTML = '';
-        pairs.forEach(([label, value]) => {
+        pairs.forEach(([label, value, tone]) => {
             const card = document.createElement('div');
-            card.className = 'stat-card';
-            card.innerHTML = `<span>${label}</span><strong>${value || 'n/a'}</strong>`;
+            card.className = 'hud-stat';
+            if (tone) card.dataset.type = tone;
+            const lbl = document.createElement('span');
+            lbl.className = 'hud-stat-label';
+            lbl.textContent = label;
+            const val = document.createElement('strong');
+            val.className = 'hud-stat-value';
+            val.textContent = value || 'n/a';
+            card.appendChild(lbl);
+            card.appendChild(val);
             node.appendChild(card);
         });
     }
@@ -206,20 +335,20 @@
         node.innerHTML = '';
         const list = Array.isArray(items) ? items : [];
         if (!list.length) {
-            node.innerHTML = `<p class="empty">${fallback}</p>`;
+            node.innerHTML = `<p class="hud-empty">${escapeHtml(fallback)}</p>`;
             return;
         }
         list.forEach((item) => {
             const article = document.createElement('article');
-            article.className = 'tool-card';
+            article.className = 'hud-tool-card';
             const header = truncate(item.summary || item.tool_name || 'tool');
             const detail = truncate(item.result_preview || item.args_preview || '');
             article.innerHTML = `
-                <div class="tool-head">
-                    <strong>${header}</strong>
-                    <span class="inline-chip">${item.status || item.tool_name || 'tool'}</span>
+                <div class="hud-tool-head">
+                    <strong>${escapeHtml(header)}</strong>
+                    <span class="hud-chip hud-chip--tiny">${escapeHtml(item.status || item.tool_name || 'tool')}</span>
                 </div>
-                <p>${detail || 'No preview available.'}</p>
+                <p>${escapeHtml(detail || 'No preview available.')}</p>
             `;
             node.appendChild(article);
         });
@@ -253,16 +382,16 @@
         }
         list.forEach((candidate) => {
             const li = document.createElement('li');
-            li.className = 'note-action-item';
+            li.className = 'hud-recovery-item';
 
             const text = document.createElement('span');
-            text.className = 'note-action-text';
-            text.textContent = `${candidate.name} | ${candidate.reason} | score ${candidate.score}`;
+            text.className = 'hud-recovery-text';
+            text.textContent = `${candidate.name} · ${candidate.reason} · score ${candidate.score}`;
 
             const button = document.createElement('button');
             button.type = 'button';
-            button.className = 'small-button';
-            button.textContent = 'Load';
+            button.className = 'hud-btn hud-btn--small hud-btn--ghost';
+            button.textContent = 'LOAD';
             button.addEventListener('click', () => {
                 loadSaveByName(candidate.name);
             });
@@ -331,27 +460,25 @@
 
     function createTranscriptCard(entry) {
         const article = document.createElement('article');
-        article.className = 'transcript-card';
-        article.dataset.role = transcriptRole(entry);
+        article.className = 'hud-chat-card';
 
         const meta = document.createElement('div');
-        meta.className = 'transcript-meta';
+        meta.className = 'hud-chat-meta';
 
         const chipWrap = document.createElement('div');
-        chipWrap.className = 'transcript-chip-row';
+        chipWrap.className = 'hud-chat-chips';
 
         const roleChip = document.createElement('span');
-        roleChip.className = 'transcript-chip transcript-role-chip';
-        roleChip.dataset.role = transcriptRole(entry);
-        roleChip.textContent = transcriptRoleLabel(transcriptRole(entry));
+        roleChip.className = 'hud-chat-chip';
+        roleChip.dataset.slot = 'role';
 
         const channelChip = document.createElement('span');
-        channelChip.className = 'transcript-chip transcript-channel-chip';
-        channelChip.dataset.direction = entry.direction || 'system';
-        channelChip.textContent = entry.channel || 'message';
+        channelChip.className = 'hud-chat-chip';
+        channelChip.dataset.slot = 'channel';
 
         const time = document.createElement('span');
-        time.textContent = timeLabel(entry.timestamp);
+        time.className = 'hud-chat-time';
+        time.dataset.slot = 'time';
 
         chipWrap.appendChild(roleChip);
         chipWrap.appendChild(channelChip);
@@ -360,40 +487,112 @@
         meta.appendChild(time);
 
         const pre = document.createElement('pre');
-        pre.textContent = entry.content || '';
+        pre.dataset.slot = 'content';
 
         article.appendChild(meta);
         article.appendChild(pre);
+        updateTranscriptCard(article, entry);
         return article;
     }
 
+    function updateTranscriptCard(article, entry) {
+        if (!article) return;
+        const role = transcriptRole(entry);
+        const key = transcriptKey(entry);
+        const roleChip = article.querySelector('[data-slot="role"]');
+        const channelChip = article.querySelector('[data-slot="channel"]');
+        const time = article.querySelector('[data-slot="time"]');
+        const pre = article.querySelector('[data-slot="content"]');
+
+        article.dataset.role = role;
+        article.dataset.transcriptKey = key;
+
+        if (roleChip) {
+            roleChip.dataset.role = role;
+            roleChip.textContent = transcriptRoleLabel(role).toUpperCase();
+        }
+        if (channelChip) {
+            channelChip.dataset.channel = entry.channel || 'message';
+            channelChip.dataset.direction = entry.direction || 'system';
+            channelChip.textContent = (entry.channel || 'message').toUpperCase();
+        }
+        if (time) {
+            const abs = timeLabel(entry.timestamp);
+            const rel = sessionOriginMs ? relTime(entry.timestamp, sessionOriginMs) : '';
+            time.textContent = rel || abs;
+            time.title = abs;
+        }
+        if (pre) {
+            pre.textContent = entry.content || '';
+        }
+    }
+
+    function transcriptSticky() {
+        if (!els.piTranscript) return true;
+        return (
+            els.piTranscript.scrollHeight - els.piTranscript.scrollTop - els.piTranscript.clientHeight <
+            60
+        );
+    }
+
     function renderTranscript(entries) {
-        els.piTranscript.innerHTML = '';
+        if (!els.piTranscript) return;
+        const list = (Array.isArray(entries) ? entries : []).slice(-TRANSCRIPT_LIMIT);
+        const sticky = transcriptSticky();
+        const nextKeys = new Set();
+
         transcriptKeys.clear();
-        const list = Array.isArray(entries) ? entries : [];
         if (!list.length) {
-            els.piTranscript.innerHTML = '<p class="empty">No chat messages yet.</p>';
+            const empty = document.createElement('p');
+            empty.className = 'hud-empty';
+            empty.textContent = '— awaiting comms —';
+            els.piTranscript.replaceChildren(empty);
             return;
         }
-        list.forEach((entry) => {
+
+        const empty = els.piTranscript.querySelector('.hud-empty');
+        if (empty) empty.remove();
+
+        const existingCards = Array.from(els.piTranscript.querySelectorAll('.hud-chat-card'));
+        const existingByKey = new Map(
+            existingCards.map((card) => [card.dataset.transcriptKey || '', card])
+        );
+
+        list.forEach((entry, index) => {
             const key = transcriptKey(entry);
+            nextKeys.add(key);
             transcriptKeys.add(key);
-            els.piTranscript.appendChild(createTranscriptCard(entry));
+            let card = existingByKey.get(key);
+            if (!card) {
+                card = createTranscriptCard(entry);
+            } else {
+                updateTranscriptCard(card, entry);
+            }
+            const currentChild = els.piTranscript.children[index];
+            if (currentChild !== card) {
+                els.piTranscript.insertBefore(card, currentChild || null);
+            }
         });
-        els.piTranscript.scrollTop = els.piTranscript.scrollHeight;
+
+        Array.from(els.piTranscript.querySelectorAll('.hud-chat-card')).forEach((card) => {
+            if (!nextKeys.has(card.dataset.transcriptKey || '')) {
+                card.remove();
+            }
+        });
+
+        if (sticky) {
+            els.piTranscript.scrollTop = els.piTranscript.scrollHeight;
+        }
     }
 
     function appendTranscriptEntry(entry) {
         if (!entry || !els.piTranscript) return;
-        if (els.piTranscript.querySelector('.empty')) {
-            els.piTranscript.innerHTML = '';
-        }
+        const empty = els.piTranscript.querySelector('.hud-empty');
+        if (empty) empty.remove();
         const key = transcriptKey(entry);
         if (transcriptKeys.has(key)) return;
         transcriptKeys.add(key);
-        const sticky =
-            els.piTranscript.scrollHeight - els.piTranscript.scrollTop - els.piTranscript.clientHeight <
-            40;
+        const sticky = transcriptSticky();
         while (els.piTranscript.children.length >= TRANSCRIPT_LIMIT) {
             const first = els.piTranscript.firstElementChild;
             if (!first) break;
@@ -411,57 +610,403 @@
         const pos = player.position || {};
         const battle = worldState.battle || {};
         const realtimeLabel = serverRuntime?.realtime_enabled
-            ? `${serverRuntime.realtime_fps || 60} FPS`
+            ? `${serverRuntime.realtime_fps || 60}/${serverRuntime.live_artifact_fps || 0} FPS`
             : 'paused';
         renderKeyValueCards(els.worldStats, [
-            ['Map', map.map_name || 'Unknown'],
-            ['Coords', `${pos.x ?? '--'}, ${pos.y ?? '--'}`],
-            ['Facing', player.facing || 'unknown'],
-            ['Battle', battle.in_battle ? (battle.type || 'active') : 'no'],
-            ['Progress', `${progress ?? 0}%`],
-            ['Clock', realtimeLabel],
+            ['MAP', map.map_name || 'Unknown'],
+            ['COORDS', `${pos.x ?? '--'}, ${pos.y ?? '--'}`],
+            ['FACING', player.facing || 'unknown'],
+            ['BATTLE', battle.in_battle ? (battle.type || 'active') : 'no'],
+            ['PROGRESS', `${progress ?? 0}%`, 'progress'],
+            ['CLOCK', realtimeLabel],
         ]);
     }
 
+    function hpTone(ratio) {
+        if (ratio >= 0.5) return 'good';
+        if (ratio >= 0.2) return 'mid';
+        return 'low';
+    }
+
+    function renderFrameHud(worldState, memory) {
+        const party = Array.isArray(worldState?.party) ? worldState.party : [];
+        const totals = party.reduce(
+            (acc, mon) => {
+                const hp = Number(mon.hp) || 0;
+                const max = Number(mon.max_hp) || 0;
+                acc.hp += hp;
+                acc.max += max;
+                return acc;
+            },
+            { hp: 0, max: 0 }
+        );
+        const hpRatio = totals.max > 0 ? totals.hp / totals.max : 0;
+        if (els.hudFrameHp) {
+            els.hudFrameHp.textContent = totals.max > 0
+                ? `${totals.hp} / ${totals.max}`
+                : '—';
+        }
+        if (els.hudFrameHpBar) {
+            els.hudFrameHpBar.style.width = `${Math.min(100, Math.round(hpRatio * 100))}%`;
+            els.hudFrameHpBar.dataset.tone = hpTone(hpRatio);
+        }
+        const map = worldState?.map || {};
+        const player = worldState?.player || {};
+        const pos = player.position || {};
+        if (els.hudFrameMap) {
+            els.hudFrameMap.textContent = map.map_name || map.id || '—';
+        }
+        if (els.hudFrameCoord) {
+            els.hudFrameCoord.textContent =
+                pos.x !== undefined && pos.y !== undefined
+                    ? `${pos.x}, ${pos.y}`
+                    : '—';
+        }
+        if (els.hudFrameFacing) {
+            els.hudFrameFacing.textContent = (player.facing || '—').toString().toUpperCase();
+        }
+        if (els.hudFrameBadges) {
+            const badges =
+                memory?.badges ??
+                memory?.badge_count ??
+                (Array.isArray(player?.badges) ? player.badges.length : null);
+            els.hudFrameBadges.textContent = badges !== null && badges !== undefined ? String(badges) : '—';
+        }
+        const progressPct = memory?.progress_percent ?? 0;
+        if (els.hudFrameProgress) {
+            els.hudFrameProgress.textContent = `${progressPct}%`;
+        }
+        if (els.hudFrameProgressBar) {
+            els.hudFrameProgressBar.style.width = `${Math.min(100, Math.max(0, Number(progressPct) || 0))}%`;
+        }
+    }
+
     function renderParty(party) {
-        if (!Array.isArray(party) || !party.length) {
-            els.partySnapshot.textContent = 'No party data yet.';
+        els.partySnapshot.innerHTML = '';
+        const list = Array.isArray(party) ? party : [];
+        if (!list.length) {
+            els.partySnapshot.innerHTML = '<p class="hud-empty">— no party data —</p>';
             return;
         }
-        const lines = party.map((mon) => {
-            const moves = (mon.moves || []).map((move) => move.name || move).join(', ');
-            return [
-                `${mon.nickname || mon.species || 'Unknown'} Lv${mon.level || '?'} ${mon.hp || '?'} / ${mon.max_hp || '?'}`,
-                `Status: ${mon.status || 'OK'} | Moves: ${moves || 'none'}`,
-            ].join('\n');
+        list.forEach((mon) => {
+            const card = document.createElement('article');
+            card.className = 'hud-party-card';
+            const name = mon.nickname || mon.species || 'Unknown';
+            const species = mon.species && mon.nickname ? mon.species : '';
+            const level = mon.level ? `LV ${mon.level}` : 'LV —';
+            const hp = Number(mon.hp) || 0;
+            const maxHp = Number(mon.max_hp) || 0;
+            const ratio = maxHp > 0 ? hp / maxHp : 0;
+            const tone = hpTone(ratio);
+            const status = (mon.status || 'OK').toString();
+            const statusTone = /^(ok|none|healthy)$/i.test(status)
+                ? ''
+                : /(par|slp|brn|psn|frz)/i.test(status)
+                ? 'warn'
+                : 'bad';
+            const moves = Array.isArray(mon.moves)
+                ? mon.moves.map((m) => (typeof m === 'string' ? m : m.name || '—'))
+                : [];
+
+            const head = document.createElement('div');
+            head.className = 'hud-party-head';
+            const nameEl = document.createElement('span');
+            nameEl.className = 'hud-party-name';
+            nameEl.textContent = name;
+            const lvEl = document.createElement('span');
+            lvEl.className = 'hud-party-lv';
+            lvEl.textContent = level;
+            head.appendChild(nameEl);
+            head.appendChild(lvEl);
+            card.appendChild(head);
+
+            if (species || mon.type) {
+                const sub = document.createElement('div');
+                sub.className = 'hud-party-sub';
+                if (species) {
+                    const s = document.createElement('span');
+                    s.innerHTML = `<strong>${escapeHtml(species)}</strong>`;
+                    sub.appendChild(s);
+                }
+                if (mon.type) {
+                    const t = document.createElement('span');
+                    t.textContent = mon.type;
+                    sub.appendChild(t);
+                }
+                card.appendChild(sub);
+            }
+
+            const hpRow = document.createElement('div');
+            hpRow.className = 'hud-party-hp-row';
+            const hpLbl = document.createElement('span');
+            hpLbl.className = 'hud-party-hp-label';
+            hpLbl.textContent = 'HP';
+            const hpBar = document.createElement('div');
+            hpBar.className = 'hud-party-hp-bar';
+            const hpFill = document.createElement('div');
+            hpFill.className = 'hud-party-hp-fill';
+            hpFill.dataset.tone = tone;
+            hpFill.style.width = `${Math.min(100, Math.round(ratio * 100))}%`;
+            hpBar.appendChild(hpFill);
+            const hpVal = document.createElement('span');
+            hpVal.className = 'hud-party-hp-value';
+            hpVal.textContent = maxHp > 0 ? `${hp} / ${maxHp}` : '— / —';
+            hpRow.appendChild(hpLbl);
+            hpRow.appendChild(hpBar);
+            hpRow.appendChild(hpVal);
+            card.appendChild(hpRow);
+
+            const statusEl = document.createElement('span');
+            statusEl.className = 'hud-party-status';
+            if (statusTone) statusEl.dataset.tone = statusTone;
+            statusEl.textContent = `STATUS · ${status.toUpperCase()}`;
+            card.appendChild(statusEl);
+
+            if (moves.length) {
+                const movesEl = document.createElement('div');
+                movesEl.className = 'hud-party-moves';
+                moves.forEach((move) => {
+                    const m = document.createElement('span');
+                    m.className = 'hud-party-move';
+                    m.textContent = move;
+                    movesEl.appendChild(m);
+                });
+                card.appendChild(movesEl);
+            }
+
+            els.partySnapshot.appendChild(card);
         });
-        els.partySnapshot.textContent = lines.join('\n\n');
+    }
+
+    function renderTimelineFilters(typeCounts) {
+        if (!els.timelineFilters) return;
+        els.timelineFilters.innerHTML = '';
+        EVENT_CATEGORIES.forEach(({ key, label }) => {
+            const count = key === 'all' ? latestTimelineEvents.length : (typeCounts[key] || 0);
+            const chip = document.createElement('button');
+            chip.type = 'button';
+            chip.className = 'hud-filter-chip';
+            const active = timelineFilters.has(key) || (timelineFilters.size === 0 && key === 'all');
+            chip.dataset.active = active ? 'true' : 'false';
+            chip.dataset.filter = key;
+            chip.innerHTML = `${escapeHtml(label)}<span class="hud-filter-count">${count}</span>`;
+            chip.addEventListener('click', () => toggleTimelineFilter(key));
+            els.timelineFilters.appendChild(chip);
+        });
+    }
+
+    function toggleTimelineFilter(key) {
+        if (key === 'all') {
+            timelineFilters.clear();
+            timelineFilters.add('all');
+        } else {
+            timelineFilters.delete('all');
+            if (timelineFilters.has(key)) {
+                timelineFilters.delete(key);
+            } else {
+                timelineFilters.add(key);
+            }
+            if (timelineFilters.size === 0) {
+                timelineFilters.add('all');
+            }
+        }
+        renderTimeline(latestTimelineEvents);
+    }
+
+    function renderTimelineSparkline(events) {
+        if (!els.timelineSpark) return;
+        const svg = els.timelineSpark;
+        svg.innerHTML = '';
+        const BUCKETS = 30;
+        const WIDTH = 300;
+        const HEIGHT = 36;
+        const bucketW = WIDTH / BUCKETS;
+        if (!events.length) return;
+        const stamps = events
+            .map((e) => parseTs(e.timestamp))
+            .filter((t) => !Number.isNaN(t));
+        if (!stamps.length) return;
+        const minT = Math.min(...stamps);
+        const maxT = Math.max(...stamps);
+        const range = Math.max(1, maxT - minT);
+        const buckets = Array.from({ length: BUCKETS }, () => ({}));
+        events.forEach((event) => {
+            const t = parseTs(event.timestamp);
+            if (Number.isNaN(t)) return;
+            const idx = Math.min(BUCKETS - 1, Math.floor(((t - minT) / range) * BUCKETS));
+            const cat = eventCategory(event.type);
+            buckets[idx][cat] = (buckets[idx][cat] || 0) + 1;
+        });
+        let maxStack = 1;
+        buckets.forEach((b) => {
+            const sum = Object.values(b).reduce((a, c) => a + c, 0);
+            if (sum > maxStack) maxStack = sum;
+        });
+        buckets.forEach((bucket, idx) => {
+            const entries = Object.entries(bucket);
+            if (!entries.length) return;
+            let yOffset = HEIGHT;
+            entries.forEach(([cat, count]) => {
+                const h = (count / maxStack) * (HEIGHT - 2);
+                const rect = document.createElementNS('http://www.w3.org/2000/svg', 'rect');
+                rect.setAttribute('x', String(idx * bucketW + 0.5));
+                rect.setAttribute('y', String(yOffset - h));
+                rect.setAttribute('width', String(Math.max(1, bucketW - 1)));
+                rect.setAttribute('height', String(h));
+                rect.setAttribute('fill', EVENT_COLOR_VAR[cat] || 'var(--hud-cyan)');
+                rect.setAttribute('opacity', '0.72');
+                svg.appendChild(rect);
+                yOffset -= h;
+            });
+        });
+        const axis = document.createElementNS('http://www.w3.org/2000/svg', 'line');
+        axis.setAttribute('x1', '0');
+        axis.setAttribute('x2', String(WIDTH));
+        axis.setAttribute('y1', String(HEIGHT - 0.5));
+        axis.setAttribute('y2', String(HEIGHT - 0.5));
+        axis.setAttribute('stroke', 'var(--hud-line)');
+        axis.setAttribute('stroke-width', '1');
+        svg.appendChild(axis);
+    }
+
+    function eventSummaryText(event) {
+        return (
+            event.summary ||
+            event.reason ||
+            event.text ||
+            event.objective?.title ||
+            event.tool_name ||
+            event.type ||
+            '(no detail)'
+        );
+    }
+
+    function renderTimelineCounts(total) {
+        if (!els.timelineCounts) return;
+        els.timelineCounts.innerHTML = '';
+        const chip = document.createElement('span');
+        chip.className = 'hud-chip hud-chip--tiny';
+        chip.textContent = `${total} EVENTS`;
+        els.timelineCounts.appendChild(chip);
     }
 
     function renderTimeline(events) {
-        els.timeline.innerHTML = '';
         const recent = Array.isArray(events) ? events : [];
-        if (!recent.length) {
-            els.timeline.innerHTML = '<p class="empty">No events recorded yet.</p>';
+        latestTimelineEvents = recent;
+        const ordered = recent.slice().sort((a, b) => {
+            const ta = parseTs(a.timestamp);
+            const tb = parseTs(b.timestamp);
+            if (Number.isNaN(ta) || Number.isNaN(tb)) return 0;
+            return ta - tb;
+        });
+
+        const stamps = ordered
+            .map((e) => parseTs(e.timestamp))
+            .filter((t) => !Number.isNaN(t));
+        const originFromEvents = stamps.length ? Math.min(...stamps) : null;
+        if (!sessionOriginMs || (originFromEvents && originFromEvents < sessionOriginMs)) {
+            sessionOriginMs = originFromEvents;
+        }
+
+        const typeCounts = {};
+        ordered.forEach((e) => {
+            const cat = eventCategory(e.type);
+            typeCounts[cat] = (typeCounts[cat] || 0) + 1;
+        });
+
+        renderTimelineCounts(ordered.length);
+        renderTimelineFilters(typeCounts);
+        renderTimelineSparkline(ordered);
+
+        els.timeline.innerHTML = '';
+        if (!ordered.length) {
+            els.timeline.innerHTML = '<p class="hud-empty">[ NO TRAFFIC ]</p>';
             return;
         }
-        recent.slice().reverse().forEach((event) => {
+
+        const showAll = timelineFilters.has('all');
+        const visible = ordered.filter((event) => {
+            if (showAll) return true;
+            const cat = eventCategory(event.type);
+            return timelineFilters.has(cat);
+        });
+
+        if (!visible.length) {
+            els.timeline.innerHTML = '<p class="hud-empty">[ NO MATCHING EVENTS ]</p>';
+            return;
+        }
+
+        // Render newest first for top-down reading
+        const reversed = visible.slice().reverse();
+        reversed.forEach((event, idx) => {
+            const category = eventCategory(event.type);
             const article = document.createElement('article');
-            article.className = 'timeline-item';
-            const summary =
-                event.summary ||
-                event.reason ||
-                event.text ||
-                event.objective?.title ||
-                event.tool_name ||
-                event.type;
-            article.innerHTML = `
-                <div class="timeline-head">
-                    <span class="timeline-type">${event.type}</span>
-                    <span class="timeline-time">${timeLabel(event.timestamp)}</span>
-                </div>
-                <p>${truncate(summary, 260)}</p>
+            article.className = 'hud-event';
+            article.dataset.type = category;
+            if (idx < 12) {
+                article.style.animationDelay = `${idx * 35}ms`;
+            }
+
+            // Gutter with T+rel and delta-from-previous (next in reversed = earlier in time)
+            const prev = reversed[idx + 1];
+            const gutter = document.createElement('div');
+            gutter.className = 'hud-event-gutter';
+            const rel = relTime(event.timestamp, sessionOriginMs);
+            const delta = prev ? deltaTime(event.timestamp, prev.timestamp) : '';
+            gutter.innerHTML = `
+                <span>${escapeHtml(rel)}</span>
+                ${delta ? `<span class="hud-event-delta">${escapeHtml(delta)}</span>` : ''}
             `;
+
+            // cluster bracket when <1s from previous
+            if (prev) {
+                const diff = Math.abs(parseTs(event.timestamp) - parseTs(prev.timestamp));
+                if (!Number.isNaN(diff) && diff < 1000) {
+                    article.dataset.clusterContinue = 'true';
+                }
+            }
+
+            const icon = document.createElement('div');
+            icon.className = 'hud-event-icon';
+            icon.textContent = eventIcon(category);
+
+            const typeEl = document.createElement('div');
+            typeEl.className = 'hud-event-type';
+            typeEl.textContent = (event.type || category).toString().toUpperCase();
+
+            const summary = document.createElement('div');
+            summary.className = 'hud-event-summary';
+            const summaryText = eventSummaryText(event);
+            const pills = [];
+            if (event.tool_name) pills.push(kvPill('tool', event.tool_name));
+            if (event.action) pills.push(kvPill('act', event.action));
+            if (event.map_name) pills.push(kvPill('map', event.map_name));
+            if (event.coords) pills.push(kvPill('at', event.coords));
+            if (typeof event.duration_ms === 'number') pills.push(kvPill('ms', event.duration_ms));
+            if (event.outcome) pills.push(kvPill('→', event.outcome));
+            summary.innerHTML = `
+                <span>${escapeHtml(truncate(summaryText, 260))}</span>
+                ${pills.length ? `<span class="hud-kv">${pills.join('')}</span>` : ''}
+            `;
+
+            const meta = document.createElement('div');
+            meta.className = 'hud-event-meta';
+            if (event.reason && event.reason !== summaryText) {
+                const reason = document.createElement('span');
+                reason.textContent = truncate(event.reason, 40);
+                meta.appendChild(reason);
+            }
+            if (event.status) {
+                const st = document.createElement('span');
+                st.textContent = event.status;
+                meta.appendChild(st);
+            }
+
+            article.appendChild(gutter);
+            article.appendChild(icon);
+            article.appendChild(typeEl);
+            article.appendChild(summary);
+            article.appendChild(meta);
             els.timeline.appendChild(article);
         });
     }
@@ -482,35 +1027,41 @@
         const config = supervisor.config || {};
         seedSupervisorControls(supervisor);
 
-        const label = supervisor.available ? `${supervisor.status || 'idle'}` : 'Pi unavailable';
+        // capture session origin for relative-time labels
+        const started = parseTs(supervisor.started_at);
+        if (!Number.isNaN(started) && started) {
+            sessionOriginMs = started;
+        }
+
+        const label = supervisor.available ? `PI ${supervisor.status || 'IDLE'}` : 'PI OFFLINE';
         setPiStatus(supervisor.status, label);
         els.piModelChip.textContent = supervisor.model
-            ? `Pi: ${supervisor.model}`
-            : `Pi: ${supervisor.pi_binary ? 'default model' : 'not installed'}`;
+            ? `◉ PI: ${supervisor.model}`
+            : `◉ PI: ${supervisor.pi_binary ? 'default model' : 'not installed'}`;
         els.piSessionChip.textContent = supervisor.session_id
-            ? `Session: ${supervisor.session_id}`
-            : 'Session: none';
-        els.piTurnsChip.textContent = `Turns: ${supervisor.turns_completed || 0}`;
+            ? `SESSION: ${supervisor.session_id.slice(0, 8)}`
+            : 'SESSION: NONE';
+        els.piTurnsChip.textContent = `TURNS: ${supervisor.turns_completed || 0}`;
         els.piStatusSummary.textContent =
-            supervisor.status_reason || supervisor.last_error || 'Pi supervisor not started.';
+            supervisor.status_reason || supervisor.last_error || 'Pi supervisor standing by.';
 
         renderKeyValueCards(els.piSupervisorStats, [
-            ['Status', supervisor.status || 'idle'],
-            ['Model', supervisor.model || 'default'],
-            ['Provider', supervisor.provider || 'default'],
-            ['Thinking', supervisor.thinking || 'default'],
-            ['Auto', config.auto_continue ? 'on' : 'off'],
-            ['Delay', `${config.continue_delay_seconds ?? 1}s`],
-            ['Next', supervisor.next_auto_continue_at ? timeLabel(supervisor.next_auto_continue_at) : 'n/a'],
-            ['Continue', config.continue_message || 'continue'],
+            ['STATUS', (supervisor.status || 'idle').toUpperCase()],
+            ['MODEL', supervisor.model || 'default'],
+            ['PROVIDER', supervisor.provider || 'default'],
+            ['THINKING', supervisor.thinking || 'default'],
+            ['AUTO', config.auto_continue ? 'on' : 'off'],
+            ['DELAY', `${config.continue_delay_seconds ?? 1}s`],
+            ['NEXT', supervisor.next_auto_continue_at ? timeLabel(supervisor.next_auto_continue_at) : 'n/a'],
+            ['CONT MSG', config.continue_message || 'continue'],
         ]);
 
         if (supervisor.last_error) {
-            els.piControlStatus.textContent = `Last error: ${supervisor.last_error}`;
+            els.piControlStatus.textContent = `► LAST ERROR: ${supervisor.last_error}`;
         } else if (supervisor.next_auto_continue_at) {
-            els.piControlStatus.textContent = `Auto-continue scheduled for ${timeLabel(supervisor.next_auto_continue_at)}.`;
+            els.piControlStatus.textContent = `► AUTO-CONTINUE @ ${timeLabel(supervisor.next_auto_continue_at)}`;
         } else {
-            els.piControlStatus.textContent = `Last event: ${timeLabel(supervisor.last_event_at)}`;
+            els.piControlStatus.textContent = `► LAST EVENT: ${timeLabel(supervisor.last_event_at)}`;
         }
 
         const turnPlanPreview = supervisor.turn_plan_preview?.payload || supervisor.turn_plan_preview;
@@ -532,14 +1083,18 @@
             }),
             'No recent Pi events.'
         );
-        els.piCurrentThinking.textContent =
-            supervisor.current_assistant_thinking ||
-            supervisor.last_assistant_thinking ||
-            'No reasoning stream yet.';
-        els.piCurrentOutput.textContent =
-            supervisor.current_assistant_text ||
-            supervisor.last_assistant_text ||
-            'No assistant output yet.';
+        if (els.piCurrentThinking.dataset.streaming !== 'true') {
+            els.piCurrentThinking.textContent =
+                supervisor.current_assistant_thinking ||
+                supervisor.last_assistant_thinking ||
+                '— silent —';
+        }
+        if (els.piCurrentOutput.dataset.streaming !== 'true') {
+            els.piCurrentOutput.textContent =
+                supervisor.current_assistant_text ||
+                supervisor.last_assistant_text ||
+                '— silent —';
+        }
         els.piStderr.textContent = (supervisor.stderr_tail || []).join('\n') || 'No stderr output.';
         els.rawSupervisor.textContent = formatJSON(supervisor);
     }
@@ -562,13 +1117,13 @@
         const artifactUrls = payload.artifact_urls || {};
 
         setStatus(true, 'Connected');
-        els.lastUpdate.textContent = timeLabel(payload.generated_at);
-        els.uiModeChip.textContent = `UI: ${visuals.ui_mode || 'unknown'}`;
+        els.lastUpdate.textContent = `◉ ${timeLabel(payload.generated_at)}`;
+        els.uiModeChip.textContent = `◉ UI: ${(visuals.ui_mode || 'unknown').toUpperCase()}`;
         els.realtimeChip.textContent = serverRuntime.realtime_enabled
-            ? `Clock: live @ ${serverRuntime.realtime_fps || 60} FPS`
-            : 'Clock: paused';
+            ? `◉ CLK: ${serverRuntime.realtime_fps || 60}/${serverRuntime.live_artifact_fps || 0} FPS`
+            : '◉ CLK: PAUSED';
         els.frameTimestamp.textContent = timeLabel(visuals.frame_timestamp);
-        els.screenTextSource.textContent = `OCR: ${screenText.source || 'n/a'}`;
+        els.screenTextSource.textContent = `SRC: ${(screenText.source || 'n/a').toUpperCase()}`;
 
         if (artifactUrls.latest_frame_annotated) {
             els.annotatedFrame.src = withCacheBust(
@@ -599,6 +1154,7 @@
         renderList(els.movementGuidance, movementGuidance.notes, 'No movement guidance available.');
 
         renderWorldStats(world, memory.progress_percent, serverRuntime);
+        renderFrameHud(world, memory);
         els.interactionProbe.textContent = formatJSON(world.interaction || {});
         renderParty(world.party || []);
         els.liveAscii.textContent = world.live_ascii || 'No live navigation ASCII available.';
@@ -728,13 +1284,13 @@
             auto_continue: els.piAutoContinueInput.checked,
             continue_message: els.piContinueMessageInput.value.trim() || 'continue',
         };
-        els.piControlStatus.textContent = 'Starting Pi...';
+        els.piControlStatus.textContent = '► STARTING PI…';
         try {
             await postJson('/supervisor/start', body);
-            els.piControlStatus.textContent = 'Pi supervisor started.';
+            els.piControlStatus.textContent = '► PI SUPERVISOR ONLINE';
             await refreshAll();
         } catch (error) {
-            els.piControlStatus.textContent = String(error.message || error);
+            els.piControlStatus.textContent = `► ${String(error.message || error)}`;
         }
     }
 
@@ -742,24 +1298,24 @@
         const body = {
             message: els.piContinueMessageInput.value.trim() || 'continue',
         };
-        els.piControlStatus.textContent = 'Continuing Pi for one turn...';
+        els.piControlStatus.textContent = '► CONTINUING PI…';
         try {
             await postJson('/supervisor/continue', body);
-            els.piControlStatus.textContent = 'Manual continue turn started.';
+            els.piControlStatus.textContent = '► MANUAL CONTINUE DISPATCHED';
             await refreshAll();
         } catch (error) {
-            els.piControlStatus.textContent = String(error.message || error);
+            els.piControlStatus.textContent = `► ${String(error.message || error)}`;
         }
     }
 
     async function stopSupervisor() {
-        els.piControlStatus.textContent = 'Stopping Pi...';
+        els.piControlStatus.textContent = '► STOPPING PI…';
         try {
             await postJson('/supervisor/stop');
-            els.piControlStatus.textContent = 'Pi supervisor stopped.';
+            els.piControlStatus.textContent = '► PI SUPERVISOR OFFLINE';
             await refreshAll();
         } catch (error) {
-            els.piControlStatus.textContent = String(error.message || error);
+            els.piControlStatus.textContent = `► ${String(error.message || error)}`;
         }
     }
 
@@ -812,8 +1368,65 @@
 
     function appendStderrLine(text) {
         const current = els.piStderr.textContent.trim();
-        const next = current && current !== 'No stderr output.' ? `${current}\n${text}` : text;
-        els.piStderr.textContent = next;
+        const empty = !current || current === 'No stderr output.';
+        els.piStderr.textContent = empty ? text : `${current}\n${text}`;
+    }
+
+    function applyFrameUpdate(data) {
+        if (!data || typeof data !== 'object') return;
+        if (data.annotated_frame_url) {
+            els.annotatedFrame.src = withCacheBust(data.annotated_frame_url, data.frame_timestamp);
+        }
+        if (data.raw_frame_url) {
+            els.rawFrame.src = withCacheBust(data.raw_frame_url, data.frame_timestamp);
+        }
+        if (data.frame_timestamp) {
+            els.frameTimestamp.textContent = timeLabel(data.frame_timestamp);
+        }
+    }
+
+    const streamBuffers = { output: '', thinking: '' };
+    const streamPendingReset = { output: false, thinking: false };
+    let streamRafPending = false;
+
+    function flushStreamBuffers() {
+        streamRafPending = false;
+
+        if (streamPendingReset.output) {
+            els.piCurrentOutput.textContent = '';
+            streamPendingReset.output = false;
+        }
+        if (streamBuffers.output) {
+            const last = els.piCurrentOutput.lastChild;
+            if (last && last.nodeType === Node.TEXT_NODE) {
+                last.textContent += streamBuffers.output;
+            } else {
+                els.piCurrentOutput.appendChild(document.createTextNode(streamBuffers.output));
+            }
+            streamBuffers.output = '';
+            els.piCurrentOutput.scrollTop = els.piCurrentOutput.scrollHeight;
+        }
+
+        if (streamPendingReset.thinking) {
+            els.piCurrentThinking.textContent = '';
+            streamPendingReset.thinking = false;
+        }
+        if (streamBuffers.thinking) {
+            const last = els.piCurrentThinking.lastChild;
+            if (last && last.nodeType === Node.TEXT_NODE) {
+                last.textContent += streamBuffers.thinking;
+            } else {
+                els.piCurrentThinking.appendChild(document.createTextNode(streamBuffers.thinking));
+            }
+            streamBuffers.thinking = '';
+            els.piCurrentThinking.scrollTop = els.piCurrentThinking.scrollHeight;
+        }
+    }
+
+    function scheduleStreamFlush() {
+        if (streamRafPending) return;
+        streamRafPending = true;
+        requestAnimationFrame(flushStreamBuffers);
     }
 
     function handleWsEvent(event) {
@@ -843,21 +1456,33 @@
 
         if (event.type === 'pi_text_delta') {
             if (typeof event.text === 'string' && event.text) {
-                els.piCurrentOutput.textContent = event.text;
+                streamPendingReset.output = true;
+                streamBuffers.output = event.text;
+                els.piCurrentOutput.dataset.streaming = 'true';
             } else if (typeof event.delta === 'string' && event.delta) {
-                const prior = els.piCurrentOutput.textContent === 'No assistant output yet.' ? '' : els.piCurrentOutput.textContent;
-                els.piCurrentOutput.textContent = prior + event.delta;
+                if (els.piCurrentOutput.dataset.streaming !== 'true') {
+                    streamPendingReset.output = true;
+                }
+                streamBuffers.output += event.delta;
+                els.piCurrentOutput.dataset.streaming = 'true';
             }
+            scheduleStreamFlush();
             return;
         }
 
         if (event.type === 'pi_thinking_delta') {
             if (typeof event.thinking === 'string' && event.thinking) {
-                els.piCurrentThinking.textContent = event.thinking;
+                streamPendingReset.thinking = true;
+                streamBuffers.thinking = event.thinking;
+                els.piCurrentThinking.dataset.streaming = 'true';
             } else if (typeof event.delta === 'string' && event.delta) {
-                const prior = els.piCurrentThinking.textContent === 'No reasoning stream yet.' ? '' : els.piCurrentThinking.textContent;
-                els.piCurrentThinking.textContent = prior + event.delta;
+                if (els.piCurrentThinking.dataset.streaming !== 'true') {
+                    streamPendingReset.thinking = true;
+                }
+                streamBuffers.thinking += event.delta;
+                els.piCurrentThinking.dataset.streaming = 'true';
             }
+            scheduleStreamFlush();
             return;
         }
 
@@ -870,9 +1495,11 @@
         }
 
         if (event.type === 'pi_turn_launch' || event.type === 'pi_turn_start') {
-            els.piCurrentThinking.textContent = 'Waiting for Pi reasoning...';
-            els.piCurrentOutput.textContent = 'Waiting for Pi output...';
-            els.piControlStatus.textContent = truncate(event.summary || 'Pi turn started.', 220);
+            els.piCurrentThinking.textContent = '— waiting for comms —';
+            els.piCurrentThinking.dataset.streaming = 'false';
+            els.piCurrentOutput.textContent = '— waiting for comms —';
+            els.piCurrentOutput.dataset.streaming = 'false';
+            els.piControlStatus.textContent = `► ${truncate(event.summary || 'Pi turn launched.', 220)}`;
             scheduleRefresh(150);
             return;
         }
@@ -884,7 +1511,10 @@
         }
 
         if (event.type === 'screenshot') {
-            scheduleRefresh(150);
+            applyFrameUpdate(event.data || {});
+            if ((event.data || {}).source !== 'live_sync') {
+                scheduleRefresh(100);
+            }
             return;
         }
 
@@ -944,13 +1574,26 @@
 
     function init() {
         setStatus(false, 'Connecting');
-        setPiStatus('idle', 'Pi idle');
+        setPiStatus('idle', 'PI IDLE');
+        sessionOriginMs = Date.now();
+        renderTimelineFilters({});
         els.piStartButton.addEventListener('click', startSupervisor);
         els.piContinueButton.addEventListener('click', continueSupervisor);
         els.piStopButton.addEventListener('click', stopSupervisor);
         els.manualSaveButton.addEventListener('click', saveNow);
         els.loadSaveButton.addEventListener('click', loadSelectedSave);
         els.loadRecommendedButton.addEventListener('click', loadRecommendedSave);
+        // Prompt textarea: expand on focus, collapse on blur-when-empty
+        if (els.piPromptInput) {
+            els.piPromptInput.addEventListener('focus', () => {
+                els.piPromptInput.rows = 4;
+            });
+            els.piPromptInput.addEventListener('blur', () => {
+                if (!els.piPromptInput.value.trim()) {
+                    els.piPromptInput.rows = 1;
+                }
+            });
+        }
         refreshAll().catch(() => {});
         connectWS();
         pollTimer = window.setInterval(() => {

@@ -9,6 +9,7 @@ import asyncio
 import base64
 import io
 import json
+import mimetypes
 import re
 import time
 from functools import partial
@@ -24,6 +25,12 @@ from pokemon_agent.agent_runtime import AgentRuntime
 from pokemon_agent.pi_supervisor import PiSupervisor
 
 __version__ = "0.1.0"
+
+
+def _guess_content_type(path: Path) -> str:
+    ct, _ = mimetypes.guess_type(path.name)
+    return ct or "application/octet-stream"
+
 
 # ---------------------------------------------------------------------------
 # Pydantic models
@@ -109,6 +116,9 @@ _realtime_frames_per_second: int = 60
 _realtime_enabled: bool = False
 _realtime_ticks: int = 0
 _realtime_last_tick_at: Optional[float] = None
+_live_artifact_task: Optional[asyncio.Task] = None
+_live_artifact_frames_per_second: int = 60
+_live_artifact_last_sync_at: Optional[float] = None
 
 # WebSocket clients
 _ws_clients: Set[WebSocket] = set()
@@ -320,12 +330,50 @@ async def _realtime_emulator_loop() -> None:
         print(f"[server] WARNING: Realtime emulator loop stopped: {exc}")
 
 
+async def _live_artifact_loop() -> None:
+    """Refresh live workspace artifacts while realtime emulation is running."""
+    global _live_artifact_last_sync_at
+    interval = 1.0 / max(1, _live_artifact_frames_per_second)
+    try:
+        while True:
+            await asyncio.sleep(interval)
+            if _emulator is None or _runtime is None:
+                continue
+            payload = await _run_emulator_sync(_sync_live_artifacts_sync)
+            if not payload:
+                continue
+            _live_artifact_last_sync_at = time.time()
+            artifacts = payload.get("artifacts") or {}
+            generated_at = payload.get("generated_at")
+            await broadcast(
+                {
+                    "type": "screenshot",
+                    "data": {
+                        "raw_frame_path": artifacts.get("latest_frame"),
+                        "annotated_frame_path": artifacts.get("latest_frame_annotated"),
+                        "raw_frame_url": _artifact_urls_from_paths(artifacts).get("latest_frame"),
+                        "annotated_frame_url": _artifact_urls_from_paths(artifacts).get(
+                            "latest_frame_annotated"
+                        ),
+                        "frame_timestamp": generated_at,
+                        "source": payload.get("source"),
+                    },
+                }
+            )
+    except asyncio.CancelledError:
+        raise
+    except Exception as exc:  # noqa: BLE001
+        print(f"[server] WARNING: Live artifact loop stopped: {exc}")
+
+
 def _server_runtime_snapshot() -> dict:
     return {
         "realtime_enabled": _realtime_enabled,
         "realtime_fps": _realtime_frames_per_second,
         "realtime_ticks": _realtime_ticks,
         "realtime_last_tick_at": _realtime_last_tick_at,
+        "live_artifact_fps": _live_artifact_frames_per_second if _realtime_enabled else 0,
+        "live_artifact_last_sync_at": _live_artifact_last_sync_at,
         "frame_count": getattr(_emulator, "frame_count", None),
     }
 
@@ -409,7 +457,7 @@ def _compact_supervisor_status(snapshot: Optional[dict]) -> Optional[dict]:
 
 def _artifact_urls_from_paths(artifacts: Optional[dict]) -> dict:
     urls: dict[str, str] = {}
-    for key in (artifacts or {}):
+    for key in artifacts or {}:
         urls[key] = f"/artifacts/{key}"
     return urls
 
@@ -539,6 +587,19 @@ def _get_navigation_payload_sync(goal: Optional[tuple[int, int]] = None) -> Opti
     return _serialize_navigation(snapshot, location_map, goal=goal)
 
 
+def _get_live_navigation_payload_sync(goal: Optional[tuple[int, int]] = None) -> Optional[dict]:
+    try:
+        snapshot = _emulator.get_navigation_snapshot(_reader)
+    except NotImplementedError:
+        return None
+    except Exception:
+        return None
+    location_map = None
+    if _navigation_store is not None:
+        location_map = _navigation_store.get(snapshot.key)
+    return _serialize_navigation(snapshot, location_map, goal=goal)
+
+
 def _make_runtime_save_event(name: str, path: Path, source: str, reason: str) -> dict:
     return {
         "name": name,
@@ -601,6 +662,19 @@ async def _refresh_agent_bundle(
     )
 
 
+def _sync_live_artifacts_sync() -> Optional[dict]:
+    if _runtime is None or _emulator is None:
+        return None
+    state = _get_state_dict()
+    navigation = _get_live_navigation_payload_sync()
+    return _runtime.sync_live_view(
+        emulator=_emulator,
+        state=state,
+        navigation=navigation,
+        navigation_store=_navigation_store,
+    )
+
+
 async def _broadcast_runtime_refresh(result: Optional[dict]) -> None:
     if not result:
         return
@@ -619,6 +693,8 @@ async def _broadcast_runtime_refresh(result: Optional[dict]) -> None:
                     "annotated_frame_url": _artifact_urls_from_paths(artifacts).get(
                         "latest_frame_annotated"
                     ),
+                    "frame_timestamp": bundle.get("generated_at"),
+                    "source": bundle.get("source"),
                 },
             }
         )
@@ -705,18 +781,42 @@ def _plan_navigation_sync(target_x: int, target_y: int, mode: str):
 
 def _serialize_navigation(snapshot, location_map, goal: Optional[tuple[int, int]] = None) -> dict:
     """Convert navigation objects into JSON-safe response data."""
-    distances = location_map.distance_map(
-        snapshot.player_position,
-        extra_blockers=snapshot.sprite_set,
-    )
-    return {
-        "snapshot": snapshot.to_dict(goal=goal),
-        "location_map": location_map.to_dict(
+    if location_map is None:
+        location_map_payload = {
+            "location_key": snapshot.key,
+            "map_id": snapshot.map_id,
+            "map_name": snapshot.map_name,
+            "tileset": snapshot.tileset,
+            "updates": 0,
+            "known_tiles": 0,
+            "known_tile_ids": 0,
+            "passable_tiles": 0,
+            "blocked_tiles": 0,
+            "bounds": None,
+            "ascii": "(no explored map data)",
+            "ascii_legend": {
+                "P": "player",
+                "G": "goal",
+                "S": "visible sprite blocker",
+                ".": "explored passable tile",
+                "#": "known blocked tile",
+                "?": "unexplored or unknown tile",
+            },
+        }
+    else:
+        distances = location_map.distance_map(
+            snapshot.player_position,
+            extra_blockers=snapshot.sprite_set,
+        )
+        location_map_payload = location_map.to_dict(
             player=snapshot.player_position,
             goal=goal,
             sprites=snapshot.sprite_positions,
             distances=distances,
-        ),
+        )
+    return {
+        "snapshot": snapshot.to_dict(goal=goal),
+        "location_map": location_map_payload,
     }
 
 
@@ -826,12 +926,16 @@ async def _startup():
         _realtime_frames_per_second, \
         _realtime_enabled, \
         _realtime_ticks, \
-        _realtime_last_tick_at
+        _realtime_last_tick_at, \
+        _live_artifact_task, \
+        _live_artifact_frames_per_second, \
+        _live_artifact_last_sync_at
     _loop = asyncio.get_running_loop()
     _start_time = time.time()
     _emulator_lock = asyncio.Lock()
     _realtime_ticks = 0
     _realtime_last_tick_at = None
+    _live_artifact_last_sync_at = None
 
     if _config is None:
         # Config can be injected via environment or set beforehand
@@ -890,6 +994,7 @@ async def _startup():
     )
     _realtime_frames_per_second = max(1, int(_config.realtime_fps))
     _realtime_enabled = bool(_config.realtime)
+    _live_artifact_frames_per_second = _realtime_frames_per_second
 
     if _config.enable_dashboard:
         _dashboard_dir = _get_dashboard_static_dir()
@@ -937,11 +1042,12 @@ async def _startup():
 
     if _realtime_enabled:
         _realtime_task = asyncio.create_task(_realtime_emulator_loop())
-        print(
-            f"[server] Realtime emulation enabled at {_realtime_frames_per_second} FPS"
-        )
+        _live_artifact_task = asyncio.create_task(_live_artifact_loop())
+        print(f"[server] Realtime emulation enabled at {_realtime_frames_per_second} FPS")
+        print(f"[server] Live artifact sync enabled at {_live_artifact_frames_per_second} FPS")
     else:
         _realtime_task = None
+        _live_artifact_task = None
         print("[server] Realtime emulation disabled")
 
     print(f"[server] Ready — listening on port {_config.port}")
@@ -971,7 +1077,14 @@ async def _startup():
 
 @app.on_event("shutdown")
 async def _shutdown():
-    global _supervisor, _realtime_task
+    global _supervisor, _realtime_task, _live_artifact_task
+    if _live_artifact_task is not None:
+        _live_artifact_task.cancel()
+        try:
+            await _live_artifact_task
+        except asyncio.CancelledError:
+            pass
+        _live_artifact_task = None
     if _realtime_task is not None:
         _realtime_task.cancel()
         try:
@@ -1043,7 +1156,9 @@ async def get_workspace_artifact(artifact_key: str):
         raise HTTPException(status_code=404, detail=f"Unknown artifact: {artifact_key}")
     if not path.exists():
         raise HTTPException(status_code=404, detail=f"Artifact not found: {artifact_key}")
-    return FileResponse(path)
+    data = path.read_bytes()
+    content_type = _guess_content_type(path)
+    return Response(content=data, media_type=content_type)
 
 
 @app.get("/dashboard/state")

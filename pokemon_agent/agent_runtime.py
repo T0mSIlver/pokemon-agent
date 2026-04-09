@@ -2,8 +2,11 @@
 
 from __future__ import annotations
 
+import io
 import json
+import os
 import re
+import tempfile
 from collections import deque
 from dataclasses import asdict, dataclass, field
 from datetime import datetime, timezone
@@ -30,6 +33,27 @@ def _json_default(value: Any) -> Any:
     if isinstance(value, Path):
         return str(value)
     raise TypeError(f"Object of type {type(value).__name__} is not JSON serializable")
+
+
+def _atomic_write_bytes(path: Path, data: bytes) -> None:
+    fd, tmp = tempfile.mkstemp(suffix=path.suffix, dir=path.parent)
+    try:
+        os.write(fd, data)
+        os.close(fd)
+        fd = -1
+        os.replace(tmp, str(path))
+    except BaseException:
+        if fd >= 0:
+            os.close(fd)
+        try:
+            os.unlink(tmp)
+        except OSError:
+            pass
+        raise
+
+
+def _atomic_write_text(path: Path, text: str, encoding: str = "utf-8") -> None:
+    _atomic_write_bytes(path, text.encode(encoding))
 
 
 def _truncate_text_block(value: Any, limit: int = 1600) -> str:
@@ -668,6 +692,7 @@ class AgentRuntime:
         self.event_history: deque[JsonDict] = deque(maxlen=history_limit)
         self.recent_trajectory: deque[JsonDict] = deque(maxlen=60)
         self.latest_bundle: Optional[JsonDict] = None
+        self.live_bundle: Optional[JsonDict] = None
         self.last_state: Optional[JsonDict] = None
         self.last_objective_id: Optional[str] = None
         self.last_turn_plan_hash: Optional[str] = None
@@ -767,9 +792,9 @@ class AgentRuntime:
                 self.checkpoint_ids.add(checkpoint_id)
 
     def _write_json(self, path: Path, payload: Any) -> None:
-        path.write_text(
+        _atomic_write_text(
+            path,
             json.dumps(payload, indent=2, sort_keys=False, default=_json_default),
-            encoding="utf-8",
         )
 
     def _append_jsonl(self, path: Path, payload: Any) -> None:
@@ -1272,6 +1297,9 @@ class AgentRuntime:
         movement_guidance = bundle["movement_guidance"]
         stuck = bundle["stuck"]
         recovery = bundle["recovery"]
+        state_delta_summary = (bundle.get("state_delta") or {}).get("summary") or [
+            "Live frame sync only. Run /agent/observe for refreshed deltas."
+        ]
         lines = [
             "# Vision-First Turn Brief",
             "",
@@ -1293,7 +1321,7 @@ class AgentRuntime:
             "ASCII legend: P=player G=goal S=sprite .=passable #=blocked ?=unknown",
             f"Movement guidance: {movement_guidance.get('summary', 'none')}",
             "",
-            f"What changed: {' '.join(bundle['state_delta']['summary'][:3])}",
+            f"What changed: {' '.join(state_delta_summary[:3])}",
             f"Recent action result: {feedback.get('summary', 'No recent action result.')}",
             f"Planned action batch: {', '.join(turn_plan.get('planned_actions', [])) or 'not set'}",
             f"Fallback: {', '.join(turn_plan.get('fallback_actions', [])) or 'not set'}",
@@ -1309,6 +1337,185 @@ class AgentRuntime:
         for note in movement_guidance.get("notes", []):
             lines.append(f"- {note}")
         return "\n".join(lines) + "\n"
+
+    def _artifact_payload(self) -> JsonDict:
+        return {
+            "latest_frame": str(self.artifacts["latest_frame"]),
+            "latest_frame_annotated": str(self.artifacts["latest_frame_annotated"]),
+            "latest_observation_json": str(self.artifacts["latest_observation_json"]),
+            "latest_observation_md": str(self.artifacts["latest_observation_md"]),
+            "current_objective_json": str(self.artifacts["current_objective_json"]),
+            "current_objective_md": str(self.artifacts["current_objective_md"]),
+            "turn_plan_json": str(self.artifacts["turn_plan_json"]),
+            "working_memory_md": str(self.artifacts["working_memory_md"]),
+            "checkpoints_jsonl": str(self.artifacts["checkpoints_jsonl"]),
+            "knowledge_graph_json": str(self.artifacts["knowledge_graph_json"]),
+            "recovery_saves_json": str(self.artifacts["recovery_saves_json"]),
+            "run_log_jsonl": str(self.artifacts["run_log_jsonl"]),
+        }
+
+    def _snapshot_from_navigation_payload(
+        self,
+        navigation: Optional[JsonDict],
+    ) -> Optional[LiveNavigationSnapshot]:
+        snapshot = None
+        if navigation:
+            snapshot_payload = navigation.get("snapshot") or {}
+            if snapshot_payload:
+                try:
+                    snapshot = LiveNavigationSnapshot(
+                        map_id=int(snapshot_payload["map_id"]),
+                        map_name=str(snapshot_payload["map_name"]),
+                        player_position=(
+                            int(snapshot_payload["player_position"]["x"]),
+                            int(snapshot_payload["player_position"]["y"]),
+                        ),
+                        facing=str(snapshot_payload.get("facing", "unknown")),
+                        tileset=str(snapshot_payload.get("tileset", "UNKNOWN")),
+                        window_top_left=(
+                            int(snapshot_payload["window_top_left"]["x"]),
+                            int(snapshot_payload["window_top_left"]["y"]),
+                        ),
+                        terrain=list(snapshot_payload.get("terrain", [])),
+                        sprite_positions=[
+                            (int(item["x"]), int(item["y"]))
+                            for item in snapshot_payload.get("sprites", [])
+                        ],
+                        valid_moves=list(snapshot_payload.get("valid_moves", [])),
+                        warps=list(snapshot_payload.get("warps", [])),
+                        map_dimensions=snapshot_payload.get("map_dimensions"),
+                        interaction=snapshot_payload.get("interaction"),
+                    )
+                except Exception:  # noqa: BLE001
+                    snapshot = None
+        return snapshot
+
+    def _coerce_screen_image(self, emulator: Any) -> Image.Image:
+        screen = emulator.get_screen()
+        if not isinstance(screen, Image.Image):
+            screen = Image.fromarray(screen)
+        return screen
+
+    def _write_frame_artifacts(
+        self,
+        *,
+        screen: Image.Image,
+        annotated: Image.Image,
+    ) -> None:
+        self.artifacts["latest_frame"].parent.mkdir(parents=True, exist_ok=True)
+        buf = io.BytesIO()
+        screen.save(buf, format="PNG")
+        _atomic_write_bytes(self.artifacts["latest_frame"], buf.getvalue())
+        buf = io.BytesIO()
+        annotated.save(buf, format="PNG")
+        _atomic_write_bytes(self.artifacts["latest_frame_annotated"], buf.getvalue())
+
+    def sync_live_view(
+        self,
+        *,
+        emulator: Any,
+        state: JsonDict,
+        navigation: Optional[JsonDict],
+        navigation_store: Optional[NavigationStore],
+    ) -> JsonDict:
+        current_objective = self.objective_engine.evaluate(state)
+        screen = self._coerce_screen_image(emulator)
+        snapshot = self._snapshot_from_navigation_payload(navigation)
+        annotated = render_navigation_overlay(
+            screen,
+            snapshot,
+            objective=current_objective["current"],
+            goal=None,
+        )
+        self._write_frame_artifacts(screen=screen, annotated=annotated)
+
+        previous_bundle = self.live_bundle or self.latest_bundle or {}
+        previous_screen_text = previous_bundle.get("screen_text") or {}
+        dialog_active = bool(
+            state.get("dialog_active") or (state.get("dialog") or {}).get("active")
+        )
+        preserved_text = ""
+        preserved_source = "live_sync"
+        if (
+            isinstance(previous_screen_text.get("text"), str)
+            and previous_screen_text.get("text")
+            and bool(previous_screen_text.get("dialog_active")) == dialog_active
+        ):
+            preserved_text = previous_screen_text["text"]
+            preserved_source = "live_sync_cached"
+        if not preserved_text:
+            preserved_text = "Live frame sync active. Run /agent/observe for refreshed OCR."
+
+        live_bundle = {
+            "generated_at": utc_now(),
+            "reason": "realtime_live_sync",
+            "source": "live_sync",
+            "artifacts": self._artifact_payload(),
+            "state": state,
+            "navigation": navigation,
+            "screen_text": {
+                "text": preserved_text,
+                "source": preserved_source,
+                "ui_mode": classify_ui_mode(state),
+                "dialog_active": dialog_active,
+                "note": "Live sync updates visuals and core state between observations.",
+            },
+            "objective": current_objective,
+            "turn_plan": self.load_turn_plan(),
+            "recent_action": previous_bundle.get("recent_action") or {},
+            "movement_guidance": build_movement_guidance(
+                state=state,
+                snapshot=snapshot,
+                navigation_store=navigation_store,
+                objective=current_objective,
+            ),
+            "state_delta": previous_bundle.get("state_delta")
+            or {
+                "changed": False,
+                "summary": ["Live frame sync only. Run /agent/observe for refreshed deltas."],
+                "movement": None,
+            },
+            "checkpoints": previous_bundle.get("checkpoints")
+            or self._tail_jsonl(self.artifacts["checkpoints_jsonl"], 20),
+            "knowledge_graph": self._read_json(
+                self.artifacts["knowledge_graph_json"],
+                previous_bundle.get("knowledge_graph") or {},
+            ),
+            "recovery": self._read_json(
+                self.artifacts["recovery_saves_json"],
+                previous_bundle.get("recovery") or {},
+            ),
+            "stuck": previous_bundle.get("stuck")
+            or {
+                "level": "clear",
+                "reason": "No stuck signal recorded yet.",
+                "recommended_actions": [],
+                "objective_action_count": 0,
+            },
+            "workspace_dir": str(self.workspace_dir),
+        }
+
+        self._write_json(self.artifacts["current_objective_json"], current_objective)
+        _atomic_write_text(
+            self.artifacts["current_objective_md"],
+            self._objective_markdown(current_objective),
+        )
+        self._write_json(
+            self.artifacts["latest_observation_json"],
+            self._compact_observation_payload(live_bundle),
+        )
+        _atomic_write_text(
+            self.artifacts["latest_observation_md"],
+            self._observation_markdown(bundle=live_bundle),
+        )
+
+        self.live_bundle = live_bundle
+        return {
+            "generated_at": live_bundle["generated_at"],
+            "source": live_bundle["source"],
+            "artifacts": live_bundle["artifacts"],
+            "screen_text": live_bundle["screen_text"],
+        }
 
     def _compact_observation_payload(self, bundle: JsonDict) -> JsonDict:
         navigation = bundle.get("navigation") or {}
@@ -1364,9 +1571,9 @@ class AgentRuntime:
                 "planned_actions": ((bundle.get("turn_plan") or {}).get("planned_actions") or [])[
                     :6
                 ],
-                "fallback_actions": (
-                    (bundle.get("turn_plan") or {}).get("fallback_actions") or []
-                )[:6],
+                "fallback_actions": ((bundle.get("turn_plan") or {}).get("fallback_actions") or [])[
+                    :6
+                ],
                 "notes": _truncate_text_block((bundle.get("turn_plan") or {}).get("notes"), 260),
                 "updated_at": (bundle.get("turn_plan") or {}).get("updated_at"),
             },
@@ -1402,8 +1609,7 @@ class AgentRuntime:
                 "live_ascii": live_ascii,
                 "explored_ascii": explored_ascii,
                 "ascii_note": (
-                    "ASCII is symbolic only and may be truncated. "
-                    "Use the annotated frame first."
+                    "ASCII is symbolic only and may be truncated. Use the annotated frame first."
                 ),
                 "window_top_left": snapshot.get("window_top_left"),
                 "window_size": snapshot.get("window_size"),
@@ -1443,9 +1649,7 @@ class AgentRuntime:
         explicit_save: Optional[JsonDict] = None,
     ) -> JsonDict:
         current_objective = self.objective_engine.evaluate(state)
-        screen = emulator.get_screen()
-        if not isinstance(screen, Image.Image):
-            screen = Image.fromarray(screen)
+        screen = self._coerce_screen_image(emulator)
 
         goal = None
         if navigation_execution and navigation_execution.get("target"):
@@ -1453,36 +1657,7 @@ class AgentRuntime:
             if goal_data.get("x") is not None and goal_data.get("y") is not None:
                 goal = (int(goal_data["x"]), int(goal_data["y"]))
 
-        snapshot = None
-        if navigation:
-            snapshot_payload = navigation.get("snapshot") or {}
-            if snapshot_payload:
-                try:
-                    snapshot = LiveNavigationSnapshot(
-                        map_id=int(snapshot_payload["map_id"]),
-                        map_name=str(snapshot_payload["map_name"]),
-                        player_position=(
-                            int(snapshot_payload["player_position"]["x"]),
-                            int(snapshot_payload["player_position"]["y"]),
-                        ),
-                        facing=str(snapshot_payload.get("facing", "unknown")),
-                        tileset=str(snapshot_payload.get("tileset", "UNKNOWN")),
-                        window_top_left=(
-                            int(snapshot_payload["window_top_left"]["x"]),
-                            int(snapshot_payload["window_top_left"]["y"]),
-                        ),
-                        terrain=list(snapshot_payload.get("terrain", [])),
-                        sprite_positions=[
-                            (int(item["x"]), int(item["y"]))
-                            for item in snapshot_payload.get("sprites", [])
-                        ],
-                        valid_moves=list(snapshot_payload.get("valid_moves", [])),
-                        warps=list(snapshot_payload.get("warps", [])),
-                        map_dimensions=snapshot_payload.get("map_dimensions"),
-                        interaction=snapshot_payload.get("interaction"),
-                    )
-                except Exception:  # noqa: BLE001
-                    snapshot = None
+        snapshot = self._snapshot_from_navigation_payload(navigation)
 
         annotated = render_navigation_overlay(
             screen,
@@ -1537,28 +1712,13 @@ class AgentRuntime:
             requested_actions=requested_actions,
         )
 
-        self.artifacts["latest_frame"].parent.mkdir(parents=True, exist_ok=True)
-        screen.save(self.artifacts["latest_frame"], format="PNG")
-        annotated.save(self.artifacts["latest_frame_annotated"], format="PNG")
+        self._write_frame_artifacts(screen=screen, annotated=annotated)
 
         bundle = {
             "generated_at": utc_now(),
             "reason": reason,
             "source": source,
-            "artifacts": {
-                "latest_frame": str(self.artifacts["latest_frame"]),
-                "latest_frame_annotated": str(self.artifacts["latest_frame_annotated"]),
-                "latest_observation_json": str(self.artifacts["latest_observation_json"]),
-                "latest_observation_md": str(self.artifacts["latest_observation_md"]),
-                "current_objective_json": str(self.artifacts["current_objective_json"]),
-                "current_objective_md": str(self.artifacts["current_objective_md"]),
-                "turn_plan_json": str(self.artifacts["turn_plan_json"]),
-                "working_memory_md": str(self.artifacts["working_memory_md"]),
-                "checkpoints_jsonl": str(self.artifacts["checkpoints_jsonl"]),
-                "knowledge_graph_json": str(self.artifacts["knowledge_graph_json"]),
-                "recovery_saves_json": str(self.artifacts["recovery_saves_json"]),
-                "run_log_jsonl": str(self.artifacts["run_log_jsonl"]),
-            },
+            "artifacts": self._artifact_payload(),
             "state": state,
             "navigation": navigation,
             "screen_text": screen_text,
@@ -1575,17 +1735,17 @@ class AgentRuntime:
         }
 
         self._write_json(self.artifacts["current_objective_json"], current_objective)
-        self.artifacts["current_objective_md"].write_text(
+        _atomic_write_text(
+            self.artifacts["current_objective_md"],
             self._objective_markdown(current_objective),
-            encoding="utf-8",
         )
         self._write_json(
             self.artifacts["latest_observation_json"],
             self._compact_observation_payload(bundle),
         )
-        self.artifacts["latest_observation_md"].write_text(
+        _atomic_write_text(
+            self.artifacts["latest_observation_md"],
             self._observation_markdown(bundle=bundle),
-            encoding="utf-8",
         )
 
         emitted_events: list[JsonDict] = []
@@ -1661,6 +1821,7 @@ class AgentRuntime:
             self.last_turn_plan_hash = turn_plan_hash
 
         self.latest_bundle = bundle
+        self.live_bundle = bundle
         self.last_state = state
         self.last_objective_id = current_objective["current"]["id"]
         return {
@@ -1669,8 +1830,10 @@ class AgentRuntime:
         }
 
     def dashboard_state(self) -> JsonDict:
-        bundle = self.latest_bundle or self._read_json(
-            self.artifacts["latest_observation_json"], {}
+        bundle = (
+            self.live_bundle
+            or self.latest_bundle
+            or self._read_json(self.artifacts["latest_observation_json"], {})
         )
         if not bundle:
             return {
