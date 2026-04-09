@@ -2,8 +2,6 @@
 
 from __future__ import annotations
 
-import base64
-import io
 import json
 import re
 from collections import deque
@@ -32,6 +30,13 @@ def _json_default(value: Any) -> Any:
     if isinstance(value, Path):
         return str(value)
     raise TypeError(f"Object of type {type(value).__name__} is not JSON serializable")
+
+
+def _truncate_text_block(value: Any, limit: int = 1600) -> str:
+    text = str(value or "").strip()
+    if len(text) <= limit:
+        return text
+    return text[: limit - 16].rstrip() + "\n...[truncated]..."
 
 
 @dataclass(slots=True)
@@ -134,6 +139,128 @@ def extract_key_state(state: Optional[JsonDict]) -> JsonDict:
             }
             for mon in party
         ],
+    }
+
+
+def _preferred_direction_hint(text: str) -> Optional[str]:
+    lowered = text.lower()
+    for direction, words in (
+        ("north", ("north", "up")),
+        ("south", ("south", "down")),
+        ("west", ("west", "left")),
+        ("east", ("east", "right")),
+    ):
+        if any(word in lowered for word in words):
+            return direction
+    return None
+
+
+def _progress_amount(direction: str, start: tuple[int, int], coord: tuple[int, int]) -> int:
+    if direction == "north":
+        return start[1] - coord[1]
+    if direction == "south":
+        return coord[1] - start[1]
+    if direction == "west":
+        return start[0] - coord[0]
+    if direction == "east":
+        return coord[0] - start[0]
+    return 0
+
+
+def build_movement_guidance(
+    *,
+    state: JsonDict,
+    snapshot: Optional[LiveNavigationSnapshot],
+    navigation_store: Optional[NavigationStore],
+    objective: JsonDict,
+) -> JsonDict:
+    if snapshot is None:
+        return {
+            "summary": "Navigation guidance unavailable because no live snapshot was captured.",
+            "notes": [],
+            "preferred_direction": None,
+            "candidate_route": None,
+        }
+
+    current = snapshot.player_position
+    notes: list[str] = [
+        (
+            "Use the annotated screenshot as primary evidence. "
+            "Use ASCII only as a symbolic collision summary."
+        ),
+        f"Immediate legal moves: {', '.join(snapshot.valid_moves) or 'none'}.",
+    ]
+    interaction = snapshot.interaction or {}
+    target = interaction.get("target_coord") or {}
+    if interaction.get("source") == "blocked_tile":
+        notes.append(f"Forward movement is blocked at ({target.get('x')}, {target.get('y')}).")
+
+    preferred_direction = _preferred_direction_hint(objective["current"].get("route_hint", ""))
+    if preferred_direction is None:
+        preferred_direction = {
+            "up": "north",
+            "down": "south",
+            "left": "west",
+            "right": "east",
+        }.get(snapshot.facing)
+
+    candidate_route = None
+    if navigation_store is not None and preferred_direction is not None:
+        location_map = navigation_store.get(snapshot.key)
+        if location_map is not None:
+            distances = location_map.distance_map(
+                current,
+                extra_blockers=snapshot.sprite_set,
+            )
+            candidates = [
+                coord
+                for coord in distances
+                if coord != current and _progress_amount(preferred_direction, current, coord) > 0
+            ]
+            if candidates:
+                best = min(
+                    candidates,
+                    key=lambda coord: (
+                        distances[coord],
+                        abs(coord[0] - current[0]),
+                        abs(coord[1] - current[1]),
+                        coord[1],
+                        coord[0],
+                    ),
+                )
+                plan = location_map.plan_route(
+                    start=current,
+                    goal=best,
+                    extra_blockers=snapshot.sprite_set,
+                    allow_partial=False,
+                )
+                candidate_route = {
+                    "direction": preferred_direction,
+                    "target": {"x": best[0], "y": best[1]},
+                    "actions": plan.actions,
+                    "steps": len(plan.actions),
+                }
+                if plan.actions:
+                    notes.append(
+                        f"Best explored {preferred_direction}-progress route starts with: "
+                        f"{', '.join(plan.actions[:4])}."
+                    )
+                notes.append(
+                    f"Nearest explored tile that makes {preferred_direction} progress is "
+                    f"({best[0]}, {best[1]})."
+                )
+
+    if interaction.get("source") == "blocked_tile" and snapshot.valid_moves:
+        sidesteps = [move for move in snapshot.valid_moves if move != snapshot.facing]
+        if sidesteps:
+            notes.append(f"Because forward is blocked, sidestep first: {', '.join(sidesteps)}.")
+
+    summary = notes[-1] if notes else "Navigation guidance unavailable."
+    return {
+        "summary": summary,
+        "notes": notes,
+        "preferred_direction": preferred_direction,
+        "candidate_route": candidate_route,
     }
 
 
@@ -1142,6 +1269,7 @@ class AgentRuntime:
         snapshot = navigation.get("snapshot") or {}
         turn_plan = bundle["turn_plan"]
         feedback = bundle["recent_action"]
+        movement_guidance = bundle["movement_guidance"]
         stuck = bundle["stuck"]
         recovery = bundle["recovery"]
         lines = [
@@ -1149,6 +1277,8 @@ class AgentRuntime:
             "",
             f"Read first: `{bundle['artifacts']['latest_frame_annotated']}`",
             f"Fallback frame: `{bundle['artifacts']['latest_frame']}`",
+            "Mandatory: inspect the annotated frame before choosing actions.",
+            "Do not infer terrain from ASCII alone.",
             "",
             f"Objective: {objective['title']}",
             f"Objective summary: {objective['summary']}",
@@ -1160,6 +1290,8 @@ class AgentRuntime:
             f"Facing: {(state.get('player') or {}).get('facing')}",
             f"Valid moves: {', '.join(snapshot.get('valid_moves', [])) or 'none'}",
             f"Interaction probe: {(snapshot.get('interaction') or {}).get('reason', 'none')}",
+            "ASCII legend: P=player G=goal S=sprite .=passable #=blocked ?=unknown",
+            f"Movement guidance: {movement_guidance.get('summary', 'none')}",
             "",
             f"What changed: {' '.join(bundle['state_delta']['summary'][:3])}",
             f"Recent action result: {feedback.get('summary', 'No recent action result.')}",
@@ -1171,13 +1303,130 @@ class AgentRuntime:
             f"Recovery recommendation: "
             f"{(recovery.get('current_recommendation') or {}).get('name', 'none')}",
             f"Stuck signal: {stuck['level']} - {stuck['reason']}",
+            "",
+            "Navigation notes:",
         ]
+        for note in movement_guidance.get("notes", []):
+            lines.append(f"- {note}")
         return "\n".join(lines) + "\n"
 
-    def _encode_image_b64(self, image: Image.Image) -> str:
-        buf = io.BytesIO()
-        image.save(buf, format="PNG")
-        return base64.b64encode(buf.getvalue()).decode("ascii")
+    def _compact_observation_payload(self, bundle: JsonDict) -> JsonDict:
+        navigation = bundle.get("navigation") or {}
+        snapshot = navigation.get("snapshot") or {}
+        location_map = navigation.get("location_map") or {}
+        objective = bundle.get("objective") or {}
+        recovery = bundle.get("recovery") or {}
+        artifacts = bundle.get("artifacts") or {}
+        current_objective = objective.get("current") or {}
+        recent_action = bundle.get("recent_action") or {}
+        movement_guidance = bundle.get("movement_guidance") or {}
+        state_delta = bundle.get("state_delta") or {}
+        candidate_route = movement_guidance.get("candidate_route") or {}
+        live_ascii = _truncate_text_block(snapshot.get("ascii"), 900)
+        explored_ascii = _truncate_text_block(location_map.get("ascii"), 1400)
+        return {
+            "generated_at": bundle.get("generated_at"),
+            "reason": bundle.get("reason"),
+            "source": bundle.get("source"),
+            "artifacts": {
+                "latest_frame": artifacts.get("latest_frame"),
+                "latest_frame_annotated": artifacts.get("latest_frame_annotated"),
+                "latest_observation_md": artifacts.get("latest_observation_md"),
+                "current_objective_json": artifacts.get("current_objective_json"),
+                "current_objective_md": artifacts.get("current_objective_md"),
+                "turn_plan_json": artifacts.get("turn_plan_json"),
+                "working_memory_md": artifacts.get("working_memory_md"),
+                "recovery_saves_json": artifacts.get("recovery_saves_json"),
+            },
+            "state": extract_key_state(bundle.get("state")),
+            "screen_text": {
+                "text": _truncate_text_block((bundle.get("screen_text") or {}).get("text"), 420),
+                "source": (bundle.get("screen_text") or {}).get("source"),
+                "ui_mode": (bundle.get("screen_text") or {}).get("ui_mode"),
+                "dialog_active": (bundle.get("screen_text") or {}).get("dialog_active"),
+            },
+            "objective": {
+                "current": {
+                    "id": current_objective.get("id"),
+                    "title": current_objective.get("title"),
+                    "summary": current_objective.get("summary"),
+                    "completion_predicate": current_objective.get("completion_predicate"),
+                    "save_recommendation": current_objective.get("save_recommendation"),
+                    "route_hint": current_objective.get("route_hint"),
+                    "failure_hints": (current_objective.get("failure_hints") or [])[:4],
+                    "progress_percent": current_objective.get("progress_percent"),
+                },
+                "progress_percent": objective.get("progress_percent"),
+            },
+            "turn_plan": {
+                "objective_id": (bundle.get("turn_plan") or {}).get("objective_id"),
+                "summary": (bundle.get("turn_plan") or {}).get("summary"),
+                "planned_actions": ((bundle.get("turn_plan") or {}).get("planned_actions") or [])[
+                    :6
+                ],
+                "fallback_actions": (
+                    (bundle.get("turn_plan") or {}).get("fallback_actions") or []
+                )[:6],
+                "notes": _truncate_text_block((bundle.get("turn_plan") or {}).get("notes"), 260),
+                "updated_at": (bundle.get("turn_plan") or {}).get("updated_at"),
+            },
+            "recent_action": {
+                "source": recent_action.get("source"),
+                "summary": recent_action.get("summary"),
+                "notes": (recent_action.get("notes") or [])[:4],
+                "tags": recent_action.get("tags"),
+            },
+            "movement_guidance": {
+                "summary": movement_guidance.get("summary"),
+                "notes": (movement_guidance.get("notes") or [])[:5],
+                "preferred_direction": movement_guidance.get("preferred_direction"),
+                "candidate_route": (
+                    {
+                        "direction": candidate_route.get("direction"),
+                        "target": candidate_route.get("target"),
+                        "steps": candidate_route.get("steps"),
+                        "actions": (candidate_route.get("actions") or [])[:6],
+                    }
+                    if candidate_route
+                    else None
+                ),
+            },
+            "state_delta": {
+                "changed": state_delta.get("changed"),
+                "summary": (state_delta.get("summary") or [])[:4],
+                "movement": state_delta.get("movement"),
+            },
+            "navigation": {
+                "valid_moves": snapshot.get("valid_moves", []),
+                "interaction": snapshot.get("interaction"),
+                "live_ascii": live_ascii,
+                "explored_ascii": explored_ascii,
+                "ascii_note": (
+                    "ASCII is symbolic only and may be truncated. "
+                    "Use the annotated frame first."
+                ),
+                "window_top_left": snapshot.get("window_top_left"),
+                "window_size": snapshot.get("window_size"),
+                "bounds": location_map.get("bounds"),
+            },
+            "checkpoints": [
+                {
+                    "id": checkpoint.get("id"),
+                    "title": checkpoint.get("title"),
+                    "created_at": checkpoint.get("created_at"),
+                    "objective_id": checkpoint.get("objective_id"),
+                    "map_name": checkpoint.get("map_name"),
+                }
+                for checkpoint in (bundle.get("checkpoints") or [])[-10:]
+            ],
+            "knowledge_graph_summary": (bundle.get("knowledge_graph") or {}).get("summary"),
+            "recovery": {
+                "updated_at": recovery.get("updated_at"),
+                "current_recommendation": recovery.get("current_recommendation"),
+                "candidates": (recovery.get("candidates") or [])[:3],
+            },
+            "stuck": bundle.get("stuck"),
+        }
 
     def refresh(
         self,
@@ -1252,6 +1501,12 @@ class AgentRuntime:
             navigation_plan=navigation_plan,
             navigation_execution=navigation_execution,
         )
+        movement_guidance = build_movement_guidance(
+            state=state,
+            snapshot=snapshot,
+            navigation_store=navigation_store,
+            objective=current_objective,
+        )
         turn_plan = self.load_turn_plan()
         turn_plan_hash = json.dumps(turn_plan, sort_keys=True)
         checkpoints = self._persist_checkpoints(
@@ -1310,14 +1565,13 @@ class AgentRuntime:
             "objective": current_objective,
             "turn_plan": turn_plan,
             "recent_action": action_feedback,
+            "movement_guidance": movement_guidance,
             "state_delta": state_delta,
             "checkpoints": self._tail_jsonl(self.artifacts["checkpoints_jsonl"], 20),
             "knowledge_graph": knowledge_graph,
             "recovery": recovery,
             "stuck": stuck,
             "workspace_dir": str(self.workspace_dir),
-            "raw_frame_b64": self._encode_image_b64(screen),
-            "annotated_frame_b64": self._encode_image_b64(annotated),
         }
 
         self._write_json(self.artifacts["current_objective_json"], current_objective)
@@ -1325,7 +1579,10 @@ class AgentRuntime:
             self._objective_markdown(current_objective),
             encoding="utf-8",
         )
-        self._write_json(self.artifacts["latest_observation_json"], bundle)
+        self._write_json(
+            self.artifacts["latest_observation_json"],
+            self._compact_observation_payload(bundle),
+        )
         self.artifacts["latest_observation_md"].write_text(
             self._observation_markdown(bundle=bundle),
             encoding="utf-8",
@@ -1434,8 +1691,10 @@ class AgentRuntime:
         return {
             "generated_at": bundle.get("generated_at"),
             "visuals": {
-                "raw_frame_b64": bundle.get("raw_frame_b64"),
-                "annotated_frame_b64": bundle.get("annotated_frame_b64"),
+                "raw_frame_path": (bundle.get("artifacts") or {}).get("latest_frame"),
+                "annotated_frame_path": (bundle.get("artifacts") or {}).get(
+                    "latest_frame_annotated"
+                ),
                 "frame_timestamp": bundle.get("generated_at"),
                 "ui_mode": (bundle.get("screen_text") or {}).get("ui_mode"),
                 "screen_text": bundle.get("screen_text"),
@@ -1444,6 +1703,7 @@ class AgentRuntime:
                 "objective": current_objective,
                 "turn_plan": turn_plan,
                 "recent_action": bundle.get("recent_action"),
+                "movement_guidance": bundle.get("movement_guidance"),
                 "state_delta": bundle.get("state_delta"),
             },
             "world_state": {
@@ -1475,5 +1735,5 @@ class AgentRuntime:
                 },
             },
             "timeline": self.history(80),
-            "raw": bundle,
+            "artifacts": bundle.get("artifacts") or {},
         }

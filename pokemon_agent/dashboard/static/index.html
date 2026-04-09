@@ -4,7 +4,7 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Pokemon Agent Telemetry</title>
-    <link rel="stylesheet" href="/dashboard/assets/style.css?v=4">
+    <link rel="stylesheet" href="/dashboard/assets/style.css?v=7">
 </head>
 <body>
     <header class="topbar">
@@ -17,9 +17,15 @@
                 <span class="status-dot" id="statusDot"></span>
                 <span id="statusText">Connecting</span>
             </div>
+            <div class="status-chip pi-chip" id="piStatusChip">
+                <span class="status-dot" id="piStatusDot"></span>
+                <span id="piStatusText">Pi idle</span>
+            </div>
             <div class="meta-stack">
                 <span id="lastUpdate">No data yet</span>
                 <span id="uiModeChip">UI: unknown</span>
+                <span id="realtimeChip">Clock: unknown</span>
+                <span id="piModelChip">Pi: not configured</span>
             </div>
         </div>
     </header>
@@ -49,6 +55,107 @@
             <div class="screen-text-block">
                 <div class="section-label">OCR / Dialogue</div>
                 <pre id="screenText">No screen text available yet.</pre>
+            </div>
+        </section>
+
+        <section class="panel supervisor-panel">
+            <div class="panel-header">
+                <div>
+                    <p class="panel-kicker">Pi Supervisor</p>
+                    <h2>Live Session, Controls, And Reasoning</h2>
+                </div>
+                <div class="panel-badges">
+                    <span class="inline-chip" id="piSessionChip">Session: none</span>
+                    <span class="inline-chip" id="piTurnsChip">Turns: 0</span>
+                </div>
+            </div>
+            <div class="screen-text-block">
+                <div class="section-label">Supervisor Summary</div>
+                <p class="strong" id="piStatusSummary">Pi supervisor not started.</p>
+                <div class="stats-strip supervisor-stats" id="piSupervisorStats"></div>
+            </div>
+            <div class="supervisor-control-grid">
+                <div class="subpanel">
+                    <div class="section-label">Launch Prompt</div>
+                    <textarea id="piPromptInput" rows="6" spellcheck="false"></textarea>
+                    <div class="control-grid">
+                        <label>
+                            <span>Provider</span>
+                            <input id="piProviderInput" type="text" placeholder="Optional provider">
+                        </label>
+                        <label>
+                            <span>Model</span>
+                            <input id="piModelInput" type="text" placeholder="Optional model">
+                        </label>
+                        <label>
+                            <span>Thinking</span>
+                            <select id="piThinkingSelect">
+                                <option value="">Default</option>
+                                <option value="off">off</option>
+                                <option value="minimal">minimal</option>
+                                <option value="low">low</option>
+                                <option value="medium">medium</option>
+                                <option value="high">high</option>
+                                <option value="xhigh">xhigh</option>
+                            </select>
+                        </label>
+                        <label>
+                            <span>Continue Message</span>
+                            <input id="piContinueMessageInput" type="text" placeholder="continue">
+                        </label>
+                    </div>
+                    <label class="checkbox-row">
+                        <input id="piAutoContinueInput" type="checkbox" checked>
+                        <span>Auto-continue after each completed turn</span>
+                    </label>
+                    <div class="button-row">
+                        <button id="piStartButton" type="button">Start Pi</button>
+                        <button id="piContinueButton" type="button">Continue One Turn</button>
+                        <button id="piStopButton" type="button" class="danger">Stop Pi</button>
+                    </div>
+                    <p class="muted" id="piControlStatus">Use the dashboard to launch or stop Pi cleanly.</p>
+                </div>
+                <div class="subpanel">
+                    <div class="section-label">Immediate Intent</div>
+                    <div class="stacked-previews">
+                        <div>
+                            <h4>Pi Turn Plan Preview</h4>
+                            <pre id="piTurnPlanPreview">No Pi-authored turn plan captured yet.</pre>
+                        </div>
+                        <div>
+                            <h4>Active Tools</h4>
+                            <div class="tool-list" id="piActiveTools"></div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+            <div class="supervisor-stream-grid">
+                <div class="subpanel">
+                    <div class="section-label">Current Reasoning Stream</div>
+                    <pre id="piCurrentThinking">No reasoning stream yet.</pre>
+                </div>
+                <div class="subpanel">
+                    <div class="section-label">Current Assistant Output</div>
+                    <pre id="piCurrentOutput">No assistant output yet.</pre>
+                </div>
+            </div>
+            <div class="memory-grid supervisor-memory-grid">
+                <div class="subpanel">
+                    <div class="section-label">Recent Tools</div>
+                    <div class="tool-list" id="piRecentTools"></div>
+                </div>
+                <div class="subpanel">
+                    <div class="section-label">Chat Transcript</div>
+                    <div class="transcript-list" id="piTranscript"></div>
+                </div>
+                <div class="subpanel">
+                    <div class="section-label">Recent Pi Events</div>
+                    <ul class="note-list" id="piRecentEvents"></ul>
+                </div>
+                <div class="subpanel">
+                    <div class="section-label">Pi stderr / Warnings</div>
+                    <pre id="piStderr">No stderr output.</pre>
+                </div>
             </div>
         </section>
 
@@ -93,6 +200,8 @@
                     <ul class="note-list" id="recentActionNotes"></ul>
                     <div class="section-label">State Delta</div>
                     <ul class="note-list" id="stateDeltaSummary"></ul>
+                    <div class="section-label">Movement Guidance</div>
+                    <ul class="note-list" id="movementGuidance"></ul>
                 </div>
             </div>
         </section>
@@ -143,6 +252,23 @@
                     <ul class="note-list" id="recoveryCandidates"></ul>
                     <div class="section-label">Stuck Signal</div>
                     <p id="stuckSignal">No stuck signal yet.</p>
+                    <div class="section-label">Manual Save</div>
+                    <div class="inline-control-row">
+                        <input id="manualSaveNameInput" type="text" placeholder="manual_YYYYMMDD_HHMMSS">
+                        <button id="manualSaveButton" type="button">Save Now</button>
+                    </div>
+                    <p class="muted" id="manualSaveStatus">Create a manual recovery point from the dashboard.</p>
+                    <div class="section-label">Load Save</div>
+                    <div class="inline-control-row">
+                        <select id="saveSelect">
+                            <option value="">No saves loaded yet</option>
+                        </select>
+                        <button id="loadSaveButton" type="button">Load Selected</button>
+                    </div>
+                    <div class="button-row compact-button-row">
+                        <button id="loadRecommendedButton" type="button">Load Recommended</button>
+                    </div>
+                    <p class="muted" id="loadSaveStatus">Choose a save from the list or load the top recommendation.</p>
                 </div>
                 <div class="subpanel">
                     <div class="section-label">Knowledge Graph</div>
@@ -171,11 +297,15 @@
                         <summary>Latest Navigation JSON</summary>
                         <pre id="rawNavigation"></pre>
                     </details>
+                    <details>
+                        <summary>Pi Supervisor JSON</summary>
+                        <pre id="rawSupervisor"></pre>
+                    </details>
                 </div>
             </div>
         </section>
     </main>
 
-    <script src="/dashboard/assets/app.js?v=4"></script>
+    <script src="/dashboard/assets/app.js?v=7"></script>
 </body>
 </html>

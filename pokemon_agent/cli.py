@@ -72,6 +72,8 @@ def cmd_serve(args):
             load_state=getattr(args, "load_state", None),
             agent_workspace_dir=str(workspace_dir),
             enable_dashboard=not bool(getattr(args, "no_dashboard", False)),
+            realtime=not bool(getattr(args, "no_realtime", False)),
+            realtime_fps=getattr(args, "realtime_fps", 60),
         )
     )
 
@@ -138,6 +140,17 @@ def main():
             "Directory for Pi workspace artifacts like screenshots, observation files, "
             "turn_plan.json, and recovery metadata (default: <data-dir>/agent_workspace)"
         ),
+    )
+    serve_p.add_argument(
+        "--no-realtime",
+        action="store_true",
+        help="Disable the background realtime emulator clock.",
+    )
+    serve_p.add_argument(
+        "--realtime-fps",
+        type=int,
+        default=60,
+        help="Background realtime emulator FPS when realtime is enabled (default: 60).",
     )
 
     # --- info ---

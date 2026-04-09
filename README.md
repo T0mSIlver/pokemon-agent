@@ -1,6 +1,6 @@
 # 🎮 pokemon-agent
 
-**AI-powered Pokémon gameplay agent with headless emulation, REST API, and live dashboard.**
+**AI-powered Pokémon gameplay agent with headless emulation, REST API, and a live operator dashboard.**
 
 Let any AI agent — [Hermes Agent](https://github.com/NousResearch/hermes-agent), Claude Code, Codex, or your own — play Pokémon games autonomously via a clean HTTP API. Runs headlessly on any server or terminal. No display, no GUI, no emulator window needed.
 
@@ -29,7 +29,8 @@ Let any AI agent — [Hermes Agent](https://github.com/NousResearch/hermes-agent
 - **🌐 REST API** — `GET /state`, `POST /action`, `GET /screenshot` — control the game over HTTP.
 - **📡 WebSocket** — Real-time event streaming for live monitoring.
 - **🧠 Structured game state** — RAM is parsed into clean JSON: party, bag, badges, map, battle, dialog.
-- **🎨 Live dashboard** — Optional web GUI to watch the AI play (Claude Plays Pokémon style).
+- **🎨 Live dashboard** — Operator console with annotated frames, objectives, recovery, and Pi supervisor telemetry.
+- **💬 Pi chat transcript** — See prompts, assistant replies, thinking, tool calls, stderr, and auto-continue scheduling in one place.
 - **🎮 Multi-game** — Supports Game Boy (Pokémon Red/Blue) via PyBoy, GBA (FireRed) via PyGBA.
 - **🤖 Agent-agnostic** — Works with any AI agent, RL framework, or custom script.
 
@@ -47,10 +48,13 @@ pip install pokemon-agent[dashboard] pyboy
 
 > **Note:** You must provide your own ROM file. This package does not include any game ROMs.
 
-### Start the Server
+### Start the Server Manually
 
 ```bash
-pokemon-agent serve --rom path/to/pokemon_red.gb
+uv run pokemon-agent serve \
+  --rom path/to/pokemon_red.gb \
+  --port 8765 \
+  --agent-workspace-dir "$(pwd)/.agent-workspace"
 ```
 
 ```
@@ -64,7 +68,28 @@ pokemon-agent serve --rom path/to/pokemon_red.gb
   WebSocket:  ws://localhost:8765/ws
 ```
 
+The server is meant to be started by you in a terminal first. After it is running, open the dashboard and launch Pi from there.
+
+### Start Pi From The Server Dashboard
+
+1. Open [http://localhost:8765/dashboard](http://localhost:8765/dashboard).
+2. Confirm the server is healthy and the latest frame is visible.
+3. Use the Pi Supervisor panel to choose the prompt/model settings.
+4. Click `Start Pi`.
+
+The dashboard will then show:
+
+- annotated and raw frames
+- current objective and turn plan
+- Pi chat transcript with explicit message roles
+- streamed assistant output and thinking
+- tool calls, stderr, and recent events
+- stuck/recovery signals
+- a manual `Save Now` button
+
 ### Play from Any Agent
+
+The Pi supervisor flow above is the preferred path. The lower-level HTTP API is still available for custom agents and scripts:
 
 ```bash
 # Get game state
@@ -82,6 +107,23 @@ curl -X POST http://localhost:8765/action \
 curl -X POST http://localhost:8765/save -d '{"name": "before_brock"}'
 curl -X POST http://localhost:8765/load -d '{"name": "before_brock"}'
 ```
+
+For vision-first agents, prefer:
+
+```bash
+curl -s -X POST http://localhost:8765/agent/observe \
+  -H "Content-Type: application/json" \
+  -d '{"reason": "turn_refresh"}' | python3 -m json.tool
+```
+
+Then read the workspace files in `.agent-workspace/`, especially:
+
+- `latest_frame_annotated.png`
+- `latest_frame.png`
+- `latest_observation.json`
+- `latest_observation.md`
+- `current_objective.json`
+- `turn_plan.json`
 
 ### Game State (JSON)
 
@@ -134,7 +176,7 @@ curl -X POST http://localhost:8765/load -d '{"name": "before_brock"}'
 
 ## Dashboard
 
-Install with the dashboard extra to get a live web GUI:
+Install with the dashboard extra to get the full operator console:
 
 ```bash
 pip install pokemon-agent[dashboard]
@@ -143,11 +185,12 @@ pip install pokemon-agent[dashboard]
 Then open `http://localhost:8765/dashboard` in your browser.
 
 The dashboard shows:
-- **Live game screenshot** — Updated each turn with decorative corner brackets
-- **AI reasoning stream** — Watch the agent think in real-time
-- **Team status** — All party Pokémon with HP bars, types, levels
-- **Badge progress** — Visual badge tracker
-- **Action log** — Color-coded history of all actions and reasoning
+- **Annotated and raw frames** — The same images Pi is expected to inspect
+- **Pi supervisor controls** — Start, continue, stop, and auto-continue configuration
+- **Chat transcript** — Explicit `user`, `assistant`, `assistant thinking`, and `system` message roles
+- **Tool and stderr streams** — Live visibility into what Pi is calling and what fails
+- **Objective / plan / recovery state** — What the harness thinks Pi is trying to do and whether it is stuck
+- **Save controls** — Create manual saves and load named or recommended recovery saves from the UI
 
 ## Supported Games
 
@@ -178,11 +221,22 @@ The skill teaches Hermes battle strategy, exploration patterns, team management,
 | `/state` | GET | Full game state JSON |
 | `/screenshot` | GET | Current frame (PNG) |
 | `/screenshot/base64` | GET | Current frame (base64 JSON) |
+| `/agent/observe` | POST | Refresh the vision-first workspace bundle |
 | `/action` | POST | Execute game actions |
 | `/save` | POST | Save emulator state |
 | `/load` | POST | Load emulator state |
 | `/saves` | GET | List saved states |
 | `/minimap` | GET | ASCII minimap |
+| `/navigation/map` | GET | Current live and explored navigation maps |
+| `/navigation/path` | POST | Plan a route without executing it |
+| `/navigation/navigate` | POST | Plan and execute a route |
+| `/artifacts/{artifact}` | GET | Serve workspace artifacts such as screenshots and observation files |
+| `/dashboard/state` | GET | Aggregated dashboard state |
+| `/dashboard/history` | GET | Structured recent event history |
+| `/supervisor/state` | GET | Pi supervisor snapshot |
+| `/supervisor/start` | POST | Launch Pi from the server |
+| `/supervisor/continue` | POST | Continue one Pi turn |
+| `/supervisor/stop` | POST | Stop the supervised Pi session |
 | `/health` | GET | Health check |
 | `/ws` | WebSocket | Live event stream |
 | `/dashboard` | GET | Web dashboard (if installed) |

@@ -1,5 +1,9 @@
+import asyncio
+import contextlib
+import json
 from pathlib import Path
 
+import pytest
 from fastapi.testclient import TestClient
 from PIL import Image, ImageChops
 
@@ -26,6 +30,56 @@ class FakeEmulator:
     def save_state(self, path: str) -> None:
         Path(path).write_bytes(b"state")
         self.saved_paths.append(path)
+
+    def tick(self, frames: int = 1) -> None:
+        self.frame_count += frames
+
+
+class FakeSupervisorAPI:
+    def __init__(self) -> None:
+        self.started_with = None
+        self.continued_with = None
+        self.stopped = False
+
+    def state_snapshot(self) -> dict:
+        return {
+            "available": True,
+            "status": "idle",
+            "status_reason": "Idle for tests.",
+            "next_auto_continue_at": None,
+            "config": {
+                "auto_continue": True,
+                "continue_message": "continue",
+                "continue_delay_seconds": 1.0,
+            },
+            "recent_tools": [],
+            "recent_events": [],
+            "active_tools": [],
+            "stderr_tail": [],
+            "transcript": [],
+            "default_prompt": "default prompt",
+        }
+
+    async def start(self, **kwargs) -> dict:
+        self.started_with = kwargs
+        snapshot = self.state_snapshot()
+        snapshot["status"] = "starting"
+        return snapshot
+
+    async def continue_once(self, *, message: str) -> dict:
+        self.continued_with = message
+        snapshot = self.state_snapshot()
+        snapshot["status"] = "starting"
+        return snapshot
+
+    async def stop(self) -> dict:
+        self.stopped = True
+        snapshot = self.state_snapshot()
+        snapshot["status"] = "stopped"
+        return snapshot
+
+    async def shutdown(self) -> dict:
+        return await self.stop()
 
 
 def make_state(
@@ -204,12 +258,23 @@ def test_agent_runtime_refresh_writes_workspace_and_dashboard_state(tmp_path: Pa
     assert Path(bundle["artifacts"]["latest_frame_annotated"]).exists()
     assert Path(bundle["artifacts"]["latest_observation_json"]).exists()
     assert dashboard["agent_intent"]["turn_plan"]["summary"] == "Move toward the forest gate."
+    assert dashboard["agent_intent"]["movement_guidance"]["notes"]
     assert dashboard["visuals"]["ui_mode"] == "overworld"
     assert dashboard["world_state"]["map"]["map_name"] == "Viridian City"
     assert (
         dashboard["memory_and_progress"]["knowledge_graph_summary"]["current_location"]
         == "Viridian City"
     )
+    observation_md = Path(bundle["artifacts"]["latest_observation_md"]).read_text(encoding="utf-8")
+    observation_json = json.loads(
+        Path(bundle["artifacts"]["latest_observation_json"]).read_text(encoding="utf-8")
+    )
+    assert "Mandatory: inspect the annotated frame before choosing actions." in observation_md
+    assert "Do not infer terrain from ASCII alone." in observation_md
+    assert "latest_observation_json" not in observation_json["artifacts"]
+    assert "run_log_jsonl" not in observation_json["artifacts"]
+    assert "ASCII is symbolic only" in observation_json["navigation"]["ascii_note"]
+    assert "fields" not in observation_json["state_delta"]
 
 
 def test_agent_runtime_detects_repeated_no_movement(tmp_path: Path):
@@ -256,6 +321,7 @@ def test_dashboard_state_endpoint_uses_runtime_bundle(tmp_path: Path, monkeypatc
         source="observe",
     )
     monkeypatch.setattr(server, "_runtime", runtime)
+    monkeypatch.setattr(server, "_supervisor", FakeSupervisorAPI())
 
     with TestClient(server.app) as client:
         response = client.get("/dashboard/state")
@@ -264,6 +330,12 @@ def test_dashboard_state_endpoint_uses_runtime_bundle(tmp_path: Path, monkeypatc
     payload = response.json()
     assert payload["agent_intent"]["objective"]["title"]
     assert payload["world_state"]["map"]["map_name"] == "Viridian City"
+    assert payload["pi_supervisor"]["status"] == "idle"
+    assert "realtime_enabled" in payload["server_runtime"]
+    assert (
+        payload["artifact_urls"]["latest_observation_json"]
+        == "/artifacts/latest_observation_json"
+    )
 
 
 def test_agent_observe_endpoint_returns_workspace_bundle(tmp_path: Path, monkeypatch):
@@ -300,3 +372,68 @@ def test_agent_observe_endpoint_returns_workspace_bundle(tmp_path: Path, monkeyp
     assert payload["reason"] == "contract_test"
     assert payload["artifacts"]["latest_frame"].endswith("latest_frame.png")
     assert Path(payload["artifacts"]["latest_observation_json"]).exists()
+    assert "raw_frame_b64" not in payload
+
+
+def test_artifact_endpoint_serves_workspace_files(tmp_path: Path, monkeypatch):
+    runtime = AgentRuntime(
+        data_dir=tmp_path / "data",
+        workspace_dir=tmp_path / "workspace",
+    )
+    runtime.artifacts["working_memory_md"].write_text("# Notes\n", encoding="utf-8")
+    monkeypatch.setattr(server, "_runtime", runtime)
+
+    with TestClient(server.app) as client:
+        response = client.get("/artifacts/working_memory_md")
+
+    assert response.status_code == 200
+    assert "# Notes" in response.text
+
+
+def test_supervisor_endpoints_delegate_to_supervisor(monkeypatch):
+    fake_supervisor = FakeSupervisorAPI()
+    monkeypatch.setattr(server, "_supervisor", fake_supervisor)
+
+    with TestClient(server.app) as client:
+        start_response = client.post(
+            "/supervisor/start",
+            json={
+                "prompt": "play",
+                "provider": "openai",
+                "model": "local-model",
+                "thinking": "low",
+                "auto_continue": False,
+                "continue_message": "continue",
+            },
+        )
+        continue_response = client.post("/supervisor/continue", json={"message": "continue"})
+        stop_response = client.post("/supervisor/stop")
+
+    assert start_response.status_code == 200
+    assert continue_response.status_code == 200
+    assert stop_response.status_code == 200
+    assert fake_supervisor.started_with is not None
+    assert fake_supervisor.started_with["prompt"] == "play"
+    assert fake_supervisor.continued_with == "continue"
+    assert fake_supervisor.stopped is True
+
+
+@pytest.mark.asyncio
+async def test_realtime_loop_advances_emulator_frames(monkeypatch):
+    emulator = FakeEmulator()
+    monkeypatch.setattr(server, "_emulator", emulator)
+    monkeypatch.setattr(server, "_emulator_lock", asyncio.Lock())
+    monkeypatch.setattr(server, "_realtime_frames_per_second", 120)
+    monkeypatch.setattr(server, "_realtime_ticks", 0)
+    monkeypatch.setattr(server, "_realtime_last_tick_at", None)
+
+    task = asyncio.create_task(server._realtime_emulator_loop())
+    try:
+        await asyncio.sleep(0.05)
+    finally:
+        task.cancel()
+        with contextlib.suppress(asyncio.CancelledError):
+            await task
+
+    assert emulator.frame_count > 1234
+    assert server._realtime_ticks > 0

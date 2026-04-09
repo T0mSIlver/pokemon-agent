@@ -1,6 +1,6 @@
 ---
 name: pokemon-player
-description: Play Pokemon Red through this repo's vision-first harness. Start the local server with an agent workspace, refresh `/agent/observe`, read the annotated screenshot and observation files every turn, update `turn_plan.json`, then use navigation or raw actions in short batches.
+description: Play Pokemon Red through this repo's vision-first harness with the server already running. Refresh `/agent/observe`, read the annotated screenshot and observation files every turn, update `turn_plan.json`, then use navigation or raw actions in short batches.
 tags: [pokemon, emulator, vision, gameplay, pathfinding, dashboard]
 triggers:
   - play pokemon
@@ -17,9 +17,15 @@ Use this repo's local server as the sole harness. Pi is the orchestrator. The re
 
 Red is the only first-class target for this skill.
 
-## Start The Server
+This skill is intended to be loaded by the dashboard's Pi supervisor after the operator has already started the harness server in a terminal.
 
-Run from the repo root:
+Do not launch a second harness server from inside Pi.
+Do not stop the harness server from inside Pi.
+If `http://localhost:8765/health` is unreachable, stop and tell the operator that the server is not running.
+
+## Server Assumption
+
+Assume the operator already started the server, typically from the repo root:
 
 ```bash
 uv run pokemon-agent serve \
@@ -28,17 +34,13 @@ uv run pokemon-agent serve \
   --agent-workspace-dir "$(pwd)/.agent-workspace"
 ```
 
-If you need it in the background:
+Operator-only optional flags:
 
-```bash
-uv run pokemon-agent serve \
-  --rom <ROM_PATH> \
-  --port 8765 \
-  --agent-workspace-dir "$(pwd)/.agent-workspace" \
-  > server.log 2>&1 &
-```
+- `--no-realtime` disables the background clock.
+- `--realtime-fps 30` changes the realtime cadence.
 
-Health check:
+Your job is to verify the server, not to launch it.
+Check health first:
 
 ```bash
 curl -s http://localhost:8765/health | python3 -m json.tool
@@ -47,6 +49,11 @@ curl -s http://localhost:8765/health | python3 -m json.tool
 Dashboard:
 
 `http://localhost:8765/dashboard`
+
+The operator starts Pi from the dashboard supervisor. The supervisor will stream tool calls, reasoning, prompts, replies, and turn boundaries into `/dashboard`.
+The dashboard also shows the live prompt/output transcript, stderr, auto-continue scheduling, manual save controls, and direct load controls for recovery saves.
+
+If the operator is using the dashboard supervisor, do not start a second Pi session manually.
 
 ## Workspace Contract
 
@@ -66,6 +73,8 @@ The server writes these files into the agent workspace:
 - `run_log.jsonl`
 
 Pi must treat these as the canonical turn artifacts.
+
+API responses are intentionally concise. Do not expect screenshots or full raw observations inline in HTTP responses. Read the workspace files instead.
 
 ## Mandatory Turn Loop
 
@@ -109,6 +118,14 @@ Required shape:
 
 5. Re-run `/agent/observe` after each batch.
 
+If the dashboard supervisor auto-continues turns, still treat each turn as a hard stop after you observe, plan, act in a short batch, and summarize the next step via `turn_plan.json`.
+
+The screenshot read is mandatory.
+
+- Do not plan from ASCII alone.
+- Do not treat the ASCII map as a screenshot.
+- Use ASCII only as a symbolic collision summary after looking at the annotated frame.
+
 ## What To Read Every Turn
 
 From `latest_observation.json` and `latest_observation.md`, pay attention to:
@@ -121,6 +138,7 @@ From `latest_observation.json` and `latest_observation.md`, pay attention to:
 - `recovery.current_recommendation`
 - `navigation.snapshot.valid_moves`
 - `navigation.snapshot.interaction`
+- `movement_guidance`
 - `navigation.snapshot.ascii`
 - `navigation.location_map.ascii`
 
@@ -133,6 +151,17 @@ From `current_objective.json`, trust:
 - route hint
 
 Do not invent a different canonical objective.
+
+ASCII semantics:
+
+- `P` = player
+- `G` = goal
+- `S` = visible sprite blocker
+- `.` = known passable tile
+- `#` = known blocked tile
+- `?` = unknown tile
+
+The ASCII maps use coordinate labels. They do not encode terrain with distance digits.
 
 ## Navigation vs Raw Actions
 
@@ -188,6 +217,8 @@ Use this order:
 4. If the destination coordinates are known, prefer navigation.
 5. If coordinates are unknown, use the annotated frame, interaction probe, and ASCII maps to explore carefully.
 
+If `movement_guidance` gives a route cue like "best explored north-progress route starts with ...", prefer that over trying to visually parse a large ASCII block on your own.
+
 ## Saving And Recovery
 
 Manual save:
@@ -241,16 +272,32 @@ Use it to verify:
 - what frame Pi is reading
 - what objective the server thinks is current
 - what `turn_plan.json` says Pi is trying to do
+- every prompt sent to Pi and every streamed reply fragment Pi emits
+- whether auto-continue is armed and when the next turn is scheduled
 - whether the last action batch changed state
 - whether the harness thinks Pi is stuck
 - which recovery save is currently recommended
 
+If you need a manual checkpoint, use the dashboard `Save Now` button or:
+
+```bash
+curl -s -X POST http://localhost:8765/save \
+  -H "Content-Type: application/json" \
+  -d '{"name":"manual_YYYYMMDD_HHMMSS"}' | python3 -m json.tool
+```
+
 If the dashboard intent panel and Pi's next action disagree, stop and refresh observation before acting.
 
-## Stop Cleanly
+If the operator wants to recover to a specific save, prefer the dashboard `Load Selected` or
+`Load Recommended` controls instead of typing save names manually.
 
-Before stopping:
+## End Of Session
+
+Before ending a run:
 
 1. Save.
 2. Refresh `/agent/observe` once more.
 3. Leave `turn_plan.json` and `working_memory.md` in a useful state for resume.
+4. Stop Pi from the dashboard if the supervisor is still running.
+
+Server shutdown is operator-owned and outside Pi's responsibilities.

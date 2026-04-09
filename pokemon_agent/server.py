@@ -21,6 +21,7 @@ from fastapi.responses import FileResponse, JSONResponse, Response
 from pydantic import BaseModel
 
 from pokemon_agent.agent_runtime import AgentRuntime
+from pokemon_agent.pi_supervisor import PiSupervisor
 
 __version__ = "0.1.0"
 
@@ -39,6 +40,8 @@ class GameConfig(BaseModel):
     load_state: Optional[str] = None  # Save-state name to auto-load on startup
     agent_workspace_dir: Optional[str] = None
     enable_dashboard: bool = True
+    realtime: bool = True
+    realtime_fps: int = 60
 
 
 class ActionRequest(BaseModel):
@@ -67,6 +70,26 @@ class ObserveRequest(BaseModel):
     reason: str = "manual_observe"
 
 
+class PiSupervisorStartRequest(BaseModel):
+    """Body for POST /supervisor/start."""
+
+    prompt: Optional[str] = None
+    provider: Optional[str] = None
+    model: Optional[str] = None
+    thinking: Optional[str] = None
+    auto_continue: bool = True
+    continue_message: str = "continue"
+    max_turns: Optional[int] = None
+    continue_delay_seconds: float = 1.0
+    skill_path: Optional[str] = None
+
+
+class PiSupervisorContinueRequest(BaseModel):
+    """Body for POST /supervisor/continue."""
+
+    message: str = "continue"
+
+
 # ---------------------------------------------------------------------------
 # Global state
 # ---------------------------------------------------------------------------
@@ -76,9 +99,16 @@ _emulator = None  # Emulator instance
 _reader = None  # GameMemoryReader subclass instance
 _navigation_store = None  # NavigationStore instance
 _runtime: Optional[AgentRuntime] = None
+_supervisor: Optional[PiSupervisor] = None
 _start_time: float = 0.0
 _loop: Optional[asyncio.AbstractEventLoop] = None
 _dashboard_dir: Optional[Path] = None
+_emulator_lock: Optional[asyncio.Lock] = None
+_realtime_task: Optional[asyncio.Task] = None
+_realtime_frames_per_second: int = 60
+_realtime_enabled: bool = False
+_realtime_ticks: int = 0
+_realtime_last_tick_at: Optional[float] = None
 
 # WebSocket clients
 _ws_clients: Set[WebSocket] = set()
@@ -130,6 +160,14 @@ async def _run_sync(func, *args, **kwargs):
     return await loop.run_in_executor(None, partial(func, *args, **kwargs))
 
 
+async def _run_emulator_sync(func, *args, **kwargs):
+    """Run a blocking emulator call while holding the emulator lock."""
+    if _emulator_lock is None:
+        return await _run_sync(func, *args, **kwargs)
+    async with _emulator_lock:
+        return await _run_sync(func, *args, **kwargs)
+
+
 async def broadcast(event: dict):
     """Send a JSON event to every connected WebSocket client."""
     dead: list[WebSocket] = []
@@ -149,6 +187,12 @@ async def _record_and_broadcast(event_type: str, payload: dict) -> dict:
         event = _runtime.record_external_event(event_type, payload)
     await broadcast(event)
     return event
+
+
+async def _record_existing_event_and_broadcast(event: dict) -> dict:
+    event_type = str(event.get("type") or "event")
+    payload = {key: value for key, value in event.items() if key not in {"type", "timestamp"}}
+    return await _record_and_broadcast(event_type, payload)
 
 
 def _get_state_dict() -> dict:
@@ -258,6 +302,233 @@ def _get_dashboard_static_dir() -> Optional[Path]:
     return None
 
 
+async def _realtime_emulator_loop() -> None:
+    """Advance the emulator at a fixed cadence while the server is idle."""
+    global _realtime_ticks, _realtime_last_tick_at
+    interval = 1.0 / max(1, _realtime_frames_per_second)
+    try:
+        while True:
+            await asyncio.sleep(interval)
+            if _emulator is None:
+                continue
+            await _run_emulator_sync(_emulator.tick, 1)
+            _realtime_ticks += 1
+            _realtime_last_tick_at = time.time()
+    except asyncio.CancelledError:
+        raise
+    except Exception as exc:  # noqa: BLE001
+        print(f"[server] WARNING: Realtime emulator loop stopped: {exc}")
+
+
+def _server_runtime_snapshot() -> dict:
+    return {
+        "realtime_enabled": _realtime_enabled,
+        "realtime_fps": _realtime_frames_per_second,
+        "realtime_ticks": _realtime_ticks,
+        "realtime_last_tick_at": _realtime_last_tick_at,
+        "frame_count": getattr(_emulator, "frame_count", None),
+    }
+
+
+def _compact_objective_status(objective: Optional[dict]) -> Optional[dict]:
+    if not objective:
+        return None
+    return {
+        "id": objective.get("id"),
+        "title": objective.get("title"),
+        "summary": objective.get("summary"),
+        "progress_percent": objective.get("progress_percent"),
+        "status": objective.get("status"),
+        "route_hint": objective.get("route_hint"),
+        "completion_predicate": objective.get("completion_predicate"),
+    }
+
+
+def _compact_state_snapshot(state: Optional[dict]) -> dict:
+    state = state or {}
+    player = state.get("player") or {}
+    battle = state.get("battle") or {}
+    dialog = state.get("dialog") or {}
+    flags = state.get("flags") or {}
+    position = player.get("position") or {}
+    return {
+        "map_name": (state.get("map") or {}).get("map_name"),
+        "map_id": (state.get("map") or {}).get("map_id"),
+        "position": {
+            "x": position.get("x"),
+            "y": position.get("y"),
+        },
+        "facing": player.get("facing"),
+        "dialog_active": bool(state.get("dialog_active") or dialog.get("active")),
+        "battle_active": bool(battle.get("in_battle")),
+        "battle_type": battle.get("type"),
+        "has_pokedex": bool(flags.get("has_pokedex")),
+        "has_oaks_parcel": bool(flags.get("has_oaks_parcel")),
+        "badge_count": player.get("badge_count", flags.get("badge_count", 0)),
+    }
+
+
+def _compact_navigation_snapshot(navigation: Optional[dict]) -> dict:
+    navigation = navigation or {}
+    snapshot = navigation.get("snapshot") or {}
+    location_map = navigation.get("location_map") or {}
+    return {
+        "valid_moves": snapshot.get("valid_moves", []),
+        "interaction": snapshot.get("interaction"),
+        "live_ascii": snapshot.get("ascii"),
+        "explored_ascii": location_map.get("ascii"),
+        "window_top_left": snapshot.get("window_top_left"),
+        "window_size": snapshot.get("window_size"),
+        "bounds": location_map.get("bounds"),
+    }
+
+
+def _compact_recovery_summary(recovery: Optional[dict]) -> dict:
+    recovery = recovery or {}
+    return {
+        "current_recommendation": recovery.get("current_recommendation"),
+        "candidate_count": len(recovery.get("candidates") or []),
+    }
+
+
+def _compact_supervisor_status(snapshot: Optional[dict]) -> Optional[dict]:
+    if not snapshot:
+        return None
+    return {
+        "available": snapshot.get("available"),
+        "status": snapshot.get("status"),
+        "status_reason": snapshot.get("status_reason"),
+        "last_error": snapshot.get("last_error"),
+        "session_id": snapshot.get("session_id"),
+        "turns_completed": snapshot.get("turns_completed"),
+        "model": snapshot.get("model"),
+        "provider": snapshot.get("provider"),
+        "thinking": snapshot.get("thinking"),
+    }
+
+
+def _artifact_urls_from_paths(artifacts: Optional[dict]) -> dict:
+    urls: dict[str, str] = {}
+    for key in (artifacts or {}):
+        urls[key] = f"/artifacts/{key}"
+    return urls
+
+
+def _public_artifact_paths(artifacts: Optional[dict]) -> dict:
+    allowlist = (
+        "latest_frame",
+        "latest_frame_annotated",
+        "latest_observation_json",
+        "latest_observation_md",
+        "current_objective_json",
+        "current_objective_md",
+        "turn_plan_json",
+        "working_memory_md",
+        "recovery_saves_json",
+    )
+    return {
+        key: value
+        for key, value in ((key, (artifacts or {}).get(key)) for key in allowlist)
+        if value
+    }
+
+
+def _truncate_text(value: Optional[str], limit: int = 600) -> str:
+    text = str(value or "").strip()
+    if len(text) <= limit:
+        return text
+    return text[: limit - 16].rstrip() + "\n...[truncated]..."
+
+
+def _compact_screen_text(screen_text: Optional[dict]) -> Optional[dict]:
+    if not screen_text:
+        return None
+    return {
+        "text": _truncate_text(screen_text.get("text"), 420),
+        "source": screen_text.get("source"),
+        "ui_mode": screen_text.get("ui_mode"),
+        "dialog_active": screen_text.get("dialog_active"),
+    }
+
+
+def _compact_feedback(feedback: Optional[dict]) -> Optional[dict]:
+    if not feedback:
+        return None
+    return {
+        "source": feedback.get("source"),
+        "summary": feedback.get("summary"),
+        "notes": (feedback.get("notes") or [])[:4],
+        "tags": feedback.get("tags"),
+    }
+
+
+def _compact_state_delta_summary(state_delta: Optional[dict]) -> Optional[dict]:
+    if not state_delta:
+        return None
+    return {
+        "changed": state_delta.get("changed"),
+        "summary": (state_delta.get("summary") or [])[:4],
+        "movement": state_delta.get("movement"),
+    }
+
+
+def _compact_movement_guidance(movement_guidance: Optional[dict]) -> Optional[dict]:
+    if not movement_guidance:
+        return None
+    candidate_route = movement_guidance.get("candidate_route") or {}
+    compact_route = None
+    if candidate_route:
+        compact_route = {
+            "direction": candidate_route.get("direction"),
+            "target": candidate_route.get("target"),
+            "steps": candidate_route.get("steps"),
+            "actions": (candidate_route.get("actions") or [])[:6],
+        }
+    return {
+        "summary": movement_guidance.get("summary"),
+        "notes": (movement_guidance.get("notes") or [])[:4],
+        "preferred_direction": movement_guidance.get("preferred_direction"),
+        "candidate_route": compact_route,
+    }
+
+
+def _compact_turn_plan(turn_plan: Optional[dict]) -> Optional[dict]:
+    if not turn_plan:
+        return None
+    return {
+        "objective_id": turn_plan.get("objective_id"),
+        "summary": turn_plan.get("summary"),
+        "planned_actions": (turn_plan.get("planned_actions") or [])[:6],
+        "fallback_actions": (turn_plan.get("fallback_actions") or [])[:6],
+        "notes": _truncate_text(turn_plan.get("notes"), 280),
+        "updated_at": turn_plan.get("updated_at"),
+    }
+
+
+def _compact_bundle_response(bundle: Optional[dict]) -> dict:
+    if not bundle:
+        return {}
+    artifacts = _public_artifact_paths(bundle.get("artifacts") or {})
+    objective = (bundle.get("objective") or {}).get("current") or {}
+    return {
+        "generated_at": bundle.get("generated_at"),
+        "reason": bundle.get("reason"),
+        "source": bundle.get("source"),
+        "objective": _compact_objective_status(objective),
+        "state": _compact_state_snapshot(bundle.get("state")),
+        "screen_text": _compact_screen_text(bundle.get("screen_text")),
+        "recent_action": _compact_feedback(bundle.get("recent_action")),
+        "state_delta": _compact_state_delta_summary(bundle.get("state_delta")),
+        "movement_guidance": _compact_movement_guidance(bundle.get("movement_guidance")),
+        "navigation": _compact_navigation_snapshot(bundle.get("navigation")),
+        "turn_plan": _compact_turn_plan(bundle.get("turn_plan")),
+        "stuck": bundle.get("stuck"),
+        "recovery": _compact_recovery_summary(bundle.get("recovery")),
+        "artifacts": artifacts,
+        "artifact_urls": _artifact_urls_from_paths(artifacts),
+    }
+
+
 def _get_navigation_payload_sync(goal: Optional[tuple[int, int]] = None) -> Optional[dict]:
     try:
         snapshot, location_map = _refresh_navigation_state_sync()
@@ -319,7 +590,7 @@ async def _refresh_agent_bundle(
     navigation_execution: Optional[dict] = None,
     explicit_save: Optional[dict] = None,
 ) -> Optional[dict]:
-    return await _run_sync(
+    return await _run_emulator_sync(
         _refresh_agent_bundle_sync,
         reason=reason,
         source=source,
@@ -337,13 +608,17 @@ async def _broadcast_runtime_refresh(result: Optional[dict]) -> None:
         await broadcast(event)
     bundle = result.get("bundle")
     if bundle:
+        artifacts = bundle.get("artifacts") or {}
         await broadcast(
             {
                 "type": "screenshot",
                 "data": {
-                    "image": bundle.get("raw_frame_b64"),
-                    "annotated_image": bundle.get("annotated_frame_b64"),
-                    "format": "png",
+                    "raw_frame_path": artifacts.get("latest_frame"),
+                    "annotated_frame_path": artifacts.get("latest_frame_annotated"),
+                    "raw_frame_url": _artifact_urls_from_paths(artifacts).get("latest_frame"),
+                    "annotated_frame_url": _artifact_urls_from_paths(artifacts).get(
+                        "latest_frame_annotated"
+                    ),
                 },
             }
         )
@@ -452,7 +727,7 @@ def _serialize_navigation(snapshot, location_map, goal: Optional[tuple[int, int]
 _ACTION_RE = re.compile(r"^(?P<kind>press|walk|hold|wait|a_until_dialog_end)(?:_(?P<rest>.+))?$")
 
 
-async def _execute_action(action_str: str) -> None:
+def _execute_action_sync(action_str: str) -> None:
     """Parse and execute a single action string on the emulator.
 
     Supported formats:
@@ -466,8 +741,8 @@ async def _execute_action(action_str: str) -> None:
 
     if action_str == "a_until_dialog_end":
         for _ in range(10):  # max 300 frames = 10 * 30
-            await _run_sync(_emulator.press, "a")
-            await _run_sync(_emulator.tick, 30)
+            _emulator.press("a")
+            _emulator.tick(30)
             # Check dialog flag via reader if available
             try:
                 state = _get_state_dict()
@@ -484,8 +759,8 @@ async def _execute_action(action_str: str) -> None:
         button = "_".join(parts[1:])
         # Hold button for 8 frames so the game registers the press,
         # then wait 12 frames for the game to process it.
-        await _run_sync(_emulator.press, button, 8)
-        await _run_sync(_emulator.tick, 12)
+        _emulator.press(button, 8)
+        _emulator.tick(12)
         return
 
     if parts[0] == "walk" and len(parts) >= 2:
@@ -497,22 +772,30 @@ async def _execute_action(action_str: str) -> None:
         #     = 16 px = 1 tile). Total walk animation = ~16 frames.
         #   - Minimum total frames for a confirmed tile move = 17.
         #   - We use hold=8 + wait=12 = 20 total for a safety margin.
-        await _run_sync(_emulator.press, direction, 8)
-        await _run_sync(_emulator.tick, 12)
+        _emulator.press(direction, 8)
+        _emulator.tick(12)
         return
 
     if parts[0] == "hold" and len(parts) >= 3:
         button = "_".join(parts[1:-1])
         frames = int(parts[-1])
-        await _run_sync(_emulator.press, button, frames)
+        _emulator.press(button, frames)
         return
 
     if parts[0] == "wait" and len(parts) == 2:
         frames = int(parts[1])
-        await _run_sync(_emulator.tick, frames)
+        _emulator.tick(frames)
         return
 
     raise ValueError(f"Unknown action format: {action_str}")
+
+
+def _execute_action_batch_sync(actions: list[str]) -> int:
+    executed = 0
+    for action_str in actions:
+        _execute_action_sync(action_str)
+        executed += 1
+    return executed
 
 
 # ---------------------------------------------------------------------------
@@ -533,12 +816,22 @@ async def _startup():
         _reader, \
         _navigation_store, \
         _runtime, \
+        _supervisor, \
         _start_time, \
         _config, \
         _loop, \
-        _dashboard_dir
+        _dashboard_dir, \
+        _emulator_lock, \
+        _realtime_task, \
+        _realtime_frames_per_second, \
+        _realtime_enabled, \
+        _realtime_ticks, \
+        _realtime_last_tick_at
     _loop = asyncio.get_running_loop()
     _start_time = time.time()
+    _emulator_lock = asyncio.Lock()
+    _realtime_ticks = 0
+    _realtime_last_tick_at = None
 
     if _config is None:
         # Config can be injected via environment or set beforehand
@@ -589,6 +882,14 @@ async def _startup():
         else (data_dir / "agent_workspace").resolve()
     )
     _runtime = AgentRuntime(data_dir=data_dir, workspace_dir=workspace_dir)
+    _supervisor = PiSupervisor(
+        workspace_dir=workspace_dir,
+        server_url=f"http://127.0.0.1:{_config.port}",
+        event_sink=_record_existing_event_and_broadcast,
+        stream_sink=broadcast,
+    )
+    _realtime_frames_per_second = max(1, int(_config.realtime_fps))
+    _realtime_enabled = bool(_config.realtime)
 
     if _config.enable_dashboard:
         _dashboard_dir = _get_dashboard_static_dir()
@@ -634,6 +935,15 @@ async def _startup():
     except Exception as e:
         print(f"[server] WARNING: Initial agent workspace refresh failed: {e}")
 
+    if _realtime_enabled:
+        _realtime_task = asyncio.create_task(_realtime_emulator_loop())
+        print(
+            f"[server] Realtime emulation enabled at {_realtime_frames_per_second} FPS"
+        )
+    else:
+        _realtime_task = None
+        print("[server] Realtime emulation disabled")
+
     print(f"[server] Ready — listening on port {_config.port}")
     print(f"[server] Agent workspace: {workspace_dir}")
     print("[server] Endpoints:")
@@ -651,8 +961,29 @@ async def _startup():
     print("[server]   POST /navigation/navigate — execute a navigation route")
     print("[server]   GET  /dashboard/state  — aggregated telemetry state")
     print("[server]   GET  /dashboard/history — structured event timeline")
+    print("[server]   GET  /supervisor/state — Pi supervisor snapshot")
+    print("[server]   POST /supervisor/start — launch a supervised Pi session")
+    print("[server]   POST /supervisor/continue — run one more Pi turn")
+    print("[server]   POST /supervisor/stop — stop the Pi supervisor")
     print("[server]   GET  /health    — health check")
     print("[server]   WS   /ws        — live events")
+
+
+@app.on_event("shutdown")
+async def _shutdown():
+    global _supervisor, _realtime_task
+    if _realtime_task is not None:
+        _realtime_task.cancel()
+        try:
+            await _realtime_task
+        except asyncio.CancelledError:
+            pass
+        _realtime_task = None
+    if _supervisor is not None:
+        if hasattr(_supervisor, "shutdown"):
+            await _supervisor.shutdown()
+        elif hasattr(_supervisor, "stop"):
+            await _supervisor.stop()
 
 
 # ---------------------------------------------------------------------------
@@ -672,17 +1003,21 @@ async def index():
         "emulator_ready": _emulator is not None,
         "agent_workspace_dir": str(_runtime.workspace_dir) if _runtime else None,
         "dashboard_ready": _dashboard_dir is not None,
+        "emulation": _server_runtime_snapshot(),
     }
 
 
 @app.get("/health")
 async def health():
     """Health check."""
+    supervisor_snapshot = _supervisor.state_snapshot() if _supervisor is not None else None
     return {
         "status": "ok",
         "emulator_ready": _emulator is not None,
         "agent_workspace_ready": _runtime is not None,
         "dashboard_ready": _dashboard_dir is not None,
+        "emulation": _server_runtime_snapshot(),
+        "pi_supervisor": _compact_supervisor_status(supervisor_snapshot),
     }
 
 
@@ -698,12 +1033,30 @@ async def dashboard_index():
     return FileResponse(_dashboard_dir / "index.html")
 
 
+@app.get("/artifacts/{artifact_key}")
+async def get_workspace_artifact(artifact_key: str):
+    """Serve a whitelisted workspace artifact file."""
+    if _runtime is None:
+        raise HTTPException(status_code=503, detail="Agent runtime is not initialised")
+    path = _runtime.artifacts.get(artifact_key)
+    if path is None:
+        raise HTTPException(status_code=404, detail=f"Unknown artifact: {artifact_key}")
+    if not path.exists():
+        raise HTTPException(status_code=404, detail=f"Artifact not found: {artifact_key}")
+    return FileResponse(path)
+
+
 @app.get("/dashboard/state")
 async def dashboard_state():
     """Aggregated dashboard state for the operator console."""
     if _runtime is None:
         raise HTTPException(status_code=503, detail="Agent runtime is not initialised")
-    return JSONResponse(content=_runtime.dashboard_state())
+    payload = _runtime.dashboard_state()
+    artifacts = payload.get("artifacts") or {}
+    payload["artifact_urls"] = _artifact_urls_from_paths(artifacts)
+    payload["pi_supervisor"] = _supervisor.state_snapshot() if _supervisor is not None else {}
+    payload["server_runtime"] = _server_runtime_snapshot()
+    return JSONResponse(content=payload)
 
 
 @app.get("/dashboard/history")
@@ -713,6 +1066,64 @@ async def dashboard_history(limit: int = 200):
         raise HTTPException(status_code=503, detail="Agent runtime is not initialised")
     limit = max(1, min(limit, 1000))
     return {"events": _runtime.history(limit)}
+
+
+@app.get("/supervisor/state")
+async def supervisor_state():
+    """Current Pi supervisor status and recent event stream."""
+    if _supervisor is None:
+        raise HTTPException(status_code=503, detail="Pi supervisor is not initialised")
+    return JSONResponse(content=_compact_supervisor_status(_supervisor.state_snapshot()))
+
+
+@app.post("/supervisor/start")
+async def supervisor_start(req: PiSupervisorStartRequest):
+    """Launch Pi under server supervision."""
+    if _supervisor is None:
+        raise HTTPException(status_code=503, detail="Pi supervisor is not initialised")
+    try:
+        state = await _supervisor.start(
+            prompt=req.prompt,
+            provider=req.provider,
+            model=req.model,
+            thinking=req.thinking,
+            auto_continue=req.auto_continue,
+            continue_message=req.continue_message,
+            max_turns=req.max_turns,
+            continue_delay_seconds=req.continue_delay_seconds,
+            skill_path=req.skill_path,
+        )
+        return {"success": True, "supervisor": _compact_supervisor_status(state)}
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+    except Exception as exc:  # noqa: BLE001
+        raise HTTPException(status_code=500, detail=f"Supervisor start error: {exc}")
+
+
+@app.post("/supervisor/continue")
+async def supervisor_continue(req: PiSupervisorContinueRequest):
+    """Run one more Pi turn against the latest session."""
+    if _supervisor is None:
+        raise HTTPException(status_code=503, detail="Pi supervisor is not initialised")
+    try:
+        state = await _supervisor.continue_once(message=req.message)
+        return {"success": True, "supervisor": _compact_supervisor_status(state)}
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+    except Exception as exc:  # noqa: BLE001
+        raise HTTPException(status_code=500, detail=f"Supervisor continue error: {exc}")
+
+
+@app.post("/supervisor/stop")
+async def supervisor_stop():
+    """Stop Pi if it is currently running."""
+    if _supervisor is None:
+        raise HTTPException(status_code=503, detail="Pi supervisor is not initialised")
+    try:
+        state = await _supervisor.stop()
+        return {"success": True, "supervisor": _compact_supervisor_status(state)}
+    except Exception as exc:  # noqa: BLE001
+        raise HTTPException(status_code=500, detail=f"Supervisor stop error: {exc}")
 
 
 @app.post("/agent/observe")
@@ -728,7 +1139,7 @@ async def agent_observe(req: ObserveRequest):
             raise HTTPException(
                 status_code=500, detail="Agent observation refresh returned no data"
             )
-        return result["bundle"]
+        return _compact_bundle_response(result["bundle"])
     except HTTPException:
         raise
     except Exception as e:
@@ -740,7 +1151,7 @@ async def get_state():
     """Full game state JSON."""
     _ensure_emulator()
     try:
-        state = await _run_sync(_get_state_dict)
+        state = await _run_emulator_sync(_get_state_dict)
         return JSONResponse(content=state)
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Error reading state: {e}")
@@ -751,7 +1162,7 @@ async def screenshot():
     """Current emulator frame as PNG image."""
     _ensure_emulator()
     try:
-        png_bytes = await _run_sync(_get_screenshot_bytes)
+        png_bytes = await _run_emulator_sync(_get_screenshot_bytes)
         return Response(content=png_bytes, media_type="image/png")
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Screenshot error: {e}")
@@ -762,7 +1173,7 @@ async def screenshot_base64():
     """Current emulator frame as base64-encoded PNG in JSON."""
     _ensure_emulator()
     try:
-        png_bytes = await _run_sync(_get_screenshot_bytes)
+        png_bytes = await _run_emulator_sync(_get_screenshot_bytes)
         b64 = base64.b64encode(png_bytes).decode("ascii")
         return {"image": b64, "format": "png"}
     except Exception as e:
@@ -774,7 +1185,7 @@ async def execute_actions(req: ActionRequest):
     """Execute a sequence of game actions."""
     _ensure_emulator()
     try:
-        state_before = await _run_sync(_get_state_dict)
+        state_before = await _run_emulator_sync(_get_state_dict)
         await _record_and_broadcast(
             "action",
             {
@@ -782,10 +1193,7 @@ async def execute_actions(req: ActionRequest):
                 "state_before": state_before,
             },
         )
-        executed = 0
-        for action_str in req.actions:
-            await _execute_action(action_str)
-            executed += 1
+        executed = await _run_emulator_sync(_execute_action_batch_sync, req.actions)
 
         refresh = await _refresh_agent_bundle(
             reason="actions_executed",
@@ -794,8 +1202,10 @@ async def execute_actions(req: ActionRequest):
         )
         await _broadcast_runtime_refresh(refresh)
         bundle = (refresh or {}).get("bundle", {})
-        state_after = bundle.get("state") or await _run_sync(_get_state_dict)
-        navigation_after = bundle.get("navigation") or _get_navigation_payload_sync()
+        state_after = bundle.get("state") or await _run_emulator_sync(_get_state_dict)
+        navigation_after = bundle.get("navigation") or await _run_emulator_sync(
+            _get_navigation_payload_sync
+        )
 
         await _record_and_broadcast(
             "action_result",
@@ -814,16 +1224,9 @@ async def execute_actions(req: ActionRequest):
 
         return {
             "success": True,
+            "actions_requested": req.actions,
             "actions_executed": executed,
-            "state_before": state_before,
-            "state_after": state_after,
-            "navigation_after": navigation_after,
-            "feedback": bundle.get("recent_action"),
-            "state_delta": bundle.get("state_delta"),
-            "screen_text": bundle.get("screen_text"),
-            "objective_status": (bundle.get("objective") or {}).get("current"),
-            "stuck_signal": bundle.get("stuck"),
-            "artifacts": bundle.get("artifacts"),
+            **_compact_bundle_response(bundle),
         }
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
@@ -841,7 +1244,7 @@ async def save_state(req: SaveRequest):
         saves_dir = Path(_config.data_dir).expanduser().resolve() / "saves"
         saves_dir.mkdir(parents=True, exist_ok=True)
         save_path = saves_dir / f"{req.name}.state"
-        await _run_sync(_emulator.save_state, str(save_path))
+        await _run_emulator_sync(_emulator.save_state, str(save_path))
         save_event = _make_runtime_save_event(
             req.name,
             save_path,
@@ -857,9 +1260,8 @@ async def save_state(req: SaveRequest):
         bundle = (refresh or {}).get("bundle", {})
         return {
             "success": True,
-            "path": str(save_path),
-            "observation": bundle,
-            "artifacts": bundle.get("artifacts"),
+            "save": {"name": req.name, "path": str(save_path)},
+            **_compact_bundle_response(bundle),
         }
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Save error: {e}")
@@ -876,15 +1278,17 @@ async def load_state(req: SaveRequest):
         save_path = saves_dir / f"{req.name}.state"
         if not save_path.exists():
             raise HTTPException(status_code=404, detail=f"Save not found: {req.name}")
-        await _run_sync(_emulator.load_state, str(save_path))
+        await _run_emulator_sync(_emulator.load_state, str(save_path))
         refresh = await _refresh_agent_bundle(
             reason=f"manual_load:{req.name}",
             source="load",
         )
         await _broadcast_runtime_refresh(refresh)
         bundle = (refresh or {}).get("bundle", {})
-        state_after = bundle.get("state") or await _run_sync(_get_state_dict)
-        navigation_after = bundle.get("navigation") or _get_navigation_payload_sync()
+        state_after = bundle.get("state") or await _run_emulator_sync(_get_state_dict)
+        navigation_after = bundle.get("navigation") or await _run_emulator_sync(
+            _get_navigation_payload_sync
+        )
         await _record_and_broadcast("load", {"name": req.name, "path": str(save_path)})
         await broadcast(
             {
@@ -897,15 +1301,8 @@ async def load_state(req: SaveRequest):
 
         return {
             "success": True,
-            "name": req.name,
-            "state_after": state_after,
-            "navigation_after": navigation_after,
-            "feedback": bundle.get("recent_action"),
-            "state_delta": bundle.get("state_delta"),
-            "screen_text": bundle.get("screen_text"),
-            "objective_status": (bundle.get("objective") or {}).get("current"),
-            "stuck_signal": bundle.get("stuck"),
-            "artifacts": bundle.get("artifacts"),
+            "save": {"name": req.name, "path": str(save_path)},
+            **_compact_bundle_response(bundle),
         }
     except HTTPException:
         raise
@@ -942,7 +1339,7 @@ async def minimap():
     """ASCII explored navigation map for the current location."""
     _ensure_emulator()
     try:
-        snapshot, location_map = await _run_sync(_refresh_navigation_state_sync)
+        snapshot, location_map = await _run_emulator_sync(_refresh_navigation_state_sync)
         distances = location_map.distance_map(
             snapshot.player_position,
             extra_blockers=snapshot.sprite_set,
@@ -970,8 +1367,8 @@ async def navigation_map():
     """Return the current live navigation window and explored map."""
     _ensure_emulator()
     try:
-        snapshot, location_map = await _run_sync(_refresh_navigation_state_sync)
-        return _serialize_navigation(snapshot, location_map)
+        snapshot, location_map = await _run_emulator_sync(_refresh_navigation_state_sync)
+        return _compact_navigation_snapshot(_serialize_navigation(snapshot, location_map))
     except NotImplementedError as e:
         raise _navigation_not_supported(e)
     except Exception as e:
@@ -983,15 +1380,18 @@ async def navigation_path(req: NavigationRequest):
     """Plan a navigation route without executing it."""
     _ensure_emulator()
     try:
-        snapshot, location_map, plan = await _run_sync(
+        snapshot, location_map, plan = await _run_emulator_sync(
             _plan_navigation_sync,
             req.x,
             req.y,
             req.mode,
         )
         payload = _serialize_navigation(snapshot, location_map, goal=(req.x, req.y))
-        payload["plan"] = plan.to_dict()
-        return payload
+        return {
+            "target": {"x": req.x, "y": req.y},
+            "plan": plan.to_dict(),
+            "navigation": _compact_navigation_snapshot(payload),
+        }
     except NotImplementedError as e:
         raise _navigation_not_supported(e)
     except ValueError as e:
@@ -1005,13 +1405,13 @@ async def navigation_navigate(req: NavigationRequest):
     """Plan and execute a navigation route."""
     _ensure_emulator()
     try:
-        snapshot_before, location_map_before, plan = await _run_sync(
+        snapshot_before, location_map_before, plan = await _run_emulator_sync(
             _plan_navigation_sync,
             req.x,
             req.y,
             req.mode,
         )
-        state_before = await _run_sync(_get_state_dict)
+        state_before = await _run_emulator_sync(_get_state_dict)
         navigation_before = _serialize_navigation(
             snapshot_before,
             location_map_before,
@@ -1071,25 +1471,16 @@ async def navigation_navigate(req: NavigationRequest):
                 "actions_executed": 0,
                 "plan": plan.to_dict(),
                 "execution": execution,
-                "state_before": state_before,
-                "state_after": bundle.get("state") or state_before,
-                "navigation_before": navigation_before,
-                "navigation_after": bundle.get("navigation") or navigation_before,
-                "feedback": bundle.get("recent_action"),
-                "state_delta": bundle.get("state_delta"),
-                "screen_text": bundle.get("screen_text"),
-                "objective_status": (bundle.get("objective") or {}).get("current"),
-                "stuck_signal": bundle.get("stuck"),
-                "artifacts": bundle.get("artifacts"),
+                "actions_requested": plan.actions,
+                **_compact_bundle_response(bundle),
             }
 
-        executed = 0
-        for action in plan.actions:
-            await _execute_action(action)
-            executed += 1
+        executed = await _run_emulator_sync(_execute_action_batch_sync, plan.actions)
 
-        state_after = await _run_sync(_get_state_dict)
-        snapshot_after, location_map_after = await _run_sync(_refresh_navigation_state_sync)
+        state_after = await _run_emulator_sync(_get_state_dict)
+        snapshot_after, location_map_after = await _run_emulator_sync(
+            _refresh_navigation_state_sync
+        )
         navigation_after = _serialize_navigation(
             snapshot_after,
             location_map_after,
@@ -1141,19 +1532,11 @@ async def navigation_navigate(req: NavigationRequest):
 
         return {
             "success": execution["success"],
+            "actions_requested": plan.actions,
             "actions_executed": executed,
             "plan": plan.to_dict(),
             "execution": execution,
-            "state_before": state_before,
-            "state_after": state_after,
-            "navigation_after": navigation_after,
-            "navigation_before": navigation_before,
-            "feedback": bundle.get("recent_action"),
-            "state_delta": bundle.get("state_delta"),
-            "screen_text": bundle.get("screen_text"),
-            "objective_status": (bundle.get("objective") or {}).get("current"),
-            "stuck_signal": bundle.get("stuck"),
-            "artifacts": bundle.get("artifacts"),
+            **_compact_bundle_response(bundle),
         }
     except NotImplementedError as e:
         raise _navigation_not_supported(e)
@@ -1181,6 +1564,7 @@ async def websocket_endpoint(ws: WebSocket):
                 "version": __version__,
                 "emulator_ready": _emulator is not None,
                 "agent_workspace_dir": str(_runtime.workspace_dir) if _runtime else None,
+                "emulation": _server_runtime_snapshot(),
             }
         )
         # Keep alive — wait for client messages (or disconnect)
