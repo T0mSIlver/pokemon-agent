@@ -1,212 +1,256 @@
 ---
 name: pokemon-player
-description: Play Pokémon games via headless emulation. Start a game server, read game state, make strategic decisions, and send actions — all from the terminal.
-tags: [gaming, pokemon, emulator, pyboy, gameplay]
+description: Play Pokemon Red through this repo's vision-first harness. Start the local server with an agent workspace, refresh `/agent/observe`, read the annotated screenshot and observation files every turn, update `turn_plan.json`, then use navigation or raw actions in short batches.
+tags: [pokemon, emulator, vision, gameplay, pathfinding, dashboard]
 triggers:
   - play pokemon
-  - pokemon game
-  - start pokemon
   - play pokemon red
-  - play pokemon firered
-  - pokemon firered
-  - pokemon red
-  - play gameboy
+  - pokemon harness
+  - pokemon dashboard
+  - pokemon navigation
+  - pokemon vision
 ---
 
-# Pokémon Player Skill
+# Pokemon Player Skill
 
-Play Pokémon games autonomously via headless emulation. Uses the `pokemon-agent`
-package to run a game server, then interacts via HTTP API.
+Use this repo's local server as the sole harness. Pi is the orchestrator. The repo owns screenshots, observation files, objectives, checkpoints, recovery, and dashboard telemetry.
 
-## Setup (First Time Only)
+Red is the only first-class target for this skill.
+
+## Start The Server
+
+Run from the repo root:
 
 ```bash
-# Install the package + emulator + dashboard
-pip install pokemon-agent[dashboard] pyboy
-
-# User must provide their own ROM file
-# The agent CANNOT download or distribute ROMs
+uv run pokemon-agent serve \
+  --rom <ROM_PATH> \
+  --port 8765 \
+  --agent-workspace-dir "$(pwd)/.agent-workspace"
 ```
 
-Ask the user for the ROM file path if not provided. Common locations:
-- `~/roms/pokemon_red.gb`
-- `~/pokemon_red.gb`
-
-## Starting a Game
+If you need it in the background:
 
 ```bash
-# Start the game server as a background process
-pokemon-agent serve --rom <ROM_PATH> --port 8765 &
-
-# Verify it's running
-curl -s http://localhost:8765/health
+uv run pokemon-agent serve \
+  --rom <ROM_PATH> \
+  --port 8765 \
+  --agent-workspace-dir "$(pwd)/.agent-workspace" \
+  > server.log 2>&1 &
 ```
 
-Tell the user: "Dashboard available at http://localhost:8765/dashboard"
-
-## Gameplay Loop
-
-Each turn, follow this cycle:
-
-### 1. Observe — Read Game State
+Health check:
 
 ```bash
-curl -s http://localhost:8765/state | python3 -m json.tool
+curl -s http://localhost:8765/health | python3 -m json.tool
 ```
 
-Parse the JSON to understand:
-- Where am I? (map name, position)
-- What's happening? (overworld, battle, dialog, menu)
-- Party status? (HP, levels, any fainted?)
-- Bag contents? (potions, pokeballs?)
-- Badges earned?
+Dashboard:
 
-### 2. Decide — What To Do
+`http://localhost:8765/dashboard`
 
-**Priority order:**
-1. If in dialog → press A to advance (`a_until_dialog_end`)
-2. If in battle → choose best move (see Battle Strategy)
-3. If party needs healing → navigate to Pokémon Center
-4. If ready for next gym → navigate toward it
-5. Otherwise → explore, train, catch Pokémon
+## Workspace Contract
 
-Use Hermes memory to track:
-- Current objective: `PKM:OBJECTIVE: Defeat Brock in Pewter City`
-- Map knowledge: `PKM:MAP: Viridian Forest has bug catchers, exit north to Pewter`
-- Strategy notes: `PKM:STRATEGY: Brock's Onix is weak to Water — use Bubble`
+The server writes these files into the agent workspace:
 
-### 3. Act — Send Commands
+- `latest_frame.png`
+- `latest_frame_annotated.png`
+- `latest_observation.json`
+- `latest_observation.md`
+- `current_objective.json`
+- `current_objective.md`
+- `turn_plan.json`
+- `working_memory.md`
+- `checkpoints.jsonl`
+- `knowledge_graph.json`
+- `recovery_saves.json`
+- `run_log.jsonl`
+
+Pi must treat these as the canonical turn artifacts.
+
+## Mandatory Turn Loop
+
+Do this every turn:
+
+1. Refresh the workspace bundle.
 
 ```bash
-# Single action
+curl -s -X POST http://localhost:8765/agent/observe \
+  -H "Content-Type: application/json" \
+  -d '{"reason": "turn_refresh"}' | python3 -m json.tool
+```
+
+2. Read these files in this order:
+   - `latest_frame_annotated.png`
+   - `latest_frame.png` only if the overlay obscures important detail
+   - `latest_observation.md`
+   - `current_objective.md`
+   - `turn_plan.json`
+   - `recovery_saves.json` if the run looks stuck or risky
+
+3. Update `turn_plan.json` before every action batch.
+
+Required shape:
+
+```json
+{
+  "objective_id": "copy from current_objective.json",
+  "summary": "one short sentence describing the next batch",
+  "planned_actions": ["walk_up", "press_a"],
+  "fallback_actions": ["press_b"],
+  "notes": "why this batch should work",
+  "updated_at": "ISO-8601 timestamp"
+}
+```
+
+4. Keep batches short.
+   - Overworld movement: usually 1-4 actions before re-observing.
+   - Dialog/menu/battle: usually 1-2 actions before re-observing.
+   - Never send long blind action chains.
+
+5. Re-run `/agent/observe` after each batch.
+
+## What To Read Every Turn
+
+From `latest_observation.json` and `latest_observation.md`, pay attention to:
+
+- `screen_text`
+- `objective.current`
+- `recent_action`
+- `state_delta`
+- `stuck`
+- `recovery.current_recommendation`
+- `navigation.snapshot.valid_moves`
+- `navigation.snapshot.interaction`
+- `navigation.snapshot.ascii`
+- `navigation.location_map.ascii`
+
+From `current_objective.json`, trust:
+
+- the current objective id
+- completion predicate
+- failure hints
+- save recommendation
+- route hint
+
+Do not invent a different canonical objective.
+
+## Navigation vs Raw Actions
+
+Use navigation when you know the destination coordinates:
+
+```bash
+curl -s -X POST http://localhost:8765/navigation/path \
+  -H "Content-Type: application/json" \
+  -d '{"x": 10, "y": 5, "mode": "auto"}' | python3 -m json.tool
+```
+
+```bash
+curl -s -X POST http://localhost:8765/navigation/navigate \
+  -H "Content-Type: application/json" \
+  -d '{"x": 10, "y": 5, "mode": "auto"}' | python3 -m json.tool
+```
+
+Prefer raw actions for:
+
+- dialog
+- menus
+- battles
+- one-tile probing into unexplored terrain
+- NPC interaction confirmation
+
+Raw actions:
+
+```bash
 curl -s -X POST http://localhost:8765/action \
   -H "Content-Type: application/json" \
-  -d '{"actions": ["press_a"]}'
-
-# Movement sequence
-curl -s -X POST http://localhost:8765/action \
-  -H "Content-Type: application/json" \
-  -d '{"actions": ["walk_up", "walk_up", "walk_right", "press_a"]}'
-
-# Advance dialog
-curl -s -X POST http://localhost:8765/action \
-  -H "Content-Type: application/json" \
-  -d '{"actions": ["a_until_dialog_end"]}'
+  -d '{"actions": ["press_a"]}' | python3 -m json.tool
 ```
 
-### 4. Verify — Check Result
-
-After each action, the response includes `state_after`. Check:
-- Did I move? (position changed)
-- Did the dialog advance? (new text or cleared)
-- Did the battle state change? (HP, turn)
-
-If stuck (same state after 3+ actions), try:
-1. Press B to cancel menus
-2. Try different direction
-3. Load last save
-
-## Action Reference
-
-| Action | What It Does |
-|--------|-------------|
-| `press_a` | Press A (confirm, talk, interact) |
-| `press_b` | Press B (cancel, run from battle) |
-| `press_start` | Open menu |
-| `press_select` | Select button |
-| `walk_up/down/left/right` | Walk one tile |
-| `wait_60` | Wait ~1 second |
-| `a_until_dialog_end` | Mash A until dialog finishes |
-| `hold_a_30` | Hold A for 30 frames |
-
-## Battle Strategy (Gen 1)
-
-### Type Effectiveness — Key Matchups
-- **Water beats**: Fire, Ground, Rock
-- **Fire beats**: Grass, Bug, Ice
-- **Grass beats**: Water, Ground, Rock
-- **Electric beats**: Water, Flying
-- **Ground beats**: Fire, Electric, Rock, Poison
-- **Ice beats**: Grass, Ground, Flying, Dragon
-- **Fighting beats**: Normal, Rock, Ice
-- **Psychic beats**: Fighting, Poison (VERY strong in Gen 1)
-
-### Decision Tree
-1. Can I one-shot? → Use strongest super-effective move
-2. Am I at type disadvantage? → Switch if possible, or use neutral STAB
-3. Is enemy HP high? → Consider stat moves first (Growl, Tail Whip)
-4. Should I catch? → Weaken to red HP, use Poké Ball
-5. Wild battle, don't need it? → Run (press_b or use "Run" option)
-
-### Gen 1 Quirks
-- Special stat is BOTH Special Attack and Special Defense
-- Psychic type has NO effective counters (Ghost moves bugged, Bug moves weak)
-- Critical hit rate based on Speed stat
-- Wrap/Bind/Fire Spin prevent the opponent from acting
-
-## Saving
+```bash
+curl -s -X POST http://localhost:8765/action \
+  -H "Content-Type: application/json" \
+  -d '{"actions": ["walk_up", "press_a"]}' | python3 -m json.tool
+```
 
 ```bash
-# Save before important battles
+curl -s -X POST http://localhost:8765/action \
+  -H "Content-Type: application/json" \
+  -d '{"actions": ["a_until_dialog_end"]}' | python3 -m json.tool
+```
+
+## Decision Order
+
+Use this order:
+
+1. If `dialog.active` is true, clear dialog first.
+2. If `battle.in_battle` is true, handle battle first.
+3. If `stuck.level` is `warning` or `danger`, fix that before continuing long exploration.
+4. If the destination coordinates are known, prefer navigation.
+5. If coordinates are unknown, use the annotated frame, interaction probe, and ASCII maps to explore carefully.
+
+## Saving And Recovery
+
+Manual save:
+
+```bash
 curl -s -X POST http://localhost:8765/save \
-  -d '{"name": "before_brock"}'
-
-# Load if things go wrong
-curl -s -X POST http://localhost:8765/load \
-  -d '{"name": "before_brock"}'
-
-# List available saves
-curl -s http://localhost:8765/saves
+  -H "Content-Type: application/json" \
+  -d '{"name": "before_brock"}' | python3 -m json.tool
 ```
 
-Save before: Gym battles, catching rare Pokémon, entering dungeons.
-
-## Progression Milestones
-
-Track these in memory as you complete them:
-
-1. ☐ Get starter Pokémon from Oak
-2. ☐ Deliver Oak's Parcel, get Pokédex
-3. ☐ Reach Pewter City through Viridian Forest
-4. ☐ **Boulder Badge** (Brock — Rock type, use Water/Grass)
-5. ☐ Reach Cerulean City via Mt. Moon
-6. ☐ **Cascade Badge** (Misty — Water type, use Grass/Electric)
-7. ☐ Board SS Anne, get HM01 Cut
-8. ☐ **Thunder Badge** (Lt. Surge — Electric, use Ground)
-9. ☐ Clear Rock Tunnel to Lavender Town
-10. ☐ **Rainbow Badge** (Erika — Grass, use Fire/Ice/Flying)
-11. ☐ Clear Team Rocket Hideout, get Silph Scope
-12. ☐ **Soul Badge** (Koga — Poison, use Ground/Psychic)
-13. ☐ **Marsh Badge** (Sabrina — Psychic, use Bug... but good luck in Gen 1)
-14. ☐ **Volcano Badge** (Blaine — Fire, use Water/Ground)
-15. ☐ **Earth Badge** (Giovanni — Ground, use Water/Grass/Ice)
-16. ☐ Victory Road
-17. ☐ Elite Four + Champion
-
-## Memory Conventions
-
-Use these prefixes in Hermes memory for Pokémon-related entries:
-- `PKM:OBJECTIVE:` — Current goal
-- `PKM:MAP:` — Map/navigation knowledge
-- `PKM:STRATEGY:` — Battle/team strategy notes
-- `PKM:PROGRESS:` — Milestone completion
-- `PKM:STUCK:` — Notes about stuck situations and how they were resolved
-
-## Taking Screenshots
+Load recovery:
 
 ```bash
-# Save screenshot for vision analysis
-curl -s http://localhost:8765/screenshot -o /tmp/pokemon_screen.png
+curl -s -X POST http://localhost:8765/load \
+  -H "Content-Type: application/json" \
+  -d '{"name": "before_brock"}' | python3 -m json.tool
 ```
 
-Use `vision_analyze` on the screenshot when:
-- You're unsure what's on screen (menus, NPCs)
-- You need to read in-game text that RAM doesn't capture well
-- You want to verify your position visually
+Save when:
 
-## Stopping
+- `current_objective.md` recommends it
+- entering a risky battle
+- entering a dungeon/forest section with poor visibility
+- the dashboard shows a clean new checkpoint
 
-When done playing:
-1. Save the game: `curl -X POST localhost:8765/save -d '{"name": "session_end"}'`
-2. Kill the background server process
-3. Save progress notes to memory
+Reload when:
+
+- `stuck.level` is `danger`
+- repeated short batches produce no movement or no progress
+- the top candidate in `recovery_saves.json` is clearly safer than the current state
+
+## Working Memory
+
+`working_memory.md` is Pi-editable scratch space.
+
+Use it for:
+
+- local route notes
+- battle reminders
+- blockers just discovered
+- short hypotheses to test next turn
+
+Do not use it to redefine the canonical objective or recovery policy.
+
+## Dashboard Use
+
+Keep `/dashboard` open during play.
+
+Use it to verify:
+
+- what frame Pi is reading
+- what objective the server thinks is current
+- what `turn_plan.json` says Pi is trying to do
+- whether the last action batch changed state
+- whether the harness thinks Pi is stuck
+- which recovery save is currently recommended
+
+If the dashboard intent panel and Pi's next action disagree, stop and refresh observation before acting.
+
+## Stop Cleanly
+
+Before stopping:
+
+1. Save.
+2. Refresh `/agent/observe` once more.
+3. Leave `turn_plan.json` and `working_memory.md` in a useful state for resume.

@@ -3,154 +3,179 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Hermes Plays Pokémon</title>
-    <link rel="stylesheet" href="style.css?v=3">
-    <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🎮</text></svg>">
+    <title>Pokemon Agent Telemetry</title>
+    <link rel="stylesheet" href="/dashboard/assets/style.css?v=4">
 </head>
 <body>
-    <!-- Header -->
-    <header class="header">
-        <div class="header-title">
-            <pre class="ascii-title">
- ╦ ╦╔═╗╦═╗╔╦╗╔═╗╔═╗  ╔═╗╦  ╔═╗╦ ╦╔═╗
- ╠═╣║╣ ╠╦╝║║║║╣ ╚═╗  ╠═╝║  ╠═╣╚╦╝╚═╗
- ╩ ╩╚═╝╩╚═╩ ╩╚═╝╚═╝  ╩  ╩═╝╩ ╩ ╩ ╚═╝
-        ╔═╗╔═╗╦╔═╔═╗╔╦╗╔═╗╔╗╔
-        ╠═╝║ ║╠╩╗║╣ ║║║║ ║║║║
-        ╩  ╚═╝╩ ╩╚═╝╩ ╩╚═╝╝╚╝</pre>
+    <header class="topbar">
+        <div>
+            <p class="eyebrow">Vision-First Pi Harness</p>
+            <h1>Pokemon Agent Telemetry Console</h1>
         </div>
-        <div class="header-status">
-            <span class="status-dot" id="statusDot"></span>
-            <span class="status-text" id="statusText">Connecting...</span>
+        <div class="topbar-status">
+            <div class="status-chip">
+                <span class="status-dot" id="statusDot"></span>
+                <span id="statusText">Connecting</span>
+            </div>
+            <div class="meta-stack">
+                <span id="lastUpdate">No data yet</span>
+                <span id="uiModeChip">UI: unknown</span>
+            </div>
         </div>
     </header>
 
-    <!-- Main Content Grid -->
-    <main class="main-grid">
-        <!-- Left Panel: AI Log -->
-        <section class="panel log-panel">
+    <main class="dashboard-grid">
+        <section class="panel visuals-panel">
             <div class="panel-header">
-                <span class="panel-icon">🧠</span>
-                <span class="panel-title">AI Thought Process & Action Log</span>
-                <button class="btn-clear" id="btnClearLog" title="Clear log">✕</button>
+                <div>
+                    <p class="panel-kicker">Visuals</p>
+                    <h2>Current Frame</h2>
+                </div>
+                <div class="panel-badges">
+                    <span class="inline-chip" id="frameTimestamp">No frame</span>
+                    <span class="inline-chip" id="screenTextSource">OCR: n/a</span>
+                </div>
             </div>
-            <div class="log-container" id="logContainer">
-                <div class="log-entry log-status">
-                    <span class="log-time">--:--:--</span>
-                    <span class="log-text">Dashboard initializing...</span>
+            <div class="visual-grid">
+                <figure class="frame-card">
+                    <figcaption>Annotated Frame</figcaption>
+                    <img id="annotatedFrame" alt="Annotated frame">
+                </figure>
+                <figure class="frame-card">
+                    <figcaption>Raw Frame</figcaption>
+                    <img id="rawFrame" alt="Raw frame">
+                </figure>
+            </div>
+            <div class="screen-text-block">
+                <div class="section-label">OCR / Dialogue</div>
+                <pre id="screenText">No screen text available yet.</pre>
+            </div>
+        </section>
+
+        <section class="panel intent-panel">
+            <div class="panel-header">
+                <div>
+                    <p class="panel-kicker">Agent Intent</p>
+                    <h2>Objective And Plan</h2>
+                </div>
+            </div>
+            <div class="objective-card">
+                <div class="objective-head">
+                    <h3 id="objectiveTitle">No objective yet</h3>
+                    <span class="progress-pill" id="objectiveProgress">0%</span>
+                </div>
+                <p id="objectiveSummary">Waiting for observation data.</p>
+                <div class="progress-bar">
+                    <div id="progressFill"></div>
+                </div>
+                <p class="muted" id="objectivePredicate"></p>
+                <p class="muted" id="objectiveRoute"></p>
+            </div>
+            <div class="split-stack">
+                <div class="subpanel">
+                    <div class="section-label">Turn Plan</div>
+                    <p class="strong" id="turnPlanSummary">No plan file loaded.</p>
+                    <div class="plan-list">
+                        <div>
+                            <h4>Planned Actions</h4>
+                            <ul id="plannedActions"></ul>
+                        </div>
+                        <div>
+                            <h4>Fallback</h4>
+                            <ul id="fallbackActions"></ul>
+                        </div>
+                    </div>
+                    <p class="muted" id="turnPlanNotes"></p>
+                </div>
+                <div class="subpanel">
+                    <div class="section-label">Latest Outcome</div>
+                    <p class="strong" id="recentActionSummary">No action outcome yet.</p>
+                    <ul class="note-list" id="recentActionNotes"></ul>
+                    <div class="section-label">State Delta</div>
+                    <ul class="note-list" id="stateDeltaSummary"></ul>
                 </div>
             </div>
         </section>
 
-        <!-- Right Panel: Game View -->
-        <section class="panel game-panel">
+        <section class="panel world-panel">
             <div class="panel-header">
-                <span class="panel-icon">🎮</span>
-                <span class="panel-title">Game Screen</span>
-                <span class="panel-meta" id="frameCount"></span>
+                <div>
+                    <p class="panel-kicker">World State</p>
+                    <h2>Map, Party, Interaction</h2>
+                </div>
             </div>
-
-            <!-- Game Screen with corner brackets -->
-            <div class="game-screen-wrapper">
-                <div class="game-screen-frame">
-                    <img id="gameScreen" class="game-screen" alt="Game Screen"
-                         src="data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNkYPj/HwADBwIAMCbHYQAAAABJRU5ErkJggg==">
-                    <div class="game-screen-overlay" id="screenOverlay">
-                        <span class="overlay-text">Waiting for game...</span>
+            <div class="stats-strip" id="worldStats"></div>
+            <div class="world-columns">
+                <div class="subpanel">
+                    <div class="section-label">Interaction Probe</div>
+                    <pre id="interactionProbe">No interaction data yet.</pre>
+                    <div class="section-label">Party Snapshot</div>
+                    <pre id="partySnapshot">No party data yet.</pre>
+                </div>
+                <div class="subpanel ascii-panel">
+                    <div class="ascii-block">
+                        <div class="section-label">Live Local Map</div>
+                        <pre id="liveAscii">Waiting for navigation snapshot.</pre>
+                    </div>
+                    <div class="ascii-block">
+                        <div class="section-label">Explored Navigation Map</div>
+                        <pre id="exploredAscii">Waiting for explored map.</pre>
                     </div>
                 </div>
             </div>
+        </section>
 
-            <!-- Stats Grid -->
-            <div class="stats-grid">
-                <div class="stat-item">
-                    <span class="stat-label">Badges</span>
-                    <div class="badges-row" id="badgesRow">
-                        <span class="badge-circle empty" title="Boulder">○</span>
-                        <span class="badge-circle empty" title="Cascade">○</span>
-                        <span class="badge-circle empty" title="Thunder">○</span>
-                        <span class="badge-circle empty" title="Rainbow">○</span>
-                        <span class="badge-circle empty" title="Soul">○</span>
-                        <span class="badge-circle empty" title="Marsh">○</span>
-                        <span class="badge-circle empty" title="Volcano">○</span>
-                        <span class="badge-circle empty" title="Earth">○</span>
-                    </div>
-                </div>
-                <div class="stat-item">
-                    <span class="stat-label">Map</span>
-                    <span class="stat-value" id="statMap">---</span>
-                </div>
-                <div class="stat-item">
-                    <span class="stat-label">Position</span>
-                    <span class="stat-value" id="statPosition">(--, --)</span>
-                </div>
-                <div class="stat-item">
-                    <span class="stat-label">Money</span>
-                    <span class="stat-value stat-money" id="statMoney">$---</span>
-                </div>
-                <div class="stat-item">
-                    <span class="stat-label">Play Time</span>
-                    <span class="stat-value" id="statPlayTime">--:--:--</span>
-                </div>
-                <div class="stat-item">
-                    <span class="stat-label">Turns</span>
-                    <span class="stat-value" id="statTurns">0</span>
+        <section class="panel memory-panel">
+            <div class="panel-header">
+                <div>
+                    <p class="panel-kicker">Memory And Progress</p>
+                    <h2>Checkpoints, Recovery, Workspace</h2>
                 </div>
             </div>
-
-            <!-- Battle Info (hidden when not in battle) -->
-            <div class="battle-info hidden" id="battleInfo">
-                <div class="panel-header">
-                    <span class="panel-icon">⚔️</span>
-                    <span class="panel-title">Battle</span>
+            <div class="memory-grid">
+                <div class="subpanel">
+                    <div class="section-label">Checkpoints</div>
+                    <ul class="note-list" id="checkpointList"></ul>
                 </div>
-                <div class="battle-content" id="battleContent"></div>
+                <div class="subpanel">
+                    <div class="section-label">Recovery</div>
+                    <p class="strong" id="recoveryRecommendation">No recovery recommendation yet.</p>
+                    <ul class="note-list" id="recoveryCandidates"></ul>
+                    <div class="section-label">Stuck Signal</div>
+                    <p id="stuckSignal">No stuck signal yet.</p>
+                </div>
+                <div class="subpanel">
+                    <div class="section-label">Knowledge Graph</div>
+                    <pre id="knowledgeSummary">No knowledge summary yet.</pre>
+                    <div class="section-label">Workspace</div>
+                    <pre id="workspaceSummary">No workspace info yet.</pre>
+                </div>
+            </div>
+        </section>
+
+        <section class="panel timeline-panel">
+            <div class="panel-header">
+                <div>
+                    <p class="panel-kicker">Timeline</p>
+                    <h2>Recent Events And Raw State</h2>
+                </div>
+            </div>
+            <div class="timeline-layout">
+                <div class="timeline-column" id="timeline"></div>
+                <div class="raw-column">
+                    <details open>
+                        <summary>Latest Observation JSON</summary>
+                        <pre id="rawObservation"></pre>
+                    </details>
+                    <details>
+                        <summary>Latest Navigation JSON</summary>
+                        <pre id="rawNavigation"></pre>
+                    </details>
+                </div>
             </div>
         </section>
     </main>
 
-    <!-- Bottom Panel: Team -->
-    <section class="panel team-panel">
-        <div class="panel-header">
-            <span class="panel-icon">⚡</span>
-            <span class="panel-title">Current Team</span>
-        </div>
-        <div class="team-container" id="teamContainer">
-            <!-- Empty team slots -->
-            <div class="team-card empty-card">
-                <div class="team-name">Empty</div>
-                <div class="empty-pokeball">○</div>
-            </div>
-            <div class="team-card empty-card">
-                <div class="team-name">Empty</div>
-                <div class="empty-pokeball">○</div>
-            </div>
-            <div class="team-card empty-card">
-                <div class="team-name">Empty</div>
-                <div class="empty-pokeball">○</div>
-            </div>
-            <div class="team-card empty-card">
-                <div class="team-name">Empty</div>
-                <div class="empty-pokeball">○</div>
-            </div>
-            <div class="team-card empty-card">
-                <div class="team-name">Empty</div>
-                <div class="empty-pokeball">○</div>
-            </div>
-            <div class="team-card empty-card">
-                <div class="team-name">Empty</div>
-                <div class="empty-pokeball">○</div>
-            </div>
-        </div>
-    </section>
-
-    <!-- Dialog overlay (shown when dialog is active) -->
-    <div class="dialog-overlay hidden" id="dialogOverlay">
-        <div class="dialog-box">
-            <span class="dialog-text" id="dialogText"></span>
-        </div>
-    </div>
-
-    <script src="app.js?v=3"></script>
+    <script src="/dashboard/assets/app.js?v=4"></script>
 </body>
 </html>
