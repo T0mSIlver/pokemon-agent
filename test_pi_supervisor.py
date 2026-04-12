@@ -79,6 +79,13 @@ events = [
                 {"type": "thinking", "text": "Inspecting the frame."},
                 {"type": "text", "text": message},
             ],
+            "usage": {
+                "input": 3200,
+                "output": 260,
+                "cacheRead": 0,
+                "cacheWrite": 0,
+                "totalTokens": 3460,
+            },
         },
     },
     {"type": "agent_end", "messages": []},
@@ -126,13 +133,14 @@ async def test_pi_supervisor_tracks_turn_output_and_tools(tmp_path: Path):
         pi_binary=str(fake_pi),
     )
 
-    await supervisor.start(prompt="Play the game.", auto_continue=False)
+    await supervisor.start(goal="Reach the next checkpoint.", auto_continue=False)
     await supervisor.wait_until_idle(timeout=5)
 
     snapshot = supervisor.state_snapshot()
     assert snapshot["status"] == "completed"
     assert snapshot["turns_completed"] == 1
     assert snapshot["session_id"] == "session-123"
+    assert snapshot["goal"] == "Reach the next checkpoint."
     assert snapshot["last_assistant_text"] == "Initial turn."
     assert "Inspecting the frame." in snapshot["last_assistant_thinking"]
     assert snapshot["turn_plan_preview"]["payload"]["objective_id"] == "get_oaks_parcel"
@@ -176,7 +184,7 @@ async def test_pi_supervisor_attaches_latest_frame_pngs_to_turn_prompt(tmp_path:
         pi_binary=str(fake_pi),
     )
 
-    await supervisor.start(prompt="Play the game.", auto_continue=False)
+    await supervisor.start(goal="Reach the next checkpoint.", auto_continue=False)
     await supervisor.wait_until_idle(timeout=5)
 
     launch_event = next(event for event in events if event["type"] == "pi_turn_launch")
@@ -204,7 +212,7 @@ async def test_pi_supervisor_auto_continue_uses_exact_session_file(tmp_path: Pat
     )
 
     await supervisor.start(
-        prompt="Play the game.",
+        goal="Reach the next checkpoint.",
         auto_continue=True,
         max_turns=2,
         continue_delay_seconds=0,
@@ -232,15 +240,37 @@ async def test_pi_supervisor_can_continue_existing_session(tmp_path: Path):
         pi_binary=str(fake_pi),
     )
 
-    await supervisor.start(prompt="Play the game.", auto_continue=False)
+    await supervisor.start(goal="Reach the next checkpoint.", auto_continue=False)
     await supervisor.wait_until_idle(timeout=5)
-    await supervisor.continue_once(message="continue")
+    await supervisor.continue_once()
     await supervisor.wait_until_idle(timeout=5)
 
     snapshot = supervisor.state_snapshot()
     assert snapshot["turns_completed"] == 2
     assert snapshot["last_assistant_text"] == "Continued turn."
     assert snapshot["status"] == "completed"
+
+
+@pytest.mark.asyncio
+async def test_pi_supervisor_continue_snapshot_clears_live_stream_fields(tmp_path: Path):
+    fake_pi = make_fake_pi_script(tmp_path)
+    supervisor = PiSupervisor(
+        workspace_dir=tmp_path / "workspace",
+        server_url="http://127.0.0.1:8765",
+        pi_binary=str(fake_pi),
+    )
+
+    await supervisor.start(goal="Reach the next checkpoint.", auto_continue=False)
+    await supervisor.wait_until_idle(timeout=5)
+
+    snapshot = await supervisor.continue_once()
+
+    assert snapshot["status"] == "starting"
+    assert snapshot["current_assistant_text"] == ""
+    assert snapshot["current_assistant_thinking"] == ""
+    assert snapshot["active_tools"] == []
+
+    await supervisor.wait_until_idle(timeout=5)
 
 
 @pytest.mark.asyncio
@@ -264,7 +294,7 @@ async def test_pi_supervisor_auto_continue_schedules_and_runs_next_turn(tmp_path
     )
 
     await supervisor.start(
-        prompt="Play the game.",
+        goal="Reach the next checkpoint.",
         auto_continue=True,
         max_turns=2,
         continue_delay_seconds=0,
@@ -299,7 +329,7 @@ async def test_pi_supervisor_synthesizes_turn_completion_when_pi_omits_turn_end(
     )
 
     await supervisor.start(
-        prompt="Play the game.",
+        goal="Reach the next checkpoint.",
         auto_continue=True,
         max_turns=2,
         continue_delay_seconds=0,
@@ -313,3 +343,33 @@ async def test_pi_supervisor_synthesizes_turn_completion_when_pi_omits_turn_end(
     assert any(
         event["type"] == "pi_turn_end" and event.get("synthetic") is True for event in events
     )
+
+
+@pytest.mark.asyncio
+async def test_pi_supervisor_tracks_usage_and_counts(tmp_path: Path):
+    fake_pi = make_fake_pi_script(tmp_path)
+    supervisor = PiSupervisor(
+        workspace_dir=tmp_path / "workspace",
+        server_url="http://127.0.0.1:8765",
+        pi_binary=str(fake_pi),
+    )
+
+    await supervisor.start(
+        goal="Reach the next checkpoint.",
+        auto_continue=True,
+        max_turns=2,
+        continue_delay_seconds=0,
+    )
+    await supervisor.wait_until_idle(timeout=5)
+
+    snapshot = supervisor.state_snapshot()
+    counts = snapshot["counts"]
+    assert counts["assistant_messages"] == 2
+    assert counts["thinking_blocks"] == 2
+    assert counts["tool_calls"] == 2
+    assert counts["user_messages"] == 0
+    usage = snapshot["session_usage"]
+    assert usage is not None
+    assert usage["totalTokens"] == 3460
+    assert snapshot["last_message_usage"]["output"] == 260
+    assert snapshot["compaction"]["tokens_before"] is None

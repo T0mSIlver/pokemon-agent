@@ -15,6 +15,12 @@ from pokemon_agent.agent_runtime import (
     classify_action_feedback,
     render_navigation_overlay,
 )
+from pokemon_agent.harness.contracts import TurnPlanInput
+from pokemon_agent.harness.planning import (
+    evaluate_plan_outcome,
+    mark_plan_executed,
+    store_validated_plan,
+)
 from pokemon_agent.navigation import LiveNavigationSnapshot, NavigationStore
 
 
@@ -38,7 +44,7 @@ class FakeEmulator:
 class FakeSupervisorAPI:
     def __init__(self) -> None:
         self.started_with = None
-        self.continued_with = None
+        self.continued = False
         self.stopped = False
 
     def state_snapshot(self) -> dict:
@@ -49,7 +55,7 @@ class FakeSupervisorAPI:
             "next_auto_continue_at": None,
             "config": {
                 "auto_continue": True,
-                "continue_message": "continue",
+                "goal": "",
                 "continue_delay_seconds": 1.0,
             },
             "recent_tools": [],
@@ -66,8 +72,8 @@ class FakeSupervisorAPI:
         snapshot["status"] = "starting"
         return snapshot
 
-    async def continue_once(self, *, message: str) -> dict:
-        self.continued_with = message
+    async def continue_once(self) -> dict:
+        self.continued = True
         snapshot = self.state_snapshot()
         snapshot["status"] = "starting"
         return snapshot
@@ -272,16 +278,30 @@ def test_agent_runtime_refresh_writes_workspace_and_dashboard_state(tmp_path: Pa
         workspace_dir=tmp_path / "workspace",
     )
     runtime.artifacts["turn_plan_json"].write_text(
-        """
-{
-  "objective_id": "head_to_viridian_forest",
-  "summary": "Move toward the forest gate.",
-  "planned_actions": ["walk_up"],
-  "fallback_actions": ["press_b"],
-  "notes": "short probe",
-  "updated_at": "2026-04-09T12:00:00Z"
-}
-""".strip(),
+        json.dumps(
+            {
+                "version": 1,
+                "observation_id": "obs-prev",
+                "objective_id": "head_to_viridian_forest",
+                "intent": "Move toward the forest gate.",
+                "mode": "overworld",
+                "primary_branch": {"kind": "raw_actions", "actions": ["walk_up"]},
+                "fallback_branch": {"kind": "raw_actions", "actions": ["press_b"]},
+                "expected_outcome": {
+                    "summary": "Move one tile north.",
+                    "position_delta": {"dx": 0, "dy": -1},
+                },
+                "notes": "short probe",
+                "updated_at": "2026-04-09T12:00:00Z",
+                "status": {
+                    "state": "validated",
+                    "observation_id": "obs-prev",
+                    "plan_updated_at": "2026-04-09T12:00:00Z",
+                    "validated_at": "2026-04-09T12:00:00Z",
+                    "reason": "Validated against the latest turn_context.",
+                },
+            }
+        ),
         encoding="utf-8",
     )
 
@@ -298,6 +318,7 @@ def test_agent_runtime_refresh_writes_workspace_and_dashboard_state(tmp_path: Pa
 
     assert Path(bundle["artifacts"]["latest_frame"]).exists()
     assert Path(bundle["artifacts"]["latest_frame_annotated"]).exists()
+    assert Path(bundle["artifacts"]["turn_context_json"]).exists()
     assert Path(bundle["artifacts"]["latest_observation_json"]).exists()
     assert dashboard["agent_intent"]["turn_plan"]["summary"] == "Move toward the forest gate."
     assert dashboard["agent_intent"]["movement_guidance"]["notes"]
@@ -308,6 +329,9 @@ def test_agent_runtime_refresh_writes_workspace_and_dashboard_state(tmp_path: Pa
         == "Viridian City"
     )
     observation_md = Path(bundle["artifacts"]["latest_observation_md"]).read_text(encoding="utf-8")
+    turn_context = json.loads(
+        Path(bundle["artifacts"]["turn_context_json"]).read_text(encoding="utf-8")
+    )
     observation_json = json.loads(
         Path(bundle["artifacts"]["latest_observation_json"]).read_text(encoding="utf-8")
     )
@@ -321,6 +345,25 @@ def test_agent_runtime_refresh_writes_workspace_and_dashboard_state(tmp_path: Pa
     assert observation_json["navigation"]["frontiers"]
     assert observation_json["navigation"]["landmarks"]
     assert observation_json["navigation"]["distance_ascii"]
+    assert turn_context["observation_id"].startswith("obs-")
+    assert turn_context["planning"]["observation_id"] == turn_context["observation_id"]
+    assert turn_context["planning"]["objective_id"] == turn_context["objective"]["id"]
+    assert (
+        turn_context["planning"]["branch_templates"]["raw_actions"]["kind"] == "raw_actions"
+    )
+    assert (
+        turn_context["planning"]["expected_outcome_check_fields"]
+        == [
+            "map_name",
+            "position",
+            "position_delta",
+            "dialog_active",
+            "battle_active",
+            "screen_text_contains",
+        ]
+    )
+    assert turn_context["navigation"]["route_hints"]
+    assert turn_context["plan_status"]["state"] == "stale"
     assert observation_json["memory"]["recent_facts"]
     assert observation_json["memory"]["session_brief_path"].endswith("session_brief.md")
     assert observation_json["dialog"]["should_continue"] is False
@@ -328,6 +371,8 @@ def test_agent_runtime_refresh_writes_workspace_and_dashboard_state(tmp_path: Pa
     assert Path(bundle["artifacts"]["landmarks_json"]).exists()
     assert Path(bundle["artifacts"]["event_memory_jsonl"]).exists()
     assert Path(bundle["artifacts"]["session_brief_md"]).exists()
+    assert Path(bundle["artifacts"]["latest_observation_json"]).parent.name == "debug"
+    assert Path(bundle["artifacts"]["session_brief_md"]).parent.name == "debug"
 
 
 def test_agent_runtime_detects_repeated_no_movement(tmp_path: Path):
@@ -356,6 +401,67 @@ def test_agent_runtime_detects_repeated_no_movement(tmp_path: Path):
     assert stuck_level in {"warning", "danger"}
 
 
+def test_agent_runtime_moves_debug_artifacts_out_of_workspace_root(tmp_path: Path):
+    workspace_dir = tmp_path / "workspace"
+    workspace_dir.mkdir(parents=True, exist_ok=True)
+    legacy_latest_observation = workspace_dir / "latest_observation.json"
+    legacy_working_memory = workspace_dir / "working_memory.md"
+    legacy_latest_observation.write_text("{}", encoding="utf-8")
+    legacy_working_memory.write_text("# Legacy\n", encoding="utf-8")
+
+    runtime = AgentRuntime(
+        data_dir=tmp_path / "data",
+        workspace_dir=workspace_dir,
+    )
+
+    assert runtime.artifacts["latest_observation_json"].exists()
+    assert runtime.artifacts["working_memory_md"].exists()
+    assert runtime.artifacts["latest_observation_json"].parent.name == "debug"
+    assert runtime.artifacts["working_memory_md"].parent.name == "debug"
+    assert not legacy_latest_observation.exists()
+    assert not legacy_working_memory.exists()
+
+
+def test_evaluate_plan_outcome_uses_execution_baseline_for_position_delta():
+    plan = store_validated_plan(
+        TurnPlanInput.model_validate(
+            {
+                "observation_id": "obs-123",
+                "objective_id": "get_oaks_parcel",
+                "intent": "Step north once.",
+                "mode": "overworld",
+                "primary_branch": {"kind": "raw_actions", "actions": ["walk_up"]},
+                "expected_outcome": {
+                    "summary": "Move one tile north.",
+                    "position_delta": {"dx": 0, "dy": -1},
+                },
+            }
+        )
+    )
+    plan = mark_plan_executed(
+        plan,
+        branch="primary",
+        branch_kind="raw_actions",
+        requested_actions=["walk_up"],
+        executed_actions=1,
+        baseline_map_name="Viridian House",
+        baseline_position={"x": 2, "y": 7},
+        summary="Executed 1 raw action(s).",
+    )
+
+    evaluated = evaluate_plan_outcome(
+        plan,
+        {
+            "state": make_state(map_name="Viridian House", map_id=44, x=2, y=6),
+            "state_delta": {"movement": {"dx": -19, "dy": -3}},
+            "screen_text": {"text": "No readable screen text extracted."},
+        },
+    )
+
+    assert evaluated.status.state == "matched"
+    assert evaluated.status.reason == "Expected outcome matched."
+
+
 def test_agent_runtime_records_landmarks_and_failure_memory(tmp_path: Path):
     emulator = FakeEmulator()
     store = NavigationStore(tmp_path / "navigation.json")
@@ -381,7 +487,9 @@ def test_agent_runtime_records_landmarks_and_failure_memory(tmp_path: Path):
     event_lines = runtime.artifacts["event_memory_jsonl"].read_text(encoding="utf-8").splitlines()
     event_payloads = [json.loads(line) for line in event_lines if line.strip()]
     session_brief = runtime.artifacts["session_brief_md"].read_text(encoding="utf-8")
-    observation = json.loads(runtime.artifacts["latest_observation_json"].read_text(encoding="utf-8"))
+    observation = json.loads(
+        runtime.artifacts["latest_observation_json"].read_text(encoding="utf-8")
+    )
 
     assert any(entry["kind"] == "sign" for entry in landmarks["landmarks"])
     assert any(entry["kind"] == "npc_blocker" for entry in landmarks["landmarks"])
@@ -468,8 +576,7 @@ def test_dashboard_state_endpoint_uses_runtime_bundle(tmp_path: Path, monkeypatc
     assert payload["pi_supervisor"]["status"] == "idle"
     assert "realtime_enabled" in payload["server_runtime"]
     assert (
-        payload["artifact_urls"]["latest_observation_json"]
-        == "/artifacts/latest_observation_json"
+        payload["artifact_urls"]["turn_context_json"] == "/artifacts/turn_context_json"
     )
 
 
@@ -504,14 +611,39 @@ def test_agent_observe_endpoint_returns_workspace_bundle(tmp_path: Path, monkeyp
 
     assert response.status_code == 200
     payload = response.json()
+    assert payload["observation_id"].startswith("obs-")
     assert payload["reason"] == "contract_test"
     assert payload["artifacts"]["latest_frame"].endswith("latest_frame.png")
-    assert Path(payload["artifacts"]["latest_observation_json"]).exists()
+    assert Path(payload["artifacts"]["turn_context_json"]).exists()
+    assert payload["plan_status"]["state"] == "awaiting_plan"
     assert "raw_frame_b64" not in payload
-    assert payload["navigation"]["route_cards"]
-    assert payload["memory"]["recent_facts"]
-    assert payload["dialog"]["should_continue"] is False
-    assert payload["battle"]["recommended_mode"] == "none"
+
+
+def test_agent_observe_endpoint_accepts_empty_body(tmp_path: Path, monkeypatch):
+    emulator = FakeEmulator()
+    store = NavigationStore(tmp_path / "navigation.json")
+    snapshot = make_snapshot()
+    navigation = make_navigation_payload(store, snapshot)
+    runtime = AgentRuntime(
+        data_dir=tmp_path / "data",
+        workspace_dir=tmp_path / "workspace",
+    )
+
+    monkeypatch.setattr(server, "_runtime", runtime)
+    monkeypatch.setattr(server, "_emulator", emulator)
+    monkeypatch.setattr(server, "_navigation_store", store)
+    monkeypatch.setattr(
+        server,
+        "_get_state_dict",
+        lambda: make_state(map_name="Viridian City", map_id=1, has_pokedex=True, x=10, y=10),
+    )
+    monkeypatch.setattr(server, "_get_navigation_payload_sync", lambda goal=None: navigation)
+
+    with TestClient(server.app) as client:
+        response = client.post("/agent/observe")
+
+    assert response.status_code == 200
+    assert response.json()["reason"] == "manual_observe"
 
 
 def test_artifact_endpoint_serves_workspace_files(tmp_path: Path, monkeypatch):
@@ -527,6 +659,117 @@ def test_artifact_endpoint_serves_workspace_files(tmp_path: Path, monkeypatch):
 
     assert response.status_code == 200
     assert "# Notes" in response.text
+
+
+def test_agent_plan_endpoint_validates_and_persists_strict_turn_plan(tmp_path: Path, monkeypatch):
+    emulator = FakeEmulator()
+    store = NavigationStore(tmp_path / "navigation.json")
+    snapshot = make_snapshot()
+    navigation = make_navigation_payload(store, snapshot)
+    runtime = AgentRuntime(
+        data_dir=tmp_path / "data",
+        workspace_dir=tmp_path / "workspace",
+    )
+
+    monkeypatch.setattr(server, "_runtime", runtime)
+    monkeypatch.setattr(server, "_emulator", emulator)
+    monkeypatch.setattr(server, "_navigation_store", store)
+    monkeypatch.setattr(
+        server,
+        "_get_state_dict",
+        lambda: make_state(map_name="Viridian City", map_id=1, has_pokedex=True, x=10, y=10),
+    )
+    monkeypatch.setattr(server, "_get_navigation_payload_sync", lambda goal=None: navigation)
+
+    with TestClient(server.app) as client:
+        observe = client.post("/agent/observe", json={"reason": "plan_contract"}).json()
+        valid_payload = {
+            "observation_id": observe["observation_id"],
+            "objective_id": "head_to_viridian_forest",
+            "intent": "Probe one tile north.",
+            "mode": "overworld",
+            "primary_branch": {"kind": "raw_actions", "actions": ["walk_up"]},
+            "fallback_branch": {"kind": "raw_actions", "actions": ["press_b"]},
+            "expected_outcome": {
+                "summary": "Move one tile north.",
+                "position_delta": {"dx": 0, "dy": -1},
+            },
+            "notes": "short probe",
+        }
+        valid_response = client.post("/agent/plan", json=valid_payload)
+        invalid_response = client.post(
+            "/agent/plan",
+            json={**valid_payload, "objective_id": "wrong_objective"},
+        )
+
+    assert valid_response.status_code == 200
+    assert invalid_response.status_code == 400
+    assert valid_response.json()["plan_status"]["state"] == "validated"
+    assert runtime.load_turn_plan_model().status.state == "validated"
+
+
+def test_agent_act_endpoint_executes_validated_plan_and_updates_result_on_observe(
+    tmp_path: Path,
+    monkeypatch,
+):
+    emulator = FakeEmulator()
+    store = NavigationStore(tmp_path / "navigation.json")
+    snapshot = make_snapshot()
+    navigation = make_navigation_payload(store, snapshot)
+    runtime = AgentRuntime(
+        data_dir=tmp_path / "data",
+        workspace_dir=tmp_path / "workspace",
+    )
+    state_holder = {"x": 10, "y": 10}
+
+    def fake_state() -> dict:
+        return make_state(
+            map_name="Viridian City",
+            map_id=1,
+            has_pokedex=True,
+            x=state_holder["x"],
+            y=state_holder["y"],
+        )
+
+    def fake_execute(actions: list[str]) -> int:
+        for action in actions:
+            if action == "walk_up":
+                state_holder["y"] -= 1
+        return len(actions)
+
+    monkeypatch.setattr(server, "_runtime", runtime)
+    monkeypatch.setattr(server, "_emulator", emulator)
+    monkeypatch.setattr(server, "_navigation_store", store)
+    monkeypatch.setattr(server, "_get_state_dict", fake_state)
+    monkeypatch.setattr(server, "_get_navigation_payload_sync", lambda goal=None: navigation)
+    monkeypatch.setattr(server, "_execute_action_batch_sync", fake_execute)
+
+    with TestClient(server.app) as client:
+        observe = client.post("/agent/observe", json={"reason": "act_contract"}).json()
+        plan_response = client.post(
+            "/agent/plan",
+            json={
+                "observation_id": observe["observation_id"],
+                "objective_id": "head_to_viridian_forest",
+                "intent": "Step north once.",
+                "mode": "overworld",
+                "primary_branch": {"kind": "raw_actions", "actions": ["walk_up"]},
+                "expected_outcome": {
+                    "summary": "Move one tile north.",
+                    "position_delta": {"dx": 0, "dy": -1},
+                },
+            },
+        )
+        act_response = client.post("/agent/act")
+        observe_after = client.post("/agent/observe", json={"reason": "after_act"})
+
+    assert plan_response.status_code == 200
+    assert act_response.status_code == 200
+    assert act_response.json()["plan_status"]["state"] == "executed_waiting_observe"
+    assert act_response.json()["requires_observe"] is True
+    assert observe_after.status_code == 200
+    assert observe_after.json()["plan_status"]["state"] == "matched"
+    assert runtime.load_turn_plan_model().status.state == "matched"
 
 
 def test_navigator_endpoint_returns_best_route(tmp_path: Path, monkeypatch):
@@ -565,23 +808,22 @@ def test_supervisor_endpoints_delegate_to_supervisor(monkeypatch):
         start_response = client.post(
             "/supervisor/start",
             json={
-                "prompt": "play",
+                "goal": "play",
                 "provider": "openai",
                 "model": "local-model",
                 "thinking": "low",
                 "auto_continue": False,
-                "continue_message": "continue",
             },
         )
-        continue_response = client.post("/supervisor/continue", json={"message": "continue"})
+        continue_response = client.post("/supervisor/continue", json={})
         stop_response = client.post("/supervisor/stop")
 
     assert start_response.status_code == 200
     assert continue_response.status_code == 200
     assert stop_response.status_code == 200
     assert fake_supervisor.started_with is not None
-    assert fake_supervisor.started_with["prompt"] == "play"
-    assert fake_supervisor.continued_with == "continue"
+    assert fake_supervisor.started_with["goal"] == "play"
+    assert fake_supervisor.continued is True
     assert fake_supervisor.stopped is True
 
 

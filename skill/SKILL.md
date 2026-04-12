@@ -1,31 +1,26 @@
 ---
 name: pokemon-player
-description: Play Pokemon Red through this repo's vision-first harness with the server already running. Refresh `/agent/observe`, read the annotated screenshot and observation files every turn, update `turn_plan.json`, then use navigation or raw actions in short batches.
-tags: [pokemon, emulator, vision, gameplay, pathfinding, dashboard]
+description: Play Pokemon Red through this repo's strict minimal-turn harness. Inspect the attached frames, refresh `/agent/observe`, read `turn_context.json` and `turn_plan.json`, submit a validated plan with `/agent/plan`, then execute one batch with `/agent/act`.
+tags: [pokemon, emulator, vision, gameplay, dashboard]
 triggers:
   - play pokemon
   - play pokemon red
   - pokemon harness
   - pokemon dashboard
-  - pokemon navigation
   - pokemon vision
 ---
 
 # Pokemon Player Skill
 
-Use this repo's local server as the sole harness. Pi is the orchestrator. The repo owns screenshots, observation files, objectives, checkpoints, recovery, and dashboard telemetry.
+Use this repo's local server as the sole harness. Pi is the orchestrator. Do not launch or stop the harness server from inside Pi.
 
 Red is the only first-class target for this skill.
 
-This skill is intended to be loaded by the dashboard's Pi supervisor after the operator has already started the harness server in a terminal.
-
-Do not launch a second harness server from inside Pi.
-Do not stop the harness server from inside Pi.
-If `http://localhost:8765/health` is unreachable, stop and tell the operator that the server is not running.
+If `http://localhost:8765/health` is unreachable, stop and tell the operator the server is not running.
 
 ## Server Assumption
 
-Assume the operator already started the server, typically from the repo root:
+Assume the operator already started the server from the repo root:
 
 ```bash
 uv run pokemon-agent serve \
@@ -34,205 +29,115 @@ uv run pokemon-agent serve \
   --agent-workspace-dir "$(pwd)/.agent-workspace"
 ```
 
-Operator-only optional flags:
+The dashboard is at `http://localhost:8765/dashboard`.
 
-- `--no-realtime` disables the background clock.
-- `--realtime-fps 30` changes the realtime cadence.
+If the operator is already using the dashboard supervisor, do not start a second Pi session manually.
 
-Your job is to verify the server, not to launch it.
-Check health first:
+## Canonical Turn Artifacts
 
-```bash
-curl -s http://localhost:8765/health | python3 -m json.tool
-```
+Treat these files as the only model-facing workspace contract:
 
-Dashboard:
-
-`http://localhost:8765/dashboard`
-
-The operator starts Pi from the dashboard supervisor. The supervisor will stream tool calls, reasoning, prompts, replies, and turn boundaries into `/dashboard`.
-The dashboard also shows the live prompt/output transcript, stderr, auto-continue scheduling, manual save controls, and direct load controls for recovery saves.
-The supervisor also attaches `latest_frame_annotated.png` and `latest_frame.png` as image inputs on each turn when those files exist. Use those attached PNGs for scene understanding instead of treating the frame paths as plain text.
-
-If the operator is using the dashboard supervisor, do not start a second Pi session manually.
-
-## Workspace Contract
-
-The server writes these files into the agent workspace:
-
-- `latest_frame.png`
 - `latest_frame_annotated.png`
-- `latest_observation.json`
-- `latest_observation.md`
-- `current_objective.json`
-- `current_objective.md`
+- `latest_frame.png`
+- `turn_context.json`
 - `turn_plan.json`
-- `working_memory.md`
-- `checkpoints.jsonl`
-- `knowledge_graph.json`
-- `landmarks.json`
-- `event_memory.jsonl`
-- `session_brief.md`
-- `recovery_saves.json`
-- `run_log.jsonl`
+- `recovery_saves.json` only when `turn_context.json` says the run is risky or stuck
 
-Pi must treat these as the canonical turn artifacts.
+Ignore `.agent-workspace/debug/`. Those files are dashboard and operator support, not part of the Pi contract.
 
-API responses are intentionally concise. Do not expect screenshots or full raw observations inline in HTTP responses. Read the workspace files instead.
+API responses are intentionally concise. Read the workspace files instead of expecting large inline payloads.
 
 ## Mandatory Turn Loop
 
 Do this every turn:
 
-1. Refresh the workspace bundle.
+1. Refresh the turn context.
 
 ```bash
-curl -s -X POST http://localhost:8765/agent/observe \
-  -H "Content-Type: application/json" \
-  -d '{"reason": "turn_refresh"}' | python3 -m json.tool
+curl -s -X POST http://localhost:8765/agent/observe | python3 -m json.tool
 ```
 
 2. Read these files in this order:
    - `latest_frame_annotated.png`
-   - `latest_frame.png` only if the overlay obscures important detail
-   - `latest_observation.md`
-   - `current_objective.md`
-   - `session_brief.md`
+   - `latest_frame.png` only if the overlay hides detail
+   - `turn_context.json`
    - `turn_plan.json`
-   - `recovery_saves.json` if the run looks stuck or risky
+   - `recovery_saves.json` only if the context says recovery matters
 
-3. Update `turn_plan.json` before every action batch.
+   `turn_context.json` includes a `planning` section with:
+   - the exact `observation_id` and `objective_id` to copy
+   - the allowed branch shape for each mode
+   - the valid measurable `expected_outcome` fields
 
-Required shape:
+3. Submit one strict plan for the current observation.
 
-```json
-{
-  "objective_id": "copy from current_objective.json",
-  "summary": "one short sentence describing the next batch",
-  "planned_actions": ["walk_up", "press_a"],
-  "fallback_actions": ["press_b"],
-  "notes": "why this batch should work",
-  "updated_at": "ISO-8601 timestamp"
-}
+```bash
+curl -s -X POST http://localhost:8765/agent/plan \
+  -H "Content-Type: application/json" \
+  -d '{
+        "observation_id": "<copy from turn_context.json>",
+        "objective_id": "<copy from turn_context.json>",
+        "intent": "Probe one tile north.",
+        "mode": "overworld",
+        "primary_branch": {"kind": "raw_actions", "actions": ["walk_up"]},
+        "expected_outcome": {
+          "summary": "Move one tile north.",
+          "position_delta": {"dx": 0, "dy": -1}
+        }
+      }' | python3 -m json.tool
 ```
 
-4. Keep batches short.
-   - Overworld movement: usually 1-4 actions before re-observing.
-   - Dialog/menu/battle: usually 1-2 actions before re-observing.
-   - Never send long blind action chains.
+4. Execute exactly one validated batch.
 
-5. Re-run `/agent/observe` after each batch.
+```bash
+curl -s -X POST http://localhost:8765/agent/act | python3 -m json.tool
+```
 
-If the dashboard supervisor auto-continues turns, still treat each turn as a hard stop after you observe, plan, act in a short batch, and summarize the next step via `turn_plan.json`.
+5. Re-run `/agent/observe` before planning again.
+
+Never send long blind action chains. Overworld raw batches are capped at 4 actions. Dialog and battle raw batches are capped at 2 actions. Navigation plans are one target per plan.
+
+## What To Trust In `turn_context.json`
+
+Use these fields as the canonical decision surface:
+
+- `objective.id`, `objective.summary`, `objective.completion_predicate`
+- `ui.mode`, `ui.screen_text`
+- `position.map_name`, `position.x`, `position.y`, `position.facing`
+- `navigation.valid_moves`
+- `navigation.interaction`
+- `navigation.route_hints`
+- `navigation.landmarks`
+- `recent_action`
+- `recovery`
+- `constraints`
+- `planning`
+- `plan_status`
 
 The screenshot read is mandatory.
 
-- Use Pi's image understanding on the attached PNGs every turn.
-- Inspect buildings, doors, signs, ledges, NPC spacing, and map edges visually before acting.
-- Do not plan from ASCII alone.
-- Do not treat the ASCII map as a screenshot.
-- Use ASCII only as a symbolic collision summary after looking at the annotated frame.
+- Use the attached annotated frame as primary evidence every turn.
+- Use the raw frame only when the overlay hides important detail.
+- Do not infer terrain from text alone.
 
-## What To Read Every Turn
+## Planning Rules
 
-From `latest_observation.json` and `latest_observation.md`, pay attention to:
-
-- `screen_text`
-- `objective.current`
-- `recent_action`
-- `state_delta`
-- `memory.recent_facts`
-- `memory.failed_attempts`
-- `dialog.transcript_recent`
-- `battle.recommended_move`
-- `stuck`
-- `recovery.current_recommendation`
-- `navigation.valid_moves`
-- `navigation.interaction`
-- `navigation.route_cards`
-- `navigation.landmarks`
-- `navigation.avoidances`
-- `navigation.distance_ascii`
-- `movement_guidance`
-- `navigation.live_ascii`
-- `navigation.explored_ascii`
-
-From `current_objective.json`, trust:
-
-- the current objective id
-- completion predicate
-- failure hints
-- save recommendation
-- route hint
-
-Do not invent a different canonical objective.
-
-ASCII semantics:
-
-- `P` = player
-- `G` = goal
-- `S` = visible sprite blocker
-- `.` = known passable tile
-- `#` = known blocked tile
-- `?` = unknown tile
-
-The ASCII maps use coordinate labels. They do not encode terrain with distance digits.
-
-## Navigation vs Raw Actions
-
-Use navigation when you know the destination coordinates:
-
-```bash
-curl -s -X POST http://localhost:8765/navigation/path \
-  -H "Content-Type: application/json" \
-  -d '{"x": 10, "y": 5, "mode": "auto"}' | python3 -m json.tool
-```
-
-```bash
-curl -s -X POST http://localhost:8765/navigation/navigate \
-  -H "Content-Type: application/json" \
-  -d '{"x": 10, "y": 5, "mode": "auto"}' | python3 -m json.tool
-```
-
-Prefer raw actions for:
-
-- dialog
-- menus
-- battles
-- one-tile probing into unexplored terrain
-- NPC interaction confirmation
-
-Raw actions:
-
-```bash
-curl -s -X POST http://localhost:8765/action \
-  -H "Content-Type: application/json" \
-  -d '{"actions": ["press_a"]}' | python3 -m json.tool
-```
-
-```bash
-curl -s -X POST http://localhost:8765/action \
-  -H "Content-Type: application/json" \
-  -d '{"actions": ["walk_up", "press_a"]}' | python3 -m json.tool
-```
-
-```bash
-curl -s -X POST http://localhost:8765/action \
-  -H "Content-Type: application/json" \
-  -d '{"actions": ["a_until_dialog_end"]}' | python3 -m json.tool
-```
+- The plan's `observation_id` must match the current `turn_context.json`.
+- The plan's `objective_id` must match the current objective in `turn_context.json`.
+- `mode=overworld`, `dialog`, and `battle` require a `raw_actions` primary branch.
+- `mode=navigation` requires a `navigation` primary branch.
+- Every plan must include a measurable `expected_outcome`.
+- If `plan_status.state` is `drifted`, `invalid`, or `stale`, stop and re-observe before acting again.
 
 ## Decision Order
 
 Use this order:
 
-1. If `dialog.active` is true, clear dialog first.
-2. If `battle.in_battle` is true, handle battle first.
-3. If `stuck.level` is `warning` or `danger`, fix that before continuing long exploration.
-4. If the destination coordinates are known, prefer navigation.
-5. If coordinates are unknown, use the annotated frame, interaction probe, and ASCII maps to explore carefully.
-
-If `movement_guidance` gives a route cue like "best explored north-progress route starts with ...", prefer that over trying to visually parse a large ASCII block on your own.
+1. If the UI is in dialog, clear dialog first.
+2. If the UI is in battle, resolve the battle first.
+3. If `recovery.stuck_level` is `warning` or `danger`, address that before long exploration.
+4. If the destination coordinates are known, prefer a navigation plan.
+5. Otherwise use the annotated frame, valid moves, and interaction probe to explore carefully.
 
 ## Saving And Recovery
 
@@ -252,31 +157,7 @@ curl -s -X POST http://localhost:8765/load \
   -d '{"name": "before_brock"}' | python3 -m json.tool
 ```
 
-Save when:
-
-- `current_objective.md` recommends it
-- entering a risky battle
-- entering a dungeon/forest section with poor visibility
-- the dashboard shows a clean new checkpoint
-
-Reload when:
-
-- `stuck.level` is `danger`
-- repeated short batches produce no movement or no progress
-- the top candidate in `recovery_saves.json` is clearly safer than the current state
-
-## Working Memory
-
-`working_memory.md` is Pi-editable scratch space.
-
-Use it for:
-
-- local route notes
-- battle reminders
-- blockers just discovered
-- short hypotheses to test next turn
-
-Do not use it to redefine the canonical objective or recovery policy.
+Save when the context or dashboard clearly indicates a checkpoint or risky segment. Reload when `recovery.stuck_level` is `danger` or `recovery_saves.json` presents a clearly safer candidate.
 
 ## Dashboard Use
 
@@ -285,26 +166,14 @@ Keep `/dashboard` open during play.
 Use it to verify:
 
 - what frame Pi is reading
-- what objective the server thinks is current
-- what `turn_plan.json` says Pi is trying to do
-- every prompt sent to Pi and every streamed reply fragment Pi emits
-- whether auto-continue is armed and when the next turn is scheduled
-- whether the last action batch changed state
+- the current turn context and plan status
+- the validated plan in `turn_plan.json`
+- tool calls, streamed output, and recent events
+- whether auto-continue is armed
 - whether the harness thinks Pi is stuck
 - which recovery save is currently recommended
 
-If you need a manual checkpoint, use the dashboard `Save Now` button or:
-
-```bash
-curl -s -X POST http://localhost:8765/save \
-  -H "Content-Type: application/json" \
-  -d '{"name":"manual_YYYYMMDD_HHMMSS"}' | python3 -m json.tool
-```
-
-If the dashboard intent panel and Pi's next action disagree, stop and refresh observation before acting.
-
-If the operator wants to recover to a specific save, prefer the dashboard `Load Selected` or
-`Load Recommended` controls instead of typing save names manually.
+If the dashboard and `turn_context.json` disagree, refresh `/agent/observe` before acting.
 
 ## End Of Session
 
@@ -312,7 +181,7 @@ Before ending a run:
 
 1. Save.
 2. Refresh `/agent/observe` once more.
-3. Leave `turn_plan.json` and `working_memory.md` in a useful state for resume.
+3. Leave `turn_plan.json` in a useful validated or clearly invalid state.
 4. Stop Pi from the dashboard if the supervisor is still running.
 
 Server shutdown is operator-owned and outside Pi's responsibilities.

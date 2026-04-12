@@ -12,6 +12,7 @@ from pathlib import Path
 from typing import Any, Awaitable, Callable, Optional
 
 from pokemon_agent.agent_runtime import utc_now
+from pokemon_agent.harness.prompting import CONTINUE_PROMPT, default_supervisor_prompt
 
 JsonDict = dict[str, Any]
 EventSink = Callable[[JsonDict], Awaitable[None]]
@@ -27,20 +28,6 @@ def _repo_root() -> Path:
 
 def default_skill_path() -> Path:
     return _repo_root() / "skill" / "SKILL.md"
-
-
-def default_supervisor_prompt(*, server_url: str, workspace_dir: Path) -> str:
-    return (
-        "Play Pokemon Red through the local pokemon-agent harness using the loaded repo skill. "
-        f"Server URL: {server_url}. Workspace: {workspace_dir}. "
-        "Assume the harness server is already running. Do not start or stop the server yourself. "
-        "Pi can inspect attached PNGs directly, so use the attached annotated frame as primary "
-        "evidence and the attached raw frame when the overlay hides details. Use vision to "
-        "identify buildings, doors, signs, NPC spacing, and other landmarks that state JSON or "
-        "ASCII may miss. Start each turn by refreshing /agent/observe, inspect the annotated "
-        "frame first, update turn_plan.json before each action batch, keep action batches short, "
-        "and follow recovery guidance when the harness signals stuck or recommends a save."
-    )
 
 
 def _truncate(value: str, limit: int = 320) -> str:
@@ -198,7 +185,7 @@ class PiSupervisor:
         self.turns_completed = 0
         self.continue_count = 0
         self.auto_continue = False
-        self.continue_message = "continue"
+        self.goal = ""
         self.continue_delay_seconds = 1.0
         self.max_turns: Optional[int] = None
         self.provider: Optional[str] = None
@@ -209,6 +196,7 @@ class PiSupervisor:
         self.default_prompt = default_supervisor_prompt(
             server_url=self.server_url,
             workspace_dir=self.workspace_dir,
+            goal="",
         )
         self.current_assistant_text = ""
         self.current_assistant_thinking = ""
@@ -222,6 +210,16 @@ class PiSupervisor:
         self.transcript: deque[JsonDict] = deque(maxlen=160)
         self.turn_plan_preview: Optional[JsonDict] = None
         self.next_auto_continue_at: Optional[str] = None
+        self.session_usage: Optional[JsonDict] = None
+        self.last_message_usage: Optional[JsonDict] = None
+        self.tool_call_count: int = 0
+        self.thinking_block_count: int = 0
+        self.assistant_message_count: int = 0
+        self.user_message_count: int = 0
+        self.last_compaction_tokens_before: Optional[int] = None
+        self.last_compaction_tokens_after: Optional[int] = None
+        self.last_compaction_at: Optional[str] = None
+        self._pending_thinking_in_message: bool = False
 
         self._task: Optional[asyncio.Task[None]] = None
         self._process: Optional[asyncio.subprocess.Process] = None
@@ -238,7 +236,7 @@ class PiSupervisor:
             "model": self.model,
             "thinking": self.thinking,
             "auto_continue": self.auto_continue,
-            "continue_message": self.continue_message,
+            "goal": self.goal,
             "continue_delay_seconds": self.continue_delay_seconds,
             "max_turns": self.max_turns,
             "skill_path": str(self.skill_path),
@@ -269,6 +267,7 @@ class PiSupervisor:
             "current_pid": self.current_pid,
             "turns_completed": self.turns_completed,
             "continue_count": self.continue_count,
+            "goal": self.goal,
             "current_prompt": self.current_prompt,
             "last_prompt": self.last_prompt,
             "default_prompt": self.default_prompt,
@@ -284,18 +283,30 @@ class PiSupervisor:
             "transcript": list(self.transcript),
             "turn_plan_preview": self.turn_plan_preview,
             "next_auto_continue_at": self.next_auto_continue_at,
+            "session_usage": self.session_usage,
+            "last_message_usage": self.last_message_usage,
+            "counts": {
+                "tool_calls": self.tool_call_count,
+                "thinking_blocks": self.thinking_block_count,
+                "assistant_messages": self.assistant_message_count,
+                "user_messages": self.user_message_count,
+            },
+            "compaction": {
+                "tokens_before": self.last_compaction_tokens_before,
+                "tokens_after": self.last_compaction_tokens_after,
+                "at": self.last_compaction_at,
+            },
             "config": self._config_snapshot(),
         }
 
     async def start(
         self,
         *,
-        prompt: Optional[str] = None,
+        goal: Optional[str] = None,
         provider: Optional[str] = None,
         model: Optional[str] = None,
         thinking: Optional[str] = None,
         auto_continue: bool = True,
-        continue_message: str = "continue",
         max_turns: Optional[int] = None,
         continue_delay_seconds: float = 1.0,
         skill_path: Optional[str] = None,
@@ -314,14 +325,15 @@ class PiSupervisor:
         self.model = model or None
         self.thinking = thinking or None
         self.auto_continue = bool(auto_continue)
-        self.continue_message = continue_message.strip() or "continue"
+        self.goal = (goal or "").strip()
         self.max_turns = max_turns if max_turns and max_turns > 0 else None
         self.continue_delay_seconds = max(0.0, float(continue_delay_seconds))
         self.default_prompt = default_supervisor_prompt(
             server_url=self.server_url,
             workspace_dir=self.workspace_dir,
+            goal=self.goal,
         )
-        initial_prompt = (prompt or "").strip() or self.default_prompt
+        initial_prompt = self.default_prompt
 
         self.status = "starting"
         self.status_reason = "Starting a fresh Pi session."
@@ -347,6 +359,16 @@ class PiSupervisor:
         self.session_file = None
         self.current_pid = None
         self.next_auto_continue_at = None
+        self.session_usage = None
+        self.last_message_usage = None
+        self.tool_call_count = 0
+        self.thinking_block_count = 0
+        self.assistant_message_count = 0
+        self.user_message_count = 0
+        self.last_compaction_tokens_before = None
+        self.last_compaction_tokens_after = None
+        self.last_compaction_at = None
+        self._pending_thinking_in_message = False
         self._stop_requested = False
 
         await self._emit_major(
@@ -362,18 +384,21 @@ class PiSupervisor:
         )
         return self.state_snapshot()
 
-    async def continue_once(self, *, message: str = "continue") -> JsonDict:
+    async def continue_once(self) -> JsonDict:
         if self.is_running:
             raise ValueError("Pi supervisor is already running.")
         if not self.session_id:
             raise ValueError("Pi supervisor has no previous session to continue.")
-        self.current_prompt = message.strip() or self.continue_message
+        self.current_prompt = CONTINUE_PROMPT
         self.last_prompt = self.current_prompt
         self.status = "starting"
         self.status_reason = "Continuing the existing Pi session."
         self.last_error = None
         self.last_event_at = utc_now()
         self.next_auto_continue_at = None
+        self.current_assistant_text = ""
+        self.current_assistant_thinking = ""
+        self.current_tool_calls.clear()
         await self._emit_major(
             "pi_supervisor_status",
             {
@@ -457,7 +482,7 @@ class PiSupervisor:
                     self.status_reason = f"Reached max turns ({self.max_turns})."
                     break
                 self.continue_count += 1
-                current_prompt = self.continue_message
+                current_prompt = CONTINUE_PROMPT
                 use_continue = True
                 self.next_auto_continue_at = _utc_after(self.continue_delay_seconds)
                 self.status = "running"
@@ -468,7 +493,7 @@ class PiSupervisor:
                     "pi_auto_continue_scheduled",
                     {
                         "summary": self.status_reason,
-                        "continue_message": self.continue_message,
+                        "goal": self.goal,
                         "continue_delay_seconds": self.continue_delay_seconds,
                         "next_auto_continue_at": self.next_auto_continue_at,
                         "next_turn_index": self.turns_completed + 1,
@@ -586,6 +611,22 @@ class PiSupervisor:
             if candidate.is_file():
                 attachment_paths.append(candidate)
         return attachment_paths
+
+    def _refresh_turn_plan_preview_from_workspace(self) -> None:
+        path = self.workspace_dir / "turn_plan.json"
+        if not path.is_file():
+            return
+        try:
+            payload = json.loads(path.read_text(encoding="utf-8"))
+        except (OSError, UnicodeDecodeError, json.JSONDecodeError):
+            return
+        if not isinstance(payload, dict):
+            return
+        self.turn_plan_preview = {
+            "source": "workspace_turn_plan",
+            "updated_at": utc_now(),
+            "payload": payload,
+        }
 
     def _resolve_session_file(self) -> Optional[Path]:
         if self.session_file is not None and self.session_file.is_file():
@@ -825,6 +866,7 @@ class PiSupervisor:
                 self.last_assistant_text = message_text
             if thinking_text:
                 self.last_assistant_thinking = thinking_text
+            self._refresh_turn_plan_preview_from_workspace()
             summary_text = (
                 message_text or self.current_assistant_text or self.last_assistant_text
             )
@@ -836,9 +878,14 @@ class PiSupervisor:
 
         if event_type == "message_start":
             message = event.get("message") or {}
-            if message.get("role") == "assistant":
+            role = message.get("role")
+            if role == "assistant":
                 self.current_assistant_text = ""
                 self.current_assistant_thinking = ""
+                self.assistant_message_count += 1
+                self._pending_thinking_in_message = False
+            elif role == "user":
+                self.user_message_count += 1
             return
 
         if event_type == "message_update":
@@ -860,6 +907,9 @@ class PiSupervisor:
                     },
                 )
             elif assistant_type == "thinking_delta" and isinstance(delta, str):
+                if not self._pending_thinking_in_message:
+                    self.thinking_block_count += 1
+                    self._pending_thinking_in_message = True
                 self.current_assistant_thinking += delta
                 self._push_recent_event(
                     "pi_thinking_delta",
@@ -884,6 +934,22 @@ class PiSupervisor:
                 return
             final_text = extract_message_text(message) or self.current_assistant_text
             final_thinking = extract_message_thinking(message) or self.current_assistant_thinking
+            if final_thinking and not self._pending_thinking_in_message:
+                self.thinking_block_count += 1
+            self._pending_thinking_in_message = False
+            usage = message.get("usage")
+            if isinstance(usage, dict):
+                self.last_message_usage = usage
+                total_tokens = usage.get("totalTokens")
+                if isinstance(total_tokens, (int, float)):
+                    self.session_usage = {
+                        "input": usage.get("input"),
+                        "output": usage.get("output"),
+                        "cacheRead": usage.get("cacheRead"),
+                        "cacheWrite": usage.get("cacheWrite"),
+                        "totalTokens": int(total_tokens),
+                        "updated_at": utc_now(),
+                    }
             if final_text:
                 self.last_assistant_text = final_text
                 self.current_assistant_text = final_text
@@ -904,9 +970,13 @@ class PiSupervisor:
                     content=final_thinking,
                 )
                 await self._emit_stream("pi_transcript", {"entry": thinking_entry})
+            self._refresh_turn_plan_preview_from_workspace()
             await self._emit_major(
                 "pi_message_end",
-                {"summary": _truncate(final_text or "Assistant message completed.", 220)},
+                {
+                    "summary": _truncate(final_text or "Assistant message completed.", 220),
+                    "usage": self.last_message_usage,
+                },
             )
             return
 
@@ -926,6 +996,7 @@ class PiSupervisor:
                 "result_preview": "",
             }
             self.current_tool_calls[event.get("toolCallId", summary)] = entry
+            self.tool_call_count += 1
             turn_plan = extract_turn_plan_candidate(args)
             if turn_plan is not None:
                 self.turn_plan_preview = {
@@ -971,6 +1042,7 @@ class PiSupervisor:
             entry["finished_at"] = utc_now()
             entry["result_preview"] = preview_payload(event.get("result"))
             self.recent_tools.append(entry)
+            self._refresh_turn_plan_preview_from_workspace()
             summary = entry["summary"]
             if entry["status"] == "error":
                 summary = f"{summary} failed"
@@ -997,10 +1069,15 @@ class PiSupervisor:
             return
 
         if event_type == "compaction_start":
+            tokens_before = event.get("tokensBefore")
+            if isinstance(tokens_before, (int, float)):
+                self.last_compaction_tokens_before = int(tokens_before)
+            self.last_compaction_at = utc_now()
             await self._emit_major(
                 "pi_compaction_start",
                 {
                     "summary": f"Compaction started ({event.get('reason', 'unknown')}).",
+                    "tokens_before": self.last_compaction_tokens_before,
                 },
             )
             return
@@ -1009,7 +1086,25 @@ class PiSupervisor:
             summary = f"Compaction finished ({event.get('reason', 'unknown')})."
             if event.get("aborted"):
                 summary = f"Compaction aborted ({event.get('reason', 'unknown')})."
-            await self._emit_major("pi_compaction_end", {"summary": summary})
+            tokens_after = event.get("tokensAfter")
+            if isinstance(tokens_after, (int, float)):
+                self.last_compaction_tokens_after = int(tokens_after)
+                if self.session_usage is None:
+                    self.session_usage = {}
+                self.session_usage = {
+                    **(self.session_usage or {}),
+                    "totalTokens": int(tokens_after),
+                    "updated_at": utc_now(),
+                    "after_compaction": True,
+                }
+            self.last_compaction_at = utc_now()
+            await self._emit_major(
+                "pi_compaction_end",
+                {
+                    "summary": summary,
+                    "tokens_after": self.last_compaction_tokens_after,
+                },
+            )
             return
 
         if event_type == "auto_retry_start":

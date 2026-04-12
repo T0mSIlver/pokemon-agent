@@ -29,11 +29,10 @@
         piTurnsChip: $('piTurnsChip'),
         piStatusSummary: $('piStatusSummary'),
         piSupervisorStats: $('piSupervisorStats'),
-        piPromptInput: $('piPromptInput'),
+        piGoalInput: $('piGoalInput'),
         piProviderInput: $('piProviderInput'),
         piModelInput: $('piModelInput'),
         piThinkingSelect: $('piThinkingSelect'),
-        piContinueMessageInput: $('piContinueMessageInput'),
         piAutoContinueInput: $('piAutoContinueInput'),
         piStartButton: $('piStartButton'),
         piContinueButton: $('piContinueButton'),
@@ -175,6 +174,23 @@
         if (!url) return '';
         const suffix = token ? encodeURIComponent(token) : String(Date.now());
         return `${url}${url.includes('?') ? '&' : '?'}t=${suffix}`;
+    }
+
+    const PI_CONTEXT_WINDOW_TOKENS = 200000;
+
+    function formatCompactNumber(value) {
+        if (typeof value !== 'number' || !Number.isFinite(value)) return 'n/a';
+        if (Math.abs(value) >= 1_000_000) return `${(value / 1_000_000).toFixed(1)}M`;
+        if (Math.abs(value) >= 1_000) return `${(value / 1_000).toFixed(1)}k`;
+        return String(value);
+    }
+
+    function formatContextUsage(usage) {
+        if (!usage || typeof usage !== 'object') return 'n/a';
+        const total = usage.totalTokens;
+        if (typeof total !== 'number') return 'n/a';
+        const pct = Math.min(100, (total / PI_CONTEXT_WINDOW_TOKENS) * 100);
+        return `${formatCompactNumber(total)} (${pct.toFixed(0)}%)`;
     }
 
     function timeLabel(value) {
@@ -527,18 +543,14 @@
         }
     }
 
-    function transcriptSticky() {
-        if (!els.piTranscript) return true;
-        return (
-            els.piTranscript.scrollHeight - els.piTranscript.scrollTop - els.piTranscript.clientHeight <
-            60
-        );
+    function scrollTranscriptToBottom() {
+        if (!els.piTranscript) return;
+        els.piTranscript.scrollTop = els.piTranscript.scrollHeight;
     }
 
     function renderTranscript(entries) {
         if (!els.piTranscript) return;
         const list = (Array.isArray(entries) ? entries : []).slice(-TRANSCRIPT_LIMIT);
-        const sticky = transcriptSticky();
         const nextKeys = new Set();
 
         transcriptKeys.clear();
@@ -547,6 +559,7 @@
             empty.className = 'hud-empty';
             empty.textContent = '— awaiting comms —';
             els.piTranscript.replaceChildren(empty);
+            scrollTranscriptToBottom();
             return;
         }
 
@@ -580,9 +593,7 @@
             }
         });
 
-        if (sticky) {
-            els.piTranscript.scrollTop = els.piTranscript.scrollHeight;
-        }
+        scrollTranscriptToBottom();
     }
 
     function appendTranscriptEntry(entry) {
@@ -592,16 +603,17 @@
         const key = transcriptKey(entry);
         if (transcriptKeys.has(key)) return;
         transcriptKeys.add(key);
-        const sticky = transcriptSticky();
         while (els.piTranscript.children.length >= TRANSCRIPT_LIMIT) {
             const first = els.piTranscript.firstElementChild;
             if (!first) break;
+            const firstKey = first.dataset.transcriptKey || '';
+            if (firstKey) {
+                transcriptKeys.delete(firstKey);
+            }
             els.piTranscript.removeChild(first);
         }
         els.piTranscript.appendChild(createTranscriptCard(entry));
-        if (sticky) {
-            els.piTranscript.scrollTop = els.piTranscript.scrollHeight;
-        }
+        scrollTranscriptToBottom();
     }
 
     function renderWorldStats(worldState, progress, serverRuntime) {
@@ -1014,11 +1026,10 @@
     function seedSupervisorControls(supervisor) {
         const config = supervisor.config || {};
         if (controlSeeded) return;
-        els.piPromptInput.value = supervisor.default_prompt || '';
+        els.piGoalInput.value = config.goal || '';
         els.piProviderInput.value = config.provider || '';
         els.piModelInput.value = config.model || '';
         els.piThinkingSelect.value = config.thinking || '';
-        els.piContinueMessageInput.value = config.continue_message || 'continue';
         els.piAutoContinueInput.checked = Boolean(config.auto_continue ?? true);
         controlSeeded = true;
     }
@@ -1026,6 +1037,7 @@
     function renderSupervisor(supervisor) {
         const config = supervisor.config || {};
         seedSupervisorControls(supervisor);
+        const isTurnActive = supervisor.status === 'starting' || supervisor.status === 'running';
 
         // capture session origin for relative-time labels
         const started = parseTs(supervisor.started_at);
@@ -1045,6 +1057,10 @@
         els.piStatusSummary.textContent =
             supervisor.status_reason || supervisor.last_error || 'Pi supervisor standing by.';
 
+        const counts = supervisor.counts || {};
+        const sessionUsage = supervisor.session_usage || null;
+        const compactionInfo = supervisor.compaction || {};
+        const contextLabel = formatContextUsage(sessionUsage);
         renderKeyValueCards(els.piSupervisorStats, [
             ['STATUS', (supervisor.status || 'idle').toUpperCase()],
             ['MODEL', supervisor.model || 'default'],
@@ -1053,7 +1069,18 @@
             ['AUTO', config.auto_continue ? 'on' : 'off'],
             ['DELAY', `${config.continue_delay_seconds ?? 1}s`],
             ['NEXT', supervisor.next_auto_continue_at ? timeLabel(supervisor.next_auto_continue_at) : 'n/a'],
-            ['CONT MSG', config.continue_message || 'continue'],
+            ['GOAL', truncate(config.goal || supervisor.goal || 'default loop', 24)],
+            ['CTX', contextLabel],
+            ['TOOL CALLS', formatCompactNumber(counts.tool_calls || 0)],
+            ['THINK BLOCKS', formatCompactNumber(counts.thinking_blocks || 0)],
+            ['AI MSGS', formatCompactNumber(counts.assistant_messages || 0)],
+            ['USR MSGS', formatCompactNumber(counts.user_messages || 0)],
+            [
+                'LAST COMPACT',
+                compactionInfo.tokens_before
+                    ? `${formatCompactNumber(compactionInfo.tokens_before)}→${formatCompactNumber(compactionInfo.tokens_after || 0)}`
+                    : 'none',
+            ],
         ]);
 
         if (supervisor.last_error) {
@@ -1086,14 +1113,14 @@
         if (els.piCurrentThinking.dataset.streaming !== 'true') {
             els.piCurrentThinking.textContent =
                 supervisor.current_assistant_thinking ||
-                supervisor.last_assistant_thinking ||
-                '— silent —';
+                (isTurnActive ? '' : supervisor.last_assistant_thinking) ||
+                (isTurnActive ? '— waiting for comms —' : '— silent —');
         }
         if (els.piCurrentOutput.dataset.streaming !== 'true') {
             els.piCurrentOutput.textContent =
                 supervisor.current_assistant_text ||
-                supervisor.last_assistant_text ||
-                '— silent —';
+                (isTurnActive ? '' : supervisor.last_assistant_text) ||
+                (isTurnActive ? '— waiting for comms —' : '— silent —');
         }
         els.piStderr.textContent = (supervisor.stderr_tail || []).join('\n') || 'No stderr output.';
         els.rawSupervisor.textContent = formatJSON(supervisor);
@@ -1106,6 +1133,7 @@
         const memory = payload.memory_and_progress || {};
         const objective = intent.objective || {};
         const turnPlan = intent.turn_plan || {};
+        const planStatus = intent.plan_status || payload.plan_status || {};
         const recentAction = intent.recent_action || {};
         const movementGuidance = intent.movement_guidance || {};
         const stateDelta = intent.state_delta || {};
@@ -1126,13 +1154,18 @@
         els.screenTextSource.textContent = `SRC: ${(screenText.source || 'n/a').toUpperCase()}`;
 
         if (artifactUrls.latest_frame_annotated) {
-            els.annotatedFrame.src = withCacheBust(
-                artifactUrls.latest_frame_annotated,
-                visuals.frame_timestamp
+            schedulePreload(
+                'annotated',
+                els.annotatedFrame,
+                withCacheBust(artifactUrls.latest_frame_annotated, visuals.frame_timestamp),
             );
         }
         if (artifactUrls.latest_frame) {
-            els.rawFrame.src = withCacheBust(artifactUrls.latest_frame, visuals.frame_timestamp);
+            schedulePreload(
+                'raw',
+                els.rawFrame,
+                withCacheBust(artifactUrls.latest_frame, visuals.frame_timestamp),
+            );
         }
         els.screenText.textContent = screenText.text || 'No OCR or dialogue text available.';
 
@@ -1143,10 +1176,14 @@
         els.objectiveRoute.textContent = objective.route_hint || '';
         els.progressFill.style.width = `${memory.progress_percent ?? 0}%`;
 
-        els.turnPlanSummary.textContent = turnPlan.summary || 'No turn plan summary.';
+        const turnPlanState = (planStatus.state || turnPlan.status?.state || 'awaiting_plan').replaceAll('_', ' ');
+        els.turnPlanSummary.textContent = turnPlan.summary || `Plan status: ${turnPlanState}`;
         renderList(els.plannedActions, turnPlan.planned_actions, 'No planned actions set.');
         renderList(els.fallbackActions, turnPlan.fallback_actions, 'No fallback actions set.');
-        els.turnPlanNotes.textContent = turnPlan.notes || `Plan updated: ${turnPlan.updated_at || 'never'}`;
+        els.turnPlanNotes.textContent =
+            turnPlan.notes ||
+            planStatus.reason ||
+            `Plan status: ${turnPlanState} · updated ${turnPlan.updated_at || 'never'}`;
 
         els.recentActionSummary.textContent = recentAction.summary || 'No recent action summary.';
         renderList(els.recentActionNotes, recentAction.notes, 'No recent action notes.');
@@ -1189,13 +1226,13 @@
 
     async function refreshArtifactPanels(payload) {
         const artifactUrls = payload.artifact_urls || {};
-        if (!artifactUrls.latest_observation_json) {
-            els.rawObservation.textContent = 'No latest_observation.json artifact available.';
+        if (!artifactUrls.turn_context_json) {
+            els.rawObservation.textContent = 'No turn_context.json artifact available.';
             return;
         }
         try {
             const response = await fetch(
-                withCacheBust(artifactUrls.latest_observation_json, payload.generated_at)
+                withCacheBust(artifactUrls.turn_context_json, payload.generated_at)
             );
             if (!response.ok) {
                 throw new Error(`HTTP ${response.status}`);
@@ -1277,13 +1314,14 @@
 
     async function startSupervisor() {
         const body = {
-            prompt: els.piPromptInput.value.trim(),
+            goal: els.piGoalInput.value.trim() || null,
             provider: els.piProviderInput.value.trim() || null,
             model: els.piModelInput.value.trim() || null,
             thinking: els.piThinkingSelect.value || null,
             auto_continue: els.piAutoContinueInput.checked,
-            continue_message: els.piContinueMessageInput.value.trim() || 'continue',
         };
+        resetLiveStreamView();
+        scrollTranscriptToBottom();
         els.piControlStatus.textContent = '► STARTING PI…';
         try {
             await postJson('/supervisor/start', body);
@@ -1295,12 +1333,11 @@
     }
 
     async function continueSupervisor() {
-        const body = {
-            message: els.piContinueMessageInput.value.trim() || 'continue',
-        };
+        resetLiveStreamView();
+        scrollTranscriptToBottom();
         els.piControlStatus.textContent = '► CONTINUING PI…';
         try {
-            await postJson('/supervisor/continue', body);
+            await postJson('/supervisor/continue', {});
             els.piControlStatus.textContent = '► MANUAL CONTINUE DISPATCHED';
             await refreshAll();
         } catch (error) {
@@ -1372,13 +1409,37 @@
         els.piStderr.textContent = empty ? text : `${current}\n${text}`;
     }
 
+    const framePreloaders = {
+        annotated: { loader: null, latestUrl: null },
+        raw: { loader: null, latestUrl: null },
+    };
+
+    function schedulePreload(kind, targetImg, url) {
+        if (!url) return;
+        const slot = framePreloaders[kind];
+        slot.latestUrl = url;
+        const loader = new Image();
+        slot.loader = loader;
+        loader.onload = () => {
+            if (slot.latestUrl !== url) return;
+            targetImg.src = url;
+        };
+        loader.onerror = () => {
+            if (slot.latestUrl !== url) return;
+            slot.loader = null;
+        };
+        loader.src = url;
+    }
+
     function applyFrameUpdate(data) {
         if (!data || typeof data !== 'object') return;
         if (data.annotated_frame_url) {
-            els.annotatedFrame.src = withCacheBust(data.annotated_frame_url, data.frame_timestamp);
+            const url = withCacheBust(data.annotated_frame_url, data.frame_timestamp);
+            schedulePreload('annotated', els.annotatedFrame, url);
         }
         if (data.raw_frame_url) {
-            els.rawFrame.src = withCacheBust(data.raw_frame_url, data.frame_timestamp);
+            const url = withCacheBust(data.raw_frame_url, data.frame_timestamp);
+            schedulePreload('raw', els.rawFrame, url);
         }
         if (data.frame_timestamp) {
             els.frameTimestamp.textContent = timeLabel(data.frame_timestamp);
@@ -1388,6 +1449,17 @@
     const streamBuffers = { output: '', thinking: '' };
     const streamPendingReset = { output: false, thinking: false };
     let streamRafPending = false;
+
+    function resetLiveStreamView(placeholder = '— waiting for comms —') {
+        streamBuffers.output = '';
+        streamBuffers.thinking = '';
+        streamPendingReset.output = false;
+        streamPendingReset.thinking = false;
+        els.piCurrentThinking.textContent = placeholder;
+        els.piCurrentThinking.dataset.streaming = 'false';
+        els.piCurrentOutput.textContent = placeholder;
+        els.piCurrentOutput.dataset.streaming = 'false';
+    }
 
     function flushStreamBuffers() {
         streamRafPending = false;
@@ -1443,6 +1515,8 @@
         }
 
         if (event.type === 'pi_prompt_sent') {
+            resetLiveStreamView();
+            scrollTranscriptToBottom();
             els.piControlStatus.textContent = event.resume
                 ? 'Sent auto-continue prompt to Pi.'
                 : 'Sent launch prompt to Pi.';
@@ -1495,10 +1569,8 @@
         }
 
         if (event.type === 'pi_turn_launch' || event.type === 'pi_turn_start') {
-            els.piCurrentThinking.textContent = '— waiting for comms —';
-            els.piCurrentThinking.dataset.streaming = 'false';
-            els.piCurrentOutput.textContent = '— waiting for comms —';
-            els.piCurrentOutput.dataset.streaming = 'false';
+            resetLiveStreamView();
+            scrollTranscriptToBottom();
             els.piControlStatus.textContent = `► ${truncate(event.summary || 'Pi turn launched.', 220)}`;
             scheduleRefresh(150);
             return;
@@ -1584,13 +1656,13 @@
         els.loadSaveButton.addEventListener('click', loadSelectedSave);
         els.loadRecommendedButton.addEventListener('click', loadRecommendedSave);
         // Prompt textarea: expand on focus, collapse on blur-when-empty
-        if (els.piPromptInput) {
-            els.piPromptInput.addEventListener('focus', () => {
-                els.piPromptInput.rows = 4;
+        if (els.piGoalInput) {
+            els.piGoalInput.addEventListener('focus', () => {
+                els.piGoalInput.rows = 4;
             });
-            els.piPromptInput.addEventListener('blur', () => {
-                if (!els.piPromptInput.value.trim()) {
-                    els.piPromptInput.rows = 1;
+            els.piGoalInput.addEventListener('blur', () => {
+                if (!els.piGoalInput.value.trim()) {
+                    els.piGoalInput.rows = 1;
                 }
             });
         }

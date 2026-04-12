@@ -2,8 +2,8 @@
 
 from __future__ import annotations
 
-import io
 import hashlib
+import io
 import json
 import os
 import re
@@ -16,7 +16,19 @@ from pathlib import Path
 from typing import Any, Iterable, Optional
 
 from PIL import Image, ImageDraw, ImageFont
+from pydantic import ValidationError
 
+from pokemon_agent.harness.context_builder import build_turn_context
+from pokemon_agent.harness.contracts import TurnContext, TurnPlan, TurnPlanInput
+from pokemon_agent.harness.planning import (
+    default_turn_plan,
+    evaluate_plan_outcome,
+    invalidate_plan,
+    mark_plan_executed,
+    parse_stored_turn_plan,
+    store_validated_plan,
+    validate_turn_plan_submission,
+)
 from pokemon_agent.navigation import LiveNavigationSnapshot, NavigationStore
 
 JsonDict = dict[str, Any]
@@ -950,6 +962,9 @@ class AgentRuntime:
         self.last_dialog_text = ""
         self.dialog_last_change_at: Optional[str] = None
         self.workspace_dir.mkdir(parents=True, exist_ok=True)
+        self.debug_dir = self.workspace_dir / "debug"
+        self.debug_dir.mkdir(parents=True, exist_ok=True)
+        self._migrate_workspace_artifacts()
         self._ensure_workspace_files()
         self._load_existing_checkpoint_ids()
         self._load_existing_landmarks()
@@ -960,20 +975,45 @@ class AgentRuntime:
         return {
             "latest_frame": self.workspace_dir / "latest_frame.png",
             "latest_frame_annotated": self.workspace_dir / "latest_frame_annotated.png",
+            "turn_context_json": self.workspace_dir / "turn_context.json",
+            "turn_plan_json": self.workspace_dir / "turn_plan.json",
+            "recovery_saves_json": self.workspace_dir / "recovery_saves.json",
+            "latest_observation_json": self.debug_dir / "latest_observation.json",
+            "latest_observation_md": self.debug_dir / "latest_observation.md",
+            "current_objective_json": self.debug_dir / "current_objective.json",
+            "current_objective_md": self.debug_dir / "current_objective.md",
+            "working_memory_md": self.debug_dir / "working_memory.md",
+            "checkpoints_jsonl": self.debug_dir / "checkpoints.jsonl",
+            "knowledge_graph_json": self.debug_dir / "knowledge_graph.json",
+            "landmarks_json": self.debug_dir / "landmarks.json",
+            "event_memory_jsonl": self.debug_dir / "event_memory.jsonl",
+            "session_brief_md": self.debug_dir / "session_brief.md",
+            "run_log_jsonl": self.debug_dir / "run_log.jsonl",
+        }
+
+    def _migrate_workspace_artifacts(self) -> None:
+        legacy_paths = {
             "latest_observation_json": self.workspace_dir / "latest_observation.json",
             "latest_observation_md": self.workspace_dir / "latest_observation.md",
             "current_objective_json": self.workspace_dir / "current_objective.json",
             "current_objective_md": self.workspace_dir / "current_objective.md",
-            "turn_plan_json": self.workspace_dir / "turn_plan.json",
             "working_memory_md": self.workspace_dir / "working_memory.md",
             "checkpoints_jsonl": self.workspace_dir / "checkpoints.jsonl",
             "knowledge_graph_json": self.workspace_dir / "knowledge_graph.json",
             "landmarks_json": self.workspace_dir / "landmarks.json",
             "event_memory_jsonl": self.workspace_dir / "event_memory.jsonl",
             "session_brief_md": self.workspace_dir / "session_brief.md",
-            "recovery_saves_json": self.workspace_dir / "recovery_saves.json",
             "run_log_jsonl": self.workspace_dir / "run_log.jsonl",
         }
+        for key, legacy_path in legacy_paths.items():
+            if not legacy_path.exists():
+                continue
+            target_path = self.artifacts[key]
+            target_path.parent.mkdir(parents=True, exist_ok=True)
+            if target_path.exists():
+                legacy_path.unlink()
+                continue
+            legacy_path.replace(target_path)
 
     def _ensure_workspace_files(self) -> None:
         for path in (
@@ -985,14 +1025,7 @@ class AgentRuntime:
             path.touch(exist_ok=True)
 
         defaults: dict[str, Any] = {
-            "turn_plan_json": {
-                "objective_id": "",
-                "summary": "Update this file before each action batch.",
-                "planned_actions": [],
-                "fallback_actions": [],
-                "notes": "",
-                "updated_at": "",
-            },
+            "turn_plan_json": default_turn_plan().model_dump(mode="json"),
             "knowledge_graph_json": {
                 "updated_at": "",
                 "summary": {"nodes": 0, "edges": 0},
@@ -1009,6 +1042,7 @@ class AgentRuntime:
                 "candidates": [],
                 "autosave_history": [],
             },
+            "turn_context_json": {},
             "latest_observation_json": {},
             "current_objective_json": {},
         }
@@ -1021,10 +1055,9 @@ class AgentRuntime:
         if not self.artifacts["working_memory_md"].exists():
             self.artifacts["working_memory_md"].write_text(
                 "# Working Memory\n\n"
-                "- Update this file with short, current notes for Pi.\n"
+                "- Operator-only notes.\n"
                 "- Keep notes factual: location, blockers, routes tried, battle plans.\n"
-                "- Do not store canonical objective state here;\n"
-                "  read current_objective.json instead.\n",
+                "- Canonical model-facing state lives in turn_context.json.\n",
                 encoding="utf-8",
             )
         if not self.artifacts["current_objective_md"].exists():
@@ -1097,18 +1130,132 @@ class AgentRuntime:
         except Exception:  # noqa: BLE001
             return fallback
 
-    def load_turn_plan(self) -> JsonDict:
-        return self._read_json(
-            self.artifacts["turn_plan_json"],
-            {
-                "objective_id": "",
-                "summary": "",
-                "planned_actions": [],
-                "fallback_actions": [],
-                "notes": "",
-                "updated_at": "",
-            },
+    def load_turn_plan_model(self) -> TurnPlan:
+        return parse_stored_turn_plan(
+            self._read_json(self.artifacts["turn_plan_json"], default_turn_plan().model_dump())
         )
+
+    def load_turn_plan(self) -> JsonDict:
+        return self._turn_plan_view(self.load_turn_plan_model())
+
+    def load_turn_context(self) -> JsonDict:
+        return self._read_json(self.artifacts["turn_context_json"], {})
+
+    def save_turn_plan(self, plan: TurnPlan) -> TurnPlan:
+        payload = plan.model_dump(mode="json")
+        self._write_json(self.artifacts["turn_plan_json"], payload)
+        plan_view = self._turn_plan_view(plan)
+        for bundle in (self.latest_bundle, self.live_bundle):
+            if not bundle:
+                continue
+            bundle["turn_plan"] = plan_view
+            bundle["plan_status"] = payload.get("status") or {}
+        return plan
+
+    def plan_status(self) -> JsonDict:
+        return self.load_turn_plan_model().status.model_dump(mode="json")
+
+    def validate_and_store_turn_plan(self, submission: JsonDict) -> TurnPlan:
+        try:
+            current_context = TurnContext.model_validate(self.load_turn_context())
+            payload = TurnPlanInput.model_validate(submission)
+        except ValidationError as exc:
+            raise ValueError(str(exc)) from exc
+        validate_turn_plan_submission(payload, current_context)
+        plan = store_validated_plan(payload)
+        return self.save_turn_plan(plan)
+
+    def mark_turn_plan_executed(
+        self,
+        *,
+        branch: str,
+        branch_kind: str,
+        requested_actions: list[str],
+        executed_actions: int,
+        baseline_map_name: Optional[str],
+        baseline_position: Optional[JsonDict],
+        summary: str,
+    ) -> TurnPlan:
+        plan = self.load_turn_plan_model()
+        plan = mark_plan_executed(
+            plan,
+            branch=branch,  # type: ignore[arg-type]
+            branch_kind=branch_kind,
+            requested_actions=requested_actions,
+            executed_actions=executed_actions,
+            baseline_map_name=baseline_map_name,
+            baseline_position=baseline_position,
+            summary=summary,
+        )
+        return self.save_turn_plan(plan)
+
+    def invalidate_turn_plan(self, reason: str, *, state: str = "invalid") -> TurnPlan:
+        plan = self.load_turn_plan_model()
+        if not plan.observation_id and not plan.intent:
+            return plan
+        updated = invalidate_plan(plan, reason=reason, state=state)  # type: ignore[arg-type]
+        return self.save_turn_plan(updated)
+
+    def _plan_branch_actions_view(self, branch: Any) -> list[str]:
+        if not branch:
+            return []
+        if isinstance(branch, dict):
+            kind = branch.get("kind")
+            if kind == "raw_actions":
+                return list(branch.get("actions") or [])
+            if kind == "navigation":
+                target = branch.get("target") or {}
+                return [
+                    "navigate:"
+                    f"{target.get('x')},{target.get('y')}:{branch.get('mode', 'auto')}"
+                ]
+            return []
+        kind = getattr(branch, "kind", None)
+        if kind == "raw_actions":
+            return list(getattr(branch, "actions", []) or [])
+        if kind == "navigation":
+            target = getattr(branch, "target", None)
+            if target is None:
+                return []
+            return [f"navigate:{target.x},{target.y}:{getattr(branch, 'mode', 'auto')}"]
+        return []
+
+    def _turn_plan_view(self, plan_payload: Any) -> JsonDict:
+        if isinstance(plan_payload, dict) and "summary" in plan_payload:
+            return {
+                "objective_id": plan_payload.get("objective_id"),
+                "summary": plan_payload.get("summary"),
+                "planned_actions": list(plan_payload.get("planned_actions") or []),
+                "fallback_actions": list(plan_payload.get("fallback_actions") or []),
+                "notes": plan_payload.get("notes"),
+                "updated_at": plan_payload.get("updated_at"),
+                "status": plan_payload.get("status") or {},
+                "mode": plan_payload.get("mode"),
+                "observation_id": plan_payload.get("observation_id"),
+            }
+
+        plan = (
+            plan_payload
+            if isinstance(plan_payload, TurnPlan)
+            else parse_stored_turn_plan(plan_payload)
+        )
+        status = plan.status.model_dump(mode="json")
+        summary = plan.intent or status.get("reason") or "Awaiting next plan."
+        notes = plan.notes or status.get("reason") or ""
+        expected_outcome = plan.expected_outcome.summary if plan.expected_outcome else ""
+        if expected_outcome:
+            notes = f"{notes} Expected: {expected_outcome}".strip()
+        return {
+            "objective_id": plan.objective_id,
+            "summary": summary,
+            "planned_actions": self._plan_branch_actions_view(plan.primary_branch),
+            "fallback_actions": self._plan_branch_actions_view(plan.fallback_branch),
+            "notes": notes,
+            "updated_at": plan.updated_at,
+            "status": status,
+            "mode": plan.mode,
+            "observation_id": plan.observation_id,
+        }
 
     def _record_event(self, event_type: str, payload: JsonDict) -> JsonDict:
         event = {
@@ -2382,6 +2529,7 @@ class AgentRuntime:
         return {
             "latest_frame": str(self.artifacts["latest_frame"]),
             "latest_frame_annotated": str(self.artifacts["latest_frame_annotated"]),
+            "turn_context_json": str(self.artifacts["turn_context_json"]),
             "latest_observation_json": str(self.artifacts["latest_observation_json"]),
             "latest_observation_md": str(self.artifacts["latest_observation_md"]),
             "current_objective_json": str(self.artifacts["current_objective_json"]),
@@ -2396,6 +2544,51 @@ class AgentRuntime:
             "recovery_saves_json": str(self.artifacts["recovery_saves_json"]),
             "run_log_jsonl": str(self.artifacts["run_log_jsonl"]),
         }
+
+    def _next_observation_id(
+        self,
+        *,
+        generated_at: str,
+        reason: str,
+        state: JsonDict,
+    ) -> str:
+        position = (state.get("player") or {}).get("position") or {}
+        return "obs-" + _stable_id(
+            generated_at,
+            reason,
+            (state.get("map") or {}).get("map_id"),
+            (state.get("map") or {}).get("map_name"),
+            position.get("x"),
+            position.get("y"),
+            (state.get("metadata") or {}).get("frame_count"),
+        )
+
+    def _evaluate_pending_plan(self, bundle: JsonDict) -> TurnPlan:
+        plan = self.load_turn_plan_model()
+        if plan.status.state != "executed_waiting_observe":
+            return plan
+        plan = evaluate_plan_outcome(plan, bundle)
+        return self.save_turn_plan(plan)
+
+    def _write_turn_context(self, bundle: JsonDict) -> TurnContext:
+        plan = self._evaluate_pending_plan(bundle)
+        observation_id = str(bundle.get("observation_id") or "")
+        if (
+            plan.status.state == "validated"
+            and plan.observation_id
+            and plan.observation_id != observation_id
+        ):
+            plan = self.save_turn_plan(
+                invalidate_plan(
+                    plan,
+                    reason="A newer observation was generated before the validated plan executed.",
+                    state="stale",
+                )
+            )
+        plan_status = plan.status
+        context = build_turn_context(bundle=bundle, plan_status=plan_status)
+        self._write_json(self.artifacts["turn_context_json"], context.model_dump(mode="json"))
+        return context
 
     def _snapshot_from_navigation_payload(
         self,
@@ -2514,8 +2707,10 @@ class AgentRuntime:
             state=state,
         )
 
+        generated_at = utc_now()
         live_bundle = {
-            "generated_at": utc_now(),
+            "generated_at": generated_at,
+            "observation_id": (self.latest_bundle or {}).get("observation_id"),
             "reason": "realtime_live_sync",
             "source": "live_sync",
             "artifacts": self._artifact_payload(),
@@ -2530,6 +2725,7 @@ class AgentRuntime:
             },
             "objective": current_objective,
             "turn_plan": self.load_turn_plan(),
+            "plan_status": self.plan_status(),
             "recent_action": previous_bundle.get("recent_action") or {},
             "movement_guidance": movement_guidance,
             "navigation_guidance": navigation_guidance,
@@ -2560,6 +2756,7 @@ class AgentRuntime:
                 "objective_action_count": 0,
             },
             "workspace_dir": str(self.workspace_dir),
+            "turn_context": self.load_turn_context(),
         }
 
         self._write_session_brief(
@@ -2614,11 +2811,13 @@ class AgentRuntime:
         distance_ascii = _truncate_text_block(navigation_guidance.get("distance_ascii"), 1800)
         return {
             "generated_at": bundle.get("generated_at"),
+            "observation_id": bundle.get("observation_id"),
             "reason": bundle.get("reason"),
             "source": bundle.get("source"),
             "artifacts": {
                 "latest_frame": artifacts.get("latest_frame"),
                 "latest_frame_annotated": artifacts.get("latest_frame_annotated"),
+                "turn_context_json": artifacts.get("turn_context_json"),
                 "latest_observation_md": artifacts.get("latest_observation_md"),
                 "current_objective_json": artifacts.get("current_objective_json"),
                 "current_objective_md": artifacts.get("current_objective_md"),
@@ -2663,7 +2862,11 @@ class AgentRuntime:
                 ],
                 "notes": _truncate_text_block((bundle.get("turn_plan") or {}).get("notes"), 260),
                 "updated_at": (bundle.get("turn_plan") or {}).get("updated_at"),
+                "status": (bundle.get("turn_plan") or {}).get("status") or {},
+                "mode": (bundle.get("turn_plan") or {}).get("mode"),
+                "observation_id": (bundle.get("turn_plan") or {}).get("observation_id"),
             },
+            "plan_status": bundle.get("plan_status"),
             "recent_action": {
                 "source": recent_action.get("source"),
                 "summary": recent_action.get("summary"),
@@ -2789,7 +2992,6 @@ class AgentRuntime:
         )
         battle_guidance = self._build_battle_guidance(state, dialog_guidance)
         turn_plan = self.load_turn_plan()
-        turn_plan_hash = json.dumps(turn_plan, sort_keys=True)
         checkpoints = self._persist_checkpoints(
             self._candidate_checkpoints(state, current_objective)
         )
@@ -2989,8 +3191,15 @@ class AgentRuntime:
             state=state,
         )
 
+        generated_at = utc_now()
+        observation_id = self._next_observation_id(
+            generated_at=generated_at,
+            reason=reason,
+            state=state,
+        )
         bundle = {
-            "generated_at": utc_now(),
+            "generated_at": generated_at,
+            "observation_id": observation_id,
             "reason": reason,
             "source": source,
             "artifacts": self._artifact_payload(),
@@ -2999,6 +3208,7 @@ class AgentRuntime:
             "screen_text": screen_text,
             "objective": current_objective,
             "turn_plan": turn_plan,
+            "plan_status": self.plan_status(),
             "recent_action": action_feedback,
             "movement_guidance": movement_guidance,
             "navigation_guidance": navigation_guidance,
@@ -3018,6 +3228,11 @@ class AgentRuntime:
             self.artifacts["current_objective_md"],
             self._objective_markdown(current_objective),
         )
+        turn_context = self._write_turn_context(bundle)
+        bundle["turn_context"] = turn_context.model_dump(mode="json")
+        bundle["plan_status"] = turn_context.plan_status.model_dump(mode="json")
+        bundle["turn_plan"] = self.load_turn_plan()
+        turn_plan_hash = json.dumps(bundle["turn_plan"], sort_keys=True)
         self._write_json(
             self.artifacts["latest_observation_json"],
             self._compact_observation_payload(bundle),
@@ -3093,7 +3308,7 @@ class AgentRuntime:
                 self._record_event(
                     "turn_plan_updated",
                     {
-                        "turn_plan": turn_plan,
+                        "turn_plan": bundle["turn_plan"],
                     },
                 )
             )
@@ -3128,10 +3343,12 @@ class AgentRuntime:
         navigation = bundle.get("navigation") or {}
         current_objective = (bundle.get("objective") or {}).get("current") or {}
         turn_plan = bundle.get("turn_plan") or {}
+        turn_context = bundle.get("turn_context") or self.load_turn_context()
         recovery = bundle.get("recovery") or {}
         knowledge_graph = bundle.get("knowledge_graph") or {}
         memory_snapshot = bundle.get("memory") or {}
         return {
+            "observation_id": bundle.get("observation_id") or turn_context.get("observation_id"),
             "generated_at": bundle.get("generated_at"),
             "visuals": {
                 "raw_frame_path": (bundle.get("artifacts") or {}).get("latest_frame"),
@@ -3144,7 +3361,9 @@ class AgentRuntime:
             },
             "agent_intent": {
                 "objective": current_objective,
+                "turn_context": turn_context,
                 "turn_plan": turn_plan,
+                "plan_status": bundle.get("plan_status") or turn_context.get("plan_status") or {},
                 "recent_action": bundle.get("recent_action"),
                 "movement_guidance": bundle.get("movement_guidance"),
                 "navigation_guidance": bundle.get("navigation_guidance"),
@@ -3174,12 +3393,10 @@ class AgentRuntime:
                 "stuck": bundle.get("stuck"),
                 "workspace": {
                     "workspace_dir": bundle.get("workspace_dir"),
+                    "turn_context_json": (bundle.get("artifacts") or {}).get("turn_context_json"),
                     "turn_plan_json": (bundle.get("artifacts") or {}).get("turn_plan_json"),
-                    "working_memory_md": (bundle.get("artifacts") or {}).get("working_memory_md"),
-                    "session_brief_md": (bundle.get("artifacts") or {}).get("session_brief_md"),
-                    "landmarks_json": (bundle.get("artifacts") or {}).get("landmarks_json"),
-                    "latest_observation_md": (bundle.get("artifacts") or {}).get(
-                        "latest_observation_md"
+                    "recovery_saves_json": (bundle.get("artifacts") or {}).get(
+                        "recovery_saves_json"
                     ),
                 },
             },
@@ -3210,8 +3427,8 @@ class AgentRuntime:
             "dialog": bundle.get("dialog_guidance") or bundle.get("dialog") or {},
             "battle": bundle.get("battle_guidance") or bundle.get("battle") or {},
             "artifacts": {
-                "latest_observation_json": (bundle.get("artifacts") or {}).get("latest_observation_json"),
-                "session_brief_md": (bundle.get("artifacts") or {}).get("session_brief_md"),
-                "landmarks_json": (bundle.get("artifacts") or {}).get("landmarks_json"),
+                "turn_context_json": (bundle.get("artifacts") or {}).get("turn_context_json"),
+                "turn_plan_json": (bundle.get("artifacts") or {}).get("turn_plan_json"),
+                "recovery_saves_json": (bundle.get("artifacts") or {}).get("recovery_saves_json"),
             },
         }

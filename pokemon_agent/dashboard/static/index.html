@@ -7,7 +7,7 @@
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
     <link href="https://fonts.googleapis.com/css2?family=Chakra+Petch:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;700&family=Space+Mono:wght@400;700&display=swap" rel="stylesheet">
-    <link rel="stylesheet" href="/dashboard/assets/style.css?v=8">
+    <link rel="stylesheet" href="/dashboard/assets/style.css?v=9">
 </head>
 <body>
     <!-- Decorative background layers -->
@@ -209,8 +209,8 @@
 
                 <div class="hud-command-row">
                     <label class="hud-field hud-field--grow">
-                        <span>PROMPT</span>
-                        <textarea id="piPromptInput" rows="1" spellcheck="false" placeholder="Enter mission briefing…"></textarea>
+                        <span>GOAL</span>
+                        <textarea id="piGoalInput" rows="1" spellcheck="false" placeholder="Short mission override…"></textarea>
                     </label>
                     <label class="hud-field">
                         <span>PROVIDER</span>
@@ -231,10 +231,6 @@
                             <option value="high">high</option>
                             <option value="xhigh">xhigh</option>
                         </select>
-                    </label>
-                    <label class="hud-field">
-                        <span>CONTINUE MSG</span>
-                        <input id="piContinueMessageInput" type="text" placeholder="continue">
                     </label>
                     <label class="hud-checkbox">
                         <input id="piAutoContinueInput" type="checkbox" checked>
@@ -496,6 +492,6 @@
         </main>
     </div>
 
-    <script src="/dashboard/assets/app.js?v=8"></script>
+    <script src="/dashboard/assets/app.js?v=10"></script>
 </body>
 </html>

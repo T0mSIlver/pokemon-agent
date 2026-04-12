@@ -14,7 +14,7 @@ import re
 import time
 from functools import partial
 from pathlib import Path
-from typing import Optional, Set
+from typing import Literal, Optional, Set
 
 from fastapi import FastAPI, HTTPException, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
@@ -22,6 +22,7 @@ from fastapi.responses import FileResponse, JSONResponse, Response
 from pydantic import BaseModel
 
 from pokemon_agent.agent_runtime import AgentRuntime
+from pokemon_agent.harness.contracts import TurnPlanInput
 from pokemon_agent.pi_supervisor import PiSupervisor
 
 __version__ = "0.1.0"
@@ -49,6 +50,7 @@ class GameConfig(BaseModel):
     enable_dashboard: bool = True
     realtime: bool = True
     realtime_fps: int = 60
+    live_artifact_broadcast_fps: Optional[int] = None
 
 
 class ActionRequest(BaseModel):
@@ -80,12 +82,11 @@ class ObserveRequest(BaseModel):
 class PiSupervisorStartRequest(BaseModel):
     """Body for POST /supervisor/start."""
 
-    prompt: Optional[str] = None
+    goal: Optional[str] = None
     provider: Optional[str] = None
     model: Optional[str] = None
     thinking: Optional[str] = None
     auto_continue: bool = True
-    continue_message: str = "continue"
     max_turns: Optional[int] = None
     continue_delay_seconds: float = 1.0
     skill_path: Optional[str] = None
@@ -94,7 +95,13 @@ class PiSupervisorStartRequest(BaseModel):
 class PiSupervisorContinueRequest(BaseModel):
     """Body for POST /supervisor/continue."""
 
-    message: str = "continue"
+    pass
+
+
+class AgentActRequest(BaseModel):
+    """Body for POST /agent/act."""
+
+    branch: Literal["primary", "fallback"] = "primary"
 
 
 # ---------------------------------------------------------------------------
@@ -117,7 +124,7 @@ _realtime_enabled: bool = False
 _realtime_ticks: int = 0
 _realtime_last_tick_at: Optional[float] = None
 _live_artifact_task: Optional[asyncio.Task] = None
-_live_artifact_frames_per_second: int = 60
+_live_artifact_frames_per_second: int = 10
 _live_artifact_last_sync_at: Optional[float] = None
 
 # WebSocket clients
@@ -463,6 +470,7 @@ def _compact_supervisor_status(snapshot: Optional[dict]) -> Optional[dict]:
         "model": snapshot.get("model"),
         "provider": snapshot.get("provider"),
         "thinking": snapshot.get("thinking"),
+        "goal": snapshot.get("goal"),
     }
 
 
@@ -477,15 +485,8 @@ def _public_artifact_paths(artifacts: Optional[dict]) -> dict:
     allowlist = (
         "latest_frame",
         "latest_frame_annotated",
-        "latest_observation_json",
-        "latest_observation_md",
-        "current_objective_json",
-        "current_objective_md",
+        "turn_context_json",
         "turn_plan_json",
-        "working_memory_md",
-        "landmarks_json",
-        "event_memory_jsonl",
-        "session_brief_md",
         "recovery_saves_json",
     )
     return {
@@ -598,6 +599,39 @@ def _compact_turn_plan(turn_plan: Optional[dict]) -> Optional[dict]:
         "fallback_actions": (turn_plan.get("fallback_actions") or [])[:6],
         "notes": _truncate_text(turn_plan.get("notes"), 280),
         "updated_at": turn_plan.get("updated_at"),
+        "status": turn_plan.get("status") or {},
+        "mode": turn_plan.get("mode"),
+        "observation_id": turn_plan.get("observation_id"),
+    }
+
+
+def _compact_plan_status(plan_status: Optional[dict]) -> Optional[dict]:
+    if not plan_status:
+        return None
+    return {
+        "state": plan_status.get("state"),
+        "observation_id": plan_status.get("observation_id"),
+        "validated_at": plan_status.get("validated_at"),
+        "executed_at": plan_status.get("executed_at"),
+        "outcome_checked_at": plan_status.get("outcome_checked_at"),
+        "branch_executed": plan_status.get("branch_executed"),
+        "reason": _truncate_text(plan_status.get("reason"), 220),
+        "last_error": _truncate_text(plan_status.get("last_error"), 220),
+    }
+
+
+def _observe_contract_response(bundle: Optional[dict]) -> dict:
+    if not bundle:
+        return {}
+    artifacts = _public_artifact_paths(bundle.get("artifacts") or {})
+    return {
+        "observation_id": bundle.get("observation_id"),
+        "generated_at": bundle.get("generated_at"),
+        "reason": bundle.get("reason"),
+        "source": bundle.get("source"),
+        "plan_status": _compact_plan_status(bundle.get("plan_status")),
+        "artifacts": artifacts,
+        "artifact_urls": _artifact_urls_from_paths(artifacts),
     }
 
 
@@ -607,6 +641,7 @@ def _compact_bundle_response(bundle: Optional[dict]) -> dict:
     artifacts = _public_artifact_paths(bundle.get("artifacts") or {})
     objective = (bundle.get("objective") or {}).get("current") or {}
     return {
+        "observation_id": bundle.get("observation_id"),
         "generated_at": bundle.get("generated_at"),
         "reason": bundle.get("reason"),
         "source": bundle.get("source"),
@@ -624,6 +659,8 @@ def _compact_bundle_response(bundle: Optional[dict]) -> dict:
         "dialog": _compact_dialog_guidance(bundle.get("dialog_guidance")),
         "battle": _compact_battle_guidance(bundle.get("battle_guidance")),
         "turn_plan": _compact_turn_plan(bundle.get("turn_plan")),
+        "plan_status": _compact_plan_status(bundle.get("plan_status")),
+        "turn_context": bundle.get("turn_context"),
         "stuck": bundle.get("stuck"),
         "recovery": _compact_recovery_summary(bundle.get("recovery")),
         "artifacts": artifacts,
@@ -1048,7 +1085,13 @@ async def _startup():
     )
     _realtime_frames_per_second = max(1, int(_config.realtime_fps))
     _realtime_enabled = bool(_config.realtime)
-    _live_artifact_frames_per_second = _realtime_frames_per_second
+    configured_broadcast_fps = getattr(_config, "live_artifact_broadcast_fps", None)
+    if configured_broadcast_fps is None:
+        _live_artifact_frames_per_second = min(
+            _realtime_frames_per_second, max(1, _live_artifact_frames_per_second)
+        )
+    else:
+        _live_artifact_frames_per_second = max(1, int(configured_broadcast_fps))
 
     if _config.enable_dashboard:
         _dashboard_dir = _get_dashboard_static_dir()
@@ -1110,7 +1153,9 @@ async def _startup():
     print("[server]   GET  /          — server info")
     print("[server]   GET  /state     — game state")
     print("[server]   GET  /screenshot — current frame (PNG)")
-    print("[server]   POST /agent/observe — refresh vision-first workspace bundle")
+    print("[server]   POST /agent/observe — refresh the curated turn context")
+    print("[server]   POST /agent/plan — validate and persist one turn plan")
+    print("[server]   POST /agent/act — execute the validated plan branch")
     print("[server]   POST /action    — execute actions")
     print("[server]   POST /save      — save state")
     print("[server]   POST /load      — load state")
@@ -1197,7 +1242,10 @@ async def dashboard_index():
             status_code=404,
             detail="Dashboard static files are not available in this installation.",
         )
-    return FileResponse(_dashboard_dir / "index.html")
+    return FileResponse(
+        _dashboard_dir / "index.html",
+        headers={"Cache-Control": "no-store, max-age=0"},
+    )
 
 
 @app.get("/artifacts/{artifact_key}")
@@ -1221,7 +1269,8 @@ async def dashboard_state():
     if _runtime is None:
         raise HTTPException(status_code=503, detail="Agent runtime is not initialised")
     payload = _runtime.dashboard_state()
-    artifacts = payload.get("artifacts") or {}
+    artifacts = _public_artifact_paths(payload.get("artifacts") or {})
+    payload["artifacts"] = artifacts
     payload["artifact_urls"] = _artifact_urls_from_paths(artifacts)
     payload["pi_supervisor"] = _supervisor.state_snapshot() if _supervisor is not None else {}
     payload["server_runtime"] = _server_runtime_snapshot()
@@ -1252,12 +1301,11 @@ async def supervisor_start(req: PiSupervisorStartRequest):
         raise HTTPException(status_code=503, detail="Pi supervisor is not initialised")
     try:
         state = await _supervisor.start(
-            prompt=req.prompt,
+            goal=req.goal,
             provider=req.provider,
             model=req.model,
             thinking=req.thinking,
             auto_continue=req.auto_continue,
-            continue_message=req.continue_message,
             max_turns=req.max_turns,
             continue_delay_seconds=req.continue_delay_seconds,
             skill_path=req.skill_path,
@@ -1275,7 +1323,7 @@ async def supervisor_continue(req: PiSupervisorContinueRequest):
     if _supervisor is None:
         raise HTTPException(status_code=503, detail="Pi supervisor is not initialised")
     try:
-        state = await _supervisor.continue_once(message=req.message)
+        state = await _supervisor.continue_once()
         return {"success": True, "supervisor": _compact_supervisor_status(state)}
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc))
@@ -1296,23 +1344,201 @@ async def supervisor_stop():
 
 
 @app.post("/agent/observe")
-async def agent_observe(req: ObserveRequest):
+async def agent_observe(req: Optional[ObserveRequest] = None):
     """Refresh the vision-first workspace bundle and return artifact paths."""
     _ensure_emulator()
     if _runtime is None:
         raise HTTPException(status_code=503, detail="Agent runtime is not initialised")
+    request = req or ObserveRequest()
     try:
-        result = await _refresh_agent_bundle(reason=req.reason, source="observe")
+        result = await _refresh_agent_bundle(reason=request.reason, source="observe")
         await _broadcast_runtime_refresh(result)
         if not result:
             raise HTTPException(
                 status_code=500, detail="Agent observation refresh returned no data"
             )
-        return _compact_bundle_response(result["bundle"])
+        return _observe_contract_response(result["bundle"])
     except HTTPException:
         raise
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Agent observe error: {e}")
+
+
+@app.post("/agent/plan")
+async def agent_plan(req: TurnPlanInput):
+    """Validate and persist one strict turn plan for the latest observation."""
+    if _runtime is None:
+        raise HTTPException(status_code=503, detail="Agent runtime is not initialised")
+    try:
+        plan = _runtime.validate_and_store_turn_plan(req.model_dump(mode="json"))
+        await _record_and_broadcast(
+            "turn_plan_validated",
+            {
+                "observation_id": plan.observation_id,
+                "objective_id": plan.objective_id,
+                "intent": plan.intent,
+                "mode": plan.mode,
+                "status": plan.status.model_dump(mode="json"),
+            },
+        )
+        return {
+            "success": True,
+            "turn_plan": _compact_turn_plan(_runtime.load_turn_plan()),
+            "plan_status": _compact_plan_status(plan.status.model_dump(mode="json")),
+            "artifacts": _public_artifact_paths(_runtime._artifact_payload()),
+        }
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+    except Exception as exc:  # noqa: BLE001
+        raise HTTPException(status_code=500, detail=f"Agent plan error: {exc}")
+
+
+@app.post("/agent/act")
+async def agent_act(req: Optional[AgentActRequest] = None):
+    """Execute the validated primary or fallback branch from turn_plan.json."""
+    _ensure_emulator()
+    if _runtime is None:
+        raise HTTPException(status_code=503, detail="Agent runtime is not initialised")
+    request = req or AgentActRequest()
+    try:
+        plan = _runtime.load_turn_plan_model()
+        if plan.status.state != "validated":
+            raise HTTPException(
+                status_code=400,
+                detail="No validated turn plan is ready to execute",
+            )
+
+        context = _runtime.load_turn_context()
+        if not context or plan.observation_id != context.get("observation_id"):
+            _runtime.invalidate_turn_plan(
+                "A newer observation exists; the validated plan is now stale.",
+                state="stale",
+            )
+            raise HTTPException(status_code=400, detail="Validated turn plan is stale")
+
+        branch = plan.primary_branch if request.branch == "primary" else plan.fallback_branch
+        if branch is None:
+            raise HTTPException(
+                status_code=400,
+                detail=f"No {request.branch} branch is available",
+            )
+
+        state_before = await _run_emulator_sync(_get_state_dict)
+        baseline_map_name = (state_before.get("map") or {}).get("map_name")
+        baseline_position = (state_before.get("player") or {}).get("position")
+
+        if branch.kind == "raw_actions":
+            requested_actions = list(branch.actions)
+            await _record_and_broadcast(
+                "action",
+                {
+                    "actions": requested_actions,
+                    "source": "agent_act",
+                    "branch": request.branch,
+                    "plan_observation_id": plan.observation_id,
+                },
+            )
+            executed = await _run_emulator_sync(_execute_action_batch_sync, requested_actions)
+            state_after = await _run_emulator_sync(_get_state_dict)
+            navigation_after = await _run_emulator_sync(_get_navigation_payload_sync)
+            updated_plan = _runtime.mark_turn_plan_executed(
+                branch=request.branch,
+                branch_kind=branch.kind,
+                requested_actions=requested_actions,
+                executed_actions=executed,
+                baseline_map_name=baseline_map_name,
+                baseline_position=baseline_position,
+                summary=f"Executed {executed} raw action(s).",
+            )
+            await _record_and_broadcast(
+                "action_result",
+                {
+                    "actions": requested_actions,
+                    "actions_executed": executed,
+                    "source": "agent_act",
+                    "branch": request.branch,
+                    "state_after": state_after,
+                    "navigation_after": navigation_after,
+                    "plan_status": updated_plan.status.model_dump(mode="json"),
+                },
+            )
+            return {
+                "success": True,
+                "branch": request.branch,
+                "actions_requested": requested_actions,
+                "actions_executed": executed,
+                "requires_observe": True,
+                "state_after": _compact_state_snapshot(state_after),
+                "plan_status": _compact_plan_status(updated_plan.status.model_dump(mode="json")),
+            }
+
+        target = (branch.target.x, branch.target.y)
+        snapshot_before, location_map_before, nav_plan = await _run_emulator_sync(
+            _plan_navigation_sync,
+            branch.target.x,
+            branch.target.y,
+            branch.mode,
+        )
+        if _dialog_is_active(state_before):
+            _runtime.invalidate_turn_plan(
+                "Navigation plan became invalid because a dialog or prompt is open.",
+            )
+            raise HTTPException(
+                status_code=400,
+                detail="Navigation plan cannot execute while a dialog or prompt is open",
+            )
+
+        executed = await _run_emulator_sync(_execute_action_batch_sync, nav_plan.actions)
+        state_after = await _run_emulator_sync(_get_state_dict)
+        snapshot_after, location_map_after = await _run_emulator_sync(
+            _refresh_navigation_state_sync
+        )
+        navigation_after = _serialize_navigation(snapshot_after, location_map_after, goal=target)
+        execution = _summarize_navigation_execution(
+            snapshot_before,
+            snapshot_after,
+            nav_plan,
+            target,
+        )
+        updated_plan = _runtime.mark_turn_plan_executed(
+            branch=request.branch,
+            branch_kind=branch.kind,
+            requested_actions=list(nav_plan.actions),
+            executed_actions=executed,
+            baseline_map_name=baseline_map_name,
+            baseline_position=baseline_position,
+            summary=execution["status"],
+        )
+        await _record_and_broadcast(
+            "navigation",
+            {
+                "target": {"x": branch.target.x, "y": branch.target.y},
+                "mode": branch.mode,
+                "plan": nav_plan.to_dict(),
+                "execution": execution,
+                "source": "agent_act",
+                "branch": request.branch,
+                "state_after": state_after,
+                "navigation_after": navigation_after,
+                "plan_status": updated_plan.status.model_dump(mode="json"),
+            },
+        )
+        return {
+            "success": True,
+            "branch": request.branch,
+            "actions_requested": list(nav_plan.actions),
+            "actions_executed": executed,
+            "requires_observe": True,
+            "navigation_execution": execution,
+            "state_after": _compact_state_snapshot(state_after),
+            "plan_status": _compact_plan_status(updated_plan.status.model_dump(mode="json")),
+        }
+    except HTTPException:
+        raise
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+    except Exception as exc:  # noqa: BLE001
+        raise HTTPException(status_code=500, detail=f"Agent act error: {exc}")
 
 
 @app.get("/agent/navigator")
@@ -1365,6 +1591,10 @@ async def execute_actions(req: ActionRequest):
     """Execute a sequence of game actions."""
     _ensure_emulator()
     try:
+        if _runtime is not None:
+            _runtime.invalidate_turn_plan(
+                "Manual /action invalidated the previously validated plan."
+            )
         state_before = await _run_emulator_sync(_get_state_dict)
         await _record_and_broadcast(
             "action",
@@ -1458,6 +1688,8 @@ async def load_state(req: SaveRequest):
         save_path = saves_dir / f"{req.name}.state"
         if not save_path.exists():
             raise HTTPException(status_code=404, detail=f"Save not found: {req.name}")
+        if _runtime is not None:
+            _runtime.invalidate_turn_plan("Loading a save invalidated the current plan.")
         await _run_emulator_sync(_emulator.load_state, str(save_path))
         refresh = await _refresh_agent_bundle(
             reason=f"manual_load:{req.name}",
@@ -1585,6 +1817,10 @@ async def navigation_navigate(req: NavigationRequest):
     """Plan and execute a navigation route."""
     _ensure_emulator()
     try:
+        if _runtime is not None:
+            _runtime.invalidate_turn_plan(
+                "Manual /navigation/navigate invalidated the previously validated plan."
+            )
         snapshot_before, location_map_before, plan = await _run_emulator_sync(
             _plan_navigation_sync,
             req.x,
