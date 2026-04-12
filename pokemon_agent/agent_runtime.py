@@ -21,6 +21,7 @@ from pydantic import ValidationError
 from pokemon_agent.harness.context_builder import build_turn_context
 from pokemon_agent.harness.contracts import TurnContext, TurnPlan, TurnPlanInput
 from pokemon_agent.harness.planning import (
+    build_plan_execution_trace,
     default_turn_plan,
     evaluate_plan_outcome,
     invalidate_plan,
@@ -29,6 +30,7 @@ from pokemon_agent.harness.planning import (
     store_validated_plan,
     validate_turn_plan_submission,
 )
+from pokemon_agent.memory.red import MAP_NAMES as RED_MAP_NAMES
 from pokemon_agent.navigation import LiveNavigationSnapshot, NavigationStore
 
 JsonDict = dict[str, Any]
@@ -36,6 +38,13 @@ JsonDict = dict[str, Any]
 
 def utc_now() -> str:
     return datetime.now(timezone.utc).isoformat()
+
+
+_STUCK_LEVEL_ORDER = {"clear": 0, "warning": 1, "danger": 2}
+
+
+def _stuck_level_rank(level: str) -> int:
+    return _STUCK_LEVEL_ORDER.get(level, 0)
 
 
 def _slugify(value: str) -> str:
@@ -619,6 +628,8 @@ def classify_action_feedback(
     state_delta: JsonDict,
     navigation_plan: Optional[JsonDict] = None,
     navigation_execution: Optional[JsonDict] = None,
+    plan_execution_trace: Optional[str] = None,
+    plan_state: Optional[str] = None,
 ) -> JsonDict:
     requested_actions = requested_actions or []
     tags: list[str] = []
@@ -657,15 +668,28 @@ def classify_action_feedback(
     elif source == "observe":
         notes.append("Fresh observation generated for Pi.")
 
+    if plan_state:
+        tags.append(f"plan_{plan_state}")
+
+    if plan_execution_trace:
+        summary = plan_execution_trace
+        notes = [plan_execution_trace] + [
+            note for note in notes if note != "Player position changed."
+        ]
+    else:
+        summary = notes[0] if notes else ""
+
     if not tags:
         tags.append("observe")
 
     return {
         "source": source,
         "requested_actions": requested_actions,
-        "summary": notes[0],
+        "summary": summary,
         "notes": notes,
         "tags": tags,
+        "plan_state": plan_state,
+        "plan_execution_trace": plan_execution_trace,
         "navigation_plan": navigation_plan,
         "navigation_execution": navigation_execution,
     }
@@ -1503,12 +1527,27 @@ class AgentRuntime:
 
         interaction = snapshot.interaction or {}
         target = _tuple_coord_from_any(interaction.get("target_coord"))
-        if target is not None:
-            source = str(interaction.get("source") or "interaction")
-            if source in {"sprite_direct", "sprite_via_talk_over"}:
+        interaction_kind = str(interaction.get("kind") or "").lower()
+        interaction_source = str(interaction.get("source") or "").lower()
+        non_destination_sources = {
+            "blocked_tile",
+            "counter_tile",
+            "dialog_lock",
+            "unknown_facing",
+            "none",
+        }
+        is_destination = (
+            target is not None
+            and interaction_kind in {"object", "sign"}
+            and interaction_source not in non_destination_sources
+            and interaction_source != ""
+        )
+        if is_destination:
+            assert target is not None
+            if interaction_source in {"sprite_direct", "sprite_via_talk_over"}:
                 kind = "npc_blocker"
                 title = f"NPC blocker at ({target[0]}, {target[1]})"
-            elif "sign" in source:
+            elif "sign" in interaction_source:
                 kind = "sign"
                 title = f"Talkable sign at ({target[0]}, {target[1]})"
             else:
@@ -2319,9 +2358,25 @@ class AgentRuntime:
         objective: JsonDict,
         source: str,
         requested_actions: Optional[list[str]],
+        plan: Optional[TurnPlan] = None,
     ) -> JsonDict:
         player = state.get("player") or {}
         position = player.get("position") or {}
+        plan_state = plan.status.state if plan is not None else None
+        plan_target: Optional[JsonDict] = None
+        if plan is not None and plan.expected_outcome is not None:
+            if plan.expected_outcome.position is not None:
+                plan_target = {
+                    "x": plan.expected_outcome.position.x,
+                    "y": plan.expected_outcome.position.y,
+                }
+            elif (
+                plan.primary_branch is not None
+                and getattr(plan.primary_branch, "kind", None) == "navigation"
+            ):
+                target = getattr(plan.primary_branch, "target", None)
+                if target is not None:
+                    plan_target = {"x": target.x, "y": target.y}
         signature = {
             "map_name": (state.get("map") or {}).get("map_name"),
             "position": position,
@@ -2331,13 +2386,17 @@ class AgentRuntime:
             "objective_id": objective["current"]["id"],
             "source": source,
             "actions": requested_actions or [],
+            "plan_state": plan_state,
+            "plan_target": plan_target,
         }
         self.recent_trajectory.append(signature)
 
-        recent = list(self.recent_trajectory)[-6:]
+        recent = list(self.recent_trajectory)[-8:]
         no_movement_loop = False
         dialog_loop = False
         objective_timeout = False
+        drift_loop_count = 0
+        drift_loop_targets: list[JsonDict] = []
 
         if len(recent) >= 4:
             locations = {
@@ -2351,6 +2410,13 @@ class AgentRuntime:
                 no_movement_loop = True
             if no_movement_loop and all(item.get("dialog_active") for item in recent[-4:]):
                 dialog_loop = True
+
+        drifts = [item for item in recent if item.get("plan_state") == "drifted"]
+        drift_loop_count = len(drifts)
+        for item in drifts:
+            target = item.get("plan_target")
+            if target and target not in drift_loop_targets:
+                drift_loop_targets.append(target)
 
         if objective["current"]["id"] == self.last_objective_id and source in {
             "action",
@@ -2379,6 +2445,35 @@ class AgentRuntime:
                 "use a shorter action batch",
                 "consider a recovery save",
             ]
+
+        if drift_loop_count >= 3:
+            new_level = "danger" if drift_loop_count >= 5 else "warning"
+            if _stuck_level_rank(new_level) > _stuck_level_rank(level):
+                level = new_level
+            target_note = ""
+            if drift_loop_targets:
+                first = drift_loop_targets[0]
+                target_note = f" target=({first.get('x')}, {first.get('y')})"
+                if len(drift_loop_targets) > 1:
+                    target_note += f" ({len(drift_loop_targets)} distinct targets)"
+            reason = (
+                f"Plan drifted {drift_loop_count} of the last {len(recent)} observations"
+                f"{target_note}. The last raw_actions batches are not landing as planned."
+            )
+            if drift_loop_targets:
+                first = drift_loop_targets[0]
+                recommended = [
+                    f"switch to mode=navigation with target={{x:{first.get('x')},y:{first.get('y')}}}",
+                    "drop primary_branch to 1 action and re-check after each step",
+                    "reload a recovery save if the same target keeps failing",
+                ]
+            else:
+                recommended = [
+                    "switch to mode=navigation with a nearby walkable target",
+                    "drop primary_branch to 1 action and re-check after each step",
+                    "reload a recovery save if the same target keeps failing",
+                ]
+
         if objective_timeout:
             level = "danger" if level == "warning" else "warning"
             reason = "Current objective has seen many action turns without progress."
@@ -2392,6 +2487,7 @@ class AgentRuntime:
             "reason": reason,
             "recommended_actions": recommended,
             "objective_action_count": self.action_events_since_objective_change,
+            "drift_count": drift_loop_count,
         }
 
     def _objective_markdown(self, objective: JsonDict) -> str:
@@ -2586,7 +2682,11 @@ class AgentRuntime:
                 )
             )
         plan_status = plan.status
-        context = build_turn_context(bundle=bundle, plan_status=plan_status)
+        context = build_turn_context(
+            bundle=bundle,
+            plan_status=plan_status,
+            map_id_to_name=RED_MAP_NAMES,
+        )
         self._write_json(self.artifacts["turn_context_json"], context.model_dump(mode="json"))
         return context
 
@@ -2965,6 +3065,31 @@ class AgentRuntime:
         )
         screen_text = extract_screen_text(screen, state)
         state_delta = build_state_delta(self.last_state, state)
+        evaluated_plan = self._evaluate_pending_plan(
+            {
+                "state": state,
+                "state_delta": state_delta,
+                "screen_text": screen_text,
+            }
+        )
+        plan_execution_trace: Optional[str] = None
+        plan_state_label: Optional[str] = None
+        if evaluated_plan.execution is not None and evaluated_plan.status.state in {
+            "matched",
+            "partial",
+            "drifted",
+            "invalid",
+            "stale",
+        }:
+            plan_state_label = evaluated_plan.status.state
+            plan_execution_trace = build_plan_execution_trace(
+                evaluated_plan,
+                {
+                    "state": state,
+                    "state_delta": state_delta,
+                    "screen_text": screen_text,
+                },
+            )
         action_feedback = classify_action_feedback(
             source=source,
             requested_actions=requested_actions,
@@ -2973,6 +3098,8 @@ class AgentRuntime:
             state_delta=state_delta,
             navigation_plan=navigation_plan,
             navigation_execution=navigation_execution,
+            plan_execution_trace=plan_execution_trace,
+            plan_state=plan_state_label,
         )
         movement_guidance = build_movement_guidance(
             state=state,
@@ -3018,6 +3145,7 @@ class AgentRuntime:
             objective=current_objective,
             source=source,
             requested_actions=requested_actions,
+            plan=evaluated_plan,
         )
 
         map_name = str((state.get("map") or {}).get("map_name") or "Unknown")

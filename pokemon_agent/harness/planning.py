@@ -249,6 +249,17 @@ def _match_expected_outcome(plan: TurnPlan, bundle: dict) -> tuple[int, int, lis
     return matched, total, notes
 
 
+def _partial_raw_batch(plan: TurnPlan) -> Optional[tuple[int, int]]:
+    """Return (executed, requested) when a raw_actions batch stopped early."""
+    if plan.execution is None or plan.execution.branch_kind != "raw_actions":
+        return None
+    requested = len(plan.execution.requested_actions or [])
+    executed = int(plan.execution.executed_actions or 0)
+    if 0 < executed < requested:
+        return executed, requested
+    return None
+
+
 def evaluate_plan_outcome(plan: TurnPlan, bundle: dict) -> TurnPlan:
     matched, total, notes = _match_expected_outcome(plan, bundle)
     checked_at = utc_now()
@@ -262,12 +273,21 @@ def evaluate_plan_outcome(plan: TurnPlan, bundle: dict) -> TurnPlan:
             ),
         )
 
+    partial_batch = _partial_raw_batch(plan)
+
     if matched == total:
         state: PlanState = "matched"
         reason = "Expected outcome matched."
     elif matched > 0:
         state = "partial"
         reason = "Expected outcome partially matched."
+    elif partial_batch is not None:
+        executed, requested = partial_batch
+        state = "partial"
+        reason = (
+            f"Batch blocked after {executed}/{requested} steps "
+            f"({plan.execution.requested_actions[0]} likely hit a wall or sprite)."
+        )
     else:
         state = "drifted"
         reason = "Expected outcome drifted."
@@ -286,6 +306,54 @@ def evaluate_plan_outcome(plan: TurnPlan, bundle: dict) -> TurnPlan:
         reason=reason,
     )
     return plan
+
+
+def build_plan_execution_trace(plan: TurnPlan, bundle: dict) -> Optional[str]:
+    """Return a single-line trace describing what the last plan actually did.
+
+    Combines the requested/executed action counts, observed movement, and the
+    post-eval plan state so the agent can see at a glance whether the batch
+    landed, partially landed, or drifted — and why.
+    """
+    if plan.execution is None:
+        return None
+    exec_ = plan.execution
+    status = plan.status
+    requested = list(exec_.requested_actions or [])
+    executed = int(exec_.executed_actions or 0)
+    total = len(requested)
+
+    if exec_.branch_kind == "navigation":
+        head = f"navigation branch ran {executed} step(s)"
+    else:
+        if total and all(action == requested[0] for action in requested):
+            desc = f"{requested[0]} x{total}"
+        else:
+            desc = " ".join(requested) or "raw_actions"
+        head = f"{desc} requested; {executed}/{total} executed"
+
+    movement = _movement_from_execution_baseline(plan, bundle) or {}
+    dx = int(movement.get("dx") or 0)
+    dy = int(movement.get("dy") or 0)
+    head += f"; delta=({dx},{dy})"
+
+    state = status.state
+    if state in {"matched", "partial", "drifted"}:
+        head += f"; outcome={state}"
+
+    if state != "matched" and status.reason:
+        reason = status.reason
+        for prefix in (
+            "Expected outcome drifted.",
+            "Expected outcome partially matched.",
+            "Expected outcome matched.",
+        ):
+            if reason.startswith(prefix):
+                reason = reason[len(prefix) :].strip()
+                break
+        if reason:
+            head += f" ({reason})"
+    return head
 
 
 def parse_stored_turn_plan(payload: object) -> TurnPlan:

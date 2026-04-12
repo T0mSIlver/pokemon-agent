@@ -17,6 +17,7 @@ from pokemon_agent.agent_runtime import (
 )
 from pokemon_agent.harness.contracts import TurnPlanInput
 from pokemon_agent.harness.planning import (
+    build_plan_execution_trace,
     evaluate_plan_outcome,
     mark_plan_executed,
     store_validated_plan,
@@ -460,6 +461,257 @@ def test_evaluate_plan_outcome_uses_execution_baseline_for_position_delta():
 
     assert evaluated.status.state == "matched"
     assert evaluated.status.reason == "Expected outcome matched."
+
+
+def _build_multi_walk_plan_and_execute(
+    *,
+    requested: int,
+    executed: int,
+    baseline_xy: tuple[int, int],
+    current_xy: tuple[int, int],
+    map_name: str = "Viridian City",
+    map_id: int = 1,
+):
+    plan = store_validated_plan(
+        TurnPlanInput.model_validate(
+            {
+                "observation_id": "obs-batch",
+                "objective_id": "get_oaks_parcel",
+                "intent": f"Walk left {requested} tiles.",
+                "mode": "overworld",
+                "primary_branch": {
+                    "kind": "raw_actions",
+                    "actions": ["walk_left"] * requested,
+                },
+                "expected_outcome": {
+                    "summary": f"Move {requested} tiles left.",
+                    "position_delta": {"dx": -requested, "dy": 0},
+                },
+            }
+        )
+    )
+    plan = mark_plan_executed(
+        plan,
+        branch="primary",
+        branch_kind="raw_actions",
+        requested_actions=["walk_left"] * requested,
+        executed_actions=executed,
+        baseline_map_name=map_name,
+        baseline_position={"x": baseline_xy[0], "y": baseline_xy[1]},
+        summary=f"Executed {executed}/{requested} raw action(s).",
+    )
+    bundle = {
+        "state": make_state(
+            map_name=map_name,
+            map_id=map_id,
+            x=current_xy[0],
+            y=current_xy[1],
+        ),
+        "state_delta": {
+            "movement": {
+                "dx": current_xy[0] - baseline_xy[0],
+                "dy": current_xy[1] - baseline_xy[1],
+            }
+        },
+        "screen_text": {"text": ""},
+    }
+    return plan, bundle
+
+
+def test_evaluate_plan_outcome_marks_blocked_batch_as_partial_not_drifted():
+    plan, bundle = _build_multi_walk_plan_and_execute(
+        requested=4,
+        executed=1,
+        baseline_xy=(20, 16),
+        current_xy=(19, 16),
+    )
+    evaluated = evaluate_plan_outcome(plan, bundle)
+    assert evaluated.status.state == "partial"
+    assert "Batch blocked after 1/4 steps" in evaluated.status.reason
+
+
+def test_build_plan_execution_trace_exposes_collision_details():
+    plan, bundle = _build_multi_walk_plan_and_execute(
+        requested=4,
+        executed=1,
+        baseline_xy=(20, 16),
+        current_xy=(19, 16),
+    )
+    evaluated = evaluate_plan_outcome(plan, bundle)
+    trace = build_plan_execution_trace(evaluated, bundle)
+    assert trace is not None
+    assert "walk_left x4 requested" in trace
+    assert "1/4 executed" in trace
+    assert "delta=(-1,0)" in trace
+    assert "outcome=partial" in trace
+    assert "Batch blocked after 1/4 steps" in trace
+
+
+def test_classify_action_feedback_uses_plan_trace_as_summary():
+    state_before = make_state(x=20, y=16)
+    state_after = make_state(x=19, y=16)
+    delta = build_state_delta(state_before, state_after)
+    feedback = classify_action_feedback(
+        source="action",
+        requested_actions=["walk_left"] * 4,
+        state_before=state_before,
+        state_after=state_after,
+        state_delta=delta,
+        plan_execution_trace=(
+            "walk_left x4 requested; 1/4 executed; delta=(-1,0); outcome=drifted"
+        ),
+        plan_state="drifted",
+    )
+    assert feedback["summary"].startswith("walk_left x4 requested")
+    assert feedback["plan_state"] == "drifted"
+    assert "plan_drifted" in feedback["tags"]
+    assert feedback["notes"][0] == feedback["summary"]
+    assert "Player position changed." not in feedback["notes"]
+
+
+def test_agent_runtime_escalates_stuck_on_repeated_drifts(tmp_path: Path, monkeypatch):
+    emulator = FakeEmulator()
+    store = NavigationStore(tmp_path / "navigation.json")
+    snapshot = make_snapshot()
+    navigation = make_navigation_payload(store, snapshot)
+    runtime = AgentRuntime(
+        data_dir=tmp_path / "data",
+        workspace_dir=tmp_path / "workspace",
+    )
+    state_holder = {"x": 16, "y": 16}
+
+    def current_state() -> dict:
+        return make_state(
+            map_name="Viridian City",
+            map_id=1,
+            has_pokedex=True,
+            x=state_holder["x"],
+            y=state_holder["y"],
+        )
+
+    for turn in range(4):
+        observe = runtime.refresh(
+            emulator=emulator,
+            state=current_state(),
+            navigation=navigation,
+            navigation_store=store,
+            reason=f"observe_{turn}",
+            source="observe",
+        )
+        observation_id = observe["bundle"]["observation_id"]
+        runtime.validate_and_store_turn_plan(
+            {
+                "observation_id": observation_id,
+                "objective_id": observe["bundle"]["objective"]["current"]["id"],
+                "intent": "Walk left into the mart.",
+                "mode": "overworld",
+                "primary_branch": {
+                    "kind": "raw_actions",
+                    "actions": ["walk_left"],
+                },
+                "expected_outcome": {
+                    "summary": "Move one tile left.",
+                    "position": {"x": 15, "y": 16},
+                },
+            }
+        )
+        runtime.mark_turn_plan_executed(
+            branch="primary",
+            branch_kind="raw_actions",
+            requested_actions=["walk_left"],
+            executed_actions=1,
+            baseline_map_name="Viridian City",
+            baseline_position={"x": 16, "y": 16},
+            summary="Executed 1 raw action(s).",
+        )
+        result = runtime.refresh(
+            emulator=emulator,
+            state=current_state(),
+            navigation=navigation,
+            navigation_store=store,
+            reason=f"after_act_{turn}",
+            source="action",
+            requested_actions=["walk_left"],
+        )
+
+    stuck = result["bundle"]["stuck"]
+    assert stuck["level"] in {"warning", "danger"}
+    assert stuck["drift_count"] >= 3
+    assert any("navigation" in action for action in stuck["recommended_actions"])
+
+
+def test_discover_landmarks_ignores_blocked_tile_interactions(tmp_path: Path):
+    emulator = FakeEmulator()
+    store = NavigationStore(tmp_path / "navigation.json")
+    snapshot = LiveNavigationSnapshot(
+        map_id=1,
+        map_name="Viridian City",
+        player_position=(16, 16),
+        facing="left",
+        tileset="OVERWORLD",
+        window_top_left=(12, 12),
+        terrain=[[1 for _ in range(10)] for _ in range(9)],
+        sprite_positions=[],
+        valid_moves=["up", "down", "right"],
+        warps=[],
+        signs=[],
+        map_dimensions={"width": 20, "height": 18},
+        interaction={
+            "kind": "background",
+            "source": "blocked_tile",
+            "reason": "Forward movement is blocked by a non-passable background tile.",
+            "target_coord": {"x": 15, "y": 16},
+        },
+    )
+    navigation = make_navigation_payload(store, snapshot)
+    runtime = AgentRuntime(
+        data_dir=tmp_path / "data",
+        workspace_dir=tmp_path / "workspace",
+    )
+    runtime.refresh(
+        emulator=emulator,
+        state=make_state(map_name="Viridian City", map_id=1, x=16, y=16),
+        navigation=navigation,
+        navigation_store=store,
+        reason="probe_wall",
+        source="observe",
+    )
+    landmarks = json.loads(runtime.artifacts["landmarks_json"].read_text(encoding="utf-8"))
+    entries = landmarks.get("landmarks") or []
+    blocked_entries = [
+        entry
+        for entry in entries
+        if entry.get("coord", {}).get("x") == 15 and entry.get("coord", {}).get("y") == 16
+    ]
+    assert blocked_entries == []
+
+
+def test_turn_context_surfaces_warps_with_target_map_names(tmp_path: Path):
+    emulator = FakeEmulator()
+    store = NavigationStore(tmp_path / "navigation.json")
+    snapshot = make_snapshot()
+    navigation = make_navigation_payload(store, snapshot)
+    runtime = AgentRuntime(
+        data_dir=tmp_path / "data",
+        workspace_dir=tmp_path / "workspace",
+    )
+    runtime.refresh(
+        emulator=emulator,
+        state=make_state(map_name="Viridian City", map_id=1, has_pokedex=True, x=10, y=10),
+        navigation=navigation,
+        navigation_store=store,
+        reason="warp_context",
+        source="observe",
+    )
+    turn_context = json.loads(
+        runtime.artifacts["turn_context_json"].read_text(encoding="utf-8")
+    )
+    warps = turn_context["navigation"]["warps"]
+    assert warps, "expected warps to be surfaced in turn_context"
+    first_warp = warps[0]
+    assert first_warp["coord"] == {"x": 10, "y": 4}
+    assert first_warp["target_map_name"] == "Viridian Mart"
+    assert first_warp["distance"] == 6
 
 
 def test_agent_runtime_records_landmarks_and_failure_memory(tmp_path: Path):

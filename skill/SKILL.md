@@ -135,9 +135,12 @@ Use this order:
 
 1. If the UI is in dialog, clear dialog first.
 2. If the UI is in battle, resolve the battle first.
-3. If `recovery.stuck_level` is `warning` or `danger`, address that before long exploration.
-4. If the destination coordinates are known, prefer a navigation plan.
-5. Otherwise use the annotated frame, valid moves, and interaction probe to explore carefully.
+3. If `recovery.stuck_level` is `warning` or `danger`, follow `recovery.recommended_actions` verbatim before any further exploration.
+4. If a walkable destination is more than one tile away, prefer `mode=navigation` with the exact target coord. Navigation handles pathfinding around walls and sprites — raw `walk_*` batches drift the moment any step hits a collision.
+5. Use `raw_actions` only for single-step nudges (`walk_*` x1), dialog (`press_a`/`press_b`), or battle menus.
+6. Otherwise use the annotated frame, valid moves, and interaction probe to explore carefully.
+
+When `recent_action.plan_state` is `drifted` or `partial`, read `recent_action.summary` — it shows exactly how many of the requested actions executed and where the block happened. Drop your next batch to a single action and reassess, or switch to `mode=navigation`.
 
 ## Saving And Recovery
 

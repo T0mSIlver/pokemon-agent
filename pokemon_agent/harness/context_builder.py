@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from typing import Any
+from typing import Any, Optional
 
 from .contracts import (
     ActionBudget,
@@ -29,7 +29,51 @@ def _truncate(text: Any, limit: int) -> str:
     return value[: limit - 1].rstrip() + "…"
 
 
-def build_turn_context(*, bundle: dict, plan_status: PlanStatus) -> TurnContext:
+def _manhattan(a: Optional[dict], b: Optional[dict]) -> Optional[int]:
+    if not a or not b:
+        return None
+    try:
+        return abs(int(a["x"]) - int(b["x"])) + abs(int(a["y"]) - int(b["y"]))
+    except (KeyError, TypeError, ValueError):
+        return None
+
+
+def _build_warp_hints(
+    *,
+    snapshot: dict,
+    player_position: dict,
+    map_id_to_name: Optional[dict[int, str]] = None,
+) -> list[dict]:
+    warps = snapshot.get("warps") or []
+    result: list[dict] = []
+    for warp in warps[:8]:
+        try:
+            wx = int(warp.get("x"))
+            wy = int(warp.get("y"))
+        except (TypeError, ValueError):
+            continue
+        target_map_id = warp.get("target_map_id")
+        target_name: Optional[str] = None
+        if map_id_to_name and isinstance(target_map_id, int):
+            target_name = map_id_to_name.get(target_map_id)
+        result.append(
+            {
+                "coord": {"x": wx, "y": wy},
+                "target_map_id": target_map_id,
+                "target_map_name": target_name,
+                "distance": _manhattan({"x": wx, "y": wy}, player_position),
+            }
+        )
+    result.sort(key=lambda item: (item.get("distance") is None, item.get("distance") or 0))
+    return result
+
+
+def build_turn_context(
+    *,
+    bundle: dict,
+    plan_status: PlanStatus,
+    map_id_to_name: Optional[dict[int, str]] = None,
+) -> TurnContext:
     state = bundle.get("state") or {}
     objective = (bundle.get("objective") or {}).get("current") or {}
     screen_text = bundle.get("screen_text") or {}
@@ -43,6 +87,11 @@ def build_turn_context(*, bundle: dict, plan_status: PlanStatus) -> TurnContext:
     route_cards = navigation_guidance.get("route_cards") or []
     landmarks = navigation_guidance.get("landmarks") or []
     position = (state.get("player") or {}).get("position") or {}
+    warps = _build_warp_hints(
+        snapshot=snapshot,
+        player_position=position,
+        map_id_to_name=map_id_to_name,
+    )
 
     route_hints = [
         RouteHint(
@@ -94,6 +143,7 @@ def build_turn_context(*, bundle: dict, plan_status: PlanStatus) -> TurnContext:
                 "reason": _truncate((snapshot.get("interaction") or {}).get("reason"), 140),
                 "target_coord": (snapshot.get("interaction") or {}).get("target_coord"),
             },
+            "warps": warps,
             "route_hints": [hint.model_dump() for hint in route_hints],
             "landmarks": [hint.model_dump() for hint in landmark_hints],
         },

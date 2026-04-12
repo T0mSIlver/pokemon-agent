@@ -20,6 +20,7 @@ from .contracts import (
 from .planning import (
     CONTEXT_VERSION,
     PLAN_VERSION,
+    build_plan_execution_trace,
     default_plan_status,
     default_turn_plan,
     evaluate_plan_outcome,
@@ -47,6 +48,7 @@ __all__ = [
     "TurnContextArtifacts",
     "TurnPlan",
     "TurnPlanInput",
+    "build_plan_execution_trace",
     "build_turn_context",
     "default_plan_status",
     "default_supervisor_prompt",
