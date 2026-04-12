@@ -152,7 +152,10 @@ def test_interaction_probe_detects_direct_object():
     assert probe["kind"] == "object"
     assert probe["source"] == "sprite_direct"
     assert probe["distance"] == 1
+    assert probe["coordinate_system"] == "map_tile_absolute"
     assert probe["target_coord"] == {"x": 10, "y": 9}
+    assert probe["front_tile"]["coord"] == {"x": 10, "y": 9}
+    assert "local_coord" not in probe["front_tile"]
 
 
 def test_interaction_probe_detects_direct_sign():
@@ -168,6 +171,7 @@ def test_interaction_probe_detects_direct_sign():
     assert probe["kind"] == "sign"
     assert probe["source"] == "sign_direct"
     assert probe["sign_text_id"] == 7
+    assert probe["coordinate_system"] == "map_tile_absolute"
     assert probe["target_coord"] == {"x": 10, "y": 9}
 
 

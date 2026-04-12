@@ -11,6 +11,11 @@ from typing import Dict, Iterable, List, Optional, Tuple
 from pokemon_agent.pathfinding import DIRECTIONS, directions_to_actions
 
 Coord = Tuple[int, int]
+MAP_COORDINATE_SYSTEM = "map_tile_absolute"
+MAP_COORDINATE_NOTE = (
+    "All x/y values are absolute map tile coordinates. "
+    "In the annotated frame, columns are x and rows are y."
+)
 
 TILE_PAIR_BLOCKERS: dict[str, set[frozenset[int]]] = {
     "CAVERN": {
@@ -193,6 +198,8 @@ class LiveNavigationSnapshot:
             "location_key": self.key,
             "map_id": self.map_id,
             "map_name": self.map_name,
+            "coordinate_system": MAP_COORDINATE_SYSTEM,
+            "coordinate_note": MAP_COORDINATE_NOTE,
             "player_position": _coord_dict(self.player_position),
             "facing": self.facing,
             "tileset": self.tileset,
@@ -526,6 +533,8 @@ class LocationNavigationMap:
             "location_key": self.key,
             "map_id": self.map_id,
             "map_name": self.map_name,
+            "coordinate_system": MAP_COORDINATE_SYSTEM,
+            "coordinate_note": MAP_COORDINATE_NOTE,
             "tileset": self.tileset,
             "updates": self.updates,
             "known_tiles": len(self.tiles),

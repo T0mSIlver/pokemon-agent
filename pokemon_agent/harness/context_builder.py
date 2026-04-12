@@ -136,6 +136,8 @@ def build_turn_context(
             "facing": (state.get("player") or {}).get("facing"),
         },
         navigation={
+            "coordinate_system": snapshot.get("coordinate_system"),
+            "coordinate_note": snapshot.get("coordinate_note"),
             "valid_moves": list(snapshot.get("valid_moves") or [])[:4],
             "interaction": {
                 "kind": (snapshot.get("interaction") or {}).get("kind"),

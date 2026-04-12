@@ -13,6 +13,8 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional
 
 from pokemon_agent.navigation import (
+    MAP_COORDINATE_NOTE,
+    MAP_COORDINATE_SYSTEM,
     LiveNavigationSnapshot,
     NavigationPath,
     tile_pair_allows,
@@ -71,7 +73,6 @@ def _build_interaction_probe(
             tile_id = int(tilemap[tile_y][tile_x])
         return {
             "coord": _coord_dict(absolute),
-            "local_coord": {"x": local_x, "y": local_y},
             "distance": distance,
             "tile_id": tile_id,
             "passable": bool(snapshot.terrain[local_y][local_x]),
@@ -92,6 +93,8 @@ def _build_interaction_probe(
             "kind": "unknown",
             "source": "unknown_facing",
             "reason": "The player's facing direction could not be resolved.",
+            "coordinate_system": MAP_COORDINATE_SYSTEM,
+            "coordinate_note": MAP_COORDINATE_NOTE,
             "dialog_active": dialog_active,
             "can_move_forward": can_move_forward,
             "target_coord": None,
@@ -191,6 +194,8 @@ def _build_interaction_probe(
         "kind": kind,
         "source": source,
         "reason": reason,
+        "coordinate_system": MAP_COORDINATE_SYSTEM,
+        "coordinate_note": MAP_COORDINATE_NOTE,
         "dialog_active": dialog_active,
         "can_move_forward": can_move_forward,
         "target_coord": _coord_dict(target_coord),

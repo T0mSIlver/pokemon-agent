@@ -265,8 +265,10 @@ def test_render_navigation_overlay_draws_on_image():
 
     overlay = render_navigation_overlay(image, snapshot, objective={"title": "Test Objective"})
 
-    assert overlay.size == image.size
-    assert ImageChops.difference(image, overlay).getbbox() is not None
+    assert overlay.width > image.width
+    assert overlay.height > image.height
+    diff = ImageChops.difference(Image.new("RGB", overlay.size, color=(0, 0, 0)), overlay)
+    assert diff.getbbox() is not None
 
 
 def test_agent_runtime_refresh_writes_workspace_and_dashboard_state(tmp_path: Path):
@@ -341,6 +343,8 @@ def test_agent_runtime_refresh_writes_workspace_and_dashboard_state(tmp_path: Pa
     assert "latest_observation_json" not in observation_json["artifacts"]
     assert "run_log_jsonl" not in observation_json["artifacts"]
     assert "ASCII is symbolic only" in observation_json["navigation"]["ascii_note"]
+    assert observation_json["navigation"]["coordinate_system"] == "map_tile_absolute"
+    assert "absolute map tile coordinates" in observation_json["navigation"]["coordinate_note"]
     assert "fields" not in observation_json["state_delta"]
     assert observation_json["navigation"]["route_cards"]
     assert observation_json["navigation"]["frontiers"]
@@ -364,6 +368,7 @@ def test_agent_runtime_refresh_writes_workspace_and_dashboard_state(tmp_path: Pa
         ]
     )
     assert turn_context["navigation"]["route_hints"]
+    assert turn_context["navigation"]["coordinate_system"] == "map_tile_absolute"
     assert turn_context["plan_status"]["state"] == "stale"
     assert observation_json["memory"]["recent_facts"]
     assert observation_json["memory"]["session_brief_path"].endswith("session_brief.md")

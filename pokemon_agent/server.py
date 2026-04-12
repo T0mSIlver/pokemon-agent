@@ -434,6 +434,8 @@ def _compact_navigation_snapshot(
     snapshot = navigation.get("snapshot") or {}
     location_map = navigation.get("location_map") or {}
     return {
+        "coordinate_system": snapshot.get("coordinate_system"),
+        "coordinate_note": snapshot.get("coordinate_note") or location_map.get("coordinate_note"),
         "valid_moves": snapshot.get("valid_moves", []),
         "interaction": snapshot.get("interaction"),
         "live_ascii": snapshot.get("ascii"),

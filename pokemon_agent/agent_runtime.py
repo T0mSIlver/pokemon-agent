@@ -31,7 +31,12 @@ from pokemon_agent.harness.planning import (
     validate_turn_plan_submission,
 )
 from pokemon_agent.memory.red import MAP_NAMES as RED_MAP_NAMES
-from pokemon_agent.navigation import LiveNavigationSnapshot, NavigationStore
+from pokemon_agent.navigation import (
+    MAP_COORDINATE_NOTE,
+    MAP_COORDINATE_SYSTEM,
+    LiveNavigationSnapshot,
+    NavigationStore,
+)
 
 JsonDict = dict[str, Any]
 
@@ -83,6 +88,44 @@ def _truncate_text_block(value: Any, limit: int = 1600) -> str:
     if len(text) <= limit:
         return text
     return text[: limit - 16].rstrip() + "\n...[truncated]..."
+
+
+def _measure_text(
+    draw: ImageDraw.ImageDraw,
+    text: str,
+    *,
+    font: ImageFont.ImageFont,
+) -> tuple[int, int]:
+    if not text:
+        return 0, 0
+    if hasattr(draw, "textbbox"):
+        left, top, right, bottom = draw.textbbox((0, 0), text, font=font)
+        return right - left, bottom - top
+    return draw.textsize(text, font=font)
+
+
+def _wrap_text(
+    draw: ImageDraw.ImageDraw,
+    text: str,
+    *,
+    font: ImageFont.ImageFont,
+    max_width: int,
+) -> list[str]:
+    words = str(text or "").split()
+    if not words:
+        return [""]
+
+    lines: list[str] = []
+    current = words[0]
+    for word in words[1:]:
+        candidate = f"{current} {word}"
+        if _measure_text(draw, candidate, font=font)[0] <= max_width:
+            current = candidate
+        else:
+            lines.append(current)
+            current = word
+    lines.append(current)
+    return lines
 
 
 @dataclass(slots=True)
@@ -755,92 +798,248 @@ def render_navigation_overlay(
     objective: Optional[JsonDict] = None,
     goal: Optional[tuple[int, int]] = None,
 ) -> Image.Image:
-    canvas = image.convert("RGBA")
-    overlay = Image.new("RGBA", canvas.size, (0, 0, 0, 0))
-    draw = ImageDraw.Draw(overlay)
+    scale = 2
+    frame = image.convert("RGBA").resize(
+        (image.width * scale, image.height * scale),
+        resample=Image.NEAREST,
+    )
     font = ImageFont.load_default()
+    measure_draw = ImageDraw.Draw(Image.new("RGBA", (1, 1), (0, 0, 0, 0)))
+    padding = 8
+    line_height = max(_measure_text(measure_draw, "Ag", font=font)[1], 11) + 3
 
-    if not snapshot:
-        draw.rectangle((0, 0, canvas.width, 22), fill=(12, 17, 26, 200))
-        draw.text((6, 6), "Navigation overlay unavailable", fill=(255, 255, 255, 255), font=font)
-        return Image.alpha_composite(canvas, overlay).convert("RGB")
+    if not snapshot or not snapshot.width or not snapshot.height:
+        canvas_width = frame.width + (padding * 2)
+        wrap_width = max(40, canvas_width - (padding * 2))
+        header_lines = [
+            (line, (255, 255, 255, 255))
+            for line in _wrap_text(
+                measure_draw,
+                "Navigation overlay unavailable.",
+                font=font,
+                max_width=wrap_width,
+            )
+        ]
+        header_lines.extend(
+            (
+                line,
+                (165, 180, 196, 255),
+            )
+            for line in _wrap_text(
+                measure_draw,
+                "No live collision window was captured for this frame.",
+                font=font,
+                max_width=wrap_width,
+            )
+        )
+        header_height = padding + (len(header_lines) * line_height) + padding
+        canvas = Image.new(
+            "RGBA",
+            (canvas_width, header_height + frame.height + padding),
+            (7, 10, 16, 255),
+        )
+        draw = ImageDraw.Draw(canvas)
+        draw.rectangle((0, 0, canvas.width, header_height), fill=(12, 17, 26, 235))
+        canvas.alpha_composite(frame, (padding, header_height))
+        draw.rectangle(
+            (
+                padding - 1,
+                header_height - 1,
+                padding + frame.width,
+                header_height + frame.height,
+            ),
+            outline=(255, 138, 61, 220),
+            width=1,
+        )
 
-    tile_width = canvas.width / 10
-    tile_height = canvas.height / 9
+        text_y = padding
+        for line, fill in header_lines:
+            draw.text((padding, text_y), line, fill=fill, font=font)
+            text_y += line_height
+        return canvas.convert("RGB")
+
+    window_min_x = snapshot.window_top_left[0]
+    window_max_x = snapshot.window_top_left[0] + snapshot.width - 1
+    window_min_y = snapshot.window_top_left[1]
+    window_max_y = snapshot.window_top_left[1] + snapshot.height - 1
+    x_labels = [str(window_min_x + local_x) for local_x in range(snapshot.width)]
+    y_labels = [str(window_min_y + local_y) for local_y in range(snapshot.height)]
+    x_label_height = max(
+        (_measure_text(measure_draw, label, font=font)[1] for label in x_labels),
+        default=0,
+    )
+    y_label_width = max(
+        (_measure_text(measure_draw, label, font=font)[0] for label in y_labels),
+        default=0,
+    )
+
+    left_margin = y_label_width + (padding * 2)
+    canvas_width = left_margin + frame.width + padding
+    wrap_width = max(40, canvas_width - (padding * 2))
+    pos = snapshot.player_position
+    move_list = ", ".join(snapshot.valid_moves) or "none"
+    objective_line = objective["title"] if objective else "No objective"
+    header_blocks = [
+        (snapshot.map_name, (255, 255, 255, 255)),
+        (
+            f"Player ({pos[0]}, {pos[1]}) facing {snapshot.facing} | moves: {move_list}",
+            (165, 180, 196, 255),
+        ),
+        (f"Objective: {objective_line}", (255, 214, 10, 255)),
+        (
+            (
+                "Coords are absolute map tiles. "
+                f"Columns show x={window_min_x}..{window_max_x}; "
+                f"rows show y={window_min_y}..{window_max_y}."
+            ),
+            (110, 230, 174, 255),
+        ),
+    ]
+    header_lines: list[tuple[str, tuple[int, int, int, int]]] = []
+    for text, fill in header_blocks:
+        for line in _wrap_text(measure_draw, text, font=font, max_width=wrap_width):
+            header_lines.append((line, fill))
+
+    column_band_height = x_label_height + padding + 2
+    header_height = padding + (len(header_lines) * line_height) + padding
+    top_margin = header_height + column_band_height
+    canvas = Image.new(
+        "RGBA",
+        (canvas_width, top_margin + frame.height + padding),
+        (7, 10, 16, 255),
+    )
+    draw = ImageDraw.Draw(canvas)
+    draw.rectangle((0, 0, canvas.width, header_height), fill=(12, 17, 26, 235))
+    draw.rectangle((0, header_height, canvas.width, top_margin), fill=(12, 17, 26, 220))
+    draw.rectangle((0, top_margin, left_margin, canvas.height), fill=(12, 17, 26, 220))
+    canvas.alpha_composite(frame, (left_margin, top_margin))
+    draw.rectangle(
+        (
+            left_margin - 1,
+            top_margin - 1,
+            left_margin + frame.width,
+            top_margin + frame.height,
+        ),
+        outline=(255, 138, 61, 220),
+        width=1,
+    )
+
+    text_y = padding
+    for line, fill in header_lines:
+        draw.text((padding, text_y), line, fill=fill, font=font)
+        text_y += line_height
+
+    tile_width = frame.width / snapshot.width
+    tile_height = frame.height / snapshot.height
+    grid_line_width = max(1, scale)
 
     for local_y, row in enumerate(snapshot.terrain):
         for local_x, tile in enumerate(row):
-            left = int(local_x * tile_width)
-            top = int(local_y * tile_height)
-            right = int((local_x + 1) * tile_width)
-            bottom = int((local_y + 1) * tile_height)
-            absolute = snapshot.local_to_absolute(local_x, local_y)
-            fill = (24, 123, 73, 64) if tile else (180, 58, 58, 80)
-            outline = (110, 230, 174, 180) if tile else (255, 120, 120, 180)
+            left = int(left_margin + (local_x * tile_width))
+            top = int(top_margin + (local_y * tile_height))
+            right = int(left_margin + ((local_x + 1) * tile_width))
+            bottom = int(top_margin + ((local_y + 1) * tile_height))
+            fill = (24, 123, 73, 72) if tile else (180, 58, 58, 92)
+            outline = (110, 230, 174, 190) if tile else (255, 120, 120, 200)
             draw.rectangle((left, top, right, bottom), outline=outline, fill=fill, width=1)
-            coord_label = f"{absolute[0]},{absolute[1]}"
-            draw.text((left + 2, top + 1), coord_label, fill=(255, 255, 255, 220), font=font)
+
+    for local_x, label in enumerate(x_labels):
+        label_width, label_height = _measure_text(measure_draw, label, font=font)
+        x_center = int(left_margin + ((local_x + 0.5) * tile_width))
+        draw.text(
+            (x_center - (label_width // 2), header_height + 2),
+            label,
+            fill=(255, 255, 255, 255),
+            font=font,
+        )
+
+    for local_y, label in enumerate(y_labels):
+        label_width, label_height = _measure_text(measure_draw, label, font=font)
+        y_center = int(top_margin + ((local_y + 0.5) * tile_height))
+        draw.text(
+            (
+                left_margin - padding - label_width,
+                y_center - (label_height // 2),
+            ),
+            label,
+            fill=(255, 255, 255, 255),
+            font=font,
+        )
 
     for sprite_x, sprite_y in snapshot.sprite_positions:
         local = snapshot.absolute_to_local(sprite_x, sprite_y)
         if local is None:
             continue
-        left = int(local[0] * tile_width)
-        top = int(local[1] * tile_height)
-        right = int((local[0] + 1) * tile_width)
-        bottom = int((local[1] + 1) * tile_height)
-        draw.rectangle((left + 3, top + 3, right - 3, bottom - 3), fill=(255, 174, 66, 180))
+        left = int(left_margin + (local[0] * tile_width))
+        top = int(top_margin + (local[1] * tile_height))
+        right = int(left_margin + ((local[0] + 1) * tile_width))
+        bottom = int(top_margin + ((local[1] + 1) * tile_height))
+        inset = max(4, scale * 3)
+        draw.rectangle(
+            (left + inset, top + inset, right - inset, bottom - inset),
+            fill=(255, 174, 66, 190),
+        )
 
-    player_left = int(4 * tile_width)
-    player_top = int(4 * tile_height)
-    player_right = int(5 * tile_width)
-    player_bottom = int(5 * tile_height)
+    player_left = int(left_margin + (4 * tile_width))
+    player_top = int(top_margin + (4 * tile_height))
+    player_right = int(left_margin + (5 * tile_width))
+    player_bottom = int(top_margin + (5 * tile_height))
     draw.rectangle(
-        (player_left + 1, player_top + 1, player_right - 1, player_bottom - 1),
+        (player_left + 2, player_top + 2, player_right - 2, player_bottom - 2),
         outline=(55, 208, 255, 255),
-        width=3,
+        width=grid_line_width + 1,
     )
-    draw.text((player_left + 4, player_top + 5), "P", fill=(55, 208, 255, 255), font=font)
+    player_label_width, player_label_height = _measure_text(measure_draw, "P", font=font)
+    draw.text(
+        (
+            player_left + int((tile_width - player_label_width) / 2),
+            player_top + int((tile_height - player_label_height) / 2),
+        ),
+        "P",
+        fill=(55, 208, 255, 255),
+        font=font,
+    )
 
     if goal is not None:
         goal_local = snapshot.absolute_to_local(goal[0], goal[1])
         if goal_local is not None:
-            left = int(goal_local[0] * tile_width)
-            top = int(goal_local[1] * tile_height)
-            right = int((goal_local[0] + 1) * tile_width)
-            bottom = int((goal_local[1] + 1) * tile_height)
+            left = int(left_margin + (goal_local[0] * tile_width))
+            top = int(top_margin + (goal_local[1] * tile_height))
+            right = int(left_margin + ((goal_local[0] + 1) * tile_width))
+            bottom = int(top_margin + ((goal_local[1] + 1) * tile_height))
             draw.rectangle(
-                (left + 1, top + 1, right - 1, bottom - 1), outline=(255, 214, 10, 255), width=3
+                (left + 2, top + 2, right - 2, bottom - 2),
+                outline=(255, 214, 10, 255),
+                width=grid_line_width + 1,
             )
-            draw.text((left + 4, top + 5), "G", fill=(255, 214, 10, 255), font=font)
+            goal_label_width, goal_label_height = _measure_text(measure_draw, "G", font=font)
+            draw.text(
+                (
+                    left + int((tile_width - goal_label_width) / 2),
+                    top + int((tile_height - goal_label_height) / 2),
+                ),
+                "G",
+                fill=(255, 214, 10, 255),
+                font=font,
+            )
 
     interaction = snapshot.interaction or {}
     target_coord = interaction.get("target_coord") or {}
     if target_coord.get("x") is not None and target_coord.get("y") is not None:
         local = snapshot.absolute_to_local(int(target_coord["x"]), int(target_coord["y"]))
         if local is not None:
-            left = int(local[0] * tile_width)
-            top = int(local[1] * tile_height)
-            right = int((local[0] + 1) * tile_width)
-            bottom = int((local[1] + 1) * tile_height)
+            left = int(left_margin + (local[0] * tile_width))
+            top = int(top_margin + (local[1] * tile_height))
+            right = int(left_margin + ((local[0] + 1) * tile_width))
+            bottom = int(top_margin + ((local[1] + 1) * tile_height))
+            inset = max(4, scale * 3)
             draw.ellipse(
-                (left + 4, top + 4, right - 4, bottom - 4), outline=(255, 125, 0, 255), width=3
+                (left + inset, top + inset, right - inset, bottom - inset),
+                outline=(255, 125, 0, 255),
+                width=grid_line_width + 1,
             )
 
-    legend_height = 38
-    draw.rectangle((0, 0, canvas.width, legend_height), fill=(12, 17, 26, 210))
-    title = snapshot.map_name
-    pos = snapshot.player_position
-    subtitle = (
-        f"({pos[0]}, {pos[1]}) facing {snapshot.facing} | "
-        f"moves: {', '.join(snapshot.valid_moves) or 'none'}"
-    )
-    objective_line = objective["title"] if objective else "No objective"
-    draw.text((6, 4), title, fill=(255, 255, 255, 255), font=font)
-    draw.text((6, 16), subtitle, fill=(165, 180, 196, 255), font=font)
-    draw.text((6, 28), f"Objective: {objective_line}", fill=(255, 214, 10, 255), font=font)
-
-    return Image.alpha_composite(canvas, overlay).convert("RGB")
+    return canvas.convert("RGB")
 
 
 class ObjectiveEngine:
@@ -2547,6 +2746,7 @@ class AgentRuntime:
             f"Facing: {(state.get('player') or {}).get('facing')}",
             f"Valid moves: {', '.join(snapshot.get('valid_moves', [])) or 'none'}",
             f"Interaction probe: {(snapshot.get('interaction') or {}).get('reason', 'none')}",
+            f"Coordinate system: {snapshot.get('coordinate_note') or MAP_COORDINATE_NOTE}",
             "ASCII legend: P=player G=goal S=sprite .=passable #=blocked ?=unknown",
             f"Movement guidance: {movement_guidance.get('summary', 'none')}",
             "",
@@ -2909,6 +3109,11 @@ class AgentRuntime:
         live_ascii = _truncate_text_block(snapshot.get("ascii"), 900)
         explored_ascii = _truncate_text_block(location_map.get("ascii"), 1400)
         distance_ascii = _truncate_text_block(navigation_guidance.get("distance_ascii"), 1800)
+        coordinate_note = (
+            snapshot.get("coordinate_note")
+            or location_map.get("coordinate_note")
+            or MAP_COORDINATE_NOTE
+        )
         return {
             "generated_at": bundle.get("generated_at"),
             "observation_id": bundle.get("observation_id"),
@@ -2994,6 +3199,8 @@ class AgentRuntime:
                 "movement": state_delta.get("movement"),
             },
             "navigation": {
+                "coordinate_system": snapshot.get("coordinate_system") or MAP_COORDINATE_SYSTEM,
+                "coordinate_note": coordinate_note,
                 "valid_moves": snapshot.get("valid_moves", []),
                 "interaction": snapshot.get("interaction"),
                 "live_ascii": live_ascii,
@@ -3004,7 +3211,8 @@ class AgentRuntime:
                 "route_cards": (navigation_guidance.get("route_cards") or [])[:5],
                 "avoidances": (navigation_guidance.get("avoidances") or [])[:5],
                 "ascii_note": (
-                    "ASCII is symbolic only and may be truncated. Use the annotated frame first."
+                    "ASCII is symbolic only and may be truncated. "
+                    "It uses the same absolute map tile coordinates as the annotated frame."
                 ),
                 "window_top_left": snapshot.get("window_top_left"),
                 "window_size": snapshot.get("window_size"),
