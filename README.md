@@ -30,6 +30,8 @@ Let any AI agent — [Hermes Agent](https://github.com/NousResearch/hermes-agent
 - **📡 WebSocket** — Real-time event streaming for live monitoring.
 - **🧠 Structured game state** — RAM is parsed into clean JSON: party, bag, badges, map, battle, dialog.
 - **🎨 Live dashboard** — Operator console with annotated frames, objectives, recovery, and Pi supervisor telemetry.
+- **🧭 Deterministic route guidance** — Frontiers, landmarks, distance maps, route cards, and avoidances narrow choices for weaker local models.
+- **🗂️ Durable semantic memory** — Append-only event memory, a session brief, and per-map failed-attempt tracking survive loops and resumes.
 - **💬 Pi chat transcript** — See prompts, assistant replies, thinking, tool calls, stderr, and auto-continue scheduling in one place.
 - **🎮 Multi-game** — Supports Game Boy (Pokémon Red/Blue) via PyBoy, GBA (FireRed) via PyGBA.
 - **🤖 Agent-agnostic** — Works with any AI agent, RL framework, or custom script.
@@ -124,6 +126,13 @@ Then read the workspace files in `.agent-workspace/`, especially:
 - `latest_observation.md`
 - `current_objective.json`
 - `turn_plan.json`
+- `landmarks.json`
+- `event_memory.jsonl`
+- `session_brief.md`
+
+If you launch Pi from the dashboard supervisor, the current `latest_frame_annotated.png` and
+`latest_frame.png` are also attached to each turn as image inputs, so Pi can visually inspect
+buildings, doors, NPCs, and other scene details instead of relying on JSON/ASCII alone.
 
 ### Game State (JSON)
 
@@ -222,6 +231,7 @@ The skill teaches Hermes battle strategy, exploration patterns, team management,
 | `/screenshot` | GET | Current frame (PNG) |
 | `/screenshot/base64` | GET | Current frame (base64 JSON) |
 | `/agent/observe` | POST | Refresh the vision-first workspace bundle |
+| `/agent/navigator` | GET | Return the best deterministic route card and alternatives |
 | `/action` | POST | Execute game actions |
 | `/save` | POST | Save emulator state |
 | `/load` | POST | Load emulator state |

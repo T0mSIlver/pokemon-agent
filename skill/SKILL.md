@@ -52,6 +52,7 @@ Dashboard:
 
 The operator starts Pi from the dashboard supervisor. The supervisor will stream tool calls, reasoning, prompts, replies, and turn boundaries into `/dashboard`.
 The dashboard also shows the live prompt/output transcript, stderr, auto-continue scheduling, manual save controls, and direct load controls for recovery saves.
+The supervisor also attaches `latest_frame_annotated.png` and `latest_frame.png` as image inputs on each turn when those files exist. Use those attached PNGs for scene understanding instead of treating the frame paths as plain text.
 
 If the operator is using the dashboard supervisor, do not start a second Pi session manually.
 
@@ -69,6 +70,9 @@ The server writes these files into the agent workspace:
 - `working_memory.md`
 - `checkpoints.jsonl`
 - `knowledge_graph.json`
+- `landmarks.json`
+- `event_memory.jsonl`
+- `session_brief.md`
 - `recovery_saves.json`
 - `run_log.jsonl`
 
@@ -93,6 +97,7 @@ curl -s -X POST http://localhost:8765/agent/observe \
    - `latest_frame.png` only if the overlay obscures important detail
    - `latest_observation.md`
    - `current_objective.md`
+   - `session_brief.md`
    - `turn_plan.json`
    - `recovery_saves.json` if the run looks stuck or risky
 
@@ -122,6 +127,8 @@ If the dashboard supervisor auto-continues turns, still treat each turn as a har
 
 The screenshot read is mandatory.
 
+- Use Pi's image understanding on the attached PNGs every turn.
+- Inspect buildings, doors, signs, ledges, NPC spacing, and map edges visually before acting.
 - Do not plan from ASCII alone.
 - Do not treat the ASCII map as a screenshot.
 - Use ASCII only as a symbolic collision summary after looking at the annotated frame.
@@ -134,13 +141,21 @@ From `latest_observation.json` and `latest_observation.md`, pay attention to:
 - `objective.current`
 - `recent_action`
 - `state_delta`
+- `memory.recent_facts`
+- `memory.failed_attempts`
+- `dialog.transcript_recent`
+- `battle.recommended_move`
 - `stuck`
 - `recovery.current_recommendation`
-- `navigation.snapshot.valid_moves`
-- `navigation.snapshot.interaction`
+- `navigation.valid_moves`
+- `navigation.interaction`
+- `navigation.route_cards`
+- `navigation.landmarks`
+- `navigation.avoidances`
+- `navigation.distance_ascii`
 - `movement_guidance`
-- `navigation.snapshot.ascii`
-- `navigation.location_map.ascii`
+- `navigation.live_ascii`
+- `navigation.explored_ascii`
 
 From `current_objective.json`, trust:
 

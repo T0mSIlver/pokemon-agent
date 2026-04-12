@@ -383,12 +383,14 @@ def _compact_objective_status(objective: Optional[dict]) -> Optional[dict]:
         return None
     return {
         "id": objective.get("id"),
+        "pack_id": objective.get("pack_id"),
         "title": objective.get("title"),
         "summary": objective.get("summary"),
         "progress_percent": objective.get("progress_percent"),
         "status": objective.get("status"),
         "route_hint": objective.get("route_hint"),
         "completion_predicate": objective.get("completion_predicate"),
+        "preferred_landmark_types": objective.get("preferred_landmark_types"),
     }
 
 
@@ -416,8 +418,12 @@ def _compact_state_snapshot(state: Optional[dict]) -> dict:
     }
 
 
-def _compact_navigation_snapshot(navigation: Optional[dict]) -> dict:
+def _compact_navigation_snapshot(
+    navigation: Optional[dict],
+    navigation_guidance: Optional[dict] = None,
+) -> dict:
     navigation = navigation or {}
+    navigation_guidance = navigation_guidance or {}
     snapshot = navigation.get("snapshot") or {}
     location_map = navigation.get("location_map") or {}
     return {
@@ -425,6 +431,11 @@ def _compact_navigation_snapshot(navigation: Optional[dict]) -> dict:
         "interaction": snapshot.get("interaction"),
         "live_ascii": snapshot.get("ascii"),
         "explored_ascii": location_map.get("ascii"),
+        "distance_ascii": _truncate_text(navigation_guidance.get("distance_ascii"), 1800),
+        "frontiers": (navigation_guidance.get("frontiers") or [])[:8],
+        "landmarks": (navigation_guidance.get("landmarks") or [])[:8],
+        "route_cards": (navigation_guidance.get("route_cards") or [])[:5],
+        "avoidances": (navigation_guidance.get("avoidances") or [])[:5],
         "window_top_left": snapshot.get("window_top_left"),
         "window_size": snapshot.get("window_size"),
         "bounds": location_map.get("bounds"),
@@ -472,6 +483,9 @@ def _public_artifact_paths(artifacts: Optional[dict]) -> dict:
         "current_objective_md",
         "turn_plan_json",
         "working_memory_md",
+        "landmarks_json",
+        "event_memory_jsonl",
+        "session_brief_md",
         "recovery_saves_json",
     )
     return {
@@ -517,6 +531,40 @@ def _compact_state_delta_summary(state_delta: Optional[dict]) -> Optional[dict]:
         "changed": state_delta.get("changed"),
         "summary": (state_delta.get("summary") or [])[:4],
         "movement": state_delta.get("movement"),
+    }
+
+
+def _compact_memory_snapshot(memory: Optional[dict]) -> Optional[dict]:
+    if not memory:
+        return None
+    return {
+        "recent_facts": (memory.get("recent_facts") or [])[:8],
+        "current_hypotheses": (memory.get("current_hypotheses") or [])[:4],
+        "failed_attempts": (memory.get("failed_attempts") or [])[:5],
+        "session_brief_path": memory.get("session_brief_path"),
+    }
+
+
+def _compact_dialog_guidance(dialog: Optional[dict]) -> Optional[dict]:
+    if not dialog:
+        return None
+    return {
+        "transcript_recent": (dialog.get("transcript_recent") or [])[:4],
+        "should_continue": dialog.get("should_continue"),
+        "last_change_at": dialog.get("last_change_at"),
+        "printing": dialog.get("printing"),
+        "waiting_for_input": dialog.get("waiting_for_input"),
+    }
+
+
+def _compact_battle_guidance(battle: Optional[dict]) -> Optional[dict]:
+    if not battle:
+        return None
+    return {
+        "recommended_mode": battle.get("recommended_mode"),
+        "recommended_move": battle.get("recommended_move"),
+        "reason": battle.get("reason"),
+        "safe_short_actions": (battle.get("safe_short_actions") or [])[:4],
     }
 
 
@@ -568,7 +616,13 @@ def _compact_bundle_response(bundle: Optional[dict]) -> dict:
         "recent_action": _compact_feedback(bundle.get("recent_action")),
         "state_delta": _compact_state_delta_summary(bundle.get("state_delta")),
         "movement_guidance": _compact_movement_guidance(bundle.get("movement_guidance")),
-        "navigation": _compact_navigation_snapshot(bundle.get("navigation")),
+        "navigation": _compact_navigation_snapshot(
+            bundle.get("navigation"),
+            bundle.get("navigation_guidance"),
+        ),
+        "memory": _compact_memory_snapshot(bundle.get("memory")),
+        "dialog": _compact_dialog_guidance(bundle.get("dialog_guidance")),
+        "battle": _compact_battle_guidance(bundle.get("battle_guidance")),
         "turn_plan": _compact_turn_plan(bundle.get("turn_plan")),
         "stuck": bundle.get("stuck"),
         "recovery": _compact_recovery_summary(bundle.get("recovery")),
@@ -1259,6 +1313,17 @@ async def agent_observe(req: ObserveRequest):
         raise
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Agent observe error: {e}")
+
+
+@app.get("/agent/navigator")
+async def agent_navigator():
+    """Return a strict JSON navigator view over the latest deterministic guidance."""
+    if _runtime is None:
+        raise HTTPException(status_code=503, detail="Agent runtime is not initialised")
+    try:
+        return JSONResponse(content=_runtime.navigator_payload())
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Agent navigator error: {e}")
 
 
 @app.get("/state")

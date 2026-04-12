@@ -93,6 +93,8 @@ def make_state(
     has_oaks_parcel: bool = False,
     has_pokedex: bool = False,
     badge_count: int = 0,
+    bag: list[dict] | None = None,
+    enemy_types: list[str] | None = None,
 ) -> dict:
     return {
         "metadata": {"frame_count": 1234},
@@ -113,10 +115,31 @@ def make_state(
                 "hp": 20,
                 "max_hp": 22,
                 "status": "OK",
-                "moves": [{"name": "Tackle"}],
+                "types": ["Grass", "Poison"],
+                "moves": [
+                    {"name": "Tackle", "pp": 35},
+                    {"name": "Vine Whip", "pp": 10},
+                ],
             }
         ],
-        "battle": {"in_battle": battle, "type": "trainer" if battle else "none"},
+        "bag": bag if bag is not None else [],
+        "battle": {
+            "in_battle": battle,
+            "type": "trainer" if battle else "none",
+            "enemy": (
+                {
+                    "species": "Geodude",
+                    "level": 12,
+                    "hp": 30,
+                    "max_hp": 30,
+                    "status": "OK",
+                    "types": enemy_types or ["Rock", "Ground"],
+                    "moves": ["Tackle"],
+                }
+                if battle
+                else None
+            ),
+        },
         "dialog": {
             "active": dialog_active,
             "waiting_for_input": dialog_active,
@@ -143,6 +166,7 @@ def make_snapshot() -> LiveNavigationSnapshot:
         sprite_positions=[(10, 9)],
         valid_moves=["up", "left", "right"],
         warps=[{"x": 10, "y": 4, "warp_id": 1, "target_map_id": 42}],
+        signs=[{"x": 8, "y": 8, "text_id": 3}],
         map_dimensions={"width": 20, "height": 18},
         interaction={
             "kind": "object",
@@ -203,11 +227,29 @@ def test_objective_engine_reaches_brock_phase():
     pewter = engine.evaluate(make_state(map_name="Pewter City", has_pokedex=True))
     brock = engine.evaluate(make_state(map_name="Pewter Gym", has_pokedex=True, battle=True))
     complete = engine.evaluate(make_state(map_name="Pewter City", has_pokedex=True, badge_count=1))
+    ss_ticket = engine.evaluate(
+        make_state(
+            map_name="Cerulean City",
+            has_pokedex=True,
+            badge_count=1,
+            bag=[{"item": "S.S. Ticket", "quantity": 1}],
+        )
+    )
+    cut = engine.evaluate(
+        make_state(
+            map_name="Vermilion City",
+            has_pokedex=True,
+            badge_count=1,
+            bag=[{"item": "HM01", "quantity": 1}],
+        )
+    )
 
     assert after_pokedex["current"]["id"] == "head_to_viridian_forest"
     assert pewter["current"]["id"] == "reach_pewter_gym"
     assert brock["current"]["id"] == "defeat_brock"
-    assert complete["current"]["id"] == "phase_complete_boulder_badge"
+    assert complete["current"]["id"] == "cross_mt_moon_to_cerulean"
+    assert ss_ticket["current"]["id"] == "head_to_vermilion_with_ticket"
+    assert cut["current"]["id"] == "phase_complete_cut_access"
 
 
 def test_render_navigation_overlay_draws_on_image():
@@ -275,6 +317,17 @@ def test_agent_runtime_refresh_writes_workspace_and_dashboard_state(tmp_path: Pa
     assert "run_log_jsonl" not in observation_json["artifacts"]
     assert "ASCII is symbolic only" in observation_json["navigation"]["ascii_note"]
     assert "fields" not in observation_json["state_delta"]
+    assert observation_json["navigation"]["route_cards"]
+    assert observation_json["navigation"]["frontiers"]
+    assert observation_json["navigation"]["landmarks"]
+    assert observation_json["navigation"]["distance_ascii"]
+    assert observation_json["memory"]["recent_facts"]
+    assert observation_json["memory"]["session_brief_path"].endswith("session_brief.md")
+    assert observation_json["dialog"]["should_continue"] is False
+    assert observation_json["battle"]["recommended_mode"] == "none"
+    assert Path(bundle["artifacts"]["landmarks_json"]).exists()
+    assert Path(bundle["artifacts"]["event_memory_jsonl"]).exists()
+    assert Path(bundle["artifacts"]["session_brief_md"]).exists()
 
 
 def test_agent_runtime_detects_repeated_no_movement(tmp_path: Path):
@@ -301,6 +354,88 @@ def test_agent_runtime_detects_repeated_no_movement(tmp_path: Path):
         stuck_level = result["bundle"]["stuck"]["level"]
 
     assert stuck_level in {"warning", "danger"}
+
+
+def test_agent_runtime_records_landmarks_and_failure_memory(tmp_path: Path):
+    emulator = FakeEmulator()
+    store = NavigationStore(tmp_path / "navigation.json")
+    snapshot = make_snapshot()
+    navigation = make_navigation_payload(store, snapshot)
+    runtime = AgentRuntime(
+        data_dir=tmp_path / "data",
+        workspace_dir=tmp_path / "workspace",
+    )
+
+    for _ in range(4):
+        runtime.refresh(
+            emulator=emulator,
+            state=make_state(map_name="Viridian Forest", map_id=50, has_pokedex=True, x=10, y=10),
+            navigation=navigation,
+            navigation_store=store,
+            reason="repeat_action",
+            source="action",
+            requested_actions=["walk_up"],
+        )
+
+    landmarks = json.loads(runtime.artifacts["landmarks_json"].read_text(encoding="utf-8"))
+    event_lines = runtime.artifacts["event_memory_jsonl"].read_text(encoding="utf-8").splitlines()
+    event_payloads = [json.loads(line) for line in event_lines if line.strip()]
+    session_brief = runtime.artifacts["session_brief_md"].read_text(encoding="utf-8")
+    observation = json.loads(runtime.artifacts["latest_observation_json"].read_text(encoding="utf-8"))
+
+    assert any(entry["kind"] == "sign" for entry in landmarks["landmarks"])
+    assert any(entry["kind"] == "npc_blocker" for entry in landmarks["landmarks"])
+    assert any(entry["kind"] == "failure" for entry in event_payloads)
+    assert "Failed Attempts" in session_brief
+    assert observation["memory"]["failed_attempts"]
+
+
+def test_dialog_and_battle_guidance_are_exposed(tmp_path: Path):
+    emulator = FakeEmulator()
+    store = NavigationStore(tmp_path / "navigation.json")
+    snapshot = make_snapshot()
+    navigation = make_navigation_payload(store, snapshot)
+    runtime = AgentRuntime(
+        data_dir=tmp_path / "data",
+        workspace_dir=tmp_path / "workspace",
+    )
+
+    result = runtime.refresh(
+        emulator=emulator,
+        state=make_state(
+            map_name="Pewter Gym",
+            map_id=53,
+            has_pokedex=True,
+            badge_count=0,
+            battle=True,
+            enemy_types=["Rock", "Ground"],
+        ),
+        navigation=navigation,
+        navigation_store=store,
+        reason="battle_test",
+        source="observe",
+    )
+    bundle = result["bundle"]
+
+    assert bundle["battle_guidance"]["recommended_mode"] == "select_best_move"
+    assert bundle["battle_guidance"]["recommended_move"]["name"] == "Vine Whip"
+
+    dialog_result = runtime.refresh(
+        emulator=emulator,
+        state=make_state(
+            map_name="Oak's Lab",
+            map_id=40,
+            dialog_active=True,
+        ),
+        navigation=navigation,
+        navigation_store=store,
+        reason="dialog_test",
+        source="observe",
+    )
+    dialog_bundle = dialog_result["bundle"]
+
+    assert dialog_bundle["dialog_guidance"]["should_continue"] is True
+    assert isinstance(dialog_bundle["dialog_guidance"]["transcript_recent"], list)
 
 
 def test_dashboard_state_endpoint_uses_runtime_bundle(tmp_path: Path, monkeypatch):
@@ -373,6 +508,10 @@ def test_agent_observe_endpoint_returns_workspace_bundle(tmp_path: Path, monkeyp
     assert payload["artifacts"]["latest_frame"].endswith("latest_frame.png")
     assert Path(payload["artifacts"]["latest_observation_json"]).exists()
     assert "raw_frame_b64" not in payload
+    assert payload["navigation"]["route_cards"]
+    assert payload["memory"]["recent_facts"]
+    assert payload["dialog"]["should_continue"] is False
+    assert payload["battle"]["recommended_mode"] == "none"
 
 
 def test_artifact_endpoint_serves_workspace_files(tmp_path: Path, monkeypatch):
@@ -388,6 +527,34 @@ def test_artifact_endpoint_serves_workspace_files(tmp_path: Path, monkeypatch):
 
     assert response.status_code == 200
     assert "# Notes" in response.text
+
+
+def test_navigator_endpoint_returns_best_route(tmp_path: Path, monkeypatch):
+    emulator = FakeEmulator()
+    store = NavigationStore(tmp_path / "navigation.json")
+    snapshot = make_snapshot()
+    navigation = make_navigation_payload(store, snapshot)
+    runtime = AgentRuntime(
+        data_dir=tmp_path / "data",
+        workspace_dir=tmp_path / "workspace",
+    )
+    runtime.refresh(
+        emulator=emulator,
+        state=make_state(map_name="Viridian City", map_id=1, has_pokedex=True, x=10, y=10),
+        navigation=navigation,
+        navigation_store=store,
+        reason="navigator_contract",
+        source="observe",
+    )
+    monkeypatch.setattr(server, "_runtime", runtime)
+
+    with TestClient(server.app) as client:
+        response = client.get("/agent/navigator")
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["best_route"] is not None
+    assert payload["alternatives"] is not None
 
 
 def test_supervisor_endpoints_delegate_to_supervisor(monkeypatch):

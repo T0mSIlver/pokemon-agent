@@ -5,18 +5,32 @@ import pytest
 from pokemon_agent.pi_supervisor import PiSupervisor
 
 
-def make_fake_pi_script(tmp_path: Path) -> Path:
+def make_fake_pi_script(tmp_path: Path, *, include_turn_end: bool = True) -> Path:
     script = tmp_path / "fake-pi"
-    script.write_text(
-        """#!/usr/bin/env python3
+    template = """#!/usr/bin/env python3
 import json
 import pathlib
 import sys
 
-resume = "--continue" in sys.argv
+resume = "--continue" in sys.argv or "--session" in sys.argv
 session_dir = pathlib.Path(sys.argv[sys.argv.index("--session-dir") + 1])
 session_dir.mkdir(parents=True, exist_ok=True)
 workspace_dir = session_dir.parent
+session_file = session_dir / "session-123.jsonl"
+if not session_file.exists():
+    session_file.write_text(
+        json.dumps(
+            {
+                "type": "session",
+                "version": 3,
+                "id": "session-123",
+                "timestamp": "2026-01-01T00:00:00Z",
+                "cwd": str(workspace_dir),
+            }
+        )
+        + "\\n",
+        encoding="utf-8",
+    )
 message = "Continued turn." if resume else "Initial turn."
 
 events = [
@@ -67,18 +81,25 @@ events = [
             ],
         },
     },
-    {
-        "type": "turn_end",
-        "turnIndex": 1,
-        "message": {"role": "assistant", "content": [{"type": "text", "text": message}]},
-        "toolResults": [],
-    },
     {"type": "agent_end", "messages": []},
 ]
 
+if __INCLUDE_TURN_END__:
+    events.insert(
+        -1,
+        {
+            "type": "turn_end",
+            "turnIndex": 1,
+            "message": {"role": "assistant", "content": [{"type": "text", "text": message}]},
+            "toolResults": [],
+        },
+    )
+
 for event in events:
     print(json.dumps(event), flush=True)
-""",
+"""
+    script.write_text(
+        template.replace("__INCLUDE_TURN_END__", repr(include_turn_end)),
         encoding="utf-8",
     )
     script.chmod(0o755)
@@ -127,6 +148,79 @@ async def test_pi_supervisor_tracks_turn_output_and_tools(tmp_path: Path):
     assert any(event["type"] == "pi_turn_end" for event in events)
     assert any(event["type"] == "pi_text_delta" for event in streamed)
     assert any(event["type"] == "pi_prompt_sent" for event in streamed)
+
+
+@pytest.mark.asyncio
+async def test_pi_supervisor_attaches_latest_frame_pngs_to_turn_prompt(tmp_path: Path):
+    events: list[dict] = []
+    streamed: list[dict] = []
+    fake_pi = make_fake_pi_script(tmp_path)
+    workspace_dir = tmp_path / "workspace"
+    workspace_dir.mkdir(parents=True, exist_ok=True)
+    annotated = workspace_dir / "latest_frame_annotated.png"
+    raw = workspace_dir / "latest_frame.png"
+    annotated.write_bytes(b"annotated-frame")
+    raw.write_bytes(b"raw-frame")
+
+    async def sink(event: dict) -> None:
+        events.append(event)
+
+    async def stream(event: dict) -> None:
+        streamed.append(event)
+
+    supervisor = PiSupervisor(
+        workspace_dir=workspace_dir,
+        server_url="http://127.0.0.1:8765",
+        event_sink=sink,
+        stream_sink=stream,
+        pi_binary=str(fake_pi),
+    )
+
+    await supervisor.start(prompt="Play the game.", auto_continue=False)
+    await supervisor.wait_until_idle(timeout=5)
+
+    launch_event = next(event for event in events if event["type"] == "pi_turn_launch")
+    assert f"@{annotated}" in launch_event["command_preview"]
+    assert f"@{raw}" in launch_event["command_preview"]
+
+    prompt_event = next(event for event in streamed if event["type"] == "pi_prompt_sent")
+    assert prompt_event["attachments"] == [str(annotated), str(raw)]
+
+
+@pytest.mark.asyncio
+async def test_pi_supervisor_auto_continue_uses_exact_session_file(tmp_path: Path):
+    events: list[dict] = []
+    fake_pi = make_fake_pi_script(tmp_path)
+    workspace_dir = tmp_path / "workspace"
+
+    async def sink(event: dict) -> None:
+        events.append(event)
+
+    supervisor = PiSupervisor(
+        workspace_dir=workspace_dir,
+        server_url="http://127.0.0.1:8765",
+        event_sink=sink,
+        pi_binary=str(fake_pi),
+    )
+
+    await supervisor.start(
+        prompt="Play the game.",
+        auto_continue=True,
+        max_turns=2,
+        continue_delay_seconds=0,
+    )
+    await supervisor.wait_until_idle(timeout=5)
+
+    launch_events = [event for event in events if event["type"] == "pi_turn_launch"]
+    expected_session_file = workspace_dir / "pi-session" / "session-123.jsonl"
+
+    assert len(launch_events) == 2
+    assert "--session" not in launch_events[0]["command_preview"]
+    assert "--session" in launch_events[1]["command_preview"]
+    assert str(expected_session_file) in launch_events[1]["command_preview"]
+
+    snapshot = supervisor.state_snapshot()
+    assert snapshot["session_file"] == str(expected_session_file)
 
 
 @pytest.mark.asyncio
@@ -184,4 +278,38 @@ async def test_pi_supervisor_auto_continue_schedules_and_runs_next_turn(tmp_path
     assert any(event["type"] == "pi_auto_continue_scheduled" for event in events)
     assert any(
         event["type"] == "pi_prompt_sent" and event.get("resume") is True for event in streamed
+    )
+
+
+@pytest.mark.asyncio
+async def test_pi_supervisor_synthesizes_turn_completion_when_pi_omits_turn_end(
+    tmp_path: Path,
+):
+    events: list[dict] = []
+    fake_pi = make_fake_pi_script(tmp_path, include_turn_end=False)
+
+    async def sink(event: dict) -> None:
+        events.append(event)
+
+    supervisor = PiSupervisor(
+        workspace_dir=tmp_path / "workspace",
+        server_url="http://127.0.0.1:8765",
+        event_sink=sink,
+        pi_binary=str(fake_pi),
+    )
+
+    await supervisor.start(
+        prompt="Play the game.",
+        auto_continue=True,
+        max_turns=2,
+        continue_delay_seconds=0,
+    )
+    await supervisor.wait_until_idle(timeout=5)
+
+    snapshot = supervisor.state_snapshot()
+    assert snapshot["status"] == "completed"
+    assert snapshot["turns_completed"] == 2
+    assert snapshot["last_assistant_text"] == "Continued turn."
+    assert any(
+        event["type"] == "pi_turn_end" and event.get("synthetic") is True for event in events
     )

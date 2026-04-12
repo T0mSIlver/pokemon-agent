@@ -124,6 +124,7 @@ class LiveNavigationSnapshot:
     sprite_positions: List[Coord] = field(default_factory=list)
     valid_moves: List[str] = field(default_factory=list)
     warps: List[Dict[str, int]] = field(default_factory=list)
+    signs: List[Dict[str, int]] = field(default_factory=list)
     map_dimensions: Optional[Dict[str, int]] = None
     tile_ids: Dict[Coord, int] = field(default_factory=dict)
     interaction: Optional[Dict[str, object]] = None
@@ -201,6 +202,7 @@ class LiveNavigationSnapshot:
             "sprites": [_coord_dict(coord) for coord in self.sprite_positions],
             "valid_moves": self.valid_moves,
             "warps": self.warps,
+            "signs": self.signs,
             "map_dimensions": self.map_dimensions,
             "interaction": self.interaction,
             "ascii": self.render_window_ascii(goal=goal),
@@ -456,6 +458,50 @@ class LocationNavigationMap:
                         chars.append("?")
             lines.append(f"{y:>4} " + "".join(chars))
 
+        return "\n".join(lines)
+
+    def render_distance_ascii(
+        self,
+        *,
+        start: Coord,
+        extra_blockers: Optional[Iterable[Coord]] = None,
+        sprites: Optional[Iterable[Coord]] = None,
+        max_distance: Optional[int] = None,
+    ) -> str:
+        """Render the explored map with BFS distances from *start*."""
+        sprite_set = set(sprites or [])
+        distances = self.distance_map(
+            start,
+            extra_blockers=extra_blockers,
+            max_distance=max_distance,
+        )
+        bounds = self.bounds(extra={start, *sprite_set, *distances.keys()})
+        if bounds is None:
+            return "(no explored map data)"
+
+        min_x, max_x, min_y, max_y = bounds
+        header = "     " + "".join(f"{x:>3}" for x in range(min_x, max_x + 1))
+        lines = [header]
+
+        for y in range(min_y, max_y + 1):
+            cells: List[str] = []
+            for x in range(min_x, max_x + 1):
+                coord = (x, y)
+                if coord == start:
+                    cell = "P"
+                elif coord in sprite_set:
+                    cell = "S"
+                else:
+                    tile = self.tiles.get(coord)
+                    if tile is False:
+                        cell = "#"
+                    elif tile is not True:
+                        cell = "?"
+                    else:
+                        distance = distances.get(coord)
+                        cell = "." if distance is None else str(distance)
+                cells.append(f"{cell:>3}")
+            lines.append(f"{y:>4} " + "".join(cells))
         return "\n".join(lines)
 
     def to_dict(

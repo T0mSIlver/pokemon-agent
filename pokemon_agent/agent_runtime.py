@@ -3,11 +3,12 @@
 from __future__ import annotations
 
 import io
+import hashlib
 import json
 import os
 import re
 import tempfile
-from collections import deque
+from collections import defaultdict, deque
 from dataclasses import asdict, dataclass, field
 from datetime import datetime, timezone
 from functools import lru_cache
@@ -65,6 +66,7 @@ def _truncate_text_block(value: Any, limit: int = 1600) -> str:
 
 @dataclass(slots=True)
 class ObjectiveRecord:
+    pack_id: str
     id: str
     title: str
     summary: str
@@ -72,6 +74,7 @@ class ObjectiveRecord:
     failure_hints: list[str]
     save_recommendation: str
     route_hint: str
+    preferred_landmark_types: list[str]
     priority: int
     current: bool
     completed: bool
@@ -110,10 +113,211 @@ class RecoveryCandidate:
         return asdict(self)
 
 
+@dataclass(slots=True)
+class LandmarkRecord:
+    id: str
+    map_id: int
+    map_name: str
+    kind: str
+    title: str
+    coord: JsonDict
+    discovered_at: str
+    last_seen_at: str
+    seen_count: int = 1
+    source: str = "runtime"
+    notes: list[str] = field(default_factory=list)
+
+    def to_dict(self) -> JsonDict:
+        return asdict(self)
+
+
 @lru_cache(maxsize=1)
-def load_red_objective_pack() -> list[JsonDict]:
-    path = Path(__file__).parent / "data" / "red_objectives.json"
-    return json.loads(path.read_text(encoding="utf-8"))
+def load_red_objective_packs() -> list[JsonDict]:
+    data_dir = Path(__file__).parent / "data"
+    packs: list[JsonDict] = []
+    for path in sorted(data_dir.glob("red_objectives_*.json")):
+        payload = json.loads(path.read_text(encoding="utf-8"))
+        if isinstance(payload, dict):
+            packs.append(payload)
+    return sorted(packs, key=lambda pack: int(pack.get("order", 0)))
+
+
+def _coord_to_key(coord: tuple[int, int]) -> str:
+    return f"{coord[0]},{coord[1]}"
+
+
+def _tuple_coord_from_any(value: Any) -> Optional[tuple[int, int]]:
+    if isinstance(value, (tuple, list)) and len(value) >= 2:
+        try:
+            return int(value[0]), int(value[1])
+        except Exception:  # noqa: BLE001
+            return None
+    if isinstance(value, dict) and value.get("x") is not None and value.get("y") is not None:
+        try:
+            return int(value["x"]), int(value["y"])
+        except Exception:  # noqa: BLE001
+            return None
+    return None
+
+
+def _coord_payload(coord: Optional[tuple[int, int]]) -> Optional[JsonDict]:
+    if coord is None:
+        return None
+    return {"x": coord[0], "y": coord[1]}
+
+
+def _manhattan(a: Optional[tuple[int, int]], b: Optional[tuple[int, int]]) -> int:
+    if a is None or b is None:
+        return 999999
+    return abs(a[0] - b[0]) + abs(a[1] - b[1])
+
+
+def _stable_id(*parts: Any) -> str:
+    joined = "|".join(str(part) for part in parts)
+    digest = hashlib.sha1(joined.encode("utf-8")).hexdigest()[:10]
+    return digest
+
+
+def _bag_item_counts(state: Optional[JsonDict]) -> dict[str, int]:
+    bag = (state or {}).get("bag") or []
+    counts: dict[str, int] = {}
+    for entry in bag:
+        item = str(entry.get("item") or "").strip()
+        if not item:
+            continue
+        counts[item] = int(entry.get("quantity") or 0)
+    return counts
+
+
+def _bag_item_names(state: Optional[JsonDict]) -> set[str]:
+    return set(_bag_item_counts(state))
+
+
+def _badge_count(state: JsonDict) -> int:
+    player = state.get("player") or {}
+    flags = state.get("flags") or {}
+    return int(player.get("badge_count", flags.get("badge_count", 0)) or 0)
+
+
+def _selector_matches(selector: JsonDict, state: JsonDict) -> bool:
+    if not selector:
+        return True
+
+    map_name = str((state.get("map") or {}).get("map_name") or "")
+    bag_items = _bag_item_names(state)
+    battle_active = bool((state.get("battle") or {}).get("in_battle"))
+    flags = state.get("flags") or {}
+
+    map_in = selector.get("map_in")
+    if map_in and map_name not in set(map_in):
+        return False
+
+    map_not_in = selector.get("map_not_in")
+    if map_not_in and map_name in set(map_not_in):
+        return False
+
+    if selector.get("has_pokedex") is not None:
+        if bool(flags.get("has_pokedex")) is not bool(selector.get("has_pokedex")):
+            return False
+
+    if selector.get("has_oaks_parcel") is not None:
+        if bool(flags.get("has_oaks_parcel")) is not bool(selector.get("has_oaks_parcel")):
+            return False
+
+    badge_count = _badge_count(state)
+    if selector.get("badge_count_gte") is not None and badge_count < int(
+        selector["badge_count_gte"]
+    ):
+        return False
+    if selector.get("badge_count_lte") is not None and badge_count > int(
+        selector["badge_count_lte"]
+    ):
+        return False
+    if selector.get("badge_count_lt") is not None and badge_count >= int(
+        selector["badge_count_lt"]
+    ):
+        return False
+
+    if selector.get("battle_active") is not None and battle_active is not bool(
+        selector.get("battle_active")
+    ):
+        return False
+
+    bag_has_any = selector.get("bag_has_any") or []
+    if bag_has_any and not any(item in bag_items for item in bag_has_any):
+        return False
+
+    bag_has_all = selector.get("bag_has_all") or []
+    if bag_has_all and not all(item in bag_items for item in bag_has_all):
+        return False
+
+    bag_missing_all = selector.get("bag_missing_all") or []
+    if bag_missing_all and any(item in bag_items for item in bag_missing_all):
+        return False
+
+    return True
+
+
+TYPE_EFFECTIVENESS: dict[str, dict[str, float]] = {
+    "Normal": {"Rock": 0.5, "Ghost": 0.0},
+    "Fire": {"Grass": 2.0, "Bug": 2.0, "Ice": 2.0, "Water": 0.5, "Rock": 0.5, "Fire": 0.5, "Dragon": 0.5},
+    "Water": {"Fire": 2.0, "Ground": 2.0, "Rock": 2.0, "Water": 0.5, "Grass": 0.5, "Dragon": 0.5},
+    "Grass": {"Water": 2.0, "Ground": 2.0, "Rock": 2.0, "Fire": 0.5, "Grass": 0.5, "Poison": 0.5, "Flying": 0.5, "Bug": 0.5, "Dragon": 0.5},
+    "Electric": {"Water": 2.0, "Flying": 2.0, "Electric": 0.5, "Grass": 0.5, "Dragon": 0.5, "Ground": 0.0},
+    "Ice": {"Grass": 2.0, "Ground": 2.0, "Flying": 2.0, "Dragon": 2.0, "Water": 0.5, "Ice": 0.5},
+    "Fighting": {"Normal": 2.0, "Rock": 2.0, "Ice": 2.0, "Poison": 0.5, "Flying": 0.5, "Psychic": 0.5, "Bug": 0.5, "Ghost": 0.0},
+    "Poison": {"Grass": 2.0, "Bug": 2.0, "Poison": 0.5, "Ground": 0.5, "Rock": 0.5, "Ghost": 0.5},
+    "Ground": {"Fire": 2.0, "Electric": 2.0, "Poison": 2.0, "Rock": 2.0, "Grass": 0.5, "Bug": 0.5, "Flying": 0.0},
+    "Flying": {"Grass": 2.0, "Fighting": 2.0, "Bug": 2.0, "Electric": 0.5, "Rock": 0.5},
+    "Psychic": {"Fighting": 2.0, "Poison": 2.0, "Psychic": 0.5},
+    "Bug": {"Grass": 2.0, "Poison": 2.0, "Psychic": 2.0, "Fire": 0.5, "Fighting": 0.5, "Flying": 0.5, "Ghost": 0.5},
+    "Rock": {"Fire": 2.0, "Ice": 2.0, "Flying": 2.0, "Bug": 2.0, "Fighting": 0.5, "Ground": 0.5},
+}
+
+
+MOVE_METADATA: dict[str, JsonDict] = {
+    "Tackle": {"type": "Normal", "power": 35},
+    "Scratch": {"type": "Normal", "power": 40},
+    "Pound": {"type": "Normal", "power": 40},
+    "Quick Attack": {"type": "Normal", "power": 40},
+    "Cut": {"type": "Normal", "power": 50},
+    "Gust": {"type": "Flying", "power": 40},
+    "Wing Attack": {"type": "Flying", "power": 35},
+    "Peck": {"type": "Flying", "power": 35},
+    "Karate Chop": {"type": "Normal", "power": 50},
+    "Low Kick": {"type": "Fighting", "power": 50},
+    "Double Kick": {"type": "Fighting", "power": 60},
+    "Bite": {"type": "Normal", "power": 60},
+    "Vine Whip": {"type": "Grass", "power": 45},
+    "Razor Leaf": {"type": "Grass", "power": 55},
+    "Absorb": {"type": "Grass", "power": 20},
+    "Mega Drain": {"type": "Grass", "power": 40},
+    "Ember": {"type": "Fire", "power": 40},
+    "Flamethrower": {"type": "Fire", "power": 95},
+    "Bubble": {"type": "Water", "power": 20},
+    "BubbleBeam": {"type": "Water", "power": 65},
+    "Water Gun": {"type": "Water", "power": 40},
+    "Surf": {"type": "Water", "power": 95},
+    "ThunderShock": {"type": "Electric", "power": 40},
+    "Thunderbolt": {"type": "Electric", "power": 95},
+    "Shock Wave": {"type": "Electric", "power": 60},
+    "Confusion": {"type": "Psychic", "power": 50},
+    "Psybeam": {"type": "Psychic", "power": 65},
+    "Rock Throw": {"type": "Rock", "power": 50},
+    "Seismic Toss": {"type": "Fighting", "power": 50},
+    "Dig": {"type": "Ground", "power": 100},
+    "Earthquake": {"type": "Ground", "power": 100},
+    "Strength": {"type": "Normal", "power": 80},
+    "Growl": {"type": "Normal", "power": 0, "status": True},
+    "Leer": {"type": "Normal", "power": 0, "status": True},
+    "Tail Whip": {"type": "Normal", "power": 0, "status": True},
+    "PoisonPowder": {"type": "Poison", "power": 0, "status": True},
+    "Sleep Powder": {"type": "Grass", "power": 0, "status": True},
+    "String Shot": {"type": "Bug", "power": 0, "status": True},
+    "Sand Attack": {"type": "Ground", "power": 0, "status": True},
+    "Harden": {"type": "Normal", "power": 0, "status": True},
+    "Defense Curl": {"type": "Normal", "power": 0, "status": True},
+}
 
 
 def summarize_party(party: list[JsonDict]) -> str:
@@ -346,6 +550,24 @@ def build_state_delta(before: Optional[JsonDict], after: JsonDict) -> JsonDict:
             f"Badge count changed from {previous.get('badge_count', 0)} to "
             f"{current.get('badge_count', 0)}."
         )
+
+    before_bag = _bag_item_counts(before)
+    after_bag = _bag_item_counts(after)
+    bag_changes: list[str] = []
+    for item in sorted(set(before_bag) | set(after_bag)):
+        previous_qty = before_bag.get(item, 0)
+        current_qty = after_bag.get(item, 0)
+        if previous_qty == current_qty:
+            continue
+        if previous_qty == 0 and current_qty > 0:
+            bag_changes.append(f"{item} was added to the bag (x{current_qty}).")
+        elif current_qty == 0:
+            bag_changes.append(f"{item} was removed from the bag.")
+        else:
+            bag_changes.append(f"{item} quantity changed from {previous_qty} to {current_qty}.")
+    if bag_changes:
+        fields["bag"] = bag_changes
+        summary.extend(bag_changes[:3])
 
     party_changes: list[str] = []
     before_party = {entry.get("name"): entry for entry in previous.get("party_summary", [])}
@@ -586,56 +808,68 @@ def render_navigation_overlay(
 
 
 class ObjectiveEngine:
-    """Deterministic Red-first objective progression through Brock."""
+    """Deterministic Red-first objective progression across chained packs."""
 
     def __init__(self) -> None:
-        self.pack = load_red_objective_pack()
-        self.by_id = {item["id"]: item for item in self.pack}
+        self.packs = load_red_objective_packs()
+        self.objectives: list[JsonDict] = []
+        for pack in self.packs:
+            pack_id = str(pack.get("pack_id") or "unknown_pack")
+            for item in pack.get("objectives") or []:
+                if not isinstance(item, dict):
+                    continue
+                merged = dict(item)
+                merged["pack_id"] = pack_id
+                merged.setdefault("preferred_landmark_types", [])
+                merged.setdefault("selector", {})
+                self.objectives.append(merged)
+        self.by_id = {item["id"]: item for item in self.objectives}
 
-    def _current_objective_id(self, state: JsonDict) -> str:
-        flags = state.get("flags") or {}
-        player = state.get("player") or {}
-        battle = state.get("battle") or {}
-        map_name = (state.get("map") or {}).get("map_name") or ""
-        badge_count = player.get("badge_count", flags.get("badge_count", 0)) or 0
-        has_pokedex = bool(flags.get("has_pokedex"))
-        has_oaks_parcel = bool(flags.get("has_oaks_parcel"))
-        in_battle = bool(battle.get("in_battle"))
-
-        forest_maps = {
-            "Route 2",
-            "Viridian Forest Gate (S)",
-            "Viridian Forest",
-            "Viridian Forest Gate (N)",
-        }
-        if badge_count >= 1:
-            return "phase_complete_boulder_badge"
-        if map_name == "Pewter Gym" or (map_name == "Pewter City" and in_battle):
-            return "defeat_brock"
-        if map_name == "Pewter City":
-            return "reach_pewter_gym"
-        if has_pokedex and map_name in forest_maps:
-            return "cross_viridian_forest"
-        if has_pokedex:
-            return "head_to_viridian_forest"
-        if has_oaks_parcel:
-            return "return_oaks_parcel"
-        if map_name in {"Viridian City", "Viridian Mart", "Route 1"}:
-            return "get_oaks_parcel"
-        return "leave_pallet_and_get_starter"
+    def _current_objective_index(self, state: JsonDict) -> int:
+        if not self.objectives:
+            return 0
+        current_index = 0
+        for index, item in enumerate(self.objectives):
+            if _selector_matches(item.get("selector") or {}, state):
+                current_index = index
+        return current_index
 
     def evaluate(self, state: JsonDict) -> JsonDict:
-        current_id = self._current_objective_id(state)
-        current_index = next(
-            (index for index, item in enumerate(self.pack) if item["id"] == current_id),
-            0,
-        )
-        total_steps = max(len(self.pack) - 1, 1)
+        if not self.objectives:
+            empty = ObjectiveRecord(
+                pack_id="unknown_pack",
+                id="no_objectives_loaded",
+                title="No objectives loaded",
+                summary="Objective data was not loaded.",
+                completion_predicate="N/A",
+                failure_hints=[],
+                save_recommendation="Manual saves only.",
+                route_hint="Inspect objective data loading.",
+                preferred_landmark_types=[],
+                priority=1,
+                current=True,
+                completed=False,
+                status="current",
+                progress_percent=0,
+            ).to_dict()
+            return {
+                "game": "red",
+                "current": empty,
+                "objectives": [empty],
+                "progress_percent": 0,
+                "current_pack_id": "unknown_pack",
+                "packs": [],
+                "phase_complete": False,
+            }
+
+        current_index = self._current_objective_index(state)
+        current_id = self.objectives[current_index]["id"]
+        total_steps = max(len(self.objectives) - 1, 1)
         progress_percent = min(100, int((current_index / total_steps) * 100))
         objectives: list[JsonDict] = []
         current_objective: Optional[JsonDict] = None
 
-        for index, item in enumerate(self.pack):
+        for index, item in enumerate(self.objectives):
             completed = index < current_index
             current = item["id"] == current_id
             status = "completed" if completed else "current" if current else "pending"
@@ -647,6 +881,7 @@ class ObjectiveEngine:
                 else int((index / total_steps) * 100)
             )
             record = ObjectiveRecord(
+                pack_id=item["pack_id"],
                 id=item["id"],
                 title=item["title"],
                 summary=item["summary"],
@@ -654,6 +889,7 @@ class ObjectiveEngine:
                 failure_hints=item.get("failure_hints", []),
                 save_recommendation=item.get("save_recommendation", ""),
                 route_hint=item.get("route_hint", ""),
+                preferred_landmark_types=item.get("preferred_landmark_types", []),
                 priority=index + 1,
                 current=current,
                 completed=completed,
@@ -670,7 +906,16 @@ class ObjectiveEngine:
             "current": current_objective,
             "objectives": objectives,
             "progress_percent": progress_percent,
-            "phase_complete": current_id == "phase_complete_boulder_badge",
+            "current_pack_id": current_objective["pack_id"],
+            "packs": [
+                {
+                    "pack_id": pack.get("pack_id"),
+                    "order": pack.get("order"),
+                    "title": pack.get("title"),
+                }
+                for pack in self.packs
+            ],
+            "phase_complete": current_id == "phase_complete_cut_access",
         }
 
 
@@ -698,9 +943,17 @@ class AgentRuntime:
         self.last_turn_plan_hash: Optional[str] = None
         self.checkpoint_ids: set[str] = set()
         self.action_events_since_objective_change = 0
+        self.semantic_memory: deque[JsonDict] = deque(maxlen=600)
+        self.landmarks_by_id: dict[str, JsonDict] = {}
+        self.failure_memory: dict[str, dict[str, JsonDict]] = defaultdict(dict)
+        self.dialog_transcript_recent: deque[JsonDict] = deque(maxlen=12)
+        self.last_dialog_text = ""
+        self.dialog_last_change_at: Optional[str] = None
         self.workspace_dir.mkdir(parents=True, exist_ok=True)
         self._ensure_workspace_files()
         self._load_existing_checkpoint_ids()
+        self._load_existing_landmarks()
+        self._load_existing_event_memory()
 
     @property
     def artifacts(self) -> dict[str, Path]:
@@ -715,6 +968,9 @@ class AgentRuntime:
             "working_memory_md": self.workspace_dir / "working_memory.md",
             "checkpoints_jsonl": self.workspace_dir / "checkpoints.jsonl",
             "knowledge_graph_json": self.workspace_dir / "knowledge_graph.json",
+            "landmarks_json": self.workspace_dir / "landmarks.json",
+            "event_memory_jsonl": self.workspace_dir / "event_memory.jsonl",
+            "session_brief_md": self.workspace_dir / "session_brief.md",
             "recovery_saves_json": self.workspace_dir / "recovery_saves.json",
             "run_log_jsonl": self.workspace_dir / "run_log.jsonl",
         }
@@ -722,6 +978,7 @@ class AgentRuntime:
     def _ensure_workspace_files(self) -> None:
         for path in (
             self.artifacts["checkpoints_jsonl"],
+            self.artifacts["event_memory_jsonl"],
             self.artifacts["run_log_jsonl"],
         ):
             path.parent.mkdir(parents=True, exist_ok=True)
@@ -741,6 +998,10 @@ class AgentRuntime:
                 "summary": {"nodes": 0, "edges": 0},
                 "nodes": [],
                 "edges": [],
+            },
+            "landmarks_json": {
+                "updated_at": "",
+                "landmarks": [],
             },
             "recovery_saves_json": {
                 "updated_at": "",
@@ -776,6 +1037,11 @@ class AgentRuntime:
                 "Observation summary will appear here after the first observation.\n",
                 encoding="utf-8",
             )
+        if not self.artifacts["session_brief_md"].exists():
+            self.artifacts["session_brief_md"].write_text(
+                "# Session Brief\n\nA deterministic resume brief will appear here.\n",
+                encoding="utf-8",
+            )
 
     def _load_existing_checkpoint_ids(self) -> None:
         path = self.artifacts["checkpoints_jsonl"]
@@ -790,6 +1056,30 @@ class AgentRuntime:
             checkpoint_id = record.get("id")
             if checkpoint_id:
                 self.checkpoint_ids.add(checkpoint_id)
+
+    def _load_existing_landmarks(self) -> None:
+        payload = self._read_json(self.artifacts["landmarks_json"], {"landmarks": []})
+        for landmark in payload.get("landmarks", []):
+            if isinstance(landmark, dict) and landmark.get("id"):
+                self.landmarks_by_id[str(landmark["id"])] = landmark
+
+    def _load_existing_event_memory(self) -> None:
+        path = self.artifacts["event_memory_jsonl"]
+        for line in path.read_text(encoding="utf-8").splitlines():
+            line = line.strip()
+            if not line:
+                continue
+            try:
+                record = json.loads(line)
+            except json.JSONDecodeError:
+                continue
+            if not isinstance(record, dict):
+                continue
+            self.semantic_memory.append(record)
+            self._ingest_failure_memory_event(record)
+            if record.get("kind") == "dialog_text" and record.get("text"):
+                self.last_dialog_text = str(record["text"])
+                self.dialog_last_change_at = record.get("timestamp")
 
     def _write_json(self, path: Path, payload: Any) -> None:
         _atomic_write_text(
@@ -848,6 +1138,698 @@ class AgentRuntime:
         if self.event_history:
             return list(self.event_history)[-limit:]
         return self._tail_jsonl(self.artifacts["run_log_jsonl"], limit)
+
+    def _map_key(
+        self,
+        *,
+        state: Optional[JsonDict] = None,
+        snapshot: Optional[LiveNavigationSnapshot] = None,
+    ) -> str:
+        if state is not None:
+            map_info = state.get("map") or {}
+            if map_info.get("map_name") is not None:
+                return f"{map_info.get('map_id', '?')}:{map_info.get('map_name', 'Unknown')}"
+        if snapshot is not None:
+            return snapshot.key
+        map_info = (state or {}).get("map") or {}
+        return f"{map_info.get('map_id', '?')}:{map_info.get('map_name', 'Unknown')}"
+
+    def _persist_landmarks(self) -> None:
+        payload = {
+            "updated_at": utc_now(),
+            "landmarks": sorted(
+                self.landmarks_by_id.values(),
+                key=lambda entry: (
+                    int(entry.get("map_id", 0)),
+                    str(entry.get("kind", "")),
+                    int((entry.get("coord") or {}).get("y", 0)),
+                    int((entry.get("coord") or {}).get("x", 0)),
+                    str(entry.get("title", "")),
+                ),
+            ),
+        }
+        self._write_json(self.artifacts["landmarks_json"], payload)
+
+    def _landmarks_for_map(self, *, map_id: int, map_name: str) -> list[JsonDict]:
+        return [
+            landmark
+            for landmark in self.landmarks_by_id.values()
+            if int(landmark.get("map_id", -1)) == map_id
+            and str(landmark.get("map_name", "")) == map_name
+        ]
+
+    def _upsert_landmark(
+        self,
+        *,
+        map_id: int,
+        map_name: str,
+        kind: str,
+        coord: tuple[int, int],
+        title: str,
+        source: str,
+        notes: Optional[list[str]] = None,
+    ) -> tuple[JsonDict, bool]:
+        now = utc_now()
+        landmark_id = f"landmark:{_stable_id(map_id, kind, _coord_to_key(coord))}"
+        existing = self.landmarks_by_id.get(landmark_id)
+        if existing:
+            existing["title"] = title
+            existing["last_seen_at"] = now
+            existing["seen_count"] = int(existing.get("seen_count", 0)) + 1
+            existing["source"] = existing.get("source") or source
+            merged_notes = list(existing.get("notes") or [])
+            for note in notes or []:
+                if note and note not in merged_notes:
+                    merged_notes.append(note)
+            existing["notes"] = merged_notes[:6]
+            self.landmarks_by_id[landmark_id] = existing
+            return existing, False
+
+        record = LandmarkRecord(
+            id=landmark_id,
+            map_id=map_id,
+            map_name=map_name,
+            kind=kind,
+            title=title,
+            coord={"x": coord[0], "y": coord[1]},
+            discovered_at=now,
+            last_seen_at=now,
+            source=source,
+            notes=list(notes or [])[:6],
+        ).to_dict()
+        self.landmarks_by_id[landmark_id] = record
+        return record, True
+
+    def _ingest_failure_memory_event(self, record: JsonDict) -> None:
+        if record.get("kind") != "failure":
+            return
+        map_key = str(record.get("map_key") or "unknown")
+        coord = _tuple_coord_from_any(record.get("coord"))
+        coord_key = str(record.get("coord_key") or (_coord_to_key(coord) if coord else record.get("type") or "unknown"))
+        bucket = self.failure_memory[map_key]
+        existing = bucket.get(coord_key)
+        count_delta = max(1, int(record.get("count_delta") or 1))
+        if existing:
+            existing["count"] = int(existing.get("count", 0)) + count_delta
+            existing["last_seen_at"] = record.get("timestamp") or utc_now()
+            existing["summary"] = record.get("summary") or existing.get("summary")
+            existing["reason"] = record.get("reason") or existing.get("reason")
+            if record.get("actions"):
+                existing["actions"] = record.get("actions")
+            bucket[coord_key] = existing
+        else:
+            bucket[coord_key] = {
+                "id": f"failure:{_stable_id(map_key, coord_key, record.get('type'))}",
+                "map_key": map_key,
+                "map_id": record.get("map_id"),
+                "map_name": record.get("map_name"),
+                "coord": record.get("coord"),
+                "coord_key": coord_key,
+                "type": record.get("type"),
+                "summary": record.get("summary"),
+                "reason": record.get("reason"),
+                "actions": record.get("actions") or [],
+                "count": count_delta,
+                "first_seen_at": record.get("timestamp") or utc_now(),
+                "last_seen_at": record.get("timestamp") or utc_now(),
+            }
+
+        failure = bucket[coord_key]
+        if coord is not None and int(failure.get("count", 0)) >= 2:
+            map_id = int(record.get("map_id") or -1)
+            map_name = str(record.get("map_name") or "")
+            if map_id >= 0 and map_name:
+                self._upsert_landmark(
+                    map_id=map_id,
+                    map_name=map_name,
+                    kind="dead_end",
+                    coord=coord,
+                    title=f"Repeated failure near ({coord[0]}, {coord[1]})",
+                    source="failure_memory",
+                    notes=[str(record.get("summary") or record.get("reason") or "Repeated failure")],
+                )
+                self._persist_landmarks()
+
+    def _record_semantic_memory(self, kind: str, summary: str, **payload: Any) -> JsonDict:
+        record = {
+            "id": payload.pop(
+                "id",
+                f"memory:{_stable_id(kind, summary, payload.get('map_key'), payload.get('coord_key'), payload.get('objective_id'))}",
+            ),
+            "timestamp": utc_now(),
+            "kind": kind,
+            "summary": summary,
+            **payload,
+        }
+        if self.semantic_memory:
+            last = self.semantic_memory[-1]
+            if (
+                last.get("kind") == record["kind"]
+                and last.get("summary") == record["summary"]
+                and last.get("map_key") == record.get("map_key")
+                and kind != "failure"
+            ):
+                return last
+        self.semantic_memory.append(record)
+        self._append_jsonl(self.artifacts["event_memory_jsonl"], record)
+        self._ingest_failure_memory_event(record)
+        return record
+
+    def _discover_landmarks(
+        self,
+        *,
+        snapshot: Optional[LiveNavigationSnapshot],
+    ) -> list[JsonDict]:
+        if snapshot is None:
+            return []
+
+        created: list[JsonDict] = []
+        changed = False
+        width = int((snapshot.map_dimensions or {}).get("width") or 0)
+        height = int((snapshot.map_dimensions or {}).get("height") or 0)
+
+        for warp in snapshot.warps:
+            coord = _tuple_coord_from_any(warp)
+            if coord is None:
+                continue
+            edge_exit = (
+                coord[0] == 0
+                or coord[1] == 0
+                or (width > 0 and coord[0] >= width - 1)
+                or (height > 0 and coord[1] >= height - 1)
+            )
+            kind = "exit" if edge_exit else "warp"
+            title = (
+                f"Map exit at ({coord[0]}, {coord[1]})"
+                if edge_exit
+                else f"Warp at ({coord[0]}, {coord[1]})"
+            )
+            record, is_new = self._upsert_landmark(
+                map_id=snapshot.map_id,
+                map_name=snapshot.map_name,
+                kind=kind,
+                coord=coord,
+                title=title,
+                source="navigation",
+                notes=[f"target_map_id={warp.get('target_map_id')}"],
+            )
+            changed = True
+            if is_new:
+                created.append(record)
+
+        for sign in snapshot.signs:
+            coord = _tuple_coord_from_any(sign)
+            if coord is None:
+                continue
+            record, is_new = self._upsert_landmark(
+                map_id=snapshot.map_id,
+                map_name=snapshot.map_name,
+                kind="sign",
+                coord=coord,
+                title=f"Sign at ({coord[0]}, {coord[1]})",
+                source="navigation",
+                notes=[f"text_id={sign.get('text_id')}"],
+            )
+            changed = True
+            if is_new:
+                created.append(record)
+
+        interaction = snapshot.interaction or {}
+        target = _tuple_coord_from_any(interaction.get("target_coord"))
+        if target is not None:
+            source = str(interaction.get("source") or "interaction")
+            if source in {"sprite_direct", "sprite_via_talk_over"}:
+                kind = "npc_blocker"
+                title = f"NPC blocker at ({target[0]}, {target[1]})"
+            elif "sign" in source:
+                kind = "sign"
+                title = f"Talkable sign at ({target[0]}, {target[1]})"
+            else:
+                kind = "interactable"
+                title = f"Interactable at ({target[0]}, {target[1]})"
+            record, is_new = self._upsert_landmark(
+                map_id=snapshot.map_id,
+                map_name=snapshot.map_name,
+                kind=kind,
+                coord=target,
+                title=title,
+                source="interaction_probe",
+                notes=[str(interaction.get("reason") or "Visible interaction target")],
+            )
+            changed = True
+            if is_new:
+                created.append(record)
+
+        if changed:
+            self._persist_landmarks()
+        return created
+
+    def _build_navigation_avoidances(
+        self,
+        *,
+        map_key: str,
+        current: Optional[tuple[int, int]],
+    ) -> list[JsonDict]:
+        failures = list(self.failure_memory.get(map_key, {}).values())
+        ranked = sorted(
+            failures,
+            key=lambda entry: (
+                -int(entry.get("count", 0)),
+                _manhattan(current, _tuple_coord_from_any(entry.get("coord"))),
+                str(entry.get("summary") or ""),
+            ),
+        )
+        result: list[JsonDict] = []
+        for entry in ranked[:5]:
+            coord = _tuple_coord_from_any(entry.get("coord"))
+            result.append(
+                {
+                    "id": entry.get("id"),
+                    "kind": entry.get("type"),
+                    "coord": _coord_payload(coord),
+                    "title": entry.get("summary") or "Repeated failure",
+                    "reason": entry.get("reason") or entry.get("summary"),
+                    "times_seen": entry.get("count", 0),
+                    "last_seen_at": entry.get("last_seen_at"),
+                    "actions": (entry.get("actions") or [])[:4],
+                }
+            )
+        return result
+
+    def _build_navigation_assistance(
+        self,
+        *,
+        snapshot: Optional[LiveNavigationSnapshot],
+        navigation_store: Optional[NavigationStore],
+        objective: JsonDict,
+    ) -> JsonDict:
+        if snapshot is None or navigation_store is None:
+            return {
+                "frontiers": [],
+                "landmarks": [],
+                "distance_ascii": "(navigation guidance unavailable)",
+                "route_cards": [],
+                "avoidances": [],
+            }
+
+        location_map = navigation_store.get(snapshot.key)
+        if location_map is None:
+            return {
+                "frontiers": [],
+                "landmarks": [],
+                "distance_ascii": "(explored map unavailable)",
+                "route_cards": [],
+                "avoidances": [],
+            }
+
+        current = snapshot.player_position
+        preferred_types = set((objective.get("current") or {}).get("preferred_landmark_types") or [])
+        preferred_direction = _preferred_direction_hint(
+            (objective.get("current") or {}).get("route_hint", "")
+        )
+        avoidances = self._build_navigation_avoidances(map_key=snapshot.key, current=current)
+        blocked_coords = {
+            _tuple_coord_from_any(entry.get("coord"))
+            for entry in avoidances
+            if _tuple_coord_from_any(entry.get("coord")) is not None
+        }
+
+        distances = location_map.distance_map(current, extra_blockers=snapshot.sprite_set)
+        frontiers: list[JsonDict] = []
+        seen_frontier_coords: set[tuple[int, int]] = set()
+        for coord, distance in sorted(
+            distances.items(),
+            key=lambda item: (item[1], item[0][1], item[0][0]),
+        ):
+            if coord == current:
+                continue
+            unknown_neighbors = [
+                neighbor
+                for _, neighbor in (
+                    ((0, -1), (coord[0], coord[1] - 1)),
+                    ((0, 1), (coord[0], coord[1] + 1)),
+                    ((-1, 0), (coord[0] - 1, coord[1])),
+                    ((1, 0), (coord[0] + 1, coord[1])),
+                )
+                if location_map.tiles.get(neighbor) is None
+            ]
+            if not unknown_neighbors or coord in seen_frontier_coords:
+                continue
+            route = location_map.plan_route(
+                start=current,
+                goal=coord,
+                extra_blockers=snapshot.sprite_set,
+                allow_partial=False,
+            )
+            progress_bonus = max(0, _progress_amount(preferred_direction or "", current, coord))
+            blocked = any(_manhattan(coord, blocked_coord) <= 1 for blocked_coord in blocked_coords)
+            novelty_score = max(1, 35 + (len(unknown_neighbors) * 12) + (progress_bonus * 4) - (distance * 2) - (25 if blocked else 0))
+            title = f"Probe frontier at ({coord[0]}, {coord[1]})"
+            why_now_parts = [f"reveals {len(unknown_neighbors)} unknown edge(s)"]
+            if progress_bonus > 0 and preferred_direction:
+                why_now_parts.append(f"advances {preferred_direction}")
+            if blocked:
+                why_now_parts.append("near a recently failed branch")
+            frontiers.append(
+                {
+                    "id": f"frontier:{_stable_id(snapshot.key, _coord_to_key(coord))}",
+                    "kind": "frontier",
+                    "coord": _coord_payload(coord),
+                    "title": title,
+                    "novelty_score": novelty_score,
+                    "route_steps": len(route.actions),
+                    "route_actions": route.actions[:8],
+                    "first_action": route.actions[0] if route.actions else None,
+                    "why_now": ", ".join(why_now_parts),
+                    "blocked_by_recent_failure": blocked,
+                }
+            )
+            seen_frontier_coords.add(coord)
+
+        frontiers = sorted(
+            frontiers,
+            key=lambda entry: (
+                -int(entry.get("novelty_score", 0)),
+                int(entry.get("route_steps", 999)),
+                str(entry.get("title", "")),
+            ),
+        )[:8]
+
+        landmarks: list[JsonDict] = []
+        route_cards: list[JsonDict] = []
+        map_landmarks = self._landmarks_for_map(map_id=snapshot.map_id, map_name=snapshot.map_name)
+        for landmark in sorted(
+            map_landmarks,
+            key=lambda entry: (
+                _manhattan(current, _tuple_coord_from_any(entry.get("coord"))),
+                str(entry.get("kind", "")),
+                str(entry.get("title", "")),
+            ),
+        ):
+            coord = _tuple_coord_from_any(landmark.get("coord"))
+            if coord is None:
+                continue
+            visible = snapshot.absolute_to_local(coord[0], coord[1]) is not None
+            distance = _manhattan(current, coord)
+            landmark_view = {
+                **landmark,
+                "coord": _coord_payload(coord),
+                "distance": distance,
+                "visible": visible,
+            }
+            landmarks.append(landmark_view)
+
+            route = location_map.plan_route(
+                start=current,
+                goal=coord,
+                extra_blockers=snapshot.sprite_set,
+                allow_partial=True,
+            )
+            blocked = any(_manhattan(coord, blocked_coord) <= 1 for blocked_coord in blocked_coords)
+            type_bonus = 24 if str(landmark.get("kind")) in preferred_types else 0
+            score = max(
+                1,
+                55
+                + type_bonus
+                + (12 if visible else 0)
+                - (distance * 2)
+                - (18 if blocked else 0)
+                - (8 if str(landmark.get("kind")) == "dead_end" else 0),
+            )
+            route_cards.append(
+                {
+                    "id": f"route:{landmark.get('id')}",
+                    "kind": str(landmark.get("kind") or "landmark"),
+                    "coord": _coord_payload(coord),
+                    "title": landmark.get("title"),
+                    "score": score,
+                    "route_steps": len(route.actions),
+                    "route_actions": route.actions[:8],
+                    "first_action": route.actions[0] if route.actions else None,
+                    "why_now": (
+                        "Matches the current objective preferences."
+                        if type_bonus
+                        else "Known landmark with a concrete route."
+                    ),
+                    "blocked_by_recent_failure": blocked,
+                    "target_id": landmark.get("id"),
+                }
+            )
+
+        for frontier in frontiers:
+            route_cards.append(
+                {
+                    "id": f"route:{frontier['id']}",
+                    "kind": frontier["kind"],
+                    "coord": frontier["coord"],
+                    "title": frontier["title"],
+                    "score": frontier["novelty_score"],
+                    "route_steps": frontier["route_steps"],
+                    "route_actions": frontier["route_actions"],
+                    "first_action": frontier["first_action"],
+                    "why_now": frontier["why_now"],
+                    "blocked_by_recent_failure": frontier["blocked_by_recent_failure"],
+                    "target_id": frontier["id"],
+                }
+            )
+
+        route_cards = sorted(
+            route_cards,
+            key=lambda entry: (
+                -int(entry.get("score", 0)),
+                int(entry.get("route_steps", 999)),
+                str(entry.get("title", "")),
+            ),
+        )[:5]
+
+        distance_ascii = location_map.render_distance_ascii(
+            start=current,
+            extra_blockers=snapshot.sprite_set,
+            sprites=snapshot.sprite_positions,
+            max_distance=60,
+        )
+
+        return {
+            "frontiers": frontiers,
+            "landmarks": landmarks[:12],
+            "distance_ascii": distance_ascii,
+            "route_cards": route_cards,
+            "avoidances": avoidances,
+        }
+
+    def _update_dialog_guidance(
+        self,
+        *,
+        screen_text: JsonDict,
+        state: JsonDict,
+    ) -> tuple[JsonDict, Optional[JsonDict]]:
+        dialog = state.get("dialog") or {}
+        dialog_active = bool(state.get("dialog_active") or dialog.get("active"))
+        text = str(screen_text.get("text") or "").strip()
+        changed_event = None
+        if dialog_active and text and not text.startswith("Dialog box visible") and text != self.last_dialog_text:
+            self.last_dialog_text = text
+            self.dialog_last_change_at = utc_now()
+            entry = {"timestamp": self.dialog_last_change_at, "text": text}
+            self.dialog_transcript_recent.append(entry)
+            changed_event = entry
+        elif not dialog_active:
+            self.last_dialog_text = ""
+
+        return (
+            {
+                "transcript_recent": [entry["text"] for entry in list(self.dialog_transcript_recent)[-4:]],
+                "should_continue": dialog_active,
+                "last_change_at": self.dialog_last_change_at,
+                "printing": bool(dialog.get("printing")),
+                "waiting_for_input": bool(dialog.get("waiting_for_input")),
+            },
+            changed_event,
+        )
+
+    def _type_multiplier(self, move_type: str, enemy_types: Iterable[str]) -> float:
+        multiplier = 1.0
+        for enemy_type in enemy_types:
+            multiplier *= TYPE_EFFECTIVENESS.get(move_type, {}).get(str(enemy_type), 1.0)
+        return multiplier
+
+    def _build_battle_guidance(self, state: JsonDict, dialog_guidance: JsonDict) -> JsonDict:
+        battle = state.get("battle") or {}
+        if not battle.get("in_battle"):
+            return {
+                "recommended_mode": "none",
+                "recommended_move": None,
+                "reason": "No active battle.",
+                "safe_short_actions": [],
+            }
+
+        if dialog_guidance.get("should_continue"):
+            return {
+                "recommended_mode": "advance_text",
+                "recommended_move": None,
+                "reason": "Battle text is still active; clear dialog before selecting another move.",
+                "safe_short_actions": ["press_a"],
+            }
+
+        party = state.get("party") or []
+        active = party[0] if party else {}
+        enemy = battle.get("enemy") or {}
+        enemy_types = [entry for entry in (enemy.get("types") or []) if entry]
+        user_types = [entry for entry in (active.get("types") or []) if entry]
+        best_move: Optional[JsonDict] = None
+        best_score = -9999.0
+        for move in active.get("moves") or []:
+            if int(move.get("pp") or 0) <= 0:
+                continue
+            metadata = MOVE_METADATA.get(str(move.get("name") or ""), {"type": "Normal", "power": 35})
+            if metadata.get("status"):
+                score = -10.0
+            else:
+                score = float(metadata.get("power") or 35)
+                move_type = str(metadata.get("type") or "Normal")
+                if move_type in user_types:
+                    score *= 1.2
+                score *= self._type_multiplier(move_type, enemy_types)
+                score += min(6, int(move.get("pp") or 0))
+            if score > best_score:
+                best_score = score
+                best_move = {
+                    "name": move.get("name"),
+                    "type": metadata.get("type"),
+                    "power": metadata.get("power"),
+                    "pp": move.get("pp"),
+                    "score": round(score, 2),
+                }
+
+        if best_move is None:
+            return {
+                "recommended_mode": "advance_text",
+                "recommended_move": None,
+                "reason": "No usable damaging move is visible; keep battle actions extremely short.",
+                "safe_short_actions": ["press_a"],
+            }
+
+        reason = (
+            f"{best_move['name']} scores best against "
+            f"{'/'.join(enemy_types) if enemy_types else 'the current enemy'} "
+            f"with PP {best_move['pp']}."
+        )
+        return {
+            "recommended_mode": "select_best_move",
+            "recommended_move": best_move,
+            "reason": reason,
+            "safe_short_actions": ["press_a"],
+        }
+
+    def _build_hypotheses(
+        self,
+        *,
+        objective: JsonDict,
+        navigation_guidance: JsonDict,
+        dialog_guidance: JsonDict,
+        battle_guidance: JsonDict,
+    ) -> list[str]:
+        hypotheses: list[str] = []
+        current = objective.get("current") or {}
+        if dialog_guidance.get("should_continue"):
+            hypotheses.append("Clear the active dialog before attempting movement.")
+        elif battle_guidance.get("recommended_mode") == "select_best_move":
+            move = battle_guidance.get("recommended_move") or {}
+            if move.get("name"):
+                hypotheses.append(f"In battle, prefer {move['name']} on the next menu advance.")
+        route_cards = navigation_guidance.get("route_cards") or []
+        if route_cards:
+            top = route_cards[0]
+            hypotheses.append(f"Best near-term progress is {top.get('title')}.")
+        if current.get("route_hint"):
+            hypotheses.append(f"Route hint: {current['route_hint']}")
+        return hypotheses[:4]
+
+    def _build_memory_snapshot(
+        self,
+        *,
+        objective: JsonDict,
+        navigation_guidance: JsonDict,
+        dialog_guidance: JsonDict,
+        battle_guidance: JsonDict,
+        state: JsonDict,
+    ) -> JsonDict:
+        map_key = self._map_key(state=state)
+        failed_attempts = self._build_navigation_avoidances(
+            map_key=map_key,
+            current=_tuple_coord_from_any((state.get("player") or {}).get("position")),
+        )
+        recent_facts = [
+            {
+                "timestamp": entry.get("timestamp"),
+                "kind": entry.get("kind"),
+                "summary": entry.get("summary"),
+            }
+            for entry in list(self.semantic_memory)[-8:]
+        ]
+        hypotheses = self._build_hypotheses(
+            objective=objective,
+            navigation_guidance=navigation_guidance,
+            dialog_guidance=dialog_guidance,
+            battle_guidance=battle_guidance,
+        )
+        return {
+            "recent_facts": recent_facts,
+            "current_hypotheses": hypotheses,
+            "failed_attempts": failed_attempts,
+            "session_brief_path": str(self.artifacts["session_brief_md"]),
+        }
+
+    def _write_session_brief(
+        self,
+        *,
+        objective: JsonDict,
+        navigation_guidance: JsonDict,
+        memory_snapshot: JsonDict,
+        dialog_guidance: JsonDict,
+        battle_guidance: JsonDict,
+        state: JsonDict,
+    ) -> None:
+        current = objective.get("current") or {}
+        route_cards = navigation_guidance.get("route_cards") or []
+        lines = [
+            "# Session Brief",
+            "",
+            f"- Objective: {current.get('title', 'Unknown objective')}",
+            f"- Objective summary: {current.get('summary', 'No summary.')}",
+            f"- Map: {(state.get('map') or {}).get('map_name', 'Unknown')}",
+            f"- Position: {(state.get('player') or {}).get('position')}",
+            "",
+            "## Best Routes",
+        ]
+        for card in route_cards[:5]:
+            lines.append(
+                f"- {card.get('title')} | score={card.get('score')} | "
+                f"actions={', '.join(card.get('route_actions') or []) or 'none'}"
+            )
+        lines.extend(["", "## Recent Facts"])
+        for fact in memory_snapshot.get("recent_facts") or []:
+            lines.append(f"- [{fact.get('kind')}] {fact.get('summary')}")
+        lines.extend(["", "## Failed Attempts"])
+        for attempt in memory_snapshot.get("failed_attempts") or []:
+            lines.append(
+                f"- {attempt.get('title')} | seen={attempt.get('times_seen')} | "
+                f"{attempt.get('reason')}"
+            )
+        lines.extend(["", "## Dialog"])
+        lines.append(
+            f"- Continue dialog: {dialog_guidance.get('should_continue')} | "
+            f"last_change_at={dialog_guidance.get('last_change_at')}"
+        )
+        for text in dialog_guidance.get("transcript_recent") or []:
+            lines.append(f"- {text}")
+        lines.extend(["", "## Battle"])
+        lines.append(f"- Mode: {battle_guidance.get('recommended_mode')}")
+        lines.append(f"- Reason: {battle_guidance.get('reason')}")
+        move = battle_guidance.get("recommended_move") or {}
+        if move.get("name"):
+            lines.append(f"- Recommended move: {move.get('name')} ({move.get('type')})")
+        _atomic_write_text(self.artifacts["session_brief_md"], "\n".join(lines) + "\n")
 
     def _candidate_checkpoints(
         self, state: JsonDict, objective: JsonDict
@@ -1295,6 +2277,10 @@ class AgentRuntime:
         turn_plan = bundle["turn_plan"]
         feedback = bundle["recent_action"]
         movement_guidance = bundle["movement_guidance"]
+        navigation_guidance = bundle.get("navigation_guidance") or {}
+        memory_snapshot = bundle.get("memory") or {}
+        dialog_guidance = bundle.get("dialog_guidance") or {}
+        battle_guidance = bundle.get("battle_guidance") or {}
         stuck = bundle["stuck"]
         recovery = bundle["recovery"]
         state_delta_summary = (bundle.get("state_delta") or {}).get("summary") or [
@@ -1328,12 +2314,66 @@ class AgentRuntime:
             "",
             f"Screen text: {bundle['screen_text']['text']}",
             "",
+            f"Dialog continue: {dialog_guidance.get('should_continue')}",
+            f"Battle mode: {battle_guidance.get('recommended_mode')}",
+            f"Battle reason: {battle_guidance.get('reason')}",
+            "",
             f"Recovery recommendation: "
             f"{(recovery.get('current_recommendation') or {}).get('name', 'none')}",
             f"Stuck signal: {stuck['level']} - {stuck['reason']}",
             "",
-            "Navigation notes:",
+            "Top route cards:",
         ]
+        for card in navigation_guidance.get("route_cards", [])[:5]:
+            lines.append(
+                f"- {card.get('title')} | "
+                f"actions={', '.join(card.get('route_actions') or []) or 'none'} | "
+                f"why={card.get('why_now')}"
+            )
+        lines.extend(
+            [
+                "",
+                "Nearby landmarks:",
+            ]
+        )
+        for landmark in navigation_guidance.get("landmarks", [])[:5]:
+            lines.append(
+                f"- {landmark.get('kind')}: {landmark.get('title')} "
+                f"(distance {landmark.get('distance')})"
+            )
+        lines.extend(
+            [
+                "",
+                "Failed attempts to avoid:",
+            ]
+        )
+        for attempt in memory_snapshot.get("failed_attempts", [])[:4]:
+            lines.append(
+                f"- {attempt.get('title')} | seen={attempt.get('times_seen')} | "
+                f"{attempt.get('reason')}"
+            )
+        lines.extend(
+            [
+                "",
+                "Recent deterministic facts:",
+            ]
+        )
+        for fact in memory_snapshot.get("recent_facts", [])[:5]:
+            lines.append(f"- [{fact.get('kind')}] {fact.get('summary')}")
+        lines.extend(
+            [
+                "",
+                "Dialog transcript recent:",
+            ]
+        )
+        for text in dialog_guidance.get("transcript_recent", [])[:4]:
+            lines.append(f"- {text}")
+        lines.extend(
+            [
+                "",
+                "Navigation notes:",
+            ]
+        )
         for note in movement_guidance.get("notes", []):
             lines.append(f"- {note}")
         return "\n".join(lines) + "\n"
@@ -1350,6 +2390,9 @@ class AgentRuntime:
             "working_memory_md": str(self.artifacts["working_memory_md"]),
             "checkpoints_jsonl": str(self.artifacts["checkpoints_jsonl"]),
             "knowledge_graph_json": str(self.artifacts["knowledge_graph_json"]),
+            "landmarks_json": str(self.artifacts["landmarks_json"]),
+            "event_memory_jsonl": str(self.artifacts["event_memory_jsonl"]),
+            "session_brief_md": str(self.artifacts["session_brief_md"]),
             "recovery_saves_json": str(self.artifacts["recovery_saves_json"]),
             "run_log_jsonl": str(self.artifacts["run_log_jsonl"]),
         }
@@ -1383,6 +2426,7 @@ class AgentRuntime:
                         ],
                         valid_moves=list(snapshot_payload.get("valid_moves", [])),
                         warps=list(snapshot_payload.get("warps", [])),
+                        signs=list(snapshot_payload.get("signs", [])),
                         map_dimensions=snapshot_payload.get("map_dimensions"),
                         interaction=snapshot_payload.get("interaction"),
                     )
@@ -1446,6 +2490,30 @@ class AgentRuntime:
         if not preserved_text:
             preserved_text = "Live frame sync active. Run /agent/observe for refreshed OCR."
 
+        movement_guidance = build_movement_guidance(
+            state=state,
+            snapshot=snapshot,
+            navigation_store=navigation_store,
+            objective=current_objective,
+        )
+        navigation_guidance = self._build_navigation_assistance(
+            snapshot=snapshot,
+            navigation_store=navigation_store,
+            objective=current_objective,
+        )
+        dialog_guidance = (previous_bundle.get("dialog_guidance") or {}).copy()
+        dialog_guidance.setdefault("transcript_recent", [])
+        dialog_guidance["should_continue"] = dialog_active
+        dialog_guidance.setdefault("last_change_at", self.dialog_last_change_at)
+        battle_guidance = self._build_battle_guidance(state, dialog_guidance)
+        memory_snapshot = self._build_memory_snapshot(
+            objective=current_objective,
+            navigation_guidance=navigation_guidance,
+            dialog_guidance=dialog_guidance,
+            battle_guidance=battle_guidance,
+            state=state,
+        )
+
         live_bundle = {
             "generated_at": utc_now(),
             "reason": "realtime_live_sync",
@@ -1463,12 +2531,11 @@ class AgentRuntime:
             "objective": current_objective,
             "turn_plan": self.load_turn_plan(),
             "recent_action": previous_bundle.get("recent_action") or {},
-            "movement_guidance": build_movement_guidance(
-                state=state,
-                snapshot=snapshot,
-                navigation_store=navigation_store,
-                objective=current_objective,
-            ),
+            "movement_guidance": movement_guidance,
+            "navigation_guidance": navigation_guidance,
+            "dialog_guidance": dialog_guidance,
+            "battle_guidance": battle_guidance,
+            "memory": memory_snapshot,
             "state_delta": previous_bundle.get("state_delta")
             or {
                 "changed": False,
@@ -1494,6 +2561,15 @@ class AgentRuntime:
             },
             "workspace_dir": str(self.workspace_dir),
         }
+
+        self._write_session_brief(
+            objective=current_objective,
+            navigation_guidance=navigation_guidance,
+            memory_snapshot=memory_snapshot,
+            dialog_guidance=dialog_guidance,
+            battle_guidance=battle_guidance,
+            state=state,
+        )
 
         self._write_json(self.artifacts["current_objective_json"], current_objective)
         _atomic_write_text(
@@ -1521,6 +2597,7 @@ class AgentRuntime:
         navigation = bundle.get("navigation") or {}
         snapshot = navigation.get("snapshot") or {}
         location_map = navigation.get("location_map") or {}
+        navigation_guidance = bundle.get("navigation_guidance") or {}
         objective = bundle.get("objective") or {}
         recovery = bundle.get("recovery") or {}
         artifacts = bundle.get("artifacts") or {}
@@ -1528,9 +2605,13 @@ class AgentRuntime:
         recent_action = bundle.get("recent_action") or {}
         movement_guidance = bundle.get("movement_guidance") or {}
         state_delta = bundle.get("state_delta") or {}
+        memory_snapshot = bundle.get("memory") or {}
+        dialog_guidance = bundle.get("dialog_guidance") or {}
+        battle_guidance = bundle.get("battle_guidance") or {}
         candidate_route = movement_guidance.get("candidate_route") or {}
         live_ascii = _truncate_text_block(snapshot.get("ascii"), 900)
         explored_ascii = _truncate_text_block(location_map.get("ascii"), 1400)
+        distance_ascii = _truncate_text_block(navigation_guidance.get("distance_ascii"), 1800)
         return {
             "generated_at": bundle.get("generated_at"),
             "reason": bundle.get("reason"),
@@ -1543,6 +2624,9 @@ class AgentRuntime:
                 "current_objective_md": artifacts.get("current_objective_md"),
                 "turn_plan_json": artifacts.get("turn_plan_json"),
                 "working_memory_md": artifacts.get("working_memory_md"),
+                "landmarks_json": artifacts.get("landmarks_json"),
+                "event_memory_jsonl": artifacts.get("event_memory_jsonl"),
+                "session_brief_md": artifacts.get("session_brief_md"),
                 "recovery_saves_json": artifacts.get("recovery_saves_json"),
             },
             "state": extract_key_state(bundle.get("state")),
@@ -1560,10 +2644,13 @@ class AgentRuntime:
                     "completion_predicate": current_objective.get("completion_predicate"),
                     "save_recommendation": current_objective.get("save_recommendation"),
                     "route_hint": current_objective.get("route_hint"),
+                    "preferred_landmark_types": current_objective.get("preferred_landmark_types"),
                     "failure_hints": (current_objective.get("failure_hints") or [])[:4],
                     "progress_percent": current_objective.get("progress_percent"),
+                    "pack_id": current_objective.get("pack_id"),
                 },
                 "progress_percent": objective.get("progress_percent"),
+                "current_pack_id": objective.get("current_pack_id"),
             },
             "turn_plan": {
                 "objective_id": (bundle.get("turn_plan") or {}).get("objective_id"),
@@ -1608,6 +2695,11 @@ class AgentRuntime:
                 "interaction": snapshot.get("interaction"),
                 "live_ascii": live_ascii,
                 "explored_ascii": explored_ascii,
+                "distance_ascii": distance_ascii,
+                "frontiers": (navigation_guidance.get("frontiers") or [])[:8],
+                "landmarks": (navigation_guidance.get("landmarks") or [])[:8],
+                "route_cards": (navigation_guidance.get("route_cards") or [])[:5],
+                "avoidances": (navigation_guidance.get("avoidances") or [])[:5],
                 "ascii_note": (
                     "ASCII is symbolic only and may be truncated. Use the annotated frame first."
                 ),
@@ -1615,6 +2707,9 @@ class AgentRuntime:
                 "window_size": snapshot.get("window_size"),
                 "bounds": location_map.get("bounds"),
             },
+            "memory": memory_snapshot,
+            "dialog": dialog_guidance,
+            "battle": battle_guidance,
             "checkpoints": [
                 {
                     "id": checkpoint.get("id"),
@@ -1682,6 +2777,17 @@ class AgentRuntime:
             navigation_store=navigation_store,
             objective=current_objective,
         )
+        landmark_creations = self._discover_landmarks(snapshot=snapshot)
+        navigation_guidance = self._build_navigation_assistance(
+            snapshot=snapshot,
+            navigation_store=navigation_store,
+            objective=current_objective,
+        )
+        dialog_guidance, dialog_change = self._update_dialog_guidance(
+            screen_text=screen_text,
+            state=state,
+        )
+        battle_guidance = self._build_battle_guidance(state, dialog_guidance)
         turn_plan = self.load_turn_plan()
         turn_plan_hash = json.dumps(turn_plan, sort_keys=True)
         checkpoints = self._persist_checkpoints(
@@ -1712,7 +2818,176 @@ class AgentRuntime:
             requested_actions=requested_actions,
         )
 
+        map_name = str((state.get("map") or {}).get("map_name") or "Unknown")
+        map_id = int((state.get("map") or {}).get("map_id") or -1)
+        map_key = self._map_key(state=state, snapshot=snapshot)
+        objective_id = str(current_objective["current"]["id"])
+        current_position = _tuple_coord_from_any((state.get("player") or {}).get("position"))
+
+        if current_objective["current"]["id"] != self.last_objective_id:
+            self._record_semantic_memory(
+                "objective_change",
+                f"Objective advanced to {current_objective['current']['title']}.",
+                map_key=map_key,
+                map_id=map_id,
+                map_name=map_name,
+                objective_id=objective_id,
+                pack_id=current_objective.get("current_pack_id"),
+            )
+
+        map_field = (state_delta.get("fields") or {}).get("map")
+        if map_field:
+            self._record_semantic_memory(
+                "map_transition",
+                f"Entered {map_field.get('after')}.",
+                map_key=map_key,
+                map_id=map_id,
+                map_name=map_name,
+                objective_id=objective_id,
+                before=map_field.get("before"),
+                after=map_field.get("after"),
+            )
+
+        for key in ("has_pokedex", "has_oaks_parcel", "badge_count"):
+            if key in (state_delta.get("fields") or {}):
+                field = state_delta["fields"][key]
+                self._record_semantic_memory(
+                    "flag_change",
+                    f"{key} changed from {field.get('before')} to {field.get('after')}.",
+                    map_key=map_key,
+                    map_id=map_id,
+                    map_name=map_name,
+                    objective_id=objective_id,
+                    field=key,
+                    before=field.get("before"),
+                    after=field.get("after"),
+                )
+
+        for summary in (state_delta.get("fields") or {}).get("bag", []):
+            self._record_semantic_memory(
+                "bag_change",
+                summary,
+                map_key=map_key,
+                map_id=map_id,
+                map_name=map_name,
+                objective_id=objective_id,
+            )
+
+        for landmark in landmark_creations:
+            coord = _tuple_coord_from_any(landmark.get("coord"))
+            self._record_semantic_memory(
+                "landmark_discovery",
+                f"Learned landmark: {landmark.get('title')}.",
+                map_key=map_key,
+                map_id=map_id,
+                map_name=map_name,
+                objective_id=objective_id,
+                landmark_id=landmark.get("id"),
+                landmark_kind=landmark.get("kind"),
+                coord=_coord_payload(coord),
+            )
+
+        for checkpoint in checkpoints:
+            self._record_semantic_memory(
+                "checkpoint",
+                checkpoint.get("summary") or checkpoint.get("title") or "Checkpoint reached.",
+                map_key=map_key,
+                map_id=map_id,
+                map_name=map_name,
+                objective_id=objective_id,
+                checkpoint_id=checkpoint.get("id"),
+            )
+
+        if dialog_change is not None:
+            self._record_semantic_memory(
+                "dialog_text",
+                f"Dialog updated: {dialog_change['text']}",
+                map_key=map_key,
+                map_id=map_id,
+                map_name=map_name,
+                objective_id=objective_id,
+                text=dialog_change["text"],
+            )
+
+        for save_event in auto_saves:
+            self._record_semantic_memory(
+                "save_point",
+                f"Save recorded: {save_event.get('name')}.",
+                map_key=map_key,
+                map_id=map_id,
+                map_name=map_name,
+                objective_id=objective_id,
+                save_name=save_event.get("name"),
+                reason=save_event.get("reason"),
+            )
+
+        failure_coord = None
+        if snapshot is not None:
+            failure_coord = _tuple_coord_from_any((snapshot.interaction or {}).get("target_coord"))
+        failure_coord = failure_coord or current_position
+
+        if source == "navigation" and navigation_execution and not navigation_execution.get("success"):
+            self._record_semantic_memory(
+                "failure",
+                navigation_execution.get("status") or "Navigation route failed.",
+                map_key=map_key,
+                map_id=map_id,
+                map_name=map_name,
+                objective_id=objective_id,
+                type="navigation_partial",
+                coord=_coord_payload(failure_coord),
+                coord_key=_coord_to_key(failure_coord) if failure_coord else None,
+                reason=navigation_execution.get("status"),
+                actions=requested_actions or [],
+            )
+        elif requested_actions and "no_progress" in (action_feedback.get("tags") or []):
+            self._record_semantic_memory(
+                "failure",
+                "Repeated actions produced no structured progress.",
+                map_key=map_key,
+                map_id=map_id,
+                map_name=map_name,
+                objective_id=objective_id,
+                type="no_progress",
+                coord=_coord_payload(failure_coord),
+                coord_key=_coord_to_key(failure_coord) if failure_coord else None,
+                reason=action_feedback.get("summary"),
+                actions=requested_actions or [],
+            )
+
+        if stuck["level"] != "clear":
+            failure_type = "dialog_loop" if "dialog loop" in stuck["reason"].lower() else "stuck"
+            self._record_semantic_memory(
+                "failure",
+                stuck["reason"],
+                map_key=map_key,
+                map_id=map_id,
+                map_name=map_name,
+                objective_id=objective_id,
+                type=failure_type,
+                coord=_coord_payload(failure_coord),
+                coord_key=_coord_to_key(failure_coord) if failure_coord else None,
+                reason=stuck["reason"],
+                actions=requested_actions or [],
+            )
+
+        memory_snapshot = self._build_memory_snapshot(
+            objective=current_objective,
+            navigation_guidance=navigation_guidance,
+            dialog_guidance=dialog_guidance,
+            battle_guidance=battle_guidance,
+            state=state,
+        )
+
         self._write_frame_artifacts(screen=screen, annotated=annotated)
+        self._write_session_brief(
+            objective=current_objective,
+            navigation_guidance=navigation_guidance,
+            memory_snapshot=memory_snapshot,
+            dialog_guidance=dialog_guidance,
+            battle_guidance=battle_guidance,
+            state=state,
+        )
 
         bundle = {
             "generated_at": utc_now(),
@@ -1726,6 +3001,10 @@ class AgentRuntime:
             "turn_plan": turn_plan,
             "recent_action": action_feedback,
             "movement_guidance": movement_guidance,
+            "navigation_guidance": navigation_guidance,
+            "dialog_guidance": dialog_guidance,
+            "battle_guidance": battle_guidance,
+            "memory": memory_snapshot,
             "state_delta": state_delta,
             "checkpoints": self._tail_jsonl(self.artifacts["checkpoints_jsonl"], 20),
             "knowledge_graph": knowledge_graph,
@@ -1851,6 +3130,7 @@ class AgentRuntime:
         turn_plan = bundle.get("turn_plan") or {}
         recovery = bundle.get("recovery") or {}
         knowledge_graph = bundle.get("knowledge_graph") or {}
+        memory_snapshot = bundle.get("memory") or {}
         return {
             "generated_at": bundle.get("generated_at"),
             "visuals": {
@@ -1867,6 +3147,9 @@ class AgentRuntime:
                 "turn_plan": turn_plan,
                 "recent_action": bundle.get("recent_action"),
                 "movement_guidance": bundle.get("movement_guidance"),
+                "navigation_guidance": bundle.get("navigation_guidance"),
+                "dialog_guidance": bundle.get("dialog_guidance"),
+                "battle_guidance": bundle.get("battle_guidance"),
                 "state_delta": bundle.get("state_delta"),
             },
             "world_state": {
@@ -1886,12 +3169,15 @@ class AgentRuntime:
                 "progress_percent": (bundle.get("objective") or {}).get("progress_percent"),
                 "checkpoints": bundle.get("checkpoints"),
                 "knowledge_graph_summary": knowledge_graph.get("summary"),
+                "memory": memory_snapshot,
                 "recovery": recovery,
                 "stuck": bundle.get("stuck"),
                 "workspace": {
                     "workspace_dir": bundle.get("workspace_dir"),
                     "turn_plan_json": (bundle.get("artifacts") or {}).get("turn_plan_json"),
                     "working_memory_md": (bundle.get("artifacts") or {}).get("working_memory_md"),
+                    "session_brief_md": (bundle.get("artifacts") or {}).get("session_brief_md"),
+                    "landmarks_json": (bundle.get("artifacts") or {}).get("landmarks_json"),
                     "latest_observation_md": (bundle.get("artifacts") or {}).get(
                         "latest_observation_md"
                     ),
@@ -1899,4 +3185,33 @@ class AgentRuntime:
             },
             "timeline": self.history(80),
             "artifacts": bundle.get("artifacts") or {},
+        }
+
+    def navigator_payload(self) -> JsonDict:
+        bundle = (
+            self.live_bundle
+            or self.latest_bundle
+            or self._read_json(self.artifacts["latest_observation_json"], {})
+        )
+        navigation_guidance = bundle.get("navigation_guidance") or (bundle.get("navigation") or {})
+        route_cards = list(navigation_guidance.get("route_cards") or [])
+        best_route = route_cards[0] if route_cards else None
+        return {
+            "generated_at": bundle.get("generated_at"),
+            "reason": bundle.get("reason"),
+            "objective": (bundle.get("objective") or {}).get("current"),
+            "map": (bundle.get("state") or {}).get("map"),
+            "player": (bundle.get("state") or {}).get("player"),
+            "best_route": best_route,
+            "alternatives": route_cards[1:5],
+            "avoidances": (navigation_guidance.get("avoidances") or [])[:5],
+            "landmarks": (navigation_guidance.get("landmarks") or [])[:8],
+            "memory": bundle.get("memory") or {},
+            "dialog": bundle.get("dialog_guidance") or bundle.get("dialog") or {},
+            "battle": bundle.get("battle_guidance") or bundle.get("battle") or {},
+            "artifacts": {
+                "latest_observation_json": (bundle.get("artifacts") or {}).get("latest_observation_json"),
+                "session_brief_md": (bundle.get("artifacts") or {}).get("session_brief_md"),
+                "landmarks_json": (bundle.get("artifacts") or {}).get("landmarks_json"),
+            },
         }

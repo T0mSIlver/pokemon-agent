@@ -709,6 +709,10 @@ class RedBlueMemoryReader(GameMemoryReader):
             "hp": (data[1] << 8) | data[2],
             "max_hp": (data[15] << 8) | data[16],
             "status": self._decode_status(data[4]),
+            "types": [
+                TYPE_NAMES.get(data[5], f"???({data[5]})"),
+                TYPE_NAMES.get(data[6], f"???({data[6]})"),
+            ],
             "moves": moves,
         }
 

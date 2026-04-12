@@ -645,6 +645,7 @@ class PyBoyEmulator(Emulator):
             ],
             valid_moves=valid_moves,
             warps=components["warps"],
+            signs=components["signs"],
             map_dimensions=components["map_dimensions"],
             tile_ids=self._tile_ids_for_window(coords, components["tilemap"]),
         )
@@ -681,6 +682,7 @@ class PyBoyEmulator(Emulator):
                 warps=components["warps"],
             ),
             warps=components["warps"],
+            signs=components["signs"],
             map_dimensions=components["map_dimensions"],
             tile_ids=self._tile_ids_for_window(coords, components["tilemap"]),
         )

@@ -18,6 +18,7 @@ EventSink = Callable[[JsonDict], Awaitable[None]]
 StreamSink = Callable[[JsonDict], Awaitable[None]]
 
 DEFAULT_TOOLS = ["read", "bash", "edit", "write", "grep", "find", "ls"]
+VISION_ATTACHMENT_FILES = ("latest_frame_annotated.png", "latest_frame.png")
 
 
 def _repo_root() -> Path:
@@ -33,9 +34,12 @@ def default_supervisor_prompt(*, server_url: str, workspace_dir: Path) -> str:
         "Play Pokemon Red through the local pokemon-agent harness using the loaded repo skill. "
         f"Server URL: {server_url}. Workspace: {workspace_dir}. "
         "Assume the harness server is already running. Do not start or stop the server yourself. "
-        "Start each turn by refreshing /agent/observe, inspect the annotated frame first, update "
-        "turn_plan.json before each action batch, keep action batches short, and follow recovery "
-        "guidance when the harness signals stuck or recommends a save."
+        "Pi can inspect attached PNGs directly, so use the attached annotated frame as primary "
+        "evidence and the attached raw frame when the overlay hides details. Use vision to "
+        "identify buildings, doors, signs, NPC spacing, and other landmarks that state JSON or "
+        "ASCII may miss. Start each turn by refreshing /agent/observe, inspect the annotated "
+        "frame first, update turn_plan.json before each action batch, keep action batches short, "
+        "and follow recovery guidance when the harness signals stuck or recommends a save."
     )
 
 
@@ -189,6 +193,7 @@ class PiSupervisor:
         self.last_turn_started_at: Optional[str] = None
         self.last_turn_completed_at: Optional[str] = None
         self.session_id: Optional[str] = None
+        self.session_file: Optional[Path] = None
         self.current_pid: Optional[int] = None
         self.turns_completed = 0
         self.continue_count = 0
@@ -221,6 +226,7 @@ class PiSupervisor:
         self._task: Optional[asyncio.Task[None]] = None
         self._process: Optional[asyncio.subprocess.Process] = None
         self._stop_requested = False
+        self._current_turn_completed = False
 
     @property
     def is_running(self) -> bool:
@@ -256,6 +262,7 @@ class PiSupervisor:
             "last_turn_started_at": self.last_turn_started_at,
             "last_turn_completed_at": self.last_turn_completed_at,
             "session_id": self.session_id,
+            "session_file": str(self.session_file) if self.session_file else None,
             "session_dir": str(self.session_dir),
             "skill_path": str(self.skill_path),
             "server_url": self.server_url,
@@ -337,6 +344,7 @@ class PiSupervisor:
         self.turns_completed = 0
         self.continue_count = 0
         self.session_id = None
+        self.session_file = None
         self.current_pid = None
         self.next_auto_continue_at = None
         self._stop_requested = False
@@ -497,10 +505,18 @@ class PiSupervisor:
             self._task = None
 
     async def _run_turn(self, *, prompt: str, resume: bool) -> None:
-        command = self._build_command(prompt=prompt, resume=resume)
+        attachment_paths = self._vision_attachment_paths()
+        session_file = self._resolve_session_file() if resume else None
+        command = self._build_command(
+            prompt=prompt,
+            resume=resume,
+            attachment_paths=attachment_paths,
+            session_file=session_file,
+        )
         self.status = "running"
         self.status_reason = "Pi is processing a turn."
         self.next_auto_continue_at = None
+        self._current_turn_completed = False
         self.current_assistant_text = ""
         self.current_assistant_thinking = ""
         self.current_tool_calls.clear()
@@ -510,12 +526,16 @@ class PiSupervisor:
             role="user",
             channel="prompt",
             content=prompt,
-            meta={"resume": resume},
+            meta={
+                "resume": resume,
+                "attachments": [str(path) for path in attachment_paths],
+            },
         )
         await self._emit_stream(
             "pi_prompt_sent",
             {
                 "prompt": prompt_entry["content"],
+                "attachments": prompt_entry["meta"]["attachments"],
                 "resume": resume,
                 "session_id": self.session_id,
             },
@@ -544,6 +564,12 @@ class PiSupervisor:
         returncode = await process.wait()
         await stdout_task
         await stderr_task
+        if returncode == 0 and not self._stop_requested and not self._current_turn_completed:
+            await self._complete_turn(
+                summary_text=self.current_assistant_text or self.last_assistant_text or None,
+                tool_result_count=0,
+                synthetic=True,
+            )
         self.current_pid = None
         self._process = None
         if returncode != 0 and not self._stop_requested:
@@ -553,7 +579,45 @@ class PiSupervisor:
                 + (f" stderr: {stderr_preview}" if stderr_preview else "")
             )
 
-    def _build_command(self, *, prompt: str, resume: bool) -> list[str]:
+    def _vision_attachment_paths(self) -> list[Path]:
+        attachment_paths: list[Path] = []
+        for filename in VISION_ATTACHMENT_FILES:
+            candidate = self.workspace_dir / filename
+            if candidate.is_file():
+                attachment_paths.append(candidate)
+        return attachment_paths
+
+    def _resolve_session_file(self) -> Optional[Path]:
+        if self.session_file is not None and self.session_file.is_file():
+            return self.session_file
+        if not self.session_id:
+            return None
+        try:
+            candidates = sorted(
+                self.session_dir.glob("*.jsonl"),
+                key=lambda path: path.stat().st_mtime,
+                reverse=True,
+            )
+        except OSError:
+            return None
+        for candidate in candidates:
+            try:
+                header = json.loads(candidate.read_text(encoding="utf-8").splitlines()[0])
+            except (IndexError, OSError, UnicodeDecodeError, json.JSONDecodeError):
+                continue
+            if header.get("type") == "session" and header.get("id") == self.session_id:
+                self.session_file = candidate.resolve()
+                return self.session_file
+        return None
+
+    def _build_command(
+        self,
+        *,
+        prompt: str,
+        resume: bool,
+        attachment_paths: Optional[list[Path]] = None,
+        session_file: Optional[Path] = None,
+    ) -> list[str]:
         assert self.pi_binary is not None
         command = [
             self.pi_binary,
@@ -567,7 +631,9 @@ class PiSupervisor:
             "--tools",
             ",".join(DEFAULT_TOOLS),
         ]
-        if resume:
+        if session_file is not None:
+            command.extend(["--session", str(session_file)])
+        elif resume:
             command.append("--continue")
         if self.provider:
             command.extend(["--provider", self.provider])
@@ -575,6 +641,8 @@ class PiSupervisor:
             command.extend(["--model", self.model])
         if self.thinking:
             command.extend(["--thinking", self.thinking])
+        for path in attachment_paths or []:
+            command.append(f"@{path}")
         command.append(prompt)
         return command
 
@@ -693,11 +761,38 @@ class PiSupervisor:
         self.last_event_at = entry["timestamp"]
         return entry
 
+    async def _complete_turn(
+        self,
+        *,
+        summary_text: Optional[str],
+        tool_result_count: int = 0,
+        synthetic: bool = False,
+    ) -> None:
+        if self._current_turn_completed:
+            return
+        self._current_turn_completed = True
+        self.turns_completed += 1
+        self.last_turn_completed_at = utc_now()
+        self.latest_turn_summary = _truncate(summary_text or "Pi completed a turn.", 220)
+        payload: JsonDict = {
+            "summary": self.latest_turn_summary,
+            "turns_completed": self.turns_completed,
+            "tool_result_count": tool_result_count,
+        }
+        if synthetic:
+            payload["synthetic"] = True
+            payload["summary"] = _truncate(
+                self.latest_turn_summary + " (turn_end missing from Pi event stream)",
+                260,
+            )
+        await self._emit_major("pi_turn_end", payload)
+
     async def _handle_event(self, event: JsonDict) -> None:
         event_type = event.get("type")
         self.last_event_at = utc_now()
         if event_type == "session":
             self.session_id = event.get("id")
+            self.session_file = self._resolve_session_file()
             self._push_recent_event(
                 "pi_session",
                 f"Session {self.session_id or 'unknown'} started.",
@@ -709,7 +804,12 @@ class PiSupervisor:
             return
 
         if event_type == "agent_end":
-            summary = self.latest_turn_summary or "Pi agent turn ended."
+            summary = (
+                self.current_assistant_text
+                or self.last_assistant_text
+                or self.latest_turn_summary
+                or "Pi agent turn ended."
+            )
             await self._emit_major("pi_agent_end", {"summary": summary})
             return
 
@@ -719,22 +819,18 @@ class PiSupervisor:
             return
 
         if event_type == "turn_end":
-            self.turns_completed += 1
-            self.last_turn_completed_at = utc_now()
             message_text = extract_message_text(event.get("message"))
             thinking_text = extract_message_thinking(event.get("message"))
             if message_text:
                 self.last_assistant_text = message_text
             if thinking_text:
                 self.last_assistant_thinking = thinking_text
-            self.latest_turn_summary = _truncate(message_text or "Pi completed a turn.", 220)
-            await self._emit_major(
-                "pi_turn_end",
-                {
-                    "summary": self.latest_turn_summary,
-                    "turns_completed": self.turns_completed,
-                    "tool_result_count": len(event.get("toolResults") or []),
-                },
+            summary_text = (
+                message_text or self.current_assistant_text or self.last_assistant_text
+            )
+            await self._complete_turn(
+                summary_text=summary_text,
+                tool_result_count=len(event.get("toolResults") or []),
             )
             return
 
