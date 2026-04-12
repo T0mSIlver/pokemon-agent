@@ -39,10 +39,9 @@
         piStopButton: $('piStopButton'),
         piControlStatus: $('piControlStatus'),
         piTurnPlanPreview: $('piTurnPlanPreview'),
-        piActiveTools: $('piActiveTools'),
+        piToolFeed: $('piToolFeed'),
         piCurrentThinking: $('piCurrentThinking'),
         piCurrentOutput: $('piCurrentOutput'),
-        piRecentTools: $('piRecentTools'),
         piTranscript: $('piTranscript'),
         piRecentEvents: $('piRecentEvents'),
         piStderr: $('piStderr'),
@@ -107,6 +106,11 @@
     let latestTimelineEvents = [];
     let sessionOriginMs = null;
     const transcriptKeys = new Set();
+    const autoScrollState = {
+        transcript: true,
+        thinking: true,
+        output: true,
+    };
     const timelineFilters = new Set(['all']);
     const EVENT_CATEGORIES = [
         { key: 'all',        label: 'ALL' },
@@ -176,8 +180,6 @@
         return `${url}${url.includes('?') ? '&' : '?'}t=${suffix}`;
     }
 
-    const PI_CONTEXT_WINDOW_TOKENS = 200000;
-
     function formatCompactNumber(value) {
         if (typeof value !== 'number' || !Number.isFinite(value)) return 'n/a';
         if (Math.abs(value) >= 1_000_000) return `${(value / 1_000_000).toFixed(1)}M`;
@@ -185,12 +187,36 @@
         return String(value);
     }
 
-    function formatContextUsage(usage) {
+    function parseCompactTokenCount(value) {
+        if (typeof value === 'number' && Number.isFinite(value)) return value;
+        if (typeof value !== 'string') return NaN;
+        const match = value.trim().match(/^([\d.]+)\s*([KMB])?$/i);
+        if (!match) return NaN;
+        const amount = Number(match[1]);
+        if (!Number.isFinite(amount)) return NaN;
+        const suffix = (match[2] || '').toUpperCase();
+        if (suffix === 'B') return amount * 1_000_000_000;
+        if (suffix === 'M') return amount * 1_000_000;
+        if (suffix === 'K') return amount * 1_000;
+        return amount;
+    }
+
+    function formatContextUsage(usage, limits) {
         if (!usage || typeof usage !== 'object') return 'n/a';
         const total = usage.totalTokens;
         if (typeof total !== 'number') return 'n/a';
-        const pct = Math.min(100, (total / PI_CONTEXT_WINDOW_TOKENS) * 100);
-        return `${formatCompactNumber(total)} (${pct.toFixed(0)}%)`;
+        const limitLabel =
+            typeof limits?.context_window === 'string' && limits.context_window.trim()
+                ? limits.context_window.trim()
+                : '';
+        const limitTokens = parseCompactTokenCount(
+            limits?.context_window_tokens ?? limits?.context_window
+        );
+        if (Number.isFinite(limitTokens) && limitTokens > 0) {
+            const pct = (total / limitTokens) * 100;
+            return `${formatCompactNumber(total)} / ${limitLabel || formatCompactNumber(limitTokens)} (${pct.toFixed(0)}%)`;
+        }
+        return formatCompactNumber(total);
     }
 
     function timeLabel(value) {
@@ -221,6 +247,43 @@
         if (typeof value === 'number') return value;
         const t = new Date(value).getTime();
         return Number.isNaN(t) ? NaN : t;
+    }
+
+    function isNearBottom(node, threshold = 16) {
+        if (!node) return false;
+        return node.scrollHeight - node.scrollTop - node.clientHeight <= threshold;
+    }
+
+    function shouldAutoScroll(name, node) {
+        if (!node) return false;
+        return autoScrollState[name] || isNearBottom(node);
+    }
+
+    function syncAutoScrollState(name, node) {
+        if (!node) return;
+        autoScrollState[name] = isNearBottom(node);
+        node.dataset.autoscroll = autoScrollState[name] ? 'true' : 'false';
+    }
+
+    function initAutoScroll(name, node) {
+        if (!node) return;
+        syncAutoScrollState(name, node);
+        node.addEventListener(
+            'scroll',
+            () => {
+                syncAutoScrollState(name, node);
+            },
+            { passive: true }
+        );
+    }
+
+    function scrollNodeToBottom(node, name, force = false) {
+        if (!node) return;
+        if (!force && !shouldAutoScroll(name, node)) return;
+        node.scrollTop = node.scrollHeight;
+        if (name) {
+            syncAutoScrollState(name, node);
+        }
     }
 
     function relTime(ts, originMs) {
@@ -314,6 +377,7 @@
     }
 
     function renderList(node, items, fallback) {
+        if (!node) return;
         node.innerHTML = '';
         const list = Array.isArray(items) ? items : [];
         if (!list.length) {
@@ -330,6 +394,7 @@
     }
 
     function renderKeyValueCards(node, pairs) {
+        if (!node) return;
         node.innerHTML = '';
         pairs.forEach(([label, value, tone]) => {
             const card = document.createElement('div');
@@ -347,26 +412,189 @@
         });
     }
 
+    function toolKey(item) {
+        return (
+            item?.tool_call_id ||
+            [
+                item?.tool_name || '',
+                item?.summary || '',
+                item?.started_at || '',
+                item?.finished_at || '',
+                item?.status || '',
+            ].join('::')
+        );
+    }
+
+    function toolStatusLabel(status) {
+        const normalized = String(status || 'completed').toLowerCase();
+        if (normalized === 'running') return 'LIVE';
+        if (normalized === 'completed') return 'DONE';
+        return normalized.toUpperCase();
+    }
+
+    function toolTimeLabel(item) {
+        const stamp = item?.finished_at || item?.started_at || '';
+        const abs = timeLabel(stamp);
+        const rel = sessionOriginMs ? relTime(stamp, sessionOriginMs) : '';
+        return rel || abs;
+    }
+
+    function toolText(value, fallback) {
+        const text = String(value ?? '').trim();
+        return text || fallback;
+    }
+
+    function createToolCard(item) {
+        const card = document.createElement('details');
+        card.className = 'hud-tool-card';
+
+        const summary = document.createElement('summary');
+
+        const summaryBody = document.createElement('div');
+        summaryBody.className = 'hud-tool-summary';
+
+        const title = document.createElement('strong');
+        title.className = 'hud-tool-title';
+        title.dataset.slot = 'title';
+
+        const preview = document.createElement('p');
+        preview.className = 'hud-tool-preview';
+        preview.dataset.slot = 'preview';
+
+        summaryBody.appendChild(title);
+        summaryBody.appendChild(preview);
+
+        const meta = document.createElement('div');
+        meta.className = 'hud-tool-meta';
+
+        const status = document.createElement('span');
+        status.className = 'hud-chip hud-chip--tiny';
+        status.dataset.slot = 'status';
+
+        const time = document.createElement('span');
+        time.className = 'hud-chat-time';
+        time.dataset.slot = 'time';
+
+        meta.appendChild(status);
+        meta.appendChild(time);
+
+        summary.appendChild(summaryBody);
+        summary.appendChild(meta);
+
+        const body = document.createElement('div');
+        body.className = 'hud-tool-body';
+
+        const argsBlock = document.createElement('div');
+        argsBlock.className = 'hud-tool-block';
+        const argsLabel = document.createElement('span');
+        argsLabel.className = 'hud-tool-block-label';
+        argsLabel.textContent = 'Arguments';
+        const argsPre = document.createElement('pre');
+        argsPre.dataset.slot = 'args';
+        argsBlock.appendChild(argsLabel);
+        argsBlock.appendChild(argsPre);
+
+        const resultBlock = document.createElement('div');
+        resultBlock.className = 'hud-tool-block';
+        const resultLabel = document.createElement('span');
+        resultLabel.className = 'hud-tool-block-label';
+        resultLabel.textContent = 'Output';
+        const resultPre = document.createElement('pre');
+        resultPre.dataset.slot = 'result';
+        resultBlock.appendChild(resultLabel);
+        resultBlock.appendChild(resultPre);
+
+        body.appendChild(argsBlock);
+        body.appendChild(resultBlock);
+
+        card.appendChild(summary);
+        card.appendChild(body);
+        updateToolCard(card, item);
+        return card;
+    }
+
+    function updateToolCard(card, item) {
+        if (!card) return;
+        const key = toolKey(item);
+        const status = String(item?.status || 'completed').toLowerCase();
+        const title = card.querySelector('[data-slot="title"]');
+        const preview = card.querySelector('[data-slot="preview"]');
+        const statusChip = card.querySelector('[data-slot="status"]');
+        const time = card.querySelector('[data-slot="time"]');
+        const args = card.querySelector('[data-slot="args"]');
+        const result = card.querySelector('[data-slot="result"]');
+
+        card.dataset.toolKey = key;
+        card.dataset.status = status;
+
+        if (title) {
+            title.textContent = truncate(item.summary || item.tool_name || 'tool', 120);
+        }
+        if (preview) {
+            preview.textContent = truncate(
+                item.result_preview || item.args_preview || 'No preview available.',
+                180
+            );
+        }
+        if (statusChip) {
+            statusChip.textContent = toolStatusLabel(status);
+        }
+        if (time) {
+            time.textContent = toolTimeLabel(item);
+            time.title = item?.finished_at
+                ? `Finished ${timeLabel(item.finished_at)}`
+                : `Started ${timeLabel(item?.started_at)}`;
+        }
+        if (args) {
+            args.textContent = toolText(item?.args, 'No arguments captured.');
+        }
+        if (result) {
+            result.textContent = toolText(
+                item?.result,
+                status === 'running' ? 'Waiting for tool output…' : 'No output captured.'
+            );
+        }
+    }
+
     function renderToolList(node, items, fallback) {
-        node.innerHTML = '';
+        if (!node) return;
         const list = Array.isArray(items) ? items : [];
         if (!list.length) {
-            node.innerHTML = `<p class="hud-empty">${escapeHtml(fallback)}</p>`;
+            const empty = document.createElement('p');
+            empty.className = 'hud-empty';
+            empty.textContent = fallback;
+            node.replaceChildren(empty);
             return;
         }
-        list.forEach((item) => {
-            const article = document.createElement('article');
-            article.className = 'hud-tool-card';
-            const header = truncate(item.summary || item.tool_name || 'tool');
-            const detail = truncate(item.result_preview || item.args_preview || '');
-            article.innerHTML = `
-                <div class="hud-tool-head">
-                    <strong>${escapeHtml(header)}</strong>
-                    <span class="hud-chip hud-chip--tiny">${escapeHtml(item.status || item.tool_name || 'tool')}</span>
-                </div>
-                <p>${escapeHtml(detail || 'No preview available.')}</p>
-            `;
-            node.appendChild(article);
+
+        const empty = node.querySelector('.hud-empty');
+        if (empty) empty.remove();
+
+        const existingCards = Array.from(node.querySelectorAll('.hud-tool-card'));
+        const existingByKey = new Map(
+            existingCards.map((card) => [card.dataset.toolKey || '', card])
+        );
+        const nextKeys = new Set();
+
+        list.forEach((item, index) => {
+            const key = toolKey(item);
+            nextKeys.add(key);
+            let card = existingByKey.get(key);
+            if (!card) {
+                card = createToolCard(item);
+            } else {
+                updateToolCard(card, item);
+            }
+            const currentChild = node.children[index];
+            if (currentChild !== card) {
+                node.insertBefore(card, currentChild || null);
+            }
+        });
+
+        Array.from(node.querySelectorAll('.hud-tool-card')).forEach((card) => {
+            if (!nextKeys.has(card.dataset.toolKey || '')) {
+                card.remove();
+            }
         });
     }
 
@@ -543,15 +771,15 @@
         }
     }
 
-    function scrollTranscriptToBottom() {
-        if (!els.piTranscript) return;
-        els.piTranscript.scrollTop = els.piTranscript.scrollHeight;
+    function scrollTranscriptToBottom(force = false) {
+        scrollNodeToBottom(els.piTranscript, 'transcript', force);
     }
 
     function renderTranscript(entries) {
         if (!els.piTranscript) return;
         const list = (Array.isArray(entries) ? entries : []).slice(-TRANSCRIPT_LIMIT);
         const nextKeys = new Set();
+        const follow = shouldAutoScroll('transcript', els.piTranscript);
 
         transcriptKeys.clear();
         if (!list.length) {
@@ -559,7 +787,7 @@
             empty.className = 'hud-empty';
             empty.textContent = '— awaiting comms —';
             els.piTranscript.replaceChildren(empty);
-            scrollTranscriptToBottom();
+            scrollTranscriptToBottom(follow);
             return;
         }
 
@@ -593,11 +821,12 @@
             }
         });
 
-        scrollTranscriptToBottom();
+        scrollTranscriptToBottom(follow);
     }
 
     function appendTranscriptEntry(entry) {
         if (!entry || !els.piTranscript) return;
+        const follow = shouldAutoScroll('transcript', els.piTranscript);
         const empty = els.piTranscript.querySelector('.hud-empty');
         if (empty) empty.remove();
         const key = transcriptKey(entry);
@@ -613,7 +842,7 @@
             els.piTranscript.removeChild(first);
         }
         els.piTranscript.appendChild(createTranscriptCard(entry));
-        scrollTranscriptToBottom();
+        scrollTranscriptToBottom(follow);
     }
 
     function renderWorldStats(worldState, progress, serverRuntime) {
@@ -902,6 +1131,117 @@
         els.timelineCounts.appendChild(chip);
     }
 
+    function timelineEventKey(event) {
+        return JSON.stringify({
+            timestamp: event?.timestamp || '',
+            type: event?.type || '',
+            summary: event?.summary || '',
+            reason: event?.reason || '',
+            text: event?.text || '',
+            tool_name: event?.tool_name || '',
+            action: event?.action || '',
+            map_name: event?.map_name || '',
+            coords: event?.coords || '',
+            status: event?.status || '',
+            duration_ms: event?.duration_ms ?? '',
+            outcome: event?.outcome || '',
+        });
+    }
+
+    function createTimelineEvent() {
+        const article = document.createElement('article');
+        article.className = 'hud-event';
+
+        const gutter = document.createElement('div');
+        gutter.className = 'hud-event-gutter';
+        gutter.dataset.slot = 'gutter';
+
+        const icon = document.createElement('div');
+        icon.className = 'hud-event-icon';
+        icon.dataset.slot = 'icon';
+
+        const type = document.createElement('div');
+        type.className = 'hud-event-type';
+        type.dataset.slot = 'type';
+
+        const summary = document.createElement('div');
+        summary.className = 'hud-event-summary';
+        summary.dataset.slot = 'summary';
+
+        const meta = document.createElement('div');
+        meta.className = 'hud-event-meta';
+        meta.dataset.slot = 'meta';
+
+        article.appendChild(gutter);
+        article.appendChild(icon);
+        article.appendChild(type);
+        article.appendChild(summary);
+        article.appendChild(meta);
+        return article;
+    }
+
+    function updateTimelineEvent(article, event, previousEvent) {
+        const category = eventCategory(event.type);
+        const gutter = article.querySelector('[data-slot="gutter"]');
+        const icon = article.querySelector('[data-slot="icon"]');
+        const type = article.querySelector('[data-slot="type"]');
+        const summary = article.querySelector('[data-slot="summary"]');
+        const meta = article.querySelector('[data-slot="meta"]');
+        const summaryText = eventSummaryText(event);
+        const pills = [];
+
+        article.dataset.eventKey = timelineEventKey(event);
+        article.dataset.type = category;
+        delete article.dataset.clusterContinue;
+
+        if (previousEvent) {
+            const diff = Math.abs(parseTs(event.timestamp) - parseTs(previousEvent.timestamp));
+            if (!Number.isNaN(diff) && diff < 1000) {
+                article.dataset.clusterContinue = 'true';
+            }
+        }
+
+        if (gutter) {
+            const rel = relTime(event.timestamp, sessionOriginMs);
+            const delta = previousEvent ? deltaTime(event.timestamp, previousEvent.timestamp) : '';
+            gutter.innerHTML = `
+                <span>${escapeHtml(rel)}</span>
+                ${delta ? `<span class="hud-event-delta">${escapeHtml(delta)}</span>` : ''}
+            `;
+        }
+        if (icon) {
+            icon.textContent = eventIcon(category);
+        }
+        if (type) {
+            type.textContent = (event.type || category).toString().toUpperCase();
+        }
+        if (event.tool_name) pills.push(kvPill('tool', event.tool_name));
+        if (event.action) pills.push(kvPill('act', event.action));
+        if (event.map_name) pills.push(kvPill('map', event.map_name));
+        if (event.coords) pills.push(kvPill('at', event.coords));
+        if (typeof event.duration_ms === 'number') pills.push(kvPill('ms', event.duration_ms));
+        if (event.outcome) pills.push(kvPill('→', event.outcome));
+        if (summary) {
+            summary.innerHTML = `
+                <span>${escapeHtml(truncate(summaryText, 260))}</span>
+                ${pills.length ? `<span class="hud-kv">${pills.join('')}</span>` : ''}
+            `;
+        }
+        if (meta) {
+            meta.innerHTML = '';
+            if (event.reason && event.reason !== summaryText) {
+                const reason = document.createElement('span');
+                reason.textContent = truncate(event.reason, 40);
+                meta.appendChild(reason);
+            }
+            if (event.status) {
+                const status = document.createElement('span');
+                status.textContent = event.status;
+                meta.appendChild(status);
+            }
+        }
+    }
+
     function renderTimeline(events) {
         const recent = Array.isArray(events) ? events : [];
         latestTimelineEvents = recent;
@@ -930,9 +1270,11 @@
         renderTimelineFilters(typeCounts);
         renderTimelineSparkline(ordered);
 
-        els.timeline.innerHTML = '';
         if (!ordered.length) {
-            els.timeline.innerHTML = '<p class="hud-empty">[ NO TRAFFIC ]</p>';
+            const empty = document.createElement('p');
+            empty.className = 'hud-empty';
+            empty.textContent = '[ NO TRAFFIC ]';
+            els.timeline.replaceChildren(empty);
             return;
         }
 
@@ -944,82 +1286,55 @@
         });
 
         if (!visible.length) {
-            els.timeline.innerHTML = '<p class="hud-empty">[ NO MATCHING EVENTS ]</p>';
+            const empty = document.createElement('p');
+            empty.className = 'hud-empty';
+            empty.textContent = '[ NO MATCHING EVENTS ]';
+            els.timeline.replaceChildren(empty);
             return;
         }
 
-        // Render newest first for top-down reading
         const reversed = visible.slice().reverse();
+        const empty = els.timeline.querySelector('.hud-empty');
+        if (empty) empty.remove();
+
+        const existingCards = Array.from(els.timeline.querySelectorAll('.hud-event'));
+        const existingByKey = new Map(
+            existingCards.map((card) => [card.dataset.eventKey || '', card])
+        );
+        const nextKeys = new Set();
+
         reversed.forEach((event, idx) => {
-            const category = eventCategory(event.type);
-            const article = document.createElement('article');
-            article.className = 'hud-event';
-            article.dataset.type = category;
-            if (idx < 12) {
-                article.style.animationDelay = `${idx * 35}ms`;
-            }
-
-            // Gutter with T+rel and delta-from-previous (next in reversed = earlier in time)
+            const key = timelineEventKey(event);
             const prev = reversed[idx + 1];
-            const gutter = document.createElement('div');
-            gutter.className = 'hud-event-gutter';
-            const rel = relTime(event.timestamp, sessionOriginMs);
-            const delta = prev ? deltaTime(event.timestamp, prev.timestamp) : '';
-            gutter.innerHTML = `
-                <span>${escapeHtml(rel)}</span>
-                ${delta ? `<span class="hud-event-delta">${escapeHtml(delta)}</span>` : ''}
-            `;
+            nextKeys.add(key);
 
-            // cluster bracket when <1s from previous
-            if (prev) {
-                const diff = Math.abs(parseTs(event.timestamp) - parseTs(prev.timestamp));
-                if (!Number.isNaN(diff) && diff < 1000) {
-                    article.dataset.clusterContinue = 'true';
-                }
+            let article = existingByKey.get(key);
+            const isNew = !article;
+            if (!article) {
+                article = createTimelineEvent();
+            }
+            updateTimelineEvent(article, event, prev);
+
+            if (isNew && idx < 12) {
+                article.classList.add('hud-event--enter');
+                article.style.animationDelay = `${idx * 35}ms`;
+                window.setTimeout(() => {
+                    article.classList.remove('hud-event--enter');
+                }, 420 + idx * 35);
+            } else {
+                article.style.animationDelay = '';
             }
 
-            const icon = document.createElement('div');
-            icon.className = 'hud-event-icon';
-            icon.textContent = eventIcon(category);
-
-            const typeEl = document.createElement('div');
-            typeEl.className = 'hud-event-type';
-            typeEl.textContent = (event.type || category).toString().toUpperCase();
-
-            const summary = document.createElement('div');
-            summary.className = 'hud-event-summary';
-            const summaryText = eventSummaryText(event);
-            const pills = [];
-            if (event.tool_name) pills.push(kvPill('tool', event.tool_name));
-            if (event.action) pills.push(kvPill('act', event.action));
-            if (event.map_name) pills.push(kvPill('map', event.map_name));
-            if (event.coords) pills.push(kvPill('at', event.coords));
-            if (typeof event.duration_ms === 'number') pills.push(kvPill('ms', event.duration_ms));
-            if (event.outcome) pills.push(kvPill('→', event.outcome));
-            summary.innerHTML = `
-                <span>${escapeHtml(truncate(summaryText, 260))}</span>
-                ${pills.length ? `<span class="hud-kv">${pills.join('')}</span>` : ''}
-            `;
-
-            const meta = document.createElement('div');
-            meta.className = 'hud-event-meta';
-            if (event.reason && event.reason !== summaryText) {
-                const reason = document.createElement('span');
-                reason.textContent = truncate(event.reason, 40);
-                meta.appendChild(reason);
+            const currentChild = els.timeline.children[idx];
+            if (currentChild !== article) {
+                els.timeline.insertBefore(article, currentChild || null);
             }
-            if (event.status) {
-                const st = document.createElement('span');
-                st.textContent = event.status;
-                meta.appendChild(st);
-            }
+        });
 
-            article.appendChild(gutter);
-            article.appendChild(icon);
-            article.appendChild(typeEl);
-            article.appendChild(summary);
-            article.appendChild(meta);
-            els.timeline.appendChild(article);
+        Array.from(els.timeline.querySelectorAll('.hud-event')).forEach((card) => {
+            if (!nextKeys.has(card.dataset.eventKey || '')) {
+                card.remove();
+            }
         });
     }
 
@@ -1060,7 +1375,7 @@
         const counts = supervisor.counts || {};
         const sessionUsage = supervisor.session_usage || null;
         const compactionInfo = supervisor.compaction || {};
-        const contextLabel = formatContextUsage(sessionUsage);
+        const contextLabel = formatContextUsage(sessionUsage, supervisor.model_limits || null);
         renderKeyValueCards(els.piSupervisorStats, [
             ['STATUS', (supervisor.status || 'idle').toUpperCase()],
             ['MODEL', supervisor.model || 'default'],
@@ -1096,12 +1411,11 @@
             ? formatJSON(turnPlanPreview)
             : 'No Pi-authored turn plan captured yet.';
 
-        renderToolList(els.piActiveTools, supervisor.active_tools || [], 'No active Pi tool calls.');
-        renderToolList(
-            els.piRecentTools,
-            (supervisor.recent_tools || []).slice().reverse(),
-            'No completed Pi tool calls yet.'
-        );
+        const toolFeed = [
+            ...(supervisor.active_tools || []),
+            ...(supervisor.recent_tools || []).slice().reverse(),
+        ];
+        renderToolList(els.piToolFeed, toolFeed, 'No Pi tool calls yet.');
         renderTranscript(supervisor.transcript || []);
         renderList(
             els.piRecentEvents,
@@ -1110,17 +1424,21 @@
             }),
             'No recent Pi events.'
         );
+        const followThinking = shouldAutoScroll('thinking', els.piCurrentThinking);
         if (els.piCurrentThinking.dataset.streaming !== 'true') {
             els.piCurrentThinking.textContent =
                 supervisor.current_assistant_thinking ||
                 (isTurnActive ? '' : supervisor.last_assistant_thinking) ||
                 (isTurnActive ? '— waiting for comms —' : '— silent —');
+            scrollNodeToBottom(els.piCurrentThinking, 'thinking', followThinking);
         }
+        const followOutput = shouldAutoScroll('output', els.piCurrentOutput);
         if (els.piCurrentOutput.dataset.streaming !== 'true') {
             els.piCurrentOutput.textContent =
                 supervisor.current_assistant_text ||
                 (isTurnActive ? '' : supervisor.last_assistant_text) ||
                 (isTurnActive ? '— waiting for comms —' : '— silent —');
+            scrollNodeToBottom(els.piCurrentOutput, 'output', followOutput);
         }
         els.piStderr.textContent = (supervisor.stderr_tail || []).join('\n') || 'No stderr output.';
         els.rawSupervisor.textContent = formatJSON(supervisor);
@@ -1167,7 +1485,10 @@
                 withCacheBust(artifactUrls.latest_frame, visuals.frame_timestamp),
             );
         }
-        els.screenText.textContent = screenText.text || 'No OCR or dialogue text available.';
+        const screenTextValue = screenText.text || 'No OCR or dialogue text available.';
+        els.screenText.textContent = screenText.note
+            ? `${screenTextValue}\n\n[${screenText.note}]`
+            : screenTextValue;
 
         els.objectiveTitle.textContent = objective.title || 'No objective yet';
         els.objectiveProgress.textContent = `${objective.progress_percent ?? memory.progress_percent ?? 0}%`;
@@ -1321,7 +1642,7 @@
             auto_continue: els.piAutoContinueInput.checked,
         };
         resetLiveStreamView();
-        scrollTranscriptToBottom();
+        scrollTranscriptToBottom(true);
         els.piControlStatus.textContent = '► STARTING PI…';
         try {
             await postJson('/supervisor/start', body);
@@ -1334,7 +1655,7 @@
 
     async function continueSupervisor() {
         resetLiveStreamView();
-        scrollTranscriptToBottom();
+        scrollTranscriptToBottom(true);
         els.piControlStatus.textContent = '► CONTINUING PI…';
         try {
             await postJson('/supervisor/continue', {});
@@ -1455,6 +1776,8 @@
         streamBuffers.thinking = '';
         streamPendingReset.output = false;
         streamPendingReset.thinking = false;
+        autoScrollState.thinking = true;
+        autoScrollState.output = true;
         els.piCurrentThinking.textContent = placeholder;
         els.piCurrentThinking.dataset.streaming = 'false';
         els.piCurrentOutput.textContent = placeholder;
@@ -1463,6 +1786,8 @@
 
     function flushStreamBuffers() {
         streamRafPending = false;
+        const followOutput = shouldAutoScroll('output', els.piCurrentOutput);
+        const followThinking = shouldAutoScroll('thinking', els.piCurrentThinking);
 
         if (streamPendingReset.output) {
             els.piCurrentOutput.textContent = '';
@@ -1476,7 +1801,7 @@
                 els.piCurrentOutput.appendChild(document.createTextNode(streamBuffers.output));
             }
             streamBuffers.output = '';
-            els.piCurrentOutput.scrollTop = els.piCurrentOutput.scrollHeight;
+            scrollNodeToBottom(els.piCurrentOutput, 'output', followOutput);
         }
 
         if (streamPendingReset.thinking) {
@@ -1491,7 +1816,7 @@
                 els.piCurrentThinking.appendChild(document.createTextNode(streamBuffers.thinking));
             }
             streamBuffers.thinking = '';
-            els.piCurrentThinking.scrollTop = els.piCurrentThinking.scrollHeight;
+            scrollNodeToBottom(els.piCurrentThinking, 'thinking', followThinking);
         }
     }
 
@@ -1649,6 +1974,9 @@
         setPiStatus('idle', 'PI IDLE');
         sessionOriginMs = Date.now();
         renderTimelineFilters({});
+        initAutoScroll('transcript', els.piTranscript);
+        initAutoScroll('thinking', els.piCurrentThinking);
+        initAutoScroll('output', els.piCurrentOutput);
         els.piStartButton.addEventListener('click', startSupervisor);
         els.piContinueButton.addEventListener('click', continueSupervisor);
         els.piStopButton.addEventListener('click', stopSupervisor);

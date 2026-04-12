@@ -2,7 +2,7 @@ from pathlib import Path
 
 import pytest
 
-from pokemon_agent.pi_supervisor import PiSupervisor
+from pokemon_agent.pi_supervisor import PiSupervisor, parse_model_limits_output
 
 
 def make_fake_pi_script(tmp_path: Path, *, include_turn_end: bool = True) -> Path:
@@ -145,6 +145,8 @@ async def test_pi_supervisor_tracks_turn_output_and_tools(tmp_path: Path):
     assert "Inspecting the frame." in snapshot["last_assistant_thinking"]
     assert snapshot["turn_plan_preview"]["payload"]["objective_id"] == "get_oaks_parcel"
     assert snapshot["recent_tools"][-1]["tool_name"] == "write"
+    assert '"objective_id": "get_oaks_parcel"' in snapshot["recent_tools"][-1]["args"]
+    assert '"ok": true' in snapshot["recent_tools"][-1]["result"]
     assert any(
         entry["direction"] == "outbound" and entry["role"] == "user"
         for entry in snapshot["transcript"]
@@ -373,3 +375,19 @@ async def test_pi_supervisor_tracks_usage_and_counts(tmp_path: Path):
     assert usage["totalTokens"] == 3460
     assert snapshot["last_message_usage"]["output"] == 260
     assert snapshot["compaction"]["tokens_before"] is None
+
+
+def test_parse_model_limits_output_extracts_context_window() -> None:
+    parsed = parse_model_limits_output(
+        "provider  model           context  max-out  thinking  images\n"
+        "llamacpp  gemma4-26b-a4b  262.1K   65.5K    yes       yes\n",
+        provider="llamacpp",
+        model="gemma4-26b-a4b",
+    )
+
+    assert parsed is not None
+    assert parsed["provider"] == "llamacpp"
+    assert parsed["model"] == "gemma4-26b-a4b"
+    assert parsed["context_window"] == "262.1K"
+    assert parsed["context_window_tokens"] == 262100
+    assert parsed["max_output_tokens"] == 65500

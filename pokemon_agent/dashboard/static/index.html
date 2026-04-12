@@ -7,7 +7,7 @@
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
     <link href="https://fonts.googleapis.com/css2?family=Chakra+Petch:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;700&family=Space+Mono:wght@400;700&display=swap" rel="stylesheet">
-    <link rel="stylesheet" href="/dashboard/assets/style.css?v=9">
+    <link rel="stylesheet" href="/dashboard/assets/style.css?v=10">
 </head>
 <body>
     <!-- Decorative background layers -->
@@ -92,26 +92,33 @@
                     </header>
 
                     <div class="hud-chat-body">
-                        <div class="hud-chat-scroll" id="piTranscript">
-                            <p class="hud-empty">AWAITING TRANSMISSION…</p>
+                        <div class="hud-chat-main">
+                            <div class="hud-chat-scroll" id="piTranscript">
+                                <p class="hud-empty">AWAITING TRANSMISSION…</p>
+                            </div>
                         </div>
 
-                        <div class="hud-chat-live" id="hudChatLive">
-                            <div class="hud-live-head">
-                                <span class="hud-kicker">LIVE STREAM</span>
-                                <span class="hud-live-dot"></span>
+                        <aside class="hud-chat-side">
+                            <div class="hud-chat-live" id="hudChatLive">
+                                <div class="hud-live-line" data-channel="thinking">
+                                    <span class="hud-live-label">Thinking</span>
+                                    <pre class="hud-live-stream" id="piCurrentThinking">— silent —</pre>
+                                    <span class="hud-cursor"></span>
+                                </div>
+                                <div class="hud-live-line" data-channel="output">
+                                    <span class="hud-live-label">Response</span>
+                                    <pre class="hud-live-stream" id="piCurrentOutput">— silent —</pre>
+                                    <span class="hud-cursor"></span>
+                                </div>
                             </div>
-                            <div class="hud-live-line" data-channel="thinking">
-                                <span class="hud-live-label">► THINKING</span>
-                                <pre class="hud-live-stream" id="piCurrentThinking">— silent —</pre>
-                                <span class="hud-cursor"></span>
-                            </div>
-                            <div class="hud-live-line" data-channel="output">
-                                <span class="hud-live-label">► OUTPUT</span>
-                                <pre class="hud-live-stream" id="piCurrentOutput">— silent —</pre>
-                                <span class="hud-cursor"></span>
-                            </div>
-                        </div>
+
+                            <section class="hud-tool-pane" aria-label="Pi tool calls">
+                                <div class="hud-tool-pane-head">
+                                    <span class="hud-kicker">Tools</span>
+                                </div>
+                                <div class="hud-tool-list hud-tool-list--stream" id="piToolFeed"></div>
+                            </section>
+                        </aside>
                     </div>
                 </section>
 
@@ -303,10 +310,6 @@
                         <ul class="hud-divided-list" id="stateDeltaSummary"></ul>
                         <h4 class="hud-mini-label">MOVEMENT</h4>
                         <ul class="hud-divided-list" id="movementGuidance"></ul>
-                        <div class="hud-active-tools">
-                            <h4 class="hud-mini-label hud-mini-label--cyan">ACTIVE TOOLS</h4>
-                            <div class="hud-tool-list" id="piActiveTools"></div>
-                        </div>
                     </div>
                 </div>
             </section>
@@ -476,22 +479,18 @@
                         <pre class="hud-dump" id="rawSupervisor">No supervisor data yet.</pre>
                     </details>
                     <details class="hud-details">
-                        <summary><span class="hud-details-glyph">▸</span>PI EVENTS LOG</summary>
+                        <summary><span class="hud-details-glyph">▸</span>PI EVENT TRACE</summary>
                         <ul class="hud-divided-list" id="piRecentEvents"></ul>
                     </details>
                     <details class="hud-details">
                         <summary><span class="hud-details-glyph">▸</span>PI STDERR / WARNINGS</summary>
                         <pre class="hud-dump" id="piStderr">No stderr output.</pre>
                     </details>
-                    <details class="hud-details">
-                        <summary><span class="hud-details-glyph">▸</span>RECENT TOOL CALLS</summary>
-                        <div class="hud-tool-list" id="piRecentTools"></div>
-                    </details>
                 </div>
             </section>
         </main>
     </div>
 
-    <script src="/dashboard/assets/app.js?v=10"></script>
+    <script src="/dashboard/assets/app.js?v=11"></script>
 </body>
 </html>

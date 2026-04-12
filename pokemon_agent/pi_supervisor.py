@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import contextlib
 import json
+import re
 import shutil
 from collections import deque
 from datetime import datetime, timedelta, timezone
@@ -117,6 +118,104 @@ def preview_payload(value: Any, limit: int = 260) -> str:
     return _truncate(text, limit)
 
 
+def payload_text(value: Any, limit: int = 20000) -> str:
+    if value is None:
+        return ""
+    if isinstance(value, str):
+        text = value
+    else:
+        try:
+            text = json.dumps(value, ensure_ascii=True, sort_keys=True, indent=2)
+        except TypeError:
+            text = repr(value)
+    return _clip_text(text, limit)
+
+
+def parse_compact_token_count(value: Any) -> Optional[int]:
+    if isinstance(value, (int, float)):
+        return int(value)
+    if not isinstance(value, str):
+        return None
+    match = re.match(r"^\s*([\d.]+)\s*([KMB])?\s*$", value)
+    if not match:
+        return None
+    amount = float(match.group(1))
+    suffix = (match.group(2) or "").upper()
+    multiplier = 1
+    if suffix == "K":
+        multiplier = 1_000
+    elif suffix == "M":
+        multiplier = 1_000_000
+    elif suffix == "B":
+        multiplier = 1_000_000_000
+    return int(amount * multiplier)
+
+
+def normalize_model_lookup(
+    provider: Optional[str],
+    model: Optional[str],
+) -> tuple[Optional[str], Optional[str]]:
+    chosen_provider = (provider or "").strip() or None
+    chosen_model = (model or "").strip()
+    if not chosen_model:
+        return chosen_provider, None
+    if "/" in chosen_model:
+        inferred_provider, chosen_model = chosen_model.split("/", 1)
+        chosen_provider = chosen_provider or inferred_provider.strip() or None
+    if ":" in chosen_model:
+        base_model, maybe_thinking = chosen_model.rsplit(":", 1)
+        if maybe_thinking in {"off", "minimal", "low", "medium", "high", "xhigh"}:
+            chosen_model = base_model
+    chosen_model = chosen_model.strip() or None
+    return chosen_provider, chosen_model
+
+
+def parse_model_limits_output(
+    output: str,
+    *,
+    provider: Optional[str],
+    model: Optional[str],
+) -> Optional[JsonDict]:
+    requested_provider, requested_model = normalize_model_lookup(provider, model)
+    rows: list[JsonDict] = []
+    for raw_line in output.splitlines():
+        line = raw_line.strip()
+        if not line or line.lower().startswith("provider "):
+            continue
+        parts = [part for part in re.split(r"\s{2,}|\t+", line) if part]
+        if len(parts) < 6:
+            continue
+        rows.append(
+            {
+                "provider": parts[0],
+                "model": parts[1],
+                "context_window": parts[2],
+                "context_window_tokens": parse_compact_token_count(parts[2]),
+                "max_output": parts[3],
+                "max_output_tokens": parse_compact_token_count(parts[3]),
+                "thinking": parts[4],
+                "images": parts[5],
+            }
+        )
+
+    if not rows:
+        return None
+
+    if requested_model:
+        for row in rows:
+            if row["model"] == requested_model and (
+                not requested_provider or row["provider"] == requested_provider
+            ):
+                return row
+
+    if requested_provider:
+        for row in rows:
+            if row["provider"] == requested_provider:
+                return row
+
+    return rows[0]
+
+
 def extract_file_hint(args: Any) -> Optional[str]:
     if not isinstance(args, dict):
         return None
@@ -212,6 +311,7 @@ class PiSupervisor:
         self.next_auto_continue_at: Optional[str] = None
         self.session_usage: Optional[JsonDict] = None
         self.last_message_usage: Optional[JsonDict] = None
+        self.model_limits: Optional[JsonDict] = None
         self.tool_call_count: int = 0
         self.thinking_block_count: int = 0
         self.assistant_message_count: int = 0
@@ -220,6 +320,7 @@ class PiSupervisor:
         self.last_compaction_tokens_after: Optional[int] = None
         self.last_compaction_at: Optional[str] = None
         self._pending_thinking_in_message: bool = False
+        self._model_limits_cache: dict[str, Optional[JsonDict]] = {}
 
         self._task: Optional[asyncio.Task[None]] = None
         self._process: Optional[asyncio.subprocess.Process] = None
@@ -244,6 +345,48 @@ class PiSupervisor:
             "server_url": self.server_url,
             "tools": DEFAULT_TOOLS,
         }
+
+    async def _refresh_model_limits(self) -> None:
+        chosen_provider, chosen_model = normalize_model_lookup(self.provider, self.model)
+        if not self.pi_binary or not chosen_model:
+            self.model_limits = None
+            return
+
+        cache_key = f"{chosen_provider or ''}::{chosen_model}"
+        if cache_key in self._model_limits_cache:
+            cached = self._model_limits_cache[cache_key]
+            self.model_limits = dict(cached) if isinstance(cached, dict) else None
+            return
+
+        command = [self.pi_binary]
+        if chosen_provider:
+            command.extend(["--provider", chosen_provider])
+        command.extend(["--list-models", chosen_model])
+
+        try:
+            process = await asyncio.create_subprocess_exec(
+                *command,
+                stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.PIPE,
+            )
+            stdout, _stderr = await asyncio.wait_for(process.communicate(), timeout=8)
+        except (OSError, asyncio.TimeoutError):
+            self._model_limits_cache[cache_key] = None
+            self.model_limits = None
+            return
+
+        if process.returncode != 0:
+            self._model_limits_cache[cache_key] = None
+            self.model_limits = None
+            return
+
+        parsed = parse_model_limits_output(
+            stdout.decode("utf-8", errors="replace"),
+            provider=chosen_provider,
+            model=chosen_model,
+        )
+        self._model_limits_cache[cache_key] = parsed
+        self.model_limits = dict(parsed) if isinstance(parsed, dict) else None
 
     def state_snapshot(self) -> JsonDict:
         return {
@@ -285,6 +428,7 @@ class PiSupervisor:
             "next_auto_continue_at": self.next_auto_continue_at,
             "session_usage": self.session_usage,
             "last_message_usage": self.last_message_usage,
+            "model_limits": self.model_limits,
             "counts": {
                 "tool_calls": self.tool_call_count,
                 "thinking_blocks": self.thinking_block_count,
@@ -361,6 +505,7 @@ class PiSupervisor:
         self.next_auto_continue_at = None
         self.session_usage = None
         self.last_message_usage = None
+        self.model_limits = None
         self.tool_call_count = 0
         self.thinking_block_count = 0
         self.assistant_message_count = 0
@@ -370,6 +515,7 @@ class PiSupervisor:
         self.last_compaction_at = None
         self._pending_thinking_in_message = False
         self._stop_requested = False
+        await self._refresh_model_limits()
 
         await self._emit_major(
             "pi_supervisor_status",
@@ -399,6 +545,7 @@ class PiSupervisor:
         self.current_assistant_text = ""
         self.current_assistant_thinking = ""
         self.current_tool_calls.clear()
+        await self._refresh_model_limits()
         await self._emit_major(
             "pi_supervisor_status",
             {
@@ -840,6 +987,29 @@ class PiSupervisor:
             )
             return
 
+        if event_type == "model_change":
+            self.provider = event.get("provider") or self.provider
+            self.model = event.get("modelId") or event.get("model") or self.model
+            await self._refresh_model_limits()
+            self._push_recent_event(
+                "pi_model_change",
+                f"Model {(self.model or 'unknown')} active.",
+                {
+                    "provider": self.provider,
+                    "model": self.model,
+                },
+            )
+            return
+
+        if event_type == "thinking_level_change":
+            self.thinking = event.get("thinkingLevel") or self.thinking
+            self._push_recent_event(
+                "pi_thinking_level_change",
+                f"Thinking {(self.thinking or 'default')}.",
+                {"thinking": self.thinking},
+            )
+            return
+
         if event_type == "agent_start":
             await self._emit_major("pi_agent_start", {"summary": "Pi agent turn started."})
             return
@@ -991,8 +1161,10 @@ class PiSupervisor:
                 "tool_name": event.get("toolName"),
                 "summary": summary,
                 "args_preview": preview_payload(args),
+                "args": payload_text(args),
                 "started_at": utc_now(),
                 "status": "running",
+                "result": "",
                 "result_preview": "",
             }
             self.current_tool_calls[event.get("toolCallId", summary)] = entry
@@ -1018,6 +1190,7 @@ class PiSupervisor:
             tool_call_id = event.get("toolCallId")
             entry = self.current_tool_calls.get(tool_call_id)
             if entry is not None:
+                entry["result"] = payload_text(event.get("partialResult"))
                 entry["result_preview"] = preview_payload(event.get("partialResult"))
             self._push_recent_event(
                 "pi_tool_update",
@@ -1035,11 +1208,14 @@ class PiSupervisor:
                 "tool_call_id": tool_call_id,
                 "tool_name": event.get("toolName"),
                 "summary": event.get("toolName", "tool"),
+                "args": "",
                 "args_preview": "",
                 "started_at": utc_now(),
+                "result": "",
             }
             entry["status"] = "error" if event.get("isError") else "completed"
             entry["finished_at"] = utc_now()
+            entry["result"] = payload_text(event.get("result"))
             entry["result_preview"] = preview_payload(event.get("result"))
             self.recent_tools.append(entry)
             self._refresh_turn_plan_preview_from_workspace()
