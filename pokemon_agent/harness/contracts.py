@@ -25,7 +25,6 @@ ExpectedOutcomeCheckField = Literal[
     "position_delta",
     "dialog_active",
     "battle_active",
-    "screen_text_contains",
 ]
 
 EXPECTED_OUTCOME_CHECK_FIELDS: tuple[ExpectedOutcomeCheckField, ...] = (
@@ -34,7 +33,6 @@ EXPECTED_OUTCOME_CHECK_FIELDS: tuple[ExpectedOutcomeCheckField, ...] = (
     "position_delta",
     "dialog_active",
     "battle_active",
-    "screen_text_contains",
 )
 
 
@@ -61,7 +59,6 @@ class ExpectedOutcome(BaseModel):
     position_delta: Optional[CoordDelta] = None
     dialog_active: Optional[bool] = None
     battle_active: Optional[bool] = None
-    screen_text_contains: Optional[str] = Field(default=None, max_length=80)
 
     @model_validator(mode="after")
     def ensure_structured_check(self) -> "ExpectedOutcome":
@@ -71,7 +68,6 @@ class ExpectedOutcome(BaseModel):
             self.position_delta,
             self.dialog_active,
             self.battle_active,
-            self.screen_text_contains,
         )
         if not any(value is not None for value in checks):
             raise ValueError(

@@ -177,7 +177,6 @@ def _match_expected_outcome(plan: TurnPlan, bundle: dict) -> tuple[int, int, lis
         current_state.get("dialog_active") or ((current_state.get("dialog") or {}).get("active"))
     )
     battle_active = bool(((current_state.get("battle") or {}).get("in_battle")))
-    screen_text = str(((bundle.get("screen_text") or {}).get("text")) or "")
     movement = _movement_from_execution_baseline(plan, bundle)
 
     matched = 0
@@ -237,14 +236,6 @@ def _match_expected_outcome(plan: TurnPlan, bundle: dict) -> tuple[int, int, lis
             notes.append(
                 f"battle_active expected {plan.expected_outcome.battle_active}, got {battle_active}"
             )
-
-    if plan.expected_outcome.screen_text_contains is not None:
-        total += 1
-        needle = plan.expected_outcome.screen_text_contains.lower()
-        if needle in screen_text.lower():
-            matched += 1
-        else:
-            notes.append(f"screen_text missing '{plan.expected_outcome.screen_text_contains}'")
 
     return matched, total, notes
 

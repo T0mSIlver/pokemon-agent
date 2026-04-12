@@ -353,20 +353,14 @@ def test_agent_runtime_refresh_writes_workspace_and_dashboard_state(tmp_path: Pa
     assert turn_context["observation_id"].startswith("obs-")
     assert turn_context["planning"]["observation_id"] == turn_context["observation_id"]
     assert turn_context["planning"]["objective_id"] == turn_context["objective"]["id"]
-    assert (
-        turn_context["planning"]["branch_templates"]["raw_actions"]["kind"] == "raw_actions"
-    )
-    assert (
-        turn_context["planning"]["expected_outcome_check_fields"]
-        == [
-            "map_name",
-            "position",
-            "position_delta",
-            "dialog_active",
-            "battle_active",
-            "screen_text_contains",
-        ]
-    )
+    assert turn_context["planning"]["branch_templates"]["raw_actions"]["kind"] == "raw_actions"
+    assert turn_context["planning"]["expected_outcome_check_fields"] == [
+        "map_name",
+        "position",
+        "position_delta",
+        "dialog_active",
+        "battle_active",
+    ]
     assert turn_context["navigation"]["route_hints"]
     assert turn_context["navigation"]["coordinate_system"] == "map_tile_absolute"
     assert turn_context["plan_status"]["state"] == "stale"
@@ -708,9 +702,7 @@ def test_turn_context_surfaces_warps_with_target_map_names(tmp_path: Path):
         reason="warp_context",
         source="observe",
     )
-    turn_context = json.loads(
-        runtime.artifacts["turn_context_json"].read_text(encoding="utf-8")
-    )
+    turn_context = json.loads(runtime.artifacts["turn_context_json"].read_text(encoding="utf-8"))
     warps = turn_context["navigation"]["warps"]
     assert warps, "expected warps to be surfaced in turn_context"
     first_warp = warps[0]
@@ -832,9 +824,7 @@ def test_dashboard_state_endpoint_uses_runtime_bundle(tmp_path: Path, monkeypatc
     assert payload["world_state"]["map"]["map_name"] == "Viridian City"
     assert payload["pi_supervisor"]["status"] == "idle"
     assert "realtime_enabled" in payload["server_runtime"]
-    assert (
-        payload["artifact_urls"]["turn_context_json"] == "/artifacts/turn_context_json"
-    )
+    assert payload["artifact_urls"]["turn_context_json"] == "/artifacts/turn_context_json"
 
 
 def test_agent_observe_endpoint_returns_workspace_bundle(tmp_path: Path, monkeypatch):

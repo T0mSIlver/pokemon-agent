@@ -1328,33 +1328,6 @@ pre {
     gap: var(--sp-2);
 }
 
-.hud-frame-ocr {
-    padding: var(--sp-3);
-    background: var(--hud-surface-2);
-    border: 1px solid var(--hud-line);
-    border-left: 2px solid var(--hud-hazard);
-    clip-path: polygon(
-        0 0, calc(100% - 8px) 0,
-        100% 8px, 100% 100%, 0 100%
-    );
-}
-
-.hud-frame-ocr-head {
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-    gap: var(--sp-2);
-    margin-bottom: var(--sp-2);
-}
-
-.hud-frame-ocr pre {
-    max-height: 5em;
-    overflow: auto;
-    color: var(--hud-text);
-    font-size: var(--fs-small);
-    line-height: 1.5;
-}
-
 /* ------------------------------------------------------------------ */
 /* 7.3 COMMAND DECK                                                   */
 /* ------------------------------------------------------------------ */

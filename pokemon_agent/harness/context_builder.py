@@ -127,7 +127,6 @@ def build_turn_context(
         ui={
             "mode": screen_text.get("ui_mode"),
             "screen_text": _truncate(screen_text.get("text"), 220),
-            "screen_text_note": _truncate(screen_text.get("note"), 160),
         },
         position={
             "map_id": (state.get("map") or {}).get("map_id"),

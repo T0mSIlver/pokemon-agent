@@ -21,10 +21,8 @@
         realtimeChip: $('realtimeChip'),
         piModelChip: $('piModelChip'),
         frameTimestamp: $('frameTimestamp'),
-        screenTextSource: $('screenTextSource'),
         annotatedFrame: $('annotatedFrame'),
         rawFrame: $('rawFrame'),
-        screenText: $('screenText'),
         piSessionChip: $('piSessionChip'),
         piTurnsChip: $('piTurnsChip'),
         piStatusSummary: $('piStatusSummary'),
@@ -1546,7 +1544,6 @@
         const recentAction = intent.recent_action || {};
         const movementGuidance = intent.movement_guidance || {};
         const stateDelta = intent.state_delta || {};
-        const screenText = visuals.screen_text || {};
         const recovery = memory.recovery || {};
         const workspace = memory.workspace || {};
         const supervisor = payload.pi_supervisor || {};
@@ -1560,7 +1557,6 @@
             ? `◉ CLK: ${serverRuntime.realtime_fps || 60}/${serverRuntime.live_artifact_fps || 0} FPS`
             : '◉ CLK: PAUSED';
         els.frameTimestamp.textContent = timeLabel(visuals.frame_timestamp);
-        els.screenTextSource.textContent = `SRC: ${(screenText.source || 'n/a').toUpperCase()}`;
 
         if (artifactUrls.latest_frame_annotated) {
             schedulePreload(
@@ -1576,10 +1572,6 @@
                 withCacheBust(artifactUrls.latest_frame, visuals.frame_timestamp),
             );
         }
-        const screenTextValue = screenText.text || 'No OCR or dialogue text available.';
-        els.screenText.textContent = screenText.note
-            ? `${screenTextValue}\n\n[${screenText.note}]`
-            : screenTextValue;
 
         els.objectiveTitle.textContent = objective.title || 'No objective yet';
         els.objectiveProgress.textContent = `${objective.progress_percent ?? memory.progress_percent ?? 0}%`;

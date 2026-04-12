@@ -324,17 +324,67 @@ def _selector_matches(selector: JsonDict, state: JsonDict) -> bool:
 
 TYPE_EFFECTIVENESS: dict[str, dict[str, float]] = {
     "Normal": {"Rock": 0.5, "Ghost": 0.0},
-    "Fire": {"Grass": 2.0, "Bug": 2.0, "Ice": 2.0, "Water": 0.5, "Rock": 0.5, "Fire": 0.5, "Dragon": 0.5},
+    "Fire": {
+        "Grass": 2.0,
+        "Bug": 2.0,
+        "Ice": 2.0,
+        "Water": 0.5,
+        "Rock": 0.5,
+        "Fire": 0.5,
+        "Dragon": 0.5,
+    },
     "Water": {"Fire": 2.0, "Ground": 2.0, "Rock": 2.0, "Water": 0.5, "Grass": 0.5, "Dragon": 0.5},
-    "Grass": {"Water": 2.0, "Ground": 2.0, "Rock": 2.0, "Fire": 0.5, "Grass": 0.5, "Poison": 0.5, "Flying": 0.5, "Bug": 0.5, "Dragon": 0.5},
-    "Electric": {"Water": 2.0, "Flying": 2.0, "Electric": 0.5, "Grass": 0.5, "Dragon": 0.5, "Ground": 0.0},
+    "Grass": {
+        "Water": 2.0,
+        "Ground": 2.0,
+        "Rock": 2.0,
+        "Fire": 0.5,
+        "Grass": 0.5,
+        "Poison": 0.5,
+        "Flying": 0.5,
+        "Bug": 0.5,
+        "Dragon": 0.5,
+    },
+    "Electric": {
+        "Water": 2.0,
+        "Flying": 2.0,
+        "Electric": 0.5,
+        "Grass": 0.5,
+        "Dragon": 0.5,
+        "Ground": 0.0,
+    },
     "Ice": {"Grass": 2.0, "Ground": 2.0, "Flying": 2.0, "Dragon": 2.0, "Water": 0.5, "Ice": 0.5},
-    "Fighting": {"Normal": 2.0, "Rock": 2.0, "Ice": 2.0, "Poison": 0.5, "Flying": 0.5, "Psychic": 0.5, "Bug": 0.5, "Ghost": 0.0},
+    "Fighting": {
+        "Normal": 2.0,
+        "Rock": 2.0,
+        "Ice": 2.0,
+        "Poison": 0.5,
+        "Flying": 0.5,
+        "Psychic": 0.5,
+        "Bug": 0.5,
+        "Ghost": 0.0,
+    },
     "Poison": {"Grass": 2.0, "Bug": 2.0, "Poison": 0.5, "Ground": 0.5, "Rock": 0.5, "Ghost": 0.5},
-    "Ground": {"Fire": 2.0, "Electric": 2.0, "Poison": 2.0, "Rock": 2.0, "Grass": 0.5, "Bug": 0.5, "Flying": 0.0},
+    "Ground": {
+        "Fire": 2.0,
+        "Electric": 2.0,
+        "Poison": 2.0,
+        "Rock": 2.0,
+        "Grass": 0.5,
+        "Bug": 0.5,
+        "Flying": 0.0,
+    },
     "Flying": {"Grass": 2.0, "Fighting": 2.0, "Bug": 2.0, "Electric": 0.5, "Rock": 0.5},
     "Psychic": {"Fighting": 2.0, "Poison": 2.0, "Psychic": 0.5},
-    "Bug": {"Grass": 2.0, "Poison": 2.0, "Psychic": 2.0, "Fire": 0.5, "Fighting": 0.5, "Flying": 0.5, "Ghost": 0.5},
+    "Bug": {
+        "Grass": 2.0,
+        "Poison": 2.0,
+        "Psychic": 2.0,
+        "Fire": 0.5,
+        "Fighting": 0.5,
+        "Flying": 0.5,
+        "Ghost": 0.5,
+    },
     "Rock": {"Fire": 2.0, "Ice": 2.0, "Flying": 2.0, "Bug": 2.0, "Fighting": 0.5, "Ground": 0.5},
 }
 
@@ -748,46 +798,21 @@ def classify_ui_mode(state: JsonDict) -> str:
     return "overworld"
 
 
-def extract_screen_text(image: Image.Image, state: JsonDict) -> JsonDict:
+def classify_ui_state(state: JsonDict) -> JsonDict:
     dialog = state.get("dialog") or {}
     dialog_active = bool(state.get("dialog_active") or dialog.get("active"))
+    ui_mode = classify_ui_mode(state)
     text = ""
-    source = "none"
-    note = ""
-
-    crop = image
+    source = "vision"
     if dialog_active:
-        crop = image.crop((0, int(image.height * 0.56), image.width, image.height))
-
-    try:
-        import pytesseract  # type: ignore[import-not-found]
-
-        scaled = crop.resize((crop.width * 3, crop.height * 3))
-        bw = scaled.convert("L").point(lambda px: 255 if px > 120 else 0)
-        raw = pytesseract.image_to_string(
-            bw,
-            config="--psm 6",
-        )
-        text = re.sub(r"\s+", " ", raw or "").strip()
-        if text:
-            source = "ocr_dialog" if dialog_active else "ocr_frame"
-    except Exception as exc:  # noqa: BLE001
-        note = f"OCR unavailable: {type(exc).__name__}"
-
-    if not text and dialog_active:
         waiting = "waiting for input" if dialog.get("waiting_for_input") else "printing"
-        text = f"Dialog box visible; OCR text unavailable ({waiting})."
+        text = f"Dialog box visible ({waiting})."
         source = "dialog_state"
-    elif not text:
-        text = "No readable screen text extracted."
-        source = "none"
-
     return {
         "text": text,
         "source": source,
-        "note": note,
         "dialog_active": dialog_active,
-        "ui_mode": classify_ui_mode(state),
+        "ui_mode": ui_mode,
     }
 
 
@@ -1429,8 +1454,7 @@ class AgentRuntime:
             if kind == "navigation":
                 target = branch.get("target") or {}
                 return [
-                    "navigate:"
-                    f"{target.get('x')},{target.get('y')}:{branch.get('mode', 'auto')}"
+                    f"navigate:{target.get('x')},{target.get('y')}:{branch.get('mode', 'auto')}"
                 ]
             return []
         kind = getattr(branch, "kind", None)
@@ -1595,7 +1619,10 @@ class AgentRuntime:
             return
         map_key = str(record.get("map_key") or "unknown")
         coord = _tuple_coord_from_any(record.get("coord"))
-        coord_key = str(record.get("coord_key") or (_coord_to_key(coord) if coord else record.get("type") or "unknown"))
+        coord_key = str(
+            record.get("coord_key")
+            or (_coord_to_key(coord) if coord else record.get("type") or "unknown")
+        )
         bucket = self.failure_memory[map_key]
         existing = bucket.get(coord_key)
         count_delta = max(1, int(record.get("count_delta") or 1))
@@ -1636,7 +1663,9 @@ class AgentRuntime:
                     coord=coord,
                     title=f"Repeated failure near ({coord[0]}, {coord[1]})",
                     source="failure_memory",
-                    notes=[str(record.get("summary") or record.get("reason") or "Repeated failure")],
+                    notes=[
+                        str(record.get("summary") or record.get("reason") or "Repeated failure")
+                    ],
                 )
                 self._persist_landmarks()
 
@@ -1828,7 +1857,9 @@ class AgentRuntime:
             }
 
         current = snapshot.player_position
-        preferred_types = set((objective.get("current") or {}).get("preferred_landmark_types") or [])
+        preferred_types = set(
+            (objective.get("current") or {}).get("preferred_landmark_types") or []
+        )
         preferred_direction = _preferred_direction_hint(
             (objective.get("current") or {}).get("route_hint", "")
         )
@@ -1868,7 +1899,14 @@ class AgentRuntime:
             )
             progress_bonus = max(0, _progress_amount(preferred_direction or "", current, coord))
             blocked = any(_manhattan(coord, blocked_coord) <= 1 for blocked_coord in blocked_coords)
-            novelty_score = max(1, 35 + (len(unknown_neighbors) * 12) + (progress_bonus * 4) - (distance * 2) - (25 if blocked else 0))
+            novelty_score = max(
+                1,
+                35
+                + (len(unknown_neighbors) * 12)
+                + (progress_bonus * 4)
+                - (distance * 2)
+                - (25 if blocked else 0),
+            )
             title = f"Probe frontier at ({coord[0]}, {coord[1]})"
             why_now_parts = [f"reveals {len(unknown_neighbors)} unknown edge(s)"]
             if progress_bonus > 0 and preferred_direction:
@@ -2012,7 +2050,12 @@ class AgentRuntime:
         dialog_active = bool(state.get("dialog_active") or dialog.get("active"))
         text = str(screen_text.get("text") or "").strip()
         changed_event = None
-        if dialog_active and text and not text.startswith("Dialog box visible") and text != self.last_dialog_text:
+        if (
+            dialog_active
+            and text
+            and not text.startswith("Dialog box visible")
+            and text != self.last_dialog_text
+        ):
             self.last_dialog_text = text
             self.dialog_last_change_at = utc_now()
             entry = {"timestamp": self.dialog_last_change_at, "text": text}
@@ -2023,7 +2066,9 @@ class AgentRuntime:
 
         return (
             {
-                "transcript_recent": [entry["text"] for entry in list(self.dialog_transcript_recent)[-4:]],
+                "transcript_recent": [
+                    entry["text"] for entry in list(self.dialog_transcript_recent)[-4:]
+                ],
                 "should_continue": dialog_active,
                 "last_change_at": self.dialog_last_change_at,
                 "printing": bool(dialog.get("printing")),
@@ -2066,7 +2111,9 @@ class AgentRuntime:
         for move in active.get("moves") or []:
             if int(move.get("pp") or 0) <= 0:
                 continue
-            metadata = MOVE_METADATA.get(str(move.get("name") or ""), {"type": "Normal", "power": 35})
+            metadata = MOVE_METADATA.get(
+                str(move.get("name") or ""), {"type": "Normal", "power": 35}
+            )
             if metadata.get("status"):
                 score = -10.0
             else:
@@ -2756,11 +2803,6 @@ class AgentRuntime:
             f"Fallback: {', '.join(turn_plan.get('fallback_actions', [])) or 'not set'}",
             "",
             f"Screen text: {bundle['screen_text']['text']}",
-            (
-                f"OCR note: {bundle['screen_text']['note']}"
-                if (bundle.get("screen_text") or {}).get("note")
-                else ""
-            ),
             "",
             f"Dialog continue: {dialog_guidance.get('should_continue')}",
             f"Battle mode: {battle_guidance.get('recommended_mode')}",
@@ -2986,7 +3028,7 @@ class AgentRuntime:
             preserved_text = previous_screen_text["text"]
             preserved_source = "live_sync_cached"
         if not preserved_text:
-            preserved_text = "Live frame sync active. Run /agent/observe for refreshed OCR."
+            preserved_text = "Live frame sync active. Run /agent/observe for refreshed state."
 
         movement_guidance = build_movement_guidance(
             state=state,
@@ -3026,7 +3068,6 @@ class AgentRuntime:
                 "source": preserved_source,
                 "ui_mode": classify_ui_mode(state),
                 "dialog_active": dialog_active,
-                "note": "Live sync updates visuals and core state between observations.",
             },
             "objective": current_objective,
             "turn_plan": self.load_turn_plan(),
@@ -3144,7 +3185,6 @@ class AgentRuntime:
                 "source": (bundle.get("screen_text") or {}).get("source"),
                 "ui_mode": (bundle.get("screen_text") or {}).get("ui_mode"),
                 "dialog_active": (bundle.get("screen_text") or {}).get("dialog_active"),
-                "note": _truncate_text_block((bundle.get("screen_text") or {}).get("note"), 220),
             },
             "objective": {
                 "current": {
@@ -3277,7 +3317,7 @@ class AgentRuntime:
             objective=current_objective["current"],
             goal=goal,
         )
-        screen_text = extract_screen_text(screen, state)
+        screen_text = classify_ui_state(state)
         state_delta = build_state_delta(self.last_state, state)
         evaluated_plan = self._evaluate_pending_plan(
             {
@@ -3470,7 +3510,11 @@ class AgentRuntime:
             failure_coord = _tuple_coord_from_any((snapshot.interaction or {}).get("target_coord"))
         failure_coord = failure_coord or current_position
 
-        if source == "navigation" and navigation_execution and not navigation_execution.get("success"):
+        if (
+            source == "navigation"
+            and navigation_execution
+            and not navigation_execution.get("success")
+        ):
             self._record_semantic_memory(
                 "failure",
                 navigation_execution.get("status") or "Navigation route failed.",
@@ -3593,15 +3637,6 @@ class AgentRuntime:
                     "source": source,
                     "objective_id": current_objective["current"]["id"],
                     "summary": action_feedback["summary"],
-                },
-            )
-        )
-        emitted_events.append(
-            self._record_event(
-                "ocr",
-                {
-                    "source": screen_text["source"],
-                    "text": screen_text["text"],
                 },
             )
         )
