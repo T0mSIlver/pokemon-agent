@@ -7,7 +7,7 @@
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
     <link href="https://fonts.googleapis.com/css2?family=Chakra+Petch:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;700&family=Space+Mono:wght@400;700&display=swap" rel="stylesheet">
-    <link rel="stylesheet" href="/dashboard/assets/style.css?v=12">
+    <link rel="stylesheet" href="/dashboard/assets/style.css?v=16">
 </head>
 <body>
     <!-- Decorative background layers -->
@@ -115,6 +115,12 @@
                             <section class="hud-tool-pane" aria-label="Pi tool calls">
                                 <div class="hud-tool-pane-head">
                                     <span class="hud-kicker">Tools</span>
+                                </div>
+                                <div class="hud-tool-toolbar" id="piToolToolbar">
+                                    <div class="hud-tool-search-wrap">
+                                        <input type="text" class="hud-tool-search" id="piToolSearch" placeholder="Search tools…" autocomplete="off" spellcheck="false" />
+                                    </div>
+                                    <div class="hud-tool-filters" id="piToolFilters"></div>
                                 </div>
                                 <div class="hud-tool-list hud-tool-list--stream" id="piToolFeed"></div>
                             </section>
@@ -500,6 +506,6 @@
         </main>
     </div>
 
-    <script src="/dashboard/assets/app.js?v=13"></script>
+    <script src="/dashboard/assets/app.js?v=14"></script>
 </body>
 </html>

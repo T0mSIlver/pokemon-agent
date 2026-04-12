@@ -1024,10 +1024,12 @@ pre {
 }
 
 .hud-chat-side {
-    display: flex;
-    flex-direction: column;
+    display: grid;
+    grid-template-rows: clamp(14rem, 32vh, 22rem) minmax(0, 1fr);
     gap: var(--sp-3);
     min-width: 0;
+    min-height: 0;
+    overflow: hidden;
 }
 
 .hud-chat-card {
@@ -1111,6 +1113,7 @@ pre {
 /* live streaming region */
 .hud-chat-live {
     position: relative;
+    height: 100%;
     padding: var(--sp-3);
     background: var(--hud-surface-2);
     border: 1px solid var(--hud-line-strong);
@@ -1119,8 +1122,8 @@ pre {
         0 0, calc(100% - 10px) 0,
         100% 10px, 100% 100%, 0 100%
     );
-    min-height: 19rem;
-    height: min(42vh, 24rem);
+    min-height: 0;
+    max-height: none;
     overflow: hidden;
     display: flex;
     flex-direction: column;
@@ -1435,24 +1438,49 @@ pre {
 }
 
 .hud-tool-list {
-    display: flex;
-    flex-direction: column;
+    display: grid;
+    grid-template-columns: minmax(0, 1fr);
+    grid-auto-rows: max-content;
+    align-content: start;
     gap: var(--sp-2);
 }
 
 .hud-tool-list--stream {
     flex: 1;
     min-height: 0;
-    overflow: auto;
+    overflow-y: auto;
+    overflow-x: hidden;
     padding-right: 2px;
+    overscroll-behavior: contain;
+    scrollbar-gutter: stable;
+    scrollbar-width: thin;
+    scrollbar-color: rgba(92, 224, 255, 0.25) transparent;
+}
+
+.hud-tool-list--stream::-webkit-scrollbar {
+    width: 4px;
+}
+
+.hud-tool-list--stream::-webkit-scrollbar-track {
+    background: transparent;
+}
+
+.hud-tool-list--stream::-webkit-scrollbar-thumb {
+    background: rgba(92, 224, 255, 0.25);
+    border-radius: 2px;
+}
+
+.hud-tool-list--stream::-webkit-scrollbar-thumb:hover {
+    background: rgba(92, 224, 255, 0.45);
 }
 
 .hud-tool-pane {
     display: flex;
     flex-direction: column;
-    flex: 1;
     gap: var(--sp-2);
     min-height: 0;
+    height: 100%;
+    overflow: hidden;
     padding: var(--sp-3);
     background: var(--hud-surface-2);
     border: 1px solid var(--hud-line-strong);
@@ -1470,7 +1498,126 @@ pre {
     gap: var(--sp-2);
 }
 
+.hud-tool-toolbar {
+    display: flex;
+    flex-direction: column;
+    gap: var(--sp-2);
+}
+
+.hud-tool-search-wrap {
+    position: relative;
+}
+
+.hud-tool-search-wrap::before {
+    content: "⌕";
+    position: absolute;
+    left: 10px;
+    top: 50%;
+    transform: translateY(-50%);
+    font-size: var(--fs-small);
+    color: var(--hud-dim);
+    pointer-events: none;
+    transition: color 160ms var(--ease-hud);
+}
+
+.hud-tool-search {
+    display: block;
+    width: 100%;
+    padding: 6px 10px 6px 28px;
+    font-family: var(--font-mono);
+    font-size: var(--fs-micro);
+    color: var(--hud-text);
+    background: rgba(3, 6, 13, 0.5);
+    border: 1px solid var(--hud-line);
+    outline: none;
+    transition: border-color 160ms var(--ease-hud),
+                box-shadow 160ms var(--ease-hud);
+}
+
+.hud-tool-search::placeholder {
+    color: var(--hud-dim);
+}
+
+.hud-tool-search:focus {
+    border-color: var(--hud-cyan);
+    box-shadow: 0 0 12px rgba(92, 224, 255, 0.15);
+}
+
+.hud-tool-search:focus + .hud-tool-search-wrap::before,
+.hud-tool-search-wrap:focus-within::before {
+    color: var(--hud-cyan);
+}
+
+.hud-tool-filters {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 4px;
+}
+
+.hud-tool-filter-chip {
+    display: inline-flex;
+    align-items: center;
+    gap: 5px;
+    padding: 3px 8px;
+    font-family: var(--font-display);
+    font-size: 0.56rem;
+    font-weight: 600;
+    letter-spacing: 0.14em;
+    text-transform: uppercase;
+    color: var(--hud-muted);
+    background: transparent;
+    border: 1px solid var(--hud-line);
+    clip-path: polygon(
+        4px 0, 100% 0, 100% calc(100% - 4px),
+        calc(100% - 4px) 100%, 0 100%, 0 4px
+    );
+    cursor: pointer;
+    transition: color 160ms var(--ease-hud),
+                border-color 160ms var(--ease-hud),
+                background 160ms var(--ease-hud),
+                box-shadow 160ms var(--ease-hud);
+}
+
+.hud-tool-filter-chip:hover {
+    color: var(--hud-text);
+    border-color: var(--hud-line-strong);
+}
+
+.hud-tool-filter-chip[data-active="true"] {
+    color: var(--hud-cyan);
+    border-color: var(--hud-cyan);
+    background: var(--hud-cyan-soft);
+    box-shadow: 0 0 14px rgba(92, 224, 255, 0.2);
+}
+
+.hud-tool-filter-chip[data-active="true"][data-filter="error"],
+.hud-tool-filter-chip[data-active="true"][data-filter="running"] {
+    color: var(--hud-bad);
+    border-color: var(--hud-bad);
+    background: rgba(255, 79, 109, 0.12);
+    box-shadow: 0 0 14px rgba(255, 79, 109, 0.2);
+}
+
+.hud-tool-filter-chip[data-active="true"][data-filter="running"] {
+    color: var(--hud-cyan);
+    border-color: var(--hud-cyan);
+    background: var(--hud-cyan-soft);
+    box-shadow: 0 0 14px rgba(92, 224, 255, 0.2);
+}
+
+.hud-tool-filter-count {
+    font-family: var(--font-numeric);
+    font-size: 0.52rem;
+    color: inherit;
+    opacity: 0.8;
+    padding-left: 4px;
+    border-left: 1px solid currentColor;
+}
+
 .hud-tool-card {
+    display: block;
+    align-self: start;
+    min-height: max-content;
     overflow: hidden;
     background: var(--hud-surface);
     border: 1px solid var(--hud-line);
@@ -1489,33 +1636,42 @@ pre {
     border-left-color: var(--hud-bad);
 }
 
-.hud-tool-card summary {
+.hud-tool-card-toggle {
     display: grid;
     grid-template-columns: minmax(0, 1fr) auto;
     gap: var(--sp-2);
     align-items: start;
+    width: 100%;
     padding: 10px 12px;
+    min-height: 4.5rem;
+    background: transparent;
+    border: 0;
+    color: inherit;
+    font: inherit;
+    text-align: left;
     cursor: pointer;
-    list-style: none;
 }
 
-.hud-tool-card summary::-webkit-details-marker {
-    display: none;
+.hud-tool-card-toggle:focus-visible {
+    outline: 1px solid rgba(92, 224, 255, 0.5);
+    outline-offset: -1px;
 }
 
-.hud-tool-card summary:hover {
+.hud-tool-card-toggle:hover {
     background: rgba(92, 224, 255, 0.06);
 }
 
-.hud-tool-card[open] summary {
+.hud-tool-card[data-expanded="true"] .hud-tool-card-toggle {
     border-bottom: 1px solid var(--hud-line);
 }
 
 .hud-tool-summary {
     display: flex;
     flex-direction: column;
-    gap: 4px;
+    justify-content: center;
+    gap: 6px;
     min-width: 0;
+    min-height: 100%;
 }
 
 .hud-tool-meta {
@@ -1533,35 +1689,41 @@ pre {
     transition: transform 160ms var(--ease-hud);
 }
 
-.hud-tool-card[open] .hud-tool-meta::after {
+.hud-tool-card[data-expanded="true"] .hud-tool-meta::after {
     transform: rotate(90deg);
 }
 
 .hud-tool-title {
+    display: block;
     font-family: var(--font-display);
     font-size: var(--fs-small);
     font-weight: 600;
+    line-height: 1.2;
     letter-spacing: 0.02em;
     color: var(--hud-text);
 }
 
 .hud-tool-preview {
     margin: 0;
+    display: block;
     font-family: var(--font-mono);
     font-size: var(--fs-micro);
     color: var(--hud-muted);
     line-height: 1.45;
     word-break: break-word;
-    display: -webkit-box;
-    -webkit-line-clamp: 2;
-    -webkit-box-orient: vertical;
     overflow: hidden;
+    min-height: calc(2 * 1.45em);
+    max-height: calc(2 * 1.45em);
 }
 
 .hud-tool-body {
     display: grid;
     gap: var(--sp-2);
     padding: 0 12px 12px;
+}
+
+.hud-tool-body[hidden] {
+    display: none;
 }
 
 .hud-tool-block {
@@ -2150,7 +2312,17 @@ pre {
     .hud-chat-side {
         display: grid;
         grid-template-columns: repeat(2, minmax(0, 1fr));
+        grid-template-rows: none;
         align-items: start;
+    }
+    .hud-chat-live {
+        height: auto;
+        min-height: 10rem;
+        max-height: min(42vh, 24rem);
+    }
+    .hud-tool-pane {
+        height: auto;
+        min-height: 240px;
     }
     .hud-intent-grid {
         grid-template-columns: repeat(2, minmax(0, 1fr));
@@ -2193,6 +2365,10 @@ pre {
         display: flex;
         flex-direction: column;
     }
+    .hud-chat-live,
+    .hud-tool-pane {
+        height: auto;
+    }
     .hud-command-row .hud-button-group { margin-left: 0; }
     .hud-timeline-controls {
         grid-template-columns: minmax(0, 1fr);
@@ -2214,7 +2390,7 @@ pre {
     .hud-world-stats { grid-template-columns: minmax(0, 1fr); }
     .hud-frame-stats { grid-template-columns: minmax(0, 1fr); }
     .hud-live-line { grid-template-columns: 70px minmax(0, 1fr) 10px; }
-    .hud-chat-live { min-height: 17rem; }
+    .hud-chat-live { min-height: 17rem; height: auto; }
     .hud-timeline-body { padding-left: 30px; }
     .hud-timeline-rail { left: 16px; }
     .hud-event::before { left: -22px; }

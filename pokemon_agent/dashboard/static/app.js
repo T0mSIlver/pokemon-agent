@@ -38,6 +38,8 @@
         piControlStatus: $('piControlStatus'),
         piTurnPlanPreview: $('piTurnPlanPreview'),
         piToolFeed: $('piToolFeed'),
+        piToolSearch: $('piToolSearch'),
+        piToolFilters: $('piToolFilters'),
         piCurrentThinking: $('piCurrentThinking'),
         piCurrentOutput: $('piCurrentOutput'),
         piTranscript: $('piTranscript'),
@@ -134,6 +136,22 @@
         error:      'var(--hud-bad)',
         screenshot: 'var(--hud-muted)',
     };
+
+    const TOOL_TYPE_FILTERS = [
+        { key: 'all',       label: 'ALL' },
+        { key: 'read',      label: 'READ' },
+        { key: 'bash',      label: 'BASH' },
+        { key: 'edit',      label: 'EDIT' },
+        { key: 'write',     label: 'WRITE' },
+        { key: 'grep',      label: 'GREP' },
+        { key: 'find',      label: 'FIND' },
+        { key: 'ls',        label: 'LS' },
+        { key: 'running',   label: 'LIVE' },
+        { key: 'error',     label: 'ERROR' },
+    ];
+    const toolTypeFilter = new Set(['all']);
+    let toolSearchQuery = '';
+    let latestToolFeed = [];
 
     function api(path) {
         return `${window.location.protocol}//${window.location.host}${path}`;
@@ -533,11 +551,32 @@
         return text || fallback;
     }
 
-    function createToolCard(item) {
-        const card = document.createElement('details');
-        card.className = 'hud-tool-card';
+    function setToolCardExpanded(card, expanded) {
+        if (!card) return;
+        const next = Boolean(expanded);
+        const toggle = card.querySelector('.hud-tool-card-toggle');
+        const body = card.querySelector('.hud-tool-body');
+        card.dataset.expanded = next ? 'true' : 'false';
+        if (toggle) {
+            toggle.setAttribute('aria-expanded', next ? 'true' : 'false');
+        }
+        if (body) {
+            body.hidden = !next;
+        }
+    }
 
-        const summary = document.createElement('summary');
+    function createToolCard(item) {
+        const card = document.createElement('article');
+        card.className = 'hud-tool-card';
+        card.dataset.expanded = 'false';
+
+        const toggle = document.createElement('button');
+        toggle.type = 'button';
+        toggle.className = 'hud-tool-card-toggle';
+        toggle.setAttribute('aria-expanded', 'false');
+        toggle.addEventListener('click', () => {
+            setToolCardExpanded(card, card.dataset.expanded !== 'true');
+        });
 
         const summaryBody = document.createElement('div');
         summaryBody.className = 'hud-tool-summary';
@@ -567,11 +606,12 @@
         meta.appendChild(status);
         meta.appendChild(time);
 
-        summary.appendChild(summaryBody);
-        summary.appendChild(meta);
+        toggle.appendChild(summaryBody);
+        toggle.appendChild(meta);
 
         const body = document.createElement('div');
         body.className = 'hud-tool-body';
+        body.hidden = true;
 
         const argsBlock = document.createElement('div');
         argsBlock.className = 'hud-tool-block';
@@ -596,7 +636,7 @@
         body.appendChild(argsBlock);
         body.appendChild(resultBlock);
 
-        card.appendChild(summary);
+        card.appendChild(toggle);
         card.appendChild(body);
         updateToolCard(card, item);
         return card;
@@ -615,6 +655,7 @@
 
         card.dataset.toolKey = key;
         card.dataset.status = status;
+        if (item?.tool_name) card.dataset.toolName = item.tool_name;
 
         if (title) {
             title.textContent = truncate(item.summary || item.tool_name || 'tool', 120);
@@ -1438,6 +1479,101 @@
         controlSeeded = true;
     }
 
+    function renderToolTypeFilters(typeCounts) {
+        if (!els.piToolFilters) return;
+        els.piToolFilters.innerHTML = '';
+        TOOL_TYPE_FILTERS.forEach(({ key, label }) => {
+            const count = key === 'all'
+                ? latestToolFeed.length
+                : (typeCounts[key] || 0);
+            const chip = document.createElement('button');
+            chip.type = 'button';
+            chip.className = 'hud-tool-filter-chip';
+            const active = toolTypeFilter.has(key) || (toolTypeFilter.size === 0 && key === 'all');
+            chip.dataset.active = active ? 'true' : 'false';
+            chip.dataset.filter = key;
+            chip.innerHTML = `${escapeHtml(label)}<span class="hud-tool-filter-count">${count}</span>`;
+            chip.addEventListener('click', () => toggleToolTypeFilter(key));
+            els.piToolFilters.appendChild(chip);
+        });
+    }
+
+    function toggleToolTypeFilter(key) {
+        if (key === 'all') {
+            toolTypeFilter.clear();
+            toolTypeFilter.add('all');
+        } else {
+            toolTypeFilter.delete('all');
+            if (toolTypeFilter.has(key)) {
+                toolTypeFilter.delete(key);
+            } else {
+                toolTypeFilter.add(key);
+            }
+            if (toolTypeFilter.size === 0) {
+                toolTypeFilter.add('all');
+            }
+        }
+        applyToolFilters();
+    }
+
+    function applyToolFilters() {
+        const showAll = toolTypeFilter.has('all');
+        const query = toolSearchQuery.toLowerCase().trim();
+        const statusFilters = new Set();
+        const nameFilters = new Set();
+        if (!showAll) {
+            toolTypeFilter.forEach((key) => {
+                if (key === 'running' || key === 'error') {
+                    statusFilters.add(key);
+                } else {
+                    nameFilters.add(key);
+                }
+            });
+        }
+        const filtered = latestToolFeed.filter((item) => {
+            if (!showAll) {
+                const status = String(item?.status || 'completed').toLowerCase();
+                const toolName = String(item?.tool_name || '').toLowerCase();
+                const matchesName = nameFilters.size === 0 || nameFilters.has(toolName);
+                const matchesStatus = statusFilters.size === 0 || statusFilters.has(status);
+                if (!matchesName || !matchesStatus) return false;
+            }
+            if (query) {
+                const haystack = [
+                    item?.tool_name || '',
+                    item?.summary || '',
+                    item?.args_preview || '',
+                    item?.args || '',
+                    item?.result_preview || '',
+                    item?.result || '',
+                ].join(' ').toLowerCase();
+                return haystack.includes(query);
+            }
+            return true;
+        });
+        const typeCounts = {};
+        latestToolFeed.forEach((item) => {
+            const name = String(item?.tool_name || '').toLowerCase();
+            const status = String(item?.status || 'completed').toLowerCase();
+            typeCounts[name] = (typeCounts[name] || 0) + 1;
+            typeCounts[status] = (typeCounts[status] || 0) + 1;
+        });
+        renderToolTypeFilters(typeCounts);
+        renderToolList(els.piToolFeed, filtered, query ? 'No tools match your search.' : 'No Pi tool calls yet.');
+    }
+
+    function initToolSearch() {
+        if (!els.piToolSearch) return;
+        let debounce = null;
+        els.piToolSearch.addEventListener('input', () => {
+            clearTimeout(debounce);
+            debounce = setTimeout(() => {
+                toolSearchQuery = els.piToolSearch.value;
+                applyToolFilters();
+            }, 180);
+        });
+    }
+
     function renderSupervisor(supervisor) {
         const config = supervisor.config || {};
         seedSupervisorControls(supervisor);
@@ -1504,7 +1640,8 @@
             ...(supervisor.active_tools || []),
             ...(supervisor.recent_tools || []).slice().reverse(),
         ];
-        renderToolList(els.piToolFeed, toolFeed, 'No Pi tool calls yet.');
+        latestToolFeed = toolFeed;
+        applyToolFilters();
         renderTranscript(supervisor.transcript || []);
         renderList(
             els.piRecentEvents,
@@ -2057,6 +2194,8 @@
         setPiStatus('idle', 'PI IDLE');
         sessionOriginMs = Date.now();
         renderTimelineFilters({});
+        initToolSearch();
+        renderToolTypeFilters({});
         initAutoScroll('transcript', els.piTranscript);
         initAutoScroll('thinking', els.piCurrentThinking);
         initAutoScroll('output', els.piCurrentOutput);
