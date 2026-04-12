@@ -724,7 +724,7 @@ class PiSupervisor:
 
         process = await asyncio.create_subprocess_exec(
             *command,
-            cwd=str(self.repo_root),
+            cwd=str(self.workspace_dir),
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.PIPE,
         )
@@ -1037,9 +1037,7 @@ class PiSupervisor:
             if thinking_text:
                 self.last_assistant_thinking = thinking_text
             self._refresh_turn_plan_preview_from_workspace()
-            summary_text = (
-                message_text or self.current_assistant_text or self.last_assistant_text
-            )
+            summary_text = message_text or self.current_assistant_text or self.last_assistant_text
             await self._complete_turn(
                 summary_text=summary_text,
                 tool_result_count=len(event.get("toolResults") or []),
