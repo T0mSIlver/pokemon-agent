@@ -7,7 +7,7 @@
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
     <link href="https://fonts.googleapis.com/css2?family=Chakra+Petch:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;700&family=Space+Mono:wght@400;700&display=swap" rel="stylesheet">
-    <link rel="stylesheet" href="/dashboard/assets/style.css?v=10">
+    <link rel="stylesheet" href="/dashboard/assets/style.css?v=12">
 </head>
 <body>
     <!-- Decorative background layers -->
@@ -139,7 +139,15 @@
                     </header>
 
                     <div class="hud-frame-shot">
-                        <div class="hud-frame-annotated">
+                        <div
+                            class="hud-frame-annotated hud-frame-view"
+                            data-frame-image="annotatedFrame"
+                            data-frame-label="annotated emulator"
+                            role="button"
+                            tabindex="0"
+                            aria-label="Toggle fullscreen annotated emulator view"
+                            title="Click to toggle fullscreen"
+                        >
                             <img id="annotatedFrame" alt="Annotated frame">
                             <span class="hud-frame-label hud-frame-label--tl">
                                 <svg width="12" height="12"><use href="#icon-crosshair"/></svg>
@@ -151,7 +159,15 @@
                             <span class="hud-frame-bracket hud-frame-bracket--bl"></span>
                             <span class="hud-frame-bracket hud-frame-bracket--br"></span>
                         </div>
-                        <div class="hud-frame-raw">
+                        <div
+                            class="hud-frame-raw hud-frame-view"
+                            data-frame-image="rawFrame"
+                            data-frame-label="raw emulator"
+                            role="button"
+                            tabindex="0"
+                            aria-label="Toggle fullscreen raw emulator view"
+                            title="Click to toggle fullscreen"
+                        >
                             <img id="rawFrame" alt="Raw frame">
                             <span class="hud-frame-label hud-frame-label--tr">RAW</span>
                         </div>
@@ -491,6 +507,6 @@
         </main>
     </div>
 
-    <script src="/dashboard/assets/app.js?v=11"></script>
+    <script src="/dashboard/assets/app.js?v=13"></script>
 </body>
 </html>

@@ -174,6 +174,97 @@
         return JSON.stringify(value ?? {}, null, 2);
     }
 
+    function currentFullscreenElement() {
+        return document.fullscreenElement || document.webkitFullscreenElement || null;
+    }
+
+    function frameViewports() {
+        return Array.from(document.querySelectorAll('.hud-frame-view'));
+    }
+
+    function isElementFullscreen(element) {
+        return Boolean(element) && currentFullscreenElement() === element;
+    }
+
+    function frameViewportImage(viewport) {
+        if (!viewport) return null;
+        const imageId = viewport.dataset.frameImage;
+        if (imageId) {
+            return document.getElementById(imageId);
+        }
+        return viewport.querySelector('img');
+    }
+
+    function frameViewportLabel(viewport) {
+        return viewport?.dataset.frameLabel || 'emulator';
+    }
+
+    function syncFrameFullscreenState() {
+        const fullscreenElement = currentFullscreenElement();
+        frameViewports().forEach((viewport) => {
+            const isFullscreen = fullscreenElement === viewport;
+            const label = frameViewportLabel(viewport);
+            viewport.dataset.fullscreen = isFullscreen ? 'true' : 'false';
+            viewport.setAttribute(
+                'aria-label',
+                isFullscreen
+                    ? `Exit fullscreen ${label} view`
+                    : `Toggle fullscreen ${label} view`
+            );
+            viewport.title = isFullscreen
+                ? 'Click to exit fullscreen'
+                : 'Click to toggle fullscreen';
+        });
+    }
+
+    async function requestElementFullscreen(element) {
+        if (!element) return;
+        if (typeof element.requestFullscreen === 'function') {
+            await element.requestFullscreen();
+            return;
+        }
+        if (typeof element.webkitRequestFullscreen === 'function') {
+            element.webkitRequestFullscreen();
+        }
+    }
+
+    async function exitFullscreen() {
+        if (typeof document.exitFullscreen === 'function') {
+            await document.exitFullscreen();
+            return;
+        }
+        if (typeof document.webkitExitFullscreen === 'function') {
+            document.webkitExitFullscreen();
+        }
+    }
+
+    async function toggleFrameFullscreen(viewport) {
+        const target = viewport || null;
+        const frameImage = frameViewportImage(target);
+        if (!target || !frameImage?.src) return;
+        try {
+            if (isElementFullscreen(target)) {
+                await exitFullscreen();
+            } else {
+                await requestElementFullscreen(target);
+            }
+        } catch (_) {
+            // Ignore rejected fullscreen requests; the browser will enforce gesture rules.
+        } finally {
+            syncFrameFullscreenState();
+        }
+    }
+
+    function onFrameViewportKeydown(event) {
+        if (event.key !== 'Enter' && event.key !== ' ') return;
+        event.preventDefault();
+        toggleFrameFullscreen(event.currentTarget);
+    }
+
+    function onFrameViewportClick(event) {
+        toggleFrameFullscreen(event.currentTarget);
+    }
+
     function withCacheBust(url, token) {
         if (!url) return '';
         const suffix = token ? encodeURIComponent(token) : String(Date.now());
@@ -1983,6 +2074,16 @@
         els.manualSaveButton.addEventListener('click', saveNow);
         els.loadSaveButton.addEventListener('click', loadSelectedSave);
         els.loadRecommendedButton.addEventListener('click', loadRecommendedSave);
+        const viewports = frameViewports();
+        if (viewports.length) {
+            syncFrameFullscreenState();
+            viewports.forEach((viewport) => {
+                viewport.addEventListener('click', onFrameViewportClick);
+                viewport.addEventListener('keydown', onFrameViewportKeydown);
+            });
+            document.addEventListener('fullscreenchange', syncFrameFullscreenState);
+            document.addEventListener('webkitfullscreenchange', syncFrameFullscreenState);
+        }
         // Prompt textarea: expand on focus, collapse on blur-when-empty
         if (els.piGoalInput) {
             els.piGoalInput.addEventListener('focus', () => {
