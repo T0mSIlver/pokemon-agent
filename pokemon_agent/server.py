@@ -513,6 +513,7 @@ def _compact_screen_text(screen_text: Optional[dict]) -> Optional[dict]:
         "source": screen_text.get("source"),
         "ui_mode": screen_text.get("ui_mode"),
         "dialog_active": screen_text.get("dialog_active"),
+        "note": _truncate_text(screen_text.get("note"), 220),
     }
 
 

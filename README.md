@@ -48,6 +48,12 @@ pip install pokemon-agent pyboy
 pip install pokemon-agent[dashboard] pyboy
 ```
 
+For OCR-backed dialogue extraction, install the native Tesseract binary as well:
+
+```bash
+brew install tesseract
+```
+
 > **Note:** You must provide your own ROM file. This package does not include any game ROMs.
 
 ### Start the Server Manually

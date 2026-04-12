@@ -2756,6 +2756,11 @@ class AgentRuntime:
             f"Fallback: {', '.join(turn_plan.get('fallback_actions', [])) or 'not set'}",
             "",
             f"Screen text: {bundle['screen_text']['text']}",
+            (
+                f"OCR note: {bundle['screen_text']['note']}"
+                if (bundle.get("screen_text") or {}).get("note")
+                else ""
+            ),
             "",
             f"Dialog continue: {dialog_guidance.get('should_continue')}",
             f"Battle mode: {battle_guidance.get('recommended_mode')}",
@@ -3139,6 +3144,7 @@ class AgentRuntime:
                 "source": (bundle.get("screen_text") or {}).get("source"),
                 "ui_mode": (bundle.get("screen_text") or {}).get("ui_mode"),
                 "dialog_active": (bundle.get("screen_text") or {}).get("dialog_active"),
+                "note": _truncate_text_block((bundle.get("screen_text") or {}).get("note"), 220),
             },
             "objective": {
                 "current": {
