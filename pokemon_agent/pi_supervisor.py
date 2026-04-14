@@ -5,12 +5,14 @@ from __future__ import annotations
 import asyncio
 import contextlib
 import json
+import os
 import re
 import shutil
 from collections import deque
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any, Awaitable, Callable, Optional
+from urllib.parse import urlparse
 
 from pokemon_agent.agent_runtime import utc_now
 from pokemon_agent.harness.prompting import CONTINUE_PROMPT, default_supervisor_prompt
@@ -29,6 +31,14 @@ def _repo_root() -> Path:
 
 def default_skill_path() -> Path:
     return _repo_root() / "skill" / "SKILL.md"
+
+
+def _server_port(server_url: str) -> Optional[int]:
+    try:
+        parsed = urlparse(server_url)
+    except Exception:  # noqa: BLE001
+        return None
+    return parsed.port
 
 
 def _truncate(value: str, limit: int = 320) -> str:
@@ -727,6 +737,14 @@ class PiSupervisor:
             cwd=str(self.workspace_dir),
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.PIPE,
+            env={
+                **os.environ,
+                **(
+                    {"PORT": str(port)}
+                    if (port := _server_port(self.server_url)) is not None
+                    else {}
+                ),
+            },
         )
         self._process = process
         self.current_pid = process.pid

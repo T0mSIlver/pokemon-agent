@@ -1366,6 +1366,12 @@ async def agent_observe(req: Optional[ObserveRequest] = None):
         raise HTTPException(status_code=500, detail=f"Agent observe error: {e}")
 
 
+@app.get("/agent/observe")
+async def agent_observe_get():
+    """GET alias for agent_observe to match simple curl refreshes."""
+    return await agent_observe(None)
+
+
 @app.post("/agent/plan")
 async def agent_plan(req: TurnPlanInput):
     """Validate and persist one strict turn plan for the latest observation."""

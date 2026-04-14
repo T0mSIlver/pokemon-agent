@@ -54,12 +54,12 @@ Do this every turn:
 1. Refresh the turn context.
 
 ```bash
-curl -s -X POST http://localhost:8765/agent/observe | python3 -m json.tool
+curl -s http://localhost:8765/agent/observe | python3 -m json.tool
 ```
 
 2. Read these files in this order:
-   - `latest_frame_annotated.png`
-   - `latest_frame.png` only if the overlay hides detail
+   - Use the `read` tool on `latest_frame_annotated.png` every turn
+   - Use the `read` tool on `latest_frame.png` too if the overlay hides detail, text, or sprite placement
    - `turn_context.json`
    - `turn_plan.json`
    - `recovery_saves.json` only if the context says recovery matters
@@ -68,23 +68,30 @@ curl -s -X POST http://localhost:8765/agent/observe | python3 -m json.tool
    - the exact `observation_id` and `objective_id` to copy
    - the allowed branch shape for each mode
    - the valid measurable `expected_outcome` fields
+   - an `expected_outcome_template` example you can copy and adapt
+
+   `turn_context.json` also surfaces navigation details that matter for Oak's Lab style NPC routing:
+   - `navigation.visible_sprites`
+   - `navigation.ascii_window`
+   - `navigation.ascii_legend`
+   - `objective.route_hint` and `objective.target_npcs`
 
 3. Submit one strict plan for the current observation.
 
 ```bash
-curl -s -X POST http://localhost:8765/agent/plan \
-  -H "Content-Type: application/json" \
-  -d '{
-        "observation_id": "<copy from turn_context.json>",
-        "objective_id": "<copy from turn_context.json>",
-        "intent": "Probe one tile north.",
-        "mode": "overworld",
-        "primary_branch": {"kind": "raw_actions", "actions": ["walk_up"]},
-        "expected_outcome": {
-          "summary": "Move one tile north.",
-          "position_delta": {"dx": 0, "dy": -1}
-        }
-      }' | python3 -m json.tool
+bash scripts/agent_curl.sh /agent/plan <<'JSON' | python3 -m json.tool
+{
+  "observation_id": "<copy from turn_context.json>",
+  "objective_id": "<copy from turn_context.json>",
+  "intent": "Probe one tile north.",
+  "mode": "overworld",
+  "primary_branch": {"kind": "raw_actions", "actions": ["walk_up"]},
+  "expected_outcome": {
+    "summary": "Move one tile north.",
+    "position_delta": {"dx": 0, "dy": -1}
+  }
+}
+JSON
 ```
 
 4. Execute exactly one validated batch.
@@ -105,6 +112,9 @@ Use these fields as the canonical decision surface:
 - `ui.mode`, `ui.screen_text`
 - `position.map_name`, `position.x`, `position.y`, `position.facing`
 - `navigation.valid_moves`
+- `navigation.visible_sprites`
+- `navigation.ascii_window`
+- `navigation.ascii_legend`
 - `navigation.interaction`
 - `navigation.route_hints`
 - `navigation.landmarks`
@@ -116,8 +126,9 @@ Use these fields as the canonical decision surface:
 
 The screenshot read is mandatory.
 
-- Use the attached annotated frame as primary evidence every turn.
-- Use the raw frame only when the overlay hides important detail.
+- Use the `read` tool on the attached annotated frame every turn before planning.
+- Use the `read` tool on the raw frame when the overlay hides important detail, text, or sprite placement.
+- Do not skip image inspection just because `turn_context.json` already exists.
 - Do not infer terrain from text alone.
 
 ## Planning Rules
@@ -127,6 +138,7 @@ The screenshot read is mandatory.
 - `mode=overworld`, `dialog`, and `battle` require a `raw_actions` primary branch.
 - `mode=navigation` requires a `navigation` primary branch.
 - Every plan must include a measurable `expected_outcome`.
+- Prefer copying `planning.expected_outcome_template` and editing it instead of inventing shape from scratch.
 - If `plan_status.state` is `drifted`, `invalid`, or `stale`, stop and re-observe before acting again.
 
 ## Decision Order
@@ -140,6 +152,8 @@ Use this order:
 5. Use `raw_actions` only for single-step nudges (`walk_*` x1), dialog (`press_a`/`press_b`), or battle menus.
 6. Otherwise use the annotated frame, valid moves, and interaction probe to explore carefully.
 
+If `objective.route_hint` says `You are inside <map>...`, treat that as the current-map objective anchor rather than the older cross-map route summary.
+
 When `recent_action.plan_state` is `drifted` or `partial`, read `recent_action.summary` — it shows exactly how many of the requested actions executed and where the block happened. Drop your next batch to a single action and reassess, or switch to `mode=navigation`.
 
 ## Saving And Recovery
@@ -147,20 +161,20 @@ When `recent_action.plan_state` is `drifted` or `partial`, read `recent_action.s
 Manual save:
 
 ```bash
-curl -s -X POST http://localhost:8765/save \
-  -H "Content-Type: application/json" \
-  -d '{"name": "before_brock"}' | python3 -m json.tool
+bash scripts/agent_curl.sh /save <<'JSON' | python3 -m json.tool
+{"name": "before_brock"}
+JSON
 ```
 
 Load recovery:
 
 ```bash
-curl -s -X POST http://localhost:8765/load \
-  -H "Content-Type: application/json" \
-  -d '{"name": "before_brock"}' | python3 -m json.tool
+bash scripts/agent_curl.sh /load <<'JSON' | python3 -m json.tool
+{"name": "before_brock"}
+JSON
 ```
 
-Save when the context or dashboard clearly indicates a checkpoint or risky segment. Reload when `recovery.stuck_level` is `danger` or `recovery_saves.json` presents a clearly safer candidate.
+Save when the context or dashboard clearly indicates a checkpoint or risky segment. Reload when `recovery.stuck_level` is `danger` or `recovery_saves.json` presents a clearly safer candidate. If `recovery.recovery_command` is present in `turn_context.json`, you can run it directly.
 
 ## Dashboard Use
 

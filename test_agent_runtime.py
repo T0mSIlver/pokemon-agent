@@ -1133,6 +1133,36 @@ def test_agent_observe_endpoint_accepts_empty_body(tmp_path: Path, monkeypatch):
     assert response.json()["reason"] == "manual_observe"
 
 
+def test_agent_observe_get_alias_returns_contract(tmp_path: Path, monkeypatch):
+    emulator = FakeEmulator()
+    store = NavigationStore(tmp_path / "navigation.json")
+    snapshot = make_snapshot()
+    navigation = make_navigation_payload(store, snapshot)
+    runtime = AgentRuntime(
+        data_dir=tmp_path / "data",
+        workspace_dir=tmp_path / "workspace",
+    )
+
+    monkeypatch.setattr(server, "_runtime", runtime)
+    monkeypatch.setattr(server, "_emulator", emulator)
+    monkeypatch.setattr(server, "_navigation_store", store)
+    monkeypatch.setattr(
+        server,
+        "_get_state_dict",
+        lambda: make_state(map_name="Viridian City", map_id=1, has_pokedex=True, x=10, y=10),
+    )
+    monkeypatch.setattr(server, "_get_navigation_payload_sync", lambda goal=None: navigation)
+
+    with TestClient(server.app) as client:
+        response = client.get("/agent/observe")
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["reason"] == "manual_observe"
+    assert payload["observation_id"].startswith("obs-")
+    assert Path(payload["artifacts"]["turn_context_json"]).exists()
+
+
 def test_artifact_endpoint_serves_workspace_files(tmp_path: Path, monkeypatch):
     runtime = AgentRuntime(
         data_dir=tmp_path / "data",
