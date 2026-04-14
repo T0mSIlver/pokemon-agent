@@ -28,7 +28,7 @@ from .planning import (
     store_validated_plan,
     validate_turn_plan_submission,
 )
-from .prompting import CONTINUE_PROMPT, default_supervisor_prompt
+from .prompting import CONTINUE_PROMPT, continue_supervisor_prompt, default_supervisor_prompt
 
 __all__ = [
     "ActionBudget",
@@ -50,6 +50,7 @@ __all__ = [
     "TurnPlanInput",
     "build_plan_execution_trace",
     "build_turn_context",
+    "continue_supervisor_prompt",
     "default_plan_status",
     "default_supervisor_prompt",
     "default_turn_plan",

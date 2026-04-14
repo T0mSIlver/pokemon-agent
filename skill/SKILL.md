@@ -58,14 +58,14 @@ curl -s http://localhost:8765/agent/observe | python3 -m json.tool
 ```
 
 2. Read these files in this order:
-   - Use the `read` tool on `latest_frame_annotated.png` every turn
+   - Use the `read` tool on `latest_frame_annotated.png` every turn before any `/agent/plan` or `/agent/act` call
    - Use the `read` tool on `latest_frame.png` too if the overlay hides detail, text, or sprite placement
    - `turn_context.json`
    - `turn_plan.json`
    - `recovery_saves.json` only if the context says recovery matters
 
    `turn_context.json` includes a `planning` section with:
-   - the exact `observation_id` and `objective_id` to copy
+   - the exact `planning.observation_id` and `planning.objective_id` to copy
    - the allowed branch shape for each mode
    - the valid measurable `expected_outcome` fields
    - an `expected_outcome_template` example you can copy and adapt
@@ -127,6 +127,7 @@ Use these fields as the canonical decision surface:
 The screenshot read is mandatory.
 
 - Use the `read` tool on the attached annotated frame every turn before planning.
+- Treat a turn without that annotated-frame read as a failed turn that must be corrected on the next step.
 - Use the `read` tool on the raw frame when the overlay hides important detail, text, or sprite placement.
 - Do not skip image inspection just because `turn_context.json` already exists.
 - Do not infer terrain from text alone.
@@ -134,12 +135,13 @@ The screenshot read is mandatory.
 ## Planning Rules
 
 - The plan's `observation_id` must match the current `turn_context.json`.
-- The plan's `objective_id` must match the current objective in `turn_context.json`.
+- The plan's `objective_id` must match `turn_context.json`'s `planning.objective_id`.
 - `mode=overworld`, `dialog`, and `battle` require a `raw_actions` primary branch.
 - `mode=navigation` requires a `navigation` primary branch.
 - Every plan must include a measurable `expected_outcome`.
 - Prefer copying `planning.expected_outcome_template` and editing it instead of inventing shape from scratch.
 - If `plan_status.state` is `drifted`, `invalid`, or `stale`, stop and re-observe before acting again.
+- Use `bash scripts/agent_curl.sh` with a heredoc for JSON POST bodies instead of hand-written shell quoting.
 
 ## Decision Order
 

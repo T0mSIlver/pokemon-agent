@@ -15,7 +15,11 @@ from typing import Any, Awaitable, Callable, Optional
 from urllib.parse import urlparse
 
 from pokemon_agent.agent_runtime import utc_now
-from pokemon_agent.harness.prompting import CONTINUE_PROMPT, default_supervisor_prompt
+from pokemon_agent.harness.prompting import (
+    CONTINUE_PROMPT,
+    continue_supervisor_prompt,
+    default_supervisor_prompt,
+)
 
 JsonDict = dict[str, Any]
 EventSink = Callable[[JsonDict], Awaitable[None]]
@@ -23,6 +27,8 @@ StreamSink = Callable[[JsonDict], Awaitable[None]]
 
 DEFAULT_TOOLS = ["read", "bash", "edit", "write", "grep", "find", "ls"]
 VISION_ATTACHMENT_FILES = ("latest_frame_annotated.png", "latest_frame.png")
+ANNOTATED_FRAME_NAME = "latest_frame_annotated.png"
+RAW_FRAME_NAME = "latest_frame.png"
 
 
 def _repo_root() -> Path:
@@ -313,7 +319,7 @@ class PiSupervisor:
         self.last_assistant_thinking = ""
         self.latest_turn_summary = ""
         self.current_tool_calls: dict[str, JsonDict] = {}
-        self.recent_tools: deque[JsonDict] = deque(maxlen=24)
+        self.recent_tools: list[JsonDict] = []
         self.recent_events: deque[JsonDict] = deque(maxlen=120)
         self.stderr_tail: deque[str] = deque(maxlen=30)
         self.transcript: deque[JsonDict] = deque(maxlen=160)
@@ -331,6 +337,9 @@ class PiSupervisor:
         self.last_compaction_at: Optional[str] = None
         self._pending_thinking_in_message: bool = False
         self._model_limits_cache: dict[str, Optional[JsonDict]] = {}
+        self.current_turn_vision: JsonDict = self._new_turn_vision([])
+        self.last_turn_vision: JsonDict = self._new_turn_vision([])
+        self.vision_violation_count: int = 0
 
         self._task: Optional[asyncio.Task[None]] = None
         self._process: Optional[asyncio.subprocess.Process] = None
@@ -355,6 +364,66 @@ class PiSupervisor:
             "server_url": self.server_url,
             "tools": DEFAULT_TOOLS,
         }
+
+    def _new_turn_vision(self, attachment_paths: list[Path]) -> JsonDict:
+        annotated_path = next(
+            (str(path) for path in attachment_paths if path.name == ANNOTATED_FRAME_NAME),
+            None,
+        )
+        raw_path = next((str(path) for path in attachment_paths if path.name == RAW_FRAME_NAME), None)
+        return {
+            "annotated_path": annotated_path,
+            "annotated_available": annotated_path is not None,
+            "annotated_read": False,
+            "raw_path": raw_path,
+            "raw_available": raw_path is not None,
+            "raw_read": False,
+            "read_sequence": [],
+            "used_vision": False,
+            "compliant": None,
+            "violation_reason": "",
+        }
+
+    def _record_turn_vision_read(self, path: str) -> None:
+        if not path:
+            return
+        filename = Path(path).name
+        if filename not in {ANNOTATED_FRAME_NAME, RAW_FRAME_NAME}:
+            return
+        sequence = self.current_turn_vision.setdefault("read_sequence", [])
+        if filename == ANNOTATED_FRAME_NAME and not self.current_turn_vision.get("annotated_read"):
+            self.current_turn_vision["annotated_read"] = True
+            sequence.append(path)
+        elif filename == RAW_FRAME_NAME and not self.current_turn_vision.get("raw_read"):
+            self.current_turn_vision["raw_read"] = True
+            sequence.append(path)
+        self.current_turn_vision["used_vision"] = bool(
+            self.current_turn_vision.get("annotated_read") or self.current_turn_vision.get("raw_read")
+        )
+
+    def _finalize_turn_vision(self) -> JsonDict:
+        vision = dict(self.current_turn_vision)
+        annotated_available = bool(vision.get("annotated_available"))
+        raw_available = bool(vision.get("raw_available"))
+        annotated_read = bool(vision.get("annotated_read"))
+        raw_read = bool(vision.get("raw_read"))
+        vision["used_vision"] = annotated_read or raw_read
+
+        violation_reason = ""
+        if annotated_available and not annotated_read:
+            violation_reason = f"{ANNOTATED_FRAME_NAME} was attached but never read"
+        elif not annotated_available and raw_available and not raw_read:
+            violation_reason = f"{RAW_FRAME_NAME} was attached but no frame was read"
+
+        vision["violation_reason"] = violation_reason
+        vision["compliant"] = not violation_reason
+        return vision
+
+    def _current_continue_prompt(self) -> str:
+        reason = ""
+        if self.last_turn_vision.get("compliant") is False:
+            reason = str(self.last_turn_vision.get("violation_reason") or "")
+        return continue_supervisor_prompt(vision_violation_reason=reason)
 
     async def _refresh_model_limits(self) -> None:
         chosen_provider, chosen_model = normalize_model_lookup(self.provider, self.model)
@@ -450,6 +519,11 @@ class PiSupervisor:
                 "tokens_after": self.last_compaction_tokens_after,
                 "at": self.last_compaction_at,
             },
+            "vision": {
+                "current_turn": self.current_turn_vision,
+                "last_turn": self.last_turn_vision,
+                "violations": self.vision_violation_count,
+            },
             "config": self._config_snapshot(),
         }
 
@@ -524,6 +598,9 @@ class PiSupervisor:
         self.last_compaction_tokens_after = None
         self.last_compaction_at = None
         self._pending_thinking_in_message = False
+        self.current_turn_vision = self._new_turn_vision([])
+        self.last_turn_vision = self._new_turn_vision([])
+        self.vision_violation_count = 0
         self._stop_requested = False
         await self._refresh_model_limits()
 
@@ -545,7 +622,7 @@ class PiSupervisor:
             raise ValueError("Pi supervisor is already running.")
         if not self.session_id:
             raise ValueError("Pi supervisor has no previous session to continue.")
-        self.current_prompt = CONTINUE_PROMPT
+        self.current_prompt = self._current_continue_prompt()
         self.last_prompt = self.current_prompt
         self.status = "starting"
         self.status_reason = "Continuing the existing Pi session."
@@ -555,6 +632,7 @@ class PiSupervisor:
         self.current_assistant_text = ""
         self.current_assistant_thinking = ""
         self.current_tool_calls.clear()
+        self.current_turn_vision = self._new_turn_vision(self._vision_attachment_paths())
         await self._refresh_model_limits()
         await self._emit_major(
             "pi_supervisor_status",
@@ -639,7 +717,7 @@ class PiSupervisor:
                     self.status_reason = f"Reached max turns ({self.max_turns})."
                     break
                 self.continue_count += 1
-                current_prompt = CONTINUE_PROMPT
+                current_prompt = self._current_continue_prompt()
                 use_continue = True
                 self.next_auto_continue_at = _utc_after(self.continue_delay_seconds)
                 self.status = "running"
@@ -702,6 +780,7 @@ class PiSupervisor:
         self.current_assistant_text = ""
         self.current_assistant_thinking = ""
         self.current_tool_calls.clear()
+        self.current_turn_vision = self._new_turn_vision(attachment_paths)
         self.last_event_at = utc_now()
         prompt_entry = self._append_transcript(
             direction="outbound",
@@ -980,10 +1059,19 @@ class PiSupervisor:
         self.turns_completed += 1
         self.last_turn_completed_at = utc_now()
         self.latest_turn_summary = _truncate(summary_text or "Pi completed a turn.", 220)
+        vision = self._finalize_turn_vision()
+        self.last_turn_vision = vision
+        if not vision.get("compliant"):
+            self.vision_violation_count += 1
+            self.latest_turn_summary = _truncate(
+                f"{self.latest_turn_summary} Vision policy violated: {vision['violation_reason']}.",
+                220,
+            )
         payload: JsonDict = {
             "summary": self.latest_turn_summary,
             "turns_completed": self.turns_completed,
             "tool_result_count": tool_result_count,
+            "vision": vision,
         }
         if synthetic:
             payload["synthetic"] = True
@@ -992,6 +1080,15 @@ class PiSupervisor:
                 260,
             )
         await self._emit_major("pi_turn_end", payload)
+        if not vision.get("compliant"):
+            await self._emit_major(
+                "pi_turn_vision_violation",
+                {
+                    "summary": vision["violation_reason"],
+                    "vision": vision,
+                    "turns_completed": self.turns_completed,
+                },
+            )
 
     async def _handle_event(self, event: JsonDict) -> None:
         event_type = event.get("type")
@@ -1176,6 +1273,7 @@ class PiSupervisor:
                 "tool_call_id": event.get("toolCallId"),
                 "tool_name": event.get("toolName"),
                 "summary": summary,
+                "file_hint": file_hint,
                 "args_preview": preview_payload(args),
                 "args": payload_text(args),
                 "started_at": utc_now(),
@@ -1224,6 +1322,7 @@ class PiSupervisor:
                 "tool_call_id": tool_call_id,
                 "tool_name": event.get("toolName"),
                 "summary": event.get("toolName", "tool"),
+                "file_hint": None,
                 "args": "",
                 "args_preview": "",
                 "started_at": utc_now(),
@@ -1233,6 +1332,10 @@ class PiSupervisor:
             entry["finished_at"] = utc_now()
             entry["result"] = payload_text(event.get("result"))
             entry["result_preview"] = preview_payload(event.get("result"))
+            if entry["status"] == "completed" and entry.get("tool_name") == "read":
+                file_hint = entry.get("file_hint")
+                if isinstance(file_hint, str):
+                    self._record_turn_vision_read(file_hint)
             self.recent_tools.append(entry)
             self._refresh_turn_plan_preview_from_workspace()
             summary = entry["summary"]
@@ -1247,6 +1350,20 @@ class PiSupervisor:
                     "result_preview": entry["result_preview"],
                 },
             )
+            if entry["status"] == "completed" and entry.get("tool_name") == "read":
+                file_hint = entry.get("file_hint")
+                if isinstance(file_hint, str) and Path(file_hint).name in {
+                    ANNOTATED_FRAME_NAME,
+                    RAW_FRAME_NAME,
+                }:
+                    await self._emit_major(
+                        "pi_vision_read",
+                        {
+                            "summary": f"Vision read: {Path(file_hint).name}",
+                            "path": file_hint,
+                            "vision": dict(self.current_turn_vision),
+                        },
+                    )
             return
 
         if event_type == "queue_update":

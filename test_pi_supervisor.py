@@ -5,7 +5,12 @@ import pytest
 from pokemon_agent.pi_supervisor import PiSupervisor, parse_model_limits_output
 
 
-def make_fake_pi_script(tmp_path: Path, *, include_turn_end: bool = True) -> Path:
+def make_fake_pi_script(
+    tmp_path: Path,
+    *,
+    include_turn_end: bool = True,
+    include_frame_read: bool = False,
+) -> Path:
     script = tmp_path / "fake-pi"
     template = """#!/usr/bin/env python3
 import json
@@ -33,6 +38,26 @@ if not session_file.exists():
     )
 message = "Continued turn." if resume else "Initial turn."
 
+vision_events = []
+if __INCLUDE_FRAME_READ__:
+    vision_events = [
+        {
+            "type": "tool_execution_start",
+            "toolCallId": "tool-read-1",
+            "toolName": "read",
+            "args": {
+                "path": str(workspace_dir / "latest_frame_annotated.png"),
+            },
+        },
+        {
+            "type": "tool_execution_end",
+            "toolCallId": "tool-read-1",
+            "toolName": "read",
+            "result": {"ok": True},
+            "isError": False,
+        },
+    ]
+
 events = [
     {"type": "session", "id": "session-123", "cwd": str(workspace_dir)},
     {"type": "agent_start"},
@@ -43,6 +68,7 @@ events = [
         "message": {"role": "assistant", "content": []},
         "assistantMessageEvent": {"type": "thinking_delta", "delta": "Inspecting the frame."},
     },
+    *vision_events,
     {
         "type": "tool_execution_start",
         "toolCallId": "tool-1",
@@ -106,7 +132,9 @@ for event in events:
     print(json.dumps(event), flush=True)
 """
     script.write_text(
-        template.replace("__INCLUDE_TURN_END__", repr(include_turn_end)),
+        template.replace("__INCLUDE_TURN_END__", repr(include_turn_end)).replace(
+            "__INCLUDE_FRAME_READ__", repr(include_frame_read)
+        ),
         encoding="utf-8",
     )
     script.chmod(0o755)
@@ -145,7 +173,7 @@ async def test_pi_supervisor_tracks_turn_output_and_tools(tmp_path: Path):
     assert "Inspecting the frame." in snapshot["last_assistant_thinking"]
     assert snapshot["turn_plan_preview"]["payload"]["objective_id"] == "get_oaks_parcel"
     assert snapshot["recent_tools"][-1]["tool_name"] == "write"
-    assert '"objective_id": "get_oaks_parcel"' in snapshot["recent_tools"][-1]["args"]
+    assert "get_oaks_parcel" in snapshot["recent_tools"][-1]["args"]
     assert '"ok": true' in snapshot["recent_tools"][-1]["result"]
     assert any(
         entry["direction"] == "outbound" and entry["role"] == "user"
@@ -158,6 +186,40 @@ async def test_pi_supervisor_tracks_turn_output_and_tools(tmp_path: Path):
     assert any(event["type"] == "pi_turn_end" for event in events)
     assert any(event["type"] == "pi_text_delta" for event in streamed)
     assert any(event["type"] == "pi_prompt_sent" for event in streamed)
+
+
+@pytest.mark.asyncio
+async def test_pi_supervisor_retains_full_tool_history_for_session(tmp_path: Path):
+    supervisor = PiSupervisor(
+        workspace_dir=tmp_path / "workspace",
+        server_url="http://127.0.0.1:8765",
+    )
+
+    for index in range(30):
+        tool_call_id = f"tool-{index}"
+        await supervisor._handle_event(
+            {
+                "type": "tool_execution_start",
+                "toolCallId": tool_call_id,
+                "toolName": "bash",
+                "args": {"command": f"echo {index}"},
+            }
+        )
+        await supervisor._handle_event(
+            {
+                "type": "tool_execution_end",
+                "toolCallId": tool_call_id,
+                "toolName": "bash",
+                "result": {"ok": True, "index": index},
+                "isError": False,
+            }
+        )
+
+    snapshot = supervisor.state_snapshot()
+    assert snapshot["counts"]["tool_calls"] == 30
+    assert len(snapshot["recent_tools"]) == 30
+    assert snapshot["recent_tools"][0]["tool_call_id"] == "tool-0"
+    assert snapshot["recent_tools"][-1]["tool_call_id"] == "tool-29"
 
 
 @pytest.mark.asyncio
@@ -195,6 +257,102 @@ async def test_pi_supervisor_attaches_latest_frame_pngs_to_turn_prompt(tmp_path:
 
     prompt_event = next(event for event in streamed if event["type"] == "pi_prompt_sent")
     assert prompt_event["attachments"] == [str(annotated), str(raw)]
+
+
+@pytest.mark.asyncio
+async def test_pi_supervisor_flags_turns_that_skip_annotated_frame_reads(tmp_path: Path):
+    events: list[dict] = []
+    fake_pi = make_fake_pi_script(tmp_path)
+    workspace_dir = tmp_path / "workspace"
+    workspace_dir.mkdir(parents=True, exist_ok=True)
+    (workspace_dir / "latest_frame_annotated.png").write_bytes(b"annotated-frame")
+    (workspace_dir / "latest_frame.png").write_bytes(b"raw-frame")
+
+    async def sink(event: dict) -> None:
+        events.append(event)
+
+    supervisor = PiSupervisor(
+        workspace_dir=workspace_dir,
+        server_url="http://127.0.0.1:8765",
+        event_sink=sink,
+        pi_binary=str(fake_pi),
+    )
+
+    await supervisor.start(goal="Reach the next checkpoint.", auto_continue=False)
+    await supervisor.wait_until_idle(timeout=5)
+
+    snapshot = supervisor.state_snapshot()
+    vision = snapshot["vision"]["last_turn"]
+    assert vision["annotated_available"] is True
+    assert vision["annotated_read"] is False
+    assert vision["compliant"] is False
+    assert snapshot["vision"]["violations"] == 1
+    violation_event = next(event for event in events if event["type"] == "pi_turn_vision_violation")
+    assert "latest_frame_annotated.png" in violation_event["summary"]
+
+
+@pytest.mark.asyncio
+async def test_pi_supervisor_records_successful_annotated_frame_reads(tmp_path: Path):
+    events: list[dict] = []
+    fake_pi = make_fake_pi_script(tmp_path, include_frame_read=True)
+    workspace_dir = tmp_path / "workspace"
+    workspace_dir.mkdir(parents=True, exist_ok=True)
+    (workspace_dir / "latest_frame_annotated.png").write_bytes(b"annotated-frame")
+    (workspace_dir / "latest_frame.png").write_bytes(b"raw-frame")
+
+    async def sink(event: dict) -> None:
+        events.append(event)
+
+    supervisor = PiSupervisor(
+        workspace_dir=workspace_dir,
+        server_url="http://127.0.0.1:8765",
+        event_sink=sink,
+        pi_binary=str(fake_pi),
+    )
+
+    await supervisor.start(goal="Reach the next checkpoint.", auto_continue=False)
+    await supervisor.wait_until_idle(timeout=5)
+
+    snapshot = supervisor.state_snapshot()
+    vision = snapshot["vision"]["last_turn"]
+    assert vision["annotated_read"] is True
+    assert vision["used_vision"] is True
+    assert vision["compliant"] is True
+    assert snapshot["vision"]["violations"] == 0
+    assert any(event["type"] == "pi_vision_read" for event in events)
+
+
+@pytest.mark.asyncio
+async def test_pi_supervisor_auto_continue_warns_after_vision_violation(tmp_path: Path):
+    streamed: list[dict] = []
+    fake_pi = make_fake_pi_script(tmp_path)
+    workspace_dir = tmp_path / "workspace"
+    workspace_dir.mkdir(parents=True, exist_ok=True)
+    (workspace_dir / "latest_frame_annotated.png").write_bytes(b"annotated-frame")
+    (workspace_dir / "latest_frame.png").write_bytes(b"raw-frame")
+
+    async def stream(event: dict) -> None:
+        streamed.append(event)
+
+    supervisor = PiSupervisor(
+        workspace_dir=workspace_dir,
+        server_url="http://127.0.0.1:8765",
+        stream_sink=stream,
+        pi_binary=str(fake_pi),
+    )
+
+    await supervisor.start(
+        goal="Reach the next checkpoint.",
+        auto_continue=True,
+        max_turns=2,
+        continue_delay_seconds=0,
+    )
+    await supervisor.wait_until_idle(timeout=5)
+
+    prompt_events = [event for event in streamed if event["type"] == "pi_prompt_sent"]
+    assert len(prompt_events) == 2
+    assert "violated the frame-inspection policy" in prompt_events[1]["prompt"]
+    assert "Do not call /agent/plan or /agent/act until the frame read succeeds." in prompt_events[1]["prompt"]
 
 
 @pytest.mark.asyncio
