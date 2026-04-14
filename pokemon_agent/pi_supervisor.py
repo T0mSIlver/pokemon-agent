@@ -344,6 +344,8 @@ class PiSupervisor:
         self._task: Optional[asyncio.Task[None]] = None
         self._process: Optional[asyncio.subprocess.Process] = None
         self._stop_requested = False
+        self._requested_process_shutdown = False
+        self._current_cycle_has_tool_call = False
         self._current_turn_completed = False
 
     @property
@@ -424,6 +426,16 @@ class PiSupervisor:
         if self.last_turn_vision.get("compliant") is False:
             reason = str(self.last_turn_vision.get("violation_reason") or "")
         return continue_supervisor_prompt(vision_violation_reason=reason)
+
+    async def _request_process_shutdown_after_turn(self) -> None:
+        if self._requested_process_shutdown:
+            return
+        process = self._process
+        if process is None or process.returncode is not None:
+            return
+        self._requested_process_shutdown = True
+        with contextlib.suppress(ProcessLookupError):
+            process.terminate()
 
     async def _refresh_model_limits(self) -> None:
         chosen_provider, chosen_model = normalize_model_lookup(self.provider, self.model)
@@ -601,6 +613,8 @@ class PiSupervisor:
         self.current_turn_vision = self._new_turn_vision([])
         self.last_turn_vision = self._new_turn_vision([])
         self.vision_violation_count = 0
+        self._current_cycle_has_tool_call = False
+        self._requested_process_shutdown = False
         self._stop_requested = False
         await self._refresh_model_limits()
 
@@ -632,6 +646,8 @@ class PiSupervisor:
         self.current_assistant_text = ""
         self.current_assistant_thinking = ""
         self.current_tool_calls.clear()
+        self._current_cycle_has_tool_call = False
+        self._requested_process_shutdown = False
         self.current_turn_vision = self._new_turn_vision(self._vision_attachment_paths())
         await self._refresh_model_limits()
         await self._emit_major(
@@ -776,9 +792,11 @@ class PiSupervisor:
         self.status = "running"
         self.status_reason = "Pi is processing a turn."
         self.next_auto_continue_at = None
+        self._requested_process_shutdown = False
         self._current_turn_completed = False
         self.current_assistant_text = ""
         self.current_assistant_thinking = ""
+        self._current_cycle_has_tool_call = False
         self.current_tool_calls.clear()
         self.current_turn_vision = self._new_turn_vision(attachment_paths)
         self.last_event_at = utc_now()
@@ -841,7 +859,7 @@ class PiSupervisor:
             )
         self.current_pid = None
         self._process = None
-        if returncode != 0 and not self._stop_requested:
+        if returncode != 0 and not self._stop_requested and not self._requested_process_shutdown:
             stderr_preview = "\n".join(self.stderr_tail).strip()
             raise RuntimeError(
                 f"Pi exited with status {returncode}."
@@ -1261,12 +1279,16 @@ class PiSupervisor:
                     "usage": self.last_message_usage,
                 },
             )
+            if final_text and not self._current_cycle_has_tool_call and not self._current_turn_completed:
+                await self._complete_turn(summary_text=final_text, tool_result_count=0)
+                await self._request_process_shutdown_after_turn()
             return
 
         if event_type == "tool_execution_start":
             args = event.get("args") or {}
             file_hint = extract_file_hint(args)
             summary = event.get("toolName", "tool")
+            self._current_cycle_has_tool_call = True
             if file_hint:
                 summary = f"{summary}: {file_hint}"
             entry = {

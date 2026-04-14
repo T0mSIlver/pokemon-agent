@@ -2,6 +2,7 @@ from pathlib import Path
 
 import pytest
 
+from pokemon_agent.harness.prompting import CONTINUE_PROMPT
 from pokemon_agent.pi_supervisor import PiSupervisor, parse_model_limits_output
 
 
@@ -10,12 +11,15 @@ def make_fake_pi_script(
     *,
     include_turn_end: bool = True,
     include_frame_read: bool = False,
+    include_write_tool: bool = True,
+    linger_after_events: bool = False,
 ) -> Path:
     script = tmp_path / "fake-pi"
     template = """#!/usr/bin/env python3
 import json
 import pathlib
 import sys
+import time
 
 resume = "--continue" in sys.argv or "--session" in sys.argv
 session_dir = pathlib.Path(sys.argv[sys.argv.index("--session-dir") + 1])
@@ -58,6 +62,34 @@ if __INCLUDE_FRAME_READ__:
         },
     ]
 
+tool_events = []
+if __INCLUDE_WRITE_TOOL__:
+    tool_events = [
+        {
+            "type": "tool_execution_start",
+            "toolCallId": "tool-1",
+            "toolName": "write",
+            "args": {
+                "path": str(workspace_dir / "turn_plan.json"),
+                "content": json.dumps(
+                    {
+                        "objective_id": "get_oaks_parcel",
+                        "summary": "Move north carefully.",
+                        "planned_actions": ["walk_up"],
+                        "fallback_actions": ["walk_left"],
+                    }
+                ),
+            },
+        },
+        {
+            "type": "tool_execution_end",
+            "toolCallId": "tool-1",
+            "toolName": "write",
+            "result": {"ok": True},
+            "isError": False,
+        },
+    ]
+
 events = [
     {"type": "session", "id": "session-123", "cwd": str(workspace_dir)},
     {"type": "agent_start"},
@@ -69,29 +101,7 @@ events = [
         "assistantMessageEvent": {"type": "thinking_delta", "delta": "Inspecting the frame."},
     },
     *vision_events,
-    {
-        "type": "tool_execution_start",
-        "toolCallId": "tool-1",
-        "toolName": "write",
-        "args": {
-            "path": str(workspace_dir / "turn_plan.json"),
-            "content": json.dumps(
-                {
-                    "objective_id": "get_oaks_parcel",
-                    "summary": "Move north carefully.",
-                    "planned_actions": ["walk_up"],
-                    "fallback_actions": ["walk_left"],
-                }
-            ),
-        },
-    },
-    {
-        "type": "tool_execution_end",
-        "toolCallId": "tool-1",
-        "toolName": "write",
-        "result": {"ok": True},
-        "isError": False,
-    },
+    *tool_events,
     {
         "type": "message_update",
         "message": {"role": "assistant", "content": []},
@@ -130,11 +140,16 @@ if __INCLUDE_TURN_END__:
 
 for event in events:
     print(json.dumps(event), flush=True)
+
+if __LINGER_AFTER_EVENTS__:
+    while True:
+        time.sleep(1)
 """
     script.write_text(
-        template.replace("__INCLUDE_TURN_END__", repr(include_turn_end)).replace(
-            "__INCLUDE_FRAME_READ__", repr(include_frame_read)
-        ),
+        template.replace("__INCLUDE_TURN_END__", repr(include_turn_end))
+        .replace("__INCLUDE_FRAME_READ__", repr(include_frame_read))
+        .replace("__INCLUDE_WRITE_TOOL__", repr(include_write_tool))
+        .replace("__LINGER_AFTER_EVENTS__", repr(linger_after_events)),
         encoding="utf-8",
     )
     script.chmod(0o755)
@@ -389,6 +404,71 @@ async def test_pi_supervisor_auto_continue_uses_exact_session_file(tmp_path: Pat
 
     snapshot = supervisor.state_snapshot()
     assert snapshot["session_file"] == str(expected_session_file)
+
+
+@pytest.mark.asyncio
+async def test_pi_supervisor_completes_text_only_turn_without_tool_calls(tmp_path: Path):
+    fake_pi = make_fake_pi_script(
+        tmp_path,
+        include_turn_end=False,
+        include_write_tool=False,
+        linger_after_events=True,
+    )
+    supervisor = PiSupervisor(
+        workspace_dir=tmp_path / "workspace",
+        server_url="http://127.0.0.1:8765",
+        pi_binary=str(fake_pi),
+    )
+
+    await supervisor.start(goal="Reach the next checkpoint.", auto_continue=False)
+    await supervisor.wait_until_idle(timeout=5)
+
+    snapshot = supervisor.state_snapshot()
+    assert snapshot["status"] == "completed"
+    assert snapshot["turns_completed"] == 1
+    assert snapshot["last_assistant_text"] == "Initial turn."
+    assert snapshot["counts"]["tool_calls"] == 0
+    assert snapshot["recent_tools"] == []
+
+
+@pytest.mark.asyncio
+async def test_pi_supervisor_auto_continue_advances_after_text_only_message(tmp_path: Path):
+    streamed: list[dict] = []
+    fake_pi = make_fake_pi_script(
+        tmp_path,
+        include_turn_end=False,
+        include_write_tool=False,
+        linger_after_events=True,
+    )
+
+    async def stream(event: dict) -> None:
+        streamed.append(event)
+
+    supervisor = PiSupervisor(
+        workspace_dir=tmp_path / "workspace",
+        server_url="http://127.0.0.1:8765",
+        stream_sink=stream,
+        pi_binary=str(fake_pi),
+    )
+
+    await supervisor.start(
+        goal="Reach the next checkpoint.",
+        auto_continue=True,
+        max_turns=2,
+        continue_delay_seconds=0,
+    )
+    await supervisor.wait_until_idle(timeout=5)
+
+    prompt_events = [event for event in streamed if event["type"] == "pi_prompt_sent"]
+    snapshot = supervisor.state_snapshot()
+    assert snapshot["status"] == "completed"
+    assert snapshot["turns_completed"] == 2
+    assert snapshot["continue_count"] == 1
+    assert snapshot["counts"]["tool_calls"] == 0
+    assert snapshot["last_assistant_text"] == "Continued turn."
+    assert len(prompt_events) == 2
+    assert prompt_events[1]["resume"] is True
+    assert prompt_events[1]["prompt"] == CONTINUE_PROMPT
 
 
 @pytest.mark.asyncio
