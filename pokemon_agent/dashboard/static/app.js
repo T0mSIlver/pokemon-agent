@@ -551,6 +551,170 @@
         return text || fallback;
     }
 
+    function looksLikeSerializedJSON(text) {
+        if (typeof text !== 'string') return false;
+        const trimmed = text.trim();
+        if (!trimmed) return false;
+        const first = trimmed[0];
+        const last = trimmed[trimmed.length - 1];
+        return (
+            (first === '{' && last === '}') ||
+            (first === '[' && last === ']') ||
+            (first === '"' && last === '"')
+        );
+    }
+
+    function decodeToolPayloadValue(value, maxDepth = 2) {
+        let current = value;
+        for (let depth = 0; depth < maxDepth; depth += 1) {
+            if (typeof current !== 'string') break;
+            const trimmed = current.trim();
+            if (!looksLikeSerializedJSON(trimmed)) break;
+            try {
+                current = JSON.parse(trimmed);
+            } catch (_) {
+                break;
+            }
+        }
+        return current;
+    }
+
+    function isStructuredToolPayload(value) {
+        return Array.isArray(value) || Boolean(value && typeof value === 'object');
+    }
+
+    function formatToolScalar(value) {
+        const decoded = decodeToolPayloadValue(value, 1);
+        if (decoded === null) return 'null';
+        if (decoded === undefined) return '';
+        if (typeof decoded === 'string') return decoded;
+        if (typeof decoded === 'number' || typeof decoded === 'boolean') return String(decoded);
+        try {
+            return JSON.stringify(decoded, null, 2);
+        } catch (_) {
+            return String(decoded);
+        }
+    }
+
+    function toolPayloadPreview(value, fallback = 'No preview available.') {
+        const decoded = decodeToolPayloadValue(value);
+        if (decoded === null || decoded === undefined || decoded === '') {
+            return fallback;
+        }
+        if (typeof decoded === 'string') {
+            return truncate(decoded.replace(/\s+/g, ' ').trim(), 180) || fallback;
+        }
+        if (Array.isArray(decoded)) {
+            if (!decoded.length) return '[]';
+            return truncate(
+                decoded
+                    .slice(0, 3)
+                    .map((item, index) => {
+                        const child = decodeToolPayloadValue(item, 1);
+                        if (isStructuredToolPayload(child)) {
+                            const size = Array.isArray(child) ? child.length : Object.keys(child).length;
+                            return `[${index}]: ${Array.isArray(child) ? `${size} items` : `${size} fields`}`;
+                        }
+                        return `[${index}]: ${formatToolScalar(child)}`;
+                    })
+                    .join(' • '),
+                180
+            );
+        }
+        if (decoded && typeof decoded === 'object') {
+            const entries = Object.entries(decoded);
+            if (!entries.length) return '{}';
+            return truncate(
+                entries
+                    .slice(0, 3)
+                    .map(([key, child]) => {
+                        const normalized = decodeToolPayloadValue(child, 1);
+                        if (isStructuredToolPayload(normalized)) {
+                            const size = Array.isArray(normalized)
+                                ? normalized.length
+                                : Object.keys(normalized).length;
+                            return `${key}: ${Array.isArray(normalized) ? `${size} items` : `${size} fields`}`;
+                        }
+                        return `${key}: ${formatToolScalar(normalized)}`;
+                    })
+                    .join(' • '),
+                180
+            );
+        }
+        return truncate(String(decoded), 180) || fallback;
+    }
+
+    function createToolPayloadText(text, muted = false) {
+        const el = document.createElement('div');
+        el.className = 'hud-tool-payload-text';
+        if (muted) el.dataset.empty = 'true';
+        el.textContent = text;
+        return el;
+    }
+
+    function renderToolPayloadTree(value) {
+        const decoded = decodeToolPayloadValue(value);
+        if (!isStructuredToolPayload(decoded)) {
+            return createToolPayloadText(formatToolScalar(decoded));
+        }
+
+        const tree = document.createElement('div');
+        tree.className = 'hud-tool-payload-tree';
+        const entries = Array.isArray(decoded)
+            ? decoded.map((item, index) => [String(index), item])
+            : Object.entries(decoded);
+
+        if (!entries.length) {
+            tree.appendChild(createToolPayloadText(Array.isArray(decoded) ? '[]' : '{}', true));
+            return tree;
+        }
+
+        entries.forEach(([label, entryValue]) => {
+            const row = document.createElement('div');
+            row.className = 'hud-tool-payload-row';
+
+            const key = document.createElement('div');
+            key.className = 'hud-tool-payload-key';
+            key.textContent = label;
+
+            const val = document.createElement('div');
+            val.className = 'hud-tool-payload-value';
+
+            const normalized = decodeToolPayloadValue(entryValue);
+            if (isStructuredToolPayload(normalized)) {
+                const meta = document.createElement('div');
+                meta.className = 'hud-tool-payload-meta';
+                meta.textContent = Array.isArray(normalized)
+                    ? `${normalized.length} item${normalized.length === 1 ? '' : 's'}`
+                    : `${Object.keys(normalized).length} field${Object.keys(normalized).length === 1 ? '' : 's'}`;
+                val.appendChild(meta);
+                val.appendChild(renderToolPayloadTree(normalized));
+            } else {
+                val.appendChild(createToolPayloadText(formatToolScalar(normalized)));
+            }
+
+            row.appendChild(key);
+            row.appendChild(val);
+            tree.appendChild(row);
+        });
+
+        return tree;
+    }
+
+    function renderToolPayload(node, value, fallback) {
+        if (!node) return;
+        const decoded = decodeToolPayloadValue(value);
+        if (decoded === null || decoded === undefined || decoded === '') {
+            node.replaceChildren(createToolPayloadText(fallback, true));
+            return;
+        }
+        if (isStructuredToolPayload(decoded)) {
+            node.replaceChildren(renderToolPayloadTree(decoded));
+            return;
+        }
+        node.replaceChildren(createToolPayloadText(formatToolScalar(decoded)));
+    }
+
     function setToolCardExpanded(card, expanded) {
         if (!card) return;
         const next = Boolean(expanded);
@@ -618,20 +782,22 @@
         const argsLabel = document.createElement('span');
         argsLabel.className = 'hud-tool-block-label';
         argsLabel.textContent = 'Arguments';
-        const argsPre = document.createElement('pre');
-        argsPre.dataset.slot = 'args';
+        const argsPayload = document.createElement('div');
+        argsPayload.className = 'hud-tool-payload';
+        argsPayload.dataset.slot = 'args';
         argsBlock.appendChild(argsLabel);
-        argsBlock.appendChild(argsPre);
+        argsBlock.appendChild(argsPayload);
 
         const resultBlock = document.createElement('div');
         resultBlock.className = 'hud-tool-block';
         const resultLabel = document.createElement('span');
         resultLabel.className = 'hud-tool-block-label';
         resultLabel.textContent = 'Output';
-        const resultPre = document.createElement('pre');
-        resultPre.dataset.slot = 'result';
+        const resultPayload = document.createElement('div');
+        resultPayload.className = 'hud-tool-payload';
+        resultPayload.dataset.slot = 'result';
         resultBlock.appendChild(resultLabel);
-        resultBlock.appendChild(resultPre);
+        resultBlock.appendChild(resultPayload);
 
         body.appendChild(argsBlock);
         body.appendChild(resultBlock);
@@ -661,9 +827,9 @@
             title.textContent = truncate(item.summary || item.tool_name || 'tool', 120);
         }
         if (preview) {
-            preview.textContent = truncate(
-                item.result_preview || item.args_preview || 'No preview available.',
-                180
+            preview.textContent = toolPayloadPreview(
+                item.result || item.args || item.result_preview || item.args_preview,
+                'No preview available.'
             );
         }
         if (statusChip) {
@@ -676,10 +842,11 @@
                 : `Started ${timeLabel(item?.started_at)}`;
         }
         if (args) {
-            args.textContent = toolText(item?.args, 'No arguments captured.');
+            renderToolPayload(args, item?.args, 'No arguments captured.');
         }
         if (result) {
-            result.textContent = toolText(
+            renderToolPayload(
+                result,
                 item?.result,
                 status === 'running' ? 'Waiting for tool output…' : 'No output captured.'
             );
@@ -2074,15 +2241,15 @@
         }
 
         if (event.type === 'pi_text_delta') {
-            if (typeof event.text === 'string' && event.text) {
-                streamPendingReset.output = true;
-                streamBuffers.output = event.text;
-                els.piCurrentOutput.dataset.streaming = 'true';
-            } else if (typeof event.delta === 'string' && event.delta) {
+            if (typeof event.delta === 'string' && event.delta) {
                 if (els.piCurrentOutput.dataset.streaming !== 'true') {
                     streamPendingReset.output = true;
                 }
                 streamBuffers.output += event.delta;
+                els.piCurrentOutput.dataset.streaming = 'true';
+            } else if (typeof event.text === 'string' && event.text) {
+                streamPendingReset.output = true;
+                streamBuffers.output = event.text;
                 els.piCurrentOutput.dataset.streaming = 'true';
             }
             scheduleStreamFlush();
@@ -2090,15 +2257,15 @@
         }
 
         if (event.type === 'pi_thinking_delta') {
-            if (typeof event.thinking === 'string' && event.thinking) {
-                streamPendingReset.thinking = true;
-                streamBuffers.thinking = event.thinking;
-                els.piCurrentThinking.dataset.streaming = 'true';
-            } else if (typeof event.delta === 'string' && event.delta) {
+            if (typeof event.delta === 'string' && event.delta) {
                 if (els.piCurrentThinking.dataset.streaming !== 'true') {
                     streamPendingReset.thinking = true;
                 }
                 streamBuffers.thinking += event.delta;
+                els.piCurrentThinking.dataset.streaming = 'true';
+            } else if (typeof event.thinking === 'string' && event.thinking) {
+                streamPendingReset.thinking = true;
+                streamBuffers.thinking = event.thinking;
                 els.piCurrentThinking.dataset.streaming = 'true';
             }
             scheduleStreamFlush();
