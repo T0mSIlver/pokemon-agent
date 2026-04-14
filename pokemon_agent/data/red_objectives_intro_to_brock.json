@@ -65,9 +65,17 @@
       "save_recommendation": "Save after the Pokedex is awarded and the lab dialog is fully cleared.",
       "route_hint": "Go south to Pallet Town, enter Oak's Lab, and finish the dialog chain.",
       "preferred_landmark_types": [
+        "npc_target",
         "interactable",
         "exit",
         "frontier"
+      ],
+      "target_npcs": [
+        {
+          "name": "Professor Oak",
+          "map_name": "Oak's Lab",
+          "coord": {"x": 5, "y": 2}
+        }
       ],
       "selector": {
         "has_oaks_parcel": true,

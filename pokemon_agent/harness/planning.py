@@ -172,6 +172,8 @@ def _match_expected_outcome(plan: TurnPlan, bundle: dict) -> tuple[int, int, lis
         return 0, 0, []
     current_state = bundle.get("state") or {}
     current_map = str((current_state.get("map") or {}).get("map_name") or "")
+    baseline_map = str((plan.execution.baseline_map_name if plan.execution is not None else "") or "")
+    map_changed = bool(baseline_map and current_map and current_map != baseline_map)
     current_position = (current_state.get("player") or {}).get("position") or {}
     dialog_active = bool(
         current_state.get("dialog_active") or ((current_state.get("dialog") or {}).get("active"))
@@ -205,19 +207,22 @@ def _match_expected_outcome(plan: TurnPlan, bundle: dict) -> tuple[int, int, lis
             )
 
     if plan.expected_outcome.position_delta is not None:
-        total += 1
-        if (
-            movement.get("dx") == plan.expected_outcome.position_delta.dx
-            and movement.get("dy") == plan.expected_outcome.position_delta.dy
-        ):
-            matched += 1
+        if map_changed:
+            notes.append(f"position_delta skipped: map transition {baseline_map} -> {current_map}")
         else:
-            notes.append(
-                "position_delta expected "
-                f"({plan.expected_outcome.position_delta.dx}, "
-                f"{plan.expected_outcome.position_delta.dy}), "
-                f"got ({movement.get('dx')}, {movement.get('dy')})"
-            )
+            total += 1
+            if (
+                movement.get("dx") == plan.expected_outcome.position_delta.dx
+                and movement.get("dy") == plan.expected_outcome.position_delta.dy
+            ):
+                matched += 1
+            else:
+                notes.append(
+                    "position_delta expected "
+                    f"({plan.expected_outcome.position_delta.dx}, "
+                    f"{plan.expected_outcome.position_delta.dy}), "
+                    f"got ({movement.get('dx')}, {movement.get('dy')})"
+                )
 
     if plan.expected_outcome.dialog_active is not None:
         total += 1
@@ -254,8 +259,38 @@ def _partial_raw_batch(plan: TurnPlan) -> Optional[tuple[int, int]]:
 def evaluate_plan_outcome(plan: TurnPlan, bundle: dict) -> TurnPlan:
     matched, total, notes = _match_expected_outcome(plan, bundle)
     checked_at = utc_now()
+    current_state = bundle.get("state") or {}
+    current_map = str((current_state.get("map") or {}).get("map_name") or "")
+    baseline_map = str((plan.execution.baseline_map_name if plan.execution is not None else "") or "")
+    map_changed = bool(baseline_map and current_map and current_map != baseline_map)
+    movement = _movement_from_execution_baseline(plan, bundle) or {}
+    dx = int(movement.get("dx") or 0)
+    dy = int(movement.get("dy") or 0)
+    state_fields = (bundle.get("state_delta") or {}).get("fields") or {}
+    state_changed = (
+        map_changed
+        or dx != 0
+        or dy != 0
+        or "dialog_active" in state_fields
+        or "battle_active" in state_fields
+    )
 
     if total == 0:
+        if map_changed and plan.expected_outcome is not None:
+            reason = "map transition; no other checks"
+            if notes:
+                reason = f"{reason}. {'; '.join(notes[:3])}"
+            plan.status = PlanStatus(
+                state="matched",
+                observation_id=plan.observation_id,
+                plan_updated_at=plan.updated_at,
+                validated_at=plan.status.validated_at,
+                executed_at=plan.status.executed_at,
+                outcome_checked_at=checked_at,
+                branch_executed=plan.status.branch_executed,
+                reason=reason,
+            )
+            return plan
         return invalidate_plan(
             plan,
             reason=(
@@ -267,8 +302,20 @@ def evaluate_plan_outcome(plan: TurnPlan, bundle: dict) -> TurnPlan:
     partial_batch = _partial_raw_batch(plan)
 
     if matched == total:
-        state: PlanState = "matched"
-        reason = "Expected outcome matched."
+        if (
+            plan.execution is not None
+            and plan.execution.branch_kind == "raw_actions"
+            and not state_changed
+        ):
+            state = "drifted"
+            reason = (
+                "No observable state change after "
+                f"{len(plan.execution.requested_actions or [])} action(s); "
+                "the batch likely hit a wall or sprite."
+            )
+        else:
+            state = "matched"
+            reason = "Expected outcome matched."
     elif matched > 0:
         state = "partial"
         reason = "Expected outcome partially matched."

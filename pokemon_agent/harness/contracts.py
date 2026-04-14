@@ -112,6 +112,17 @@ class BranchTemplates(BaseModel):
     navigation: NavigationBranch
 
 
+class ExpectedOutcomeTemplate(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    summary: str
+    map_name: Optional[str] = None
+    position: Optional[Coord] = None
+    position_delta: Optional[CoordDelta] = None
+    dialog_active: Optional[bool] = None
+    battle_active: Optional[bool] = None
+
+
 class PlanningGuide(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
@@ -123,6 +134,7 @@ class PlanningGuide(BaseModel):
     expected_outcome_check_fields: list[ExpectedOutcomeCheckField] = Field(
         default_factory=lambda: list(EXPECTED_OUTCOME_CHECK_FIELDS)
     )
+    expected_outcome_template: Optional[ExpectedOutcomeTemplate] = None
 
 
 class PlanExecution(BaseModel):
@@ -220,6 +232,7 @@ class RecoveryHint(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     recommended_save: Optional[str] = None
+    recovery_command: Optional[str] = None
     candidate_count: int = 0
     stuck_level: str = "clear"
     stuck_reason: str = ""

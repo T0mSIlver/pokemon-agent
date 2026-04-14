@@ -46,6 +46,12 @@ def utc_now() -> str:
 
 
 _STUCK_LEVEL_ORDER = {"clear": 0, "warning": 1, "danger": 2}
+_OPPOSITE_ACTION = {
+    "walk_up": "walk_down",
+    "walk_down": "walk_up",
+    "walk_left": "walk_right",
+    "walk_right": "walk_left",
+}
 
 
 def _stuck_level_rank(level: str) -> int:
@@ -144,6 +150,7 @@ class ObjectiveRecord:
     completed: bool
     status: str
     progress_percent: int
+    target_npcs: list[JsonDict] = field(default_factory=list)
 
     def to_dict(self) -> JsonDict:
         return asdict(self)
@@ -1081,6 +1088,12 @@ class ObjectiveEngine:
                 merged = dict(item)
                 merged["pack_id"] = pack_id
                 merged.setdefault("preferred_landmark_types", [])
+                merged.setdefault("target_npcs", [])
+                if merged["target_npcs"] and "npc_target" not in merged["preferred_landmark_types"]:
+                    merged["preferred_landmark_types"] = [
+                        *list(merged["preferred_landmark_types"]),
+                        "npc_target",
+                    ]
                 merged.setdefault("selector", {})
                 self.objectives.append(merged)
         self.by_id = {item["id"]: item for item in self.objectives}
@@ -1155,6 +1168,7 @@ class ObjectiveEngine:
                 completed=completed,
                 status=status,
                 progress_percent=progress,
+                target_npcs=item.get("target_npcs", []),
             ).to_dict()
             objectives.append(record)
             if current:
@@ -1940,7 +1954,27 @@ class AgentRuntime:
 
         landmarks: list[JsonDict] = []
         route_cards: list[JsonDict] = []
-        map_landmarks = self._landmarks_for_map(map_id=snapshot.map_id, map_name=snapshot.map_name)
+        map_landmarks = list(
+            self._landmarks_for_map(map_id=snapshot.map_id, map_name=snapshot.map_name)
+        )
+        for npc in (objective.get("current") or {}).get("target_npcs") or []:
+            if str(npc.get("map_name") or "") != snapshot.map_name:
+                continue
+            coord = _tuple_coord_from_any(npc.get("coord"))
+            if coord is None:
+                continue
+            map_landmarks.insert(
+                0,
+                {
+                    "id": f"npc-target:{_stable_id(snapshot.key, npc.get('name'), coord)}",
+                    "map_id": snapshot.map_id,
+                    "map_name": snapshot.map_name,
+                    "kind": "npc_target",
+                    "title": f"Talk to {npc.get('name') or 'target NPC'}",
+                    "coord": _coord_payload(coord),
+                    "source": "objective",
+                },
+            )
         for landmark in sorted(
             map_landmarks,
             key=lambda entry: (
@@ -1970,10 +2004,12 @@ class AgentRuntime:
             )
             blocked = any(_manhattan(coord, blocked_coord) <= 1 for blocked_coord in blocked_coords)
             type_bonus = 24 if str(landmark.get("kind")) in preferred_types else 0
+            objective_target_bonus = 40 if str(landmark.get("kind")) == "npc_target" else 0
             score = max(
                 1,
                 55
                 + type_bonus
+                + objective_target_bonus
                 + (12 if visible else 0)
                 - (distance * 2)
                 - (18 if blocked else 0)
@@ -1990,7 +2026,9 @@ class AgentRuntime:
                     "route_actions": route.actions[:8],
                     "first_action": route.actions[0] if route.actions else None,
                     "why_now": (
-                        "Matches the current objective preferences."
+                        "Objective NPC target on this map."
+                        if str(landmark.get("kind")) == "npc_target"
+                        else "Matches the current objective preferences."
                         if type_bonus
                         else "Known landmark with a concrete route."
                     ),
@@ -2657,7 +2695,12 @@ class AgentRuntime:
             if no_movement_loop and all(item.get("dialog_active") for item in recent[-4:]):
                 dialog_loop = True
 
-        drifts = [item for item in recent if item.get("plan_state") == "drifted"]
+        drifts = [
+            item
+            for item in recent
+            if item.get("plan_state") == "drifted"
+            and item.get("map_name") == signature["map_name"]
+        ]
         drift_loop_count = len(drifts)
         for item in drifts:
             target = item.get("plan_target")
@@ -2697,6 +2740,25 @@ class AgentRuntime:
             if _stuck_level_rank(new_level) > _stuck_level_rank(level):
                 level = new_level
             target_note = ""
+            recent_failed_action_hint = None
+            latest_drift = next(
+                (item for item in reversed(recent) if item in drifts and item.get("actions")),
+                None,
+            )
+            if latest_drift is not None:
+                first_action = str((latest_drift.get("actions") or [None])[0] or "")
+                if first_action:
+                    opposite = _OPPOSITE_ACTION.get(first_action)
+                    if opposite:
+                        recent_failed_action_hint = (
+                            f"first action {first_action} repeatedly fails; "
+                            f"try {opposite} or face a different valid_moves direction first"
+                        )
+                    else:
+                        recent_failed_action_hint = (
+                            f"first action {first_action} repeatedly fails; "
+                            "face a different valid_moves direction first"
+                        )
             if drift_loop_targets:
                 first = drift_loop_targets[0]
                 target_note = f" target=({first.get('x')}, {first.get('y')})"
@@ -2719,6 +2781,8 @@ class AgentRuntime:
                     "drop primary_branch to 1 action and re-check after each step",
                     "reload a recovery save if the same target keeps failing",
                 ]
+            if recent_failed_action_hint:
+                recommended.insert(0, recent_failed_action_hint)
 
         if objective_timeout:
             level = "danger" if level == "warning" else "warning"

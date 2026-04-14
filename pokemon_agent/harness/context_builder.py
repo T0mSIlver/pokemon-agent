@@ -2,11 +2,13 @@
 
 from __future__ import annotations
 
+import json
 from typing import Any, Optional
 
 from .contracts import (
     ActionBudget,
     BranchTemplates,
+    ExpectedOutcomeTemplate,
     LandmarkHint,
     ModeRule,
     NavigationBranch,
@@ -20,6 +22,8 @@ from .contracts import (
     TurnContextArtifacts,
 )
 from .planning import CONTEXT_VERSION
+
+ASCII_WINDOW_LIMIT = 1600
 
 
 def _truncate(text: Any, limit: int) -> str:
@@ -68,6 +72,37 @@ def _build_warp_hints(
     return result
 
 
+def _build_recovery_command(*, save_name: Any, stuck_level: str) -> Optional[str]:
+    if stuck_level == "clear" or not save_name:
+        return None
+    return (
+        f"bash scripts/agent_curl.sh /load <<'JSON'\n"
+        f"{json.dumps({'name': str(save_name)})}\n"
+        f"JSON"
+    )
+
+
+def _build_expected_outcome_template(
+    *,
+    destination_npc: Optional[dict],
+    current_map_name: str,
+) -> ExpectedOutcomeTemplate:
+    if destination_npc is not None:
+        coord = destination_npc.get("coord") or {}
+        interaction_position = None
+        if coord.get("x") is not None and coord.get("y") is not None:
+            interaction_position = {"x": int(coord.get("x")), "y": int(coord.get("y")) + 1}
+        return ExpectedOutcomeTemplate(
+            summary=f"Stand next to {destination_npc.get('name') or 'target NPC'}",
+            map_name=current_map_name or str(destination_npc.get("map_name") or "") or None,
+            position=interaction_position,
+        )
+    return ExpectedOutcomeTemplate(
+        summary="Advance one tile north",
+        position_delta={"dx": 0, "dy": -1},
+    )
+
+
 def build_turn_context(
     *,
     bundle: dict,
@@ -87,11 +122,36 @@ def build_turn_context(
     route_cards = navigation_guidance.get("route_cards") or []
     landmarks = navigation_guidance.get("landmarks") or []
     position = (state.get("player") or {}).get("position") or {}
+    current_map_name = str((state.get("map") or {}).get("map_name") or "")
     warps = _build_warp_hints(
         snapshot=snapshot,
         player_position=position,
         map_id_to_name=map_id_to_name,
     )
+    target_npcs = list(objective.get("target_npcs") or [])
+    route_hint_raw = objective.get("route_hint")
+    destination_npc = next(
+        (
+            npc
+            for npc in target_npcs
+            if current_map_name and str(npc.get("map_name") or "") == current_map_name
+        ),
+        None,
+    )
+    if destination_npc is not None:
+        coord = destination_npc.get("coord") or {}
+        route_hint_raw = (
+            f"You are inside {current_map_name}. Talk to "
+            f"{destination_npc.get('name') or 'the target NPC'} at "
+            f"({coord.get('x')}, {coord.get('y')})."
+        )
+    visible_sprites = [
+        {"x": int(sprite.get("x")), "y": int(sprite.get("y"))}
+        for sprite in (snapshot.get("sprites") or [])
+        if sprite.get("x") is not None and sprite.get("y") is not None
+    ][:16]
+    ascii_window = _truncate(snapshot.get("ascii"), ASCII_WINDOW_LIMIT) or None
+    ascii_legend = dict(snapshot.get("ascii_legend") or {}) or None
 
     route_hints = [
         RouteHint(
@@ -122,7 +182,8 @@ def build_turn_context(
             "summary": _truncate(objective.get("summary"), 180),
             "completion_predicate": _truncate(objective.get("completion_predicate"), 180),
             "progress_percent": (bundle.get("objective") or {}).get("progress_percent"),
-            "route_hint": _truncate(objective.get("route_hint"), 140),
+            "route_hint": _truncate(route_hint_raw, 180),
+            "target_npcs": target_npcs,
         },
         ui={
             "mode": screen_text.get("ui_mode"),
@@ -139,6 +200,9 @@ def build_turn_context(
             "coordinate_system": snapshot.get("coordinate_system"),
             "coordinate_note": snapshot.get("coordinate_note"),
             "valid_moves": list(snapshot.get("valid_moves") or [])[:4],
+            "visible_sprites": visible_sprites,
+            "ascii_window": ascii_window,
+            "ascii_legend": ascii_legend,
             "interaction": {
                 "kind": (snapshot.get("interaction") or {}).get("kind"),
                 "source": (snapshot.get("interaction") or {}).get("source"),
@@ -156,6 +220,10 @@ def build_turn_context(
         ),
         recovery=RecoveryHint(
             recommended_save=current_recommendation.get("name"),
+            recovery_command=_build_recovery_command(
+                save_name=current_recommendation.get("name"),
+                stuck_level=str(stuck.get("level") or "clear"),
+            ),
             candidate_count=len(recovery.get("candidates") or []),
             stuck_level=str(stuck.get("level") or "clear"),
             stuck_reason=_truncate(stuck.get("reason"), 160),
@@ -184,6 +252,10 @@ def build_turn_context(
                     target={"x": 0, "y": 0},
                     mode="auto",
                 ),
+            ),
+            expected_outcome_template=_build_expected_outcome_template(
+                destination_npc=destination_npc,
+                current_map_name=current_map_name,
             ),
         ),
         plan_status=plan_status,

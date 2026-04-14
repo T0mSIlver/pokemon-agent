@@ -15,7 +15,7 @@ from pokemon_agent.agent_runtime import (
     classify_action_feedback,
     render_navigation_overlay,
 )
-from pokemon_agent.harness.contracts import TurnPlanInput
+from pokemon_agent.harness.contracts import TurnContext, TurnPlanInput
 from pokemon_agent.harness.planning import (
     build_plan_execution_trace,
     evaluate_plan_outcome,
@@ -180,6 +180,42 @@ def make_snapshot() -> LiveNavigationSnapshot:
             "source": "sprite_direct",
             "reason": "NPC detected in front of the player.",
             "target_coord": {"x": 10, "y": 9},
+        },
+    )
+
+
+def make_oaks_lab_snapshot() -> LiveNavigationSnapshot:
+    return LiveNavigationSnapshot(
+        map_id=40,
+        map_name="Oak's Lab",
+        player_position=(5, 3),
+        facing="up",
+        tileset="DOJO",
+        window_top_left=(1, -1),
+        terrain=[
+            [0, 0, 0, 0, 0, 0, 0, 0, 0, 0],
+            [0, 0, 0, 0, 0, 0, 0, 0, 0, 0],
+            [0, 0, 0, 1, 1, 0, 0, 0, 0, 0],
+            [1, 1, 1, 1, 1, 1, 1, 1, 1, 0],
+            [1, 1, 1, 1, 1, 0, 0, 0, 1, 0],
+            [1, 1, 1, 1, 1, 1, 1, 1, 1, 0],
+            [1, 1, 1, 1, 1, 1, 1, 1, 1, 0],
+            [0, 0, 0, 1, 1, 0, 0, 0, 0, 0],
+            [0, 0, 0, 1, 1, 0, 0, 0, 0, 0],
+        ],
+        sprite_positions=[(4, 3), (5, 2), (8, 3)],
+        valid_moves=["down"],
+        warps=[
+            {"x": 4, "y": 11, "warp_id": 2, "target_map_id": 255},
+            {"x": 5, "y": 11, "warp_id": 2, "target_map_id": 255},
+        ],
+        signs=[],
+        map_dimensions={"width": 5, "height": 6},
+        interaction={
+            "kind": "object",
+            "source": "sprite_direct",
+            "reason": "A visible sprite occupies the tile directly in front of the player.",
+            "target_coord": {"x": 5, "y": 2},
         },
     )
 
@@ -462,6 +498,86 @@ def test_evaluate_plan_outcome_uses_execution_baseline_for_position_delta():
     assert evaluated.status.reason == "Expected outcome matched."
 
 
+def test_evaluate_plan_outcome_treats_map_transition_as_matched_when_position_delta_skips():
+    plan = store_validated_plan(
+        TurnPlanInput.model_validate(
+            {
+                "observation_id": "obs-warp",
+                "objective_id": "return_oaks_parcel",
+                "intent": "Enter Oak's Lab.",
+                "mode": "overworld",
+                "primary_branch": {"kind": "raw_actions", "actions": ["walk_up"]},
+                "expected_outcome": {
+                    "summary": "Use the door warp.",
+                    "position_delta": {"dx": 0, "dy": -1},
+                },
+            }
+        )
+    )
+    plan = mark_plan_executed(
+        plan,
+        branch="primary",
+        branch_kind="raw_actions",
+        requested_actions=["walk_up"],
+        executed_actions=1,
+        baseline_map_name="Pallet Town",
+        baseline_position={"x": 5, "y": 12},
+        summary="Executed 1 raw action(s).",
+    )
+
+    evaluated = evaluate_plan_outcome(
+        plan,
+        {
+            "state": make_state(map_name="Oak's Lab", map_id=40, x=5, y=11),
+            "state_delta": {"fields": {"map": {"before": "Pallet Town", "after": "Oak's Lab"}}},
+            "screen_text": {"text": ""},
+        },
+    )
+
+    assert evaluated.status.state == "matched"
+    assert evaluated.status.reason.startswith("map transition; no other checks")
+
+
+def test_evaluate_plan_outcome_marks_noop_raw_action_batches_as_drifted():
+    plan = store_validated_plan(
+        TurnPlanInput.model_validate(
+            {
+                "observation_id": "obs-noop",
+                "objective_id": "return_oaks_parcel",
+                "intent": "Clear any dialog if present.",
+                "mode": "dialog",
+                "primary_branch": {"kind": "raw_actions", "actions": ["press_a"]},
+                "expected_outcome": {
+                    "summary": "Dialog should stay closed.",
+                    "dialog_active": False,
+                },
+            }
+        )
+    )
+    plan = mark_plan_executed(
+        plan,
+        branch="primary",
+        branch_kind="raw_actions",
+        requested_actions=["press_a"],
+        executed_actions=1,
+        baseline_map_name="Oak's Lab",
+        baseline_position={"x": 5, "y": 3},
+        summary="Executed 1 raw action(s).",
+    )
+
+    evaluated = evaluate_plan_outcome(
+        plan,
+        {
+            "state": make_state(map_name="Oak's Lab", map_id=40, x=5, y=3, dialog_active=False),
+            "state_delta": {"changed": False, "fields": {}, "movement": None},
+            "screen_text": {"text": ""},
+        },
+    )
+
+    assert evaluated.status.state == "drifted"
+    assert "No observable state change after 1 action(s)" in evaluated.status.reason
+
+
 def _build_multi_walk_plan_and_execute(
     *,
     requested: int,
@@ -639,6 +755,81 @@ def test_agent_runtime_escalates_stuck_on_repeated_drifts(tmp_path: Path, monkey
     assert any("navigation" in action for action in stuck["recommended_actions"])
 
 
+def test_detect_stuck_ignores_drift_targets_from_other_maps(tmp_path: Path):
+    runtime = AgentRuntime(
+        data_dir=tmp_path / "data",
+        workspace_dir=tmp_path / "workspace",
+    )
+    runtime.recent_trajectory.extend(
+        [
+            {
+                "map_name": "Pallet Town",
+                "position": {"x": 10, "y": 36},
+                "dialog_active": False,
+                "objective_id": "return_oaks_parcel",
+                "source": "action",
+                "actions": ["walk_left"],
+                "plan_state": "drifted",
+                "plan_target": {"x": 10, "y": 36},
+            },
+            {
+                "map_name": "Oak's Lab",
+                "position": {"x": 5, "y": 4},
+                "dialog_active": False,
+                "objective_id": "return_oaks_parcel",
+                "source": "action",
+                "actions": ["walk_up"],
+                "plan_state": "drifted",
+                "plan_target": {"x": 5, "y": 2},
+            },
+            {
+                "map_name": "Pallet Town",
+                "position": {"x": 10, "y": 36},
+                "dialog_active": False,
+                "objective_id": "return_oaks_parcel",
+                "source": "action",
+                "actions": ["walk_left"],
+                "plan_state": "drifted",
+                "plan_target": {"x": 10, "y": 36},
+            },
+            {
+                "map_name": "Oak's Lab",
+                "position": {"x": 5, "y": 3},
+                "dialog_active": False,
+                "objective_id": "return_oaks_parcel",
+                "source": "action",
+                "actions": ["walk_up"],
+                "plan_state": "drifted",
+                "plan_target": {"x": 5, "y": 2},
+            },
+            {
+                "map_name": "Oak's Lab",
+                "position": {"x": 5, "y": 3},
+                "dialog_active": False,
+                "objective_id": "return_oaks_parcel",
+                "source": "action",
+                "actions": ["walk_up"],
+                "plan_state": "drifted",
+                "plan_target": {"x": 5, "y": 2},
+            },
+        ]
+    )
+
+    stuck = runtime._detect_stuck(
+        state=make_state(map_name="Oak's Lab", map_id=40, x=5, y=3, has_oaks_parcel=True),
+        objective={"current": {"id": "return_oaks_parcel"}},
+        source="observe",
+        requested_actions=["walk_up"],
+        plan=None,
+    )
+
+    assert stuck["drift_count"] == 3
+    assert "target=(5, 2)" in stuck["reason"]
+    assert "10, 36" not in stuck["reason"]
+    assert stuck["recommended_actions"][0].startswith("first action walk_up repeatedly fails")
+    assert "target={x:5,y:2}" in stuck["recommended_actions"][1]
+
+
 def test_discover_landmarks_ignores_blocked_tile_interactions(tmp_path: Path):
     emulator = FakeEmulator()
     store = NavigationStore(tmp_path / "navigation.json")
@@ -709,6 +900,55 @@ def test_turn_context_surfaces_warps_with_target_map_names(tmp_path: Path):
     assert first_warp["coord"] == {"x": 10, "y": 4}
     assert first_warp["target_map_name"] == "Viridian Mart"
     assert first_warp["distance"] == 6
+
+
+def test_turn_context_surfaces_visible_sprites_ascii_and_npc_targets(tmp_path: Path):
+    emulator = FakeEmulator()
+    store = NavigationStore(tmp_path / "navigation.json")
+    snapshot = make_oaks_lab_snapshot()
+    navigation = make_navigation_payload(store, snapshot)
+    runtime = AgentRuntime(
+        data_dir=tmp_path / "data",
+        workspace_dir=tmp_path / "workspace",
+    )
+
+    result = runtime.refresh(
+        emulator=emulator,
+        state=make_state(
+            map_name="Oak's Lab",
+            map_id=40,
+            has_oaks_parcel=True,
+            has_pokedex=False,
+            x=5,
+            y=3,
+        ),
+        navigation=navigation,
+        navigation_store=store,
+        reason="oak_context",
+        source="observe",
+    )
+    bundle = result["bundle"]
+    turn_context = json.loads(runtime.artifacts["turn_context_json"].read_text(encoding="utf-8"))
+
+    TurnContext.model_validate(turn_context)
+
+    npc_targets = [
+        entry
+        for entry in ((bundle.get("navigation_guidance") or {}).get("landmarks") or [])
+        if entry.get("kind") == "npc_target"
+    ]
+    assert npc_targets
+    assert npc_targets[0]["coord"] == {"x": 5, "y": 2}
+    assert npc_targets[0]["visible"] is True
+    assert turn_context["objective"]["route_hint"].startswith("You are inside Oak's Lab.")
+    assert turn_context["navigation"]["visible_sprites"] == [
+        {"x": 4, "y": 3},
+        {"x": 5, "y": 2},
+        {"x": 8, "y": 3},
+    ]
+    assert "S" in turn_context["navigation"]["ascii_window"]
+    assert turn_context["navigation"]["ascii_legend"]["S"] == "visible sprite blocker"
+    assert turn_context["planning"]["expected_outcome_template"]["position"] == {"x": 5, "y": 3}
 
 
 def test_agent_runtime_records_landmarks_and_failure_memory(tmp_path: Path):
