@@ -172,6 +172,14 @@ class LiveNavigationSnapshot:
         if goal is not None:
             goal_local = self.absolute_to_local(goal[0], goal[1])
 
+        warp_set: set[Coord] = set()
+        for warp in self.warps:
+            wx = warp.get("x") if isinstance(warp, dict) else None
+            wy = warp.get("y") if isinstance(warp, dict) else None
+            if wx is None or wy is None:
+                continue
+            warp_set.add((int(wx), int(wy)))
+
         min_x = self.window_top_left[0]
         max_x = self.window_top_left[0] + self.width - 1
         lines = [_ascii_header(min_x, max_x)]
@@ -183,6 +191,8 @@ class LiveNavigationSnapshot:
                     chars.append("P")
                 elif goal_local == (local_x, local_y):
                     chars.append("G")
+                elif absolute in warp_set:
+                    chars.append("W")
                 elif absolute in self.sprite_set:
                     chars.append("S")
                 elif tile:
@@ -216,6 +226,7 @@ class LiveNavigationSnapshot:
             "ascii_legend": {
                 "P": "player",
                 "G": "goal",
+                "W": "warp tile (step ONTO it, then walk in the exit direction)",
                 "S": "visible sprite blocker",
                 ".": "passable tile",
                 "#": "blocked tile",

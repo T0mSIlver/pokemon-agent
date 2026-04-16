@@ -47,6 +47,7 @@ class FakeSupervisorAPI:
         self.started_with = None
         self.continued = False
         self.stopped = False
+        self.goal = ""
 
     def state_snapshot(self) -> dict:
         return {
@@ -56,7 +57,7 @@ class FakeSupervisorAPI:
             "next_auto_continue_at": None,
             "config": {
                 "auto_continue": True,
-                "goal": "",
+                "goal": self.goal,
                 "continue_delay_seconds": 1.0,
             },
             "recent_tools": [],
@@ -69,6 +70,7 @@ class FakeSupervisorAPI:
 
     async def start(self, **kwargs) -> dict:
         self.started_with = kwargs
+        self.goal = kwargs.get("goal") or ""
         snapshot = self.state_snapshot()
         snapshot["status"] = "starting"
         return snapshot
@@ -1106,6 +1108,45 @@ def test_agent_observe_endpoint_returns_workspace_bundle(tmp_path: Path, monkeyp
     assert "raw_frame_b64" not in payload
 
 
+def test_agent_observe_uses_supervisor_goal_override_in_turn_context(tmp_path: Path, monkeypatch):
+    emulator = FakeEmulator()
+    store = NavigationStore(tmp_path / "navigation.json")
+    snapshot = make_snapshot()
+    navigation = make_navigation_payload(store, snapshot)
+    runtime = AgentRuntime(
+        data_dir=tmp_path / "data",
+        workspace_dir=tmp_path / "workspace",
+    )
+    fake_supervisor = FakeSupervisorAPI()
+    fake_supervisor.goal = "go get the town map in Blue's House"
+
+    monkeypatch.setattr(server, "_runtime", runtime)
+    monkeypatch.setattr(server, "_supervisor", fake_supervisor)
+    monkeypatch.setattr(server, "_emulator", emulator)
+    monkeypatch.setattr(server, "_navigation_store", store)
+    monkeypatch.setattr(
+        server,
+        "_get_state_dict",
+        lambda: make_state(map_name="Pallet Town", map_id=0, x=9, y=5),
+    )
+    monkeypatch.setattr(server, "_get_navigation_payload_sync", lambda goal=None: navigation)
+
+    with TestClient(server.app) as client:
+        payload = client.post("/agent/observe", json={"reason": "goal_override"}).json()
+
+    turn_context = json.loads(
+        Path(payload["artifacts"]["turn_context_json"]).read_text(encoding="utf-8")
+    )
+    assert turn_context["planning"]["objective_id"] == "go get the town map in Blue's House"
+    assert turn_context["objective"]["id"] == "go get the town map in Blue's House"
+    assert turn_context["objective"]["mission_override"] == "go get the town map in Blue's House"
+    assert turn_context["objective"]["planner_objective_id"]
+    assert (
+        turn_context["objective"]["planner_objective_id"]
+        != turn_context["objective"]["mission_override"]
+    )
+
+
 def test_agent_observe_endpoint_accepts_empty_body(tmp_path: Path, monkeypatch):
     emulator = FakeEmulator()
     store = NavigationStore(tmp_path / "navigation.json")
@@ -1223,6 +1264,32 @@ def test_agent_plan_endpoint_validates_and_persists_strict_turn_plan(tmp_path: P
     assert invalid_response.status_code == 400
     assert valid_response.json()["plan_status"]["state"] == "validated"
     assert runtime.load_turn_plan_model().status.state == "validated"
+
+
+def test_agent_runtime_turn_context_uses_dialog_template_when_dialog_is_active(tmp_path: Path):
+    emulator = FakeEmulator()
+    store = NavigationStore(tmp_path / "navigation.json")
+    snapshot = make_snapshot()
+    navigation = make_navigation_payload(store, snapshot)
+    runtime = AgentRuntime(
+        data_dir=tmp_path / "data",
+        workspace_dir=tmp_path / "workspace",
+    )
+
+    result = runtime.refresh(
+        emulator=emulator,
+        state=make_state(map_name="Oak's Lab", map_id=40, x=5, y=6, dialog_active=True),
+        navigation=navigation,
+        navigation_store=store,
+        reason="dialog_template",
+        source="observe",
+    )
+    turn_context = result["bundle"]["turn_context"]
+
+    assert turn_context["planning"]["branch_templates"]["raw_actions"]["actions"] == [
+        "a_until_dialog_end"
+    ]
+    assert turn_context["planning"]["expected_outcome_template"]["dialog_active"] is False
 
 
 def test_agent_act_endpoint_executes_validated_plan_and_updates_result_on_observe(

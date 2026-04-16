@@ -1012,6 +1012,34 @@ def render_navigation_overlay(
             fill=(255, 174, 66, 190),
         )
 
+    for warp in snapshot.warps:
+        wx = warp.get("x") if isinstance(warp, dict) else None
+        wy = warp.get("y") if isinstance(warp, dict) else None
+        if wx is None or wy is None:
+            continue
+        warp_local = snapshot.absolute_to_local(int(wx), int(wy))
+        if warp_local is None:
+            continue
+        left = int(left_margin + (warp_local[0] * tile_width))
+        top = int(top_margin + (warp_local[1] * tile_height))
+        right = int(left_margin + ((warp_local[0] + 1) * tile_width))
+        bottom = int(top_margin + ((warp_local[1] + 1) * tile_height))
+        draw.rectangle(
+            (left + 1, top + 1, right - 1, bottom - 1),
+            outline=(213, 80, 255, 255),
+            width=grid_line_width + 1,
+        )
+        warp_label_width, warp_label_height = _measure_text(measure_draw, "W", font=font)
+        draw.text(
+            (
+                left + int((tile_width - warp_label_width) / 2),
+                top + int((tile_height - warp_label_height) / 2),
+            ),
+            "W",
+            fill=(213, 80, 255, 255),
+            font=font,
+        )
+
     player_left = int(left_margin + (4 * tile_width))
     player_top = int(top_margin + (4 * tile_height))
     player_right = int(left_margin + (5 * tile_width))
@@ -1687,7 +1715,16 @@ class AgentRuntime:
         record = {
             "id": payload.pop(
                 "id",
-                f"memory:{_stable_id(kind, summary, payload.get('map_key'), payload.get('coord_key'), payload.get('objective_id'))}",
+                (
+                    "memory:"
+                    + _stable_id(
+                        kind,
+                        summary,
+                        payload.get("map_key"),
+                        payload.get("coord_key"),
+                        payload.get("objective_id"),
+                    )
+                ),
             ),
             "timestamp": utc_now(),
             "kind": kind,
@@ -2135,7 +2172,9 @@ class AgentRuntime:
             return {
                 "recommended_mode": "advance_text",
                 "recommended_move": None,
-                "reason": "Battle text is still active; clear dialog before selecting another move.",
+                "reason": (
+                    "Battle text is still active; clear dialog before selecting another move."
+                ),
                 "safe_short_actions": ["press_a"],
             }
 
@@ -2175,7 +2214,9 @@ class AgentRuntime:
             return {
                 "recommended_mode": "advance_text",
                 "recommended_move": None,
-                "reason": "No usable damaging move is visible; keep battle actions extremely short.",
+                "reason": (
+                    "No usable damaging move is visible; keep battle actions extremely short."
+                ),
                 "safe_short_actions": ["press_a"],
             }
 
@@ -2698,8 +2739,7 @@ class AgentRuntime:
         drifts = [
             item
             for item in recent
-            if item.get("plan_state") == "drifted"
-            and item.get("map_name") == signature["map_name"]
+            if item.get("plan_state") == "drifted" and item.get("map_name") == signature["map_name"]
         ]
         drift_loop_count = len(drifts)
         for item in drifts:
@@ -2771,7 +2811,10 @@ class AgentRuntime:
             if drift_loop_targets:
                 first = drift_loop_targets[0]
                 recommended = [
-                    f"switch to mode=navigation with target={{x:{first.get('x')},y:{first.get('y')}}}",
+                    (
+                        "switch to mode=navigation with "
+                        f"target={{x:{first.get('x')},y:{first.get('y')}}}"
+                    ),
                     "drop primary_branch to 1 action and re-check after each step",
                     "reload a recovery save if the same target keeps failing",
                 ]
@@ -2977,7 +3020,12 @@ class AgentRuntime:
         plan = evaluate_plan_outcome(plan, bundle)
         return self.save_turn_plan(plan)
 
-    def _write_turn_context(self, bundle: JsonDict) -> TurnContext:
+    def _write_turn_context(
+        self,
+        bundle: JsonDict,
+        *,
+        goal_override: Optional[str] = None,
+    ) -> TurnContext:
         plan = self._evaluate_pending_plan(bundle)
         observation_id = str(bundle.get("observation_id") or "")
         if (
@@ -2997,6 +3045,7 @@ class AgentRuntime:
             bundle=bundle,
             plan_status=plan_status,
             map_id_to_name=RED_MAP_NAMES,
+            goal_override=goal_override,
         )
         self._write_json(self.artifacts["turn_context_json"], context.model_dump(mode="json"))
         return context
@@ -3363,6 +3412,7 @@ class AgentRuntime:
         navigation_plan: Optional[JsonDict] = None,
         navigation_execution: Optional[JsonDict] = None,
         explicit_save: Optional[JsonDict] = None,
+        goal_override: Optional[str] = None,
     ) -> JsonDict:
         current_objective = self.objective_engine.evaluate(state)
         screen = self._coerce_screen_image(emulator)
@@ -3678,7 +3728,7 @@ class AgentRuntime:
             self.artifacts["current_objective_md"],
             self._objective_markdown(current_objective),
         )
-        turn_context = self._write_turn_context(bundle)
+        turn_context = self._write_turn_context(bundle, goal_override=goal_override)
         bundle["turn_context"] = turn_context.model_dump(mode="json")
         bundle["plan_status"] = turn_context.plan_status.model_dump(mode="json")
         bundle["turn_plan"] = self.load_turn_plan()

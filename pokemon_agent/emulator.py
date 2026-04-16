@@ -604,12 +604,14 @@ class PyBoyEmulator(Emulator):
 
         warp_coords = {(warp["x"], warp["y"]) for warp in warps}
         if player_coords in warp_coords:
-            if player_coords[0] == 0 and "left" not in moves:
-                moves.append("left")
-            if player_coords[1] == 0 and "up" not in moves:
-                moves.append("up")
-            if not moves:
-                return ["up", "down", "left", "right"]
+            # Standing on a warp tile: any direction may trigger the warp
+            # transition, regardless of the collision tile beyond it.
+            # Without map-specific exit-direction metadata we cannot tell
+            # which press fires the warp, so expose all four directions and
+            # let the emulator handle the press.
+            for direction in ("up", "down", "left", "right"):
+                if direction not in moves:
+                    moves.append(direction)
 
         return moves
 

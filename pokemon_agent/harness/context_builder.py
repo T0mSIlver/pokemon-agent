@@ -75,18 +75,20 @@ def _build_warp_hints(
 def _build_recovery_command(*, save_name: Any, stuck_level: str) -> Optional[str]:
     if stuck_level == "clear" or not save_name:
         return None
-    return (
-        f"bash scripts/agent_curl.sh /load <<'JSON'\n"
-        f"{json.dumps({'name': str(save_name)})}\n"
-        f"JSON"
-    )
+    return f"bash agent_curl.sh /load <<'JSON'\n{json.dumps({'name': str(save_name)})}\nJSON"
 
 
 def _build_expected_outcome_template(
     *,
     destination_npc: Optional[dict],
     current_map_name: str,
+    dialog_active: bool,
 ) -> ExpectedOutcomeTemplate:
+    if dialog_active:
+        return ExpectedOutcomeTemplate(
+            summary="Clear the active dialog box",
+            dialog_active=False,
+        )
     if destination_npc is not None:
         coord = destination_npc.get("coord") or {}
         interaction_position = None
@@ -108,6 +110,7 @@ def build_turn_context(
     bundle: dict,
     plan_status: PlanStatus,
     map_id_to_name: Optional[dict[int, str]] = None,
+    goal_override: Optional[str] = None,
 ) -> TurnContext:
     state = bundle.get("state") or {}
     objective = (bundle.get("objective") or {}).get("current") or {}
@@ -123,6 +126,9 @@ def build_turn_context(
     landmarks = navigation_guidance.get("landmarks") or []
     position = (state.get("player") or {}).get("position") or {}
     current_map_name = str((state.get("map") or {}).get("map_name") or "")
+    dialog_active = bool(state.get("dialog_active") or ((state.get("dialog") or {}).get("active")))
+    planner_objective_id = str(objective.get("id") or "")
+    active_objective_id = (goal_override or "").strip() or planner_objective_id
     warps = _build_warp_hints(
         snapshot=snapshot,
         player_position=position,
@@ -177,13 +183,17 @@ def build_turn_context(
         reason=str(bundle.get("reason") or ""),
         source=str(bundle.get("source") or ""),
         objective={
-            "id": objective.get("id"),
+            "id": active_objective_id,
             "title": objective.get("title"),
             "summary": _truncate(objective.get("summary"), 180),
             "completion_predicate": _truncate(objective.get("completion_predicate"), 180),
             "progress_percent": (bundle.get("objective") or {}).get("progress_percent"),
             "route_hint": _truncate(route_hint_raw, 180),
             "target_npcs": target_npcs,
+            "mission_override": active_objective_id
+            if active_objective_id != planner_objective_id
+            else "",
+            "planner_objective_id": planner_objective_id,
         },
         ui={
             "mode": screen_text.get("ui_mode"),
@@ -234,7 +244,7 @@ def build_turn_context(
         constraints=ActionBudget(),
         planning=PlanningGuide(
             observation_id=str(bundle.get("observation_id") or ""),
-            objective_id=str(objective.get("id") or ""),
+            objective_id=active_objective_id,
             mode_rules={
                 "overworld": ModeRule(primary_branch_kind="raw_actions", max_actions=4),
                 "dialog": ModeRule(primary_branch_kind="raw_actions", max_actions=2),
@@ -246,7 +256,10 @@ def build_turn_context(
                 ),
             },
             branch_templates=BranchTemplates(
-                raw_actions=RawActionBranch(kind="raw_actions", actions=["walk_up"]),
+                raw_actions=RawActionBranch(
+                    kind="raw_actions",
+                    actions=["a_until_dialog_end"] if dialog_active else ["walk_up"],
+                ),
                 navigation=NavigationBranch(
                     kind="navigation",
                     target={"x": 0, "y": 0},
@@ -256,6 +269,7 @@ def build_turn_context(
             expected_outcome_template=_build_expected_outcome_template(
                 destination_npc=destination_npc,
                 current_map_name=current_map_name,
+                dialog_active=dialog_active,
             ),
         ),
         plan_status=plan_status,

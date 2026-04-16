@@ -1,3 +1,4 @@
+import asyncio
 from pathlib import Path
 
 import pytest
@@ -156,6 +157,142 @@ if __LINGER_AFTER_EVENTS__:
     return script
 
 
+def make_fake_cycle_pi_script(
+    tmp_path: Path,
+    *,
+    include_frame_read: bool = True,
+) -> Path:
+    script = tmp_path / "fake-pi-cycle"
+    template = """#!/usr/bin/env python3
+import json
+import pathlib
+import sys
+import time
+
+session_dir = pathlib.Path(sys.argv[sys.argv.index("--session-dir") + 1])
+session_dir.mkdir(parents=True, exist_ok=True)
+workspace_dir = session_dir.parent
+session_file = session_dir / "session-cycle.jsonl"
+if not session_file.exists():
+    session_file.write_text(
+        json.dumps(
+            {
+                "type": "session",
+                "version": 3,
+                "id": "session-cycle",
+                "timestamp": "2026-01-01T00:00:00Z",
+                "cwd": str(workspace_dir),
+            }
+        )
+        + "\\n",
+        encoding="utf-8",
+    )
+
+observe_result = {
+    "observation_id": "obs-cycle-1",
+    "artifacts": {
+        "latest_frame": str(workspace_dir / "latest_frame.png"),
+        "latest_frame_annotated": str(workspace_dir / "latest_frame_annotated.png"),
+        "turn_context_json": str(workspace_dir / "turn_context.json"),
+        "turn_plan_json": str(workspace_dir / "turn_plan.json"),
+    },
+}
+
+events = [
+    {"type": "session", "id": "session-cycle", "cwd": str(workspace_dir)},
+    {
+        "type": "tool_execution_start",
+        "toolCallId": "observe-1",
+        "toolName": "bash",
+        "args": {"command": "curl -s http://127.0.0.1:8765/agent/observe"},
+    },
+    {
+        "type": "tool_execution_end",
+        "toolCallId": "observe-1",
+        "toolName": "bash",
+        "result": observe_result,
+        "isError": False,
+    },
+]
+
+if __INCLUDE_FRAME_READ__:
+    events.extend(
+        [
+            {
+                "type": "tool_execution_start",
+                "toolCallId": "frame-1",
+                "toolName": "read",
+                "args": {"path": str(workspace_dir / "latest_frame_annotated.png")},
+            },
+            {
+                "type": "tool_execution_end",
+                "toolCallId": "frame-1",
+                "toolName": "read",
+                "result": {"ok": True},
+                "isError": False,
+            },
+        ]
+    )
+
+events.extend(
+    [
+        {
+            "type": "tool_execution_start",
+            "toolCallId": "plan-1",
+            "toolName": "bash",
+            "args": {"command": "PORT=8765 bash agent_curl.sh /agent/plan <<'JSON'\\n{}\\nJSON"},
+        },
+        {
+            "type": "tool_execution_end",
+            "toolCallId": "plan-1",
+            "toolName": "bash",
+            "result": {"success": True},
+            "isError": False,
+        },
+        {
+            "type": "tool_execution_start",
+            "toolCallId": "act-1",
+            "toolName": "bash",
+            "args": {"command": "PORT=8765 bash agent_curl.sh /agent/act <<'JSON'\\n{}\\nJSON"},
+        },
+        {
+            "type": "tool_execution_end",
+            "toolCallId": "act-1",
+            "toolName": "bash",
+            "result": {"success": True},
+            "isError": False,
+        },
+        {
+            "type": "tool_execution_start",
+            "toolCallId": "observe-2",
+            "toolName": "bash",
+            "args": {"command": "curl -s http://127.0.0.1:8765/agent/observe"},
+        },
+        {
+            "type": "tool_execution_end",
+            "toolCallId": "observe-2",
+            "toolName": "bash",
+            "result": observe_result,
+            "isError": False,
+        },
+    ]
+)
+
+for event in events:
+    print(json.dumps(event), flush=True)
+    time.sleep(0.02)
+
+while True:
+    time.sleep(1)
+"""
+    script.write_text(
+        template.replace("__INCLUDE_FRAME_READ__", repr(include_frame_read)),
+        encoding="utf-8",
+    )
+    script.chmod(0o755)
+    return script
+
+
 @pytest.mark.asyncio
 async def test_pi_supervisor_tracks_turn_output_and_tools(tmp_path: Path):
     events: list[dict] = []
@@ -275,6 +412,25 @@ async def test_pi_supervisor_attaches_latest_frame_pngs_to_turn_prompt(tmp_path:
 
 
 @pytest.mark.asyncio
+async def test_pi_supervisor_stages_agent_curl_in_workspace(tmp_path: Path):
+    fake_pi = make_fake_pi_script(tmp_path)
+    workspace_dir = tmp_path / "workspace"
+
+    supervisor = PiSupervisor(
+        workspace_dir=workspace_dir,
+        server_url="http://127.0.0.1:8765",
+        pi_binary=str(fake_pi),
+    )
+
+    await supervisor.start(goal="Reach the next checkpoint.", auto_continue=False)
+    await supervisor.wait_until_idle(timeout=5)
+
+    staged = workspace_dir / "agent_curl.sh"
+    assert staged.is_file()
+    assert "PORT:-8765" in staged.read_text(encoding="utf-8")
+
+
+@pytest.mark.asyncio
 async def test_pi_supervisor_flags_turns_that_skip_annotated_frame_reads(tmp_path: Path):
     events: list[dict] = []
     fake_pi = make_fake_pi_script(tmp_path)
@@ -338,6 +494,147 @@ async def test_pi_supervisor_records_successful_annotated_frame_reads(tmp_path: 
 
 
 @pytest.mark.asyncio
+async def test_pi_supervisor_preserves_vision_state_during_gameplay_cycle(tmp_path: Path):
+    events: list[dict] = []
+    workspace_dir = tmp_path / "workspace"
+    workspace_dir.mkdir(parents=True, exist_ok=True)
+    (workspace_dir / "latest_frame_annotated.png").write_bytes(b"annotated-frame")
+    (workspace_dir / "latest_frame.png").write_bytes(b"raw-frame")
+
+    async def sink(event: dict) -> None:
+        events.append(event)
+
+    supervisor = PiSupervisor(
+        workspace_dir=workspace_dir,
+        server_url="http://127.0.0.1:8765",
+        event_sink=sink,
+    )
+
+    await supervisor._handle_event(
+        {
+            "type": "tool_execution_start",
+            "toolCallId": "observe-1",
+            "toolName": "bash",
+            "args": {"command": "curl -s http://127.0.0.1:8765/agent/observe"},
+        }
+    )
+    await supervisor._handle_event(
+        {
+            "type": "tool_execution_end",
+            "toolCallId": "observe-1",
+            "toolName": "bash",
+            "result": {"success": True},
+            "isError": False,
+        }
+    )
+    await supervisor._handle_event(
+        {
+            "type": "tool_execution_start",
+            "toolCallId": "frame-1",
+            "toolName": "read",
+            "args": {"path": str(workspace_dir / "latest_frame_annotated.png")},
+        }
+    )
+    await supervisor._handle_event(
+        {
+            "type": "tool_execution_end",
+            "toolCallId": "frame-1",
+            "toolName": "read",
+            "result": {"ok": True},
+            "isError": False,
+        }
+    )
+    await supervisor._handle_event(
+        {
+            "type": "tool_execution_start",
+            "toolCallId": "plan-1",
+            "toolName": "bash",
+            "args": {"command": "PORT=8765 bash agent_curl.sh /agent/plan <<'JSON'\\n{}\\nJSON"},
+        }
+    )
+    await supervisor._handle_event(
+        {
+            "type": "tool_execution_end",
+            "toolCallId": "plan-1",
+            "toolName": "bash",
+            "result": {"success": True},
+            "isError": False,
+        }
+    )
+    await supervisor._handle_event(
+        {
+            "type": "tool_execution_start",
+            "toolCallId": "act-1",
+            "toolName": "bash",
+            "args": {"command": "PORT=8765 bash agent_curl.sh /agent/act <<'JSON'\\n{}\\nJSON"},
+        }
+    )
+    await supervisor._handle_event(
+        {
+            "type": "tool_execution_end",
+            "toolCallId": "act-1",
+            "toolName": "bash",
+            "result": {"success": True},
+            "isError": False,
+        }
+    )
+    await supervisor._handle_event(
+        {
+            "type": "tool_execution_start",
+            "toolCallId": "observe-2",
+            "toolName": "bash",
+            "args": {"command": "curl -s http://127.0.0.1:8765/agent/observe"},
+        }
+    )
+    await supervisor._handle_event(
+        {
+            "type": "tool_execution_end",
+            "toolCallId": "observe-2",
+            "toolName": "bash",
+            "result": {"success": True},
+            "isError": False,
+        }
+    )
+
+    snapshot = supervisor.state_snapshot()
+    vision = snapshot["vision"]["current_turn"]
+    assert snapshot["turns_completed"] == 0
+    assert vision["annotated_read"] is True
+    assert vision["used_vision"] is True
+    assert not any(event["type"] == "pi_turn_end" for event in events)
+
+
+@pytest.mark.asyncio
+async def test_pi_supervisor_keeps_running_until_agent_stops(tmp_path: Path):
+    fake_pi = make_fake_cycle_pi_script(tmp_path, include_frame_read=True)
+    workspace_dir = tmp_path / "workspace"
+    workspace_dir.mkdir(parents=True, exist_ok=True)
+    (workspace_dir / "latest_frame_annotated.png").write_bytes(b"annotated-frame")
+    (workspace_dir / "latest_frame.png").write_bytes(b"raw-frame")
+
+    supervisor = PiSupervisor(
+        workspace_dir=workspace_dir,
+        server_url="http://127.0.0.1:8765",
+        pi_binary=str(fake_pi),
+    )
+
+    await supervisor.start(goal="Reach the next checkpoint.", auto_continue=False)
+    for _ in range(20):
+        if supervisor.state_snapshot()["vision"]["current_turn"]["annotated_read"]:
+            break
+        await asyncio.sleep(0.05)
+
+    snapshot = supervisor.state_snapshot()
+    assert snapshot["status"] == "running"
+    assert snapshot["turns_completed"] == 0
+    assert snapshot["vision"]["current_turn"]["annotated_read"] is True
+
+    await supervisor.stop()
+    snapshot = supervisor.state_snapshot()
+    assert snapshot["status"] == "stopped"
+
+
+@pytest.mark.asyncio
 async def test_pi_supervisor_auto_continue_warns_after_vision_violation(tmp_path: Path):
     streamed: list[dict] = []
     fake_pi = make_fake_pi_script(tmp_path)
@@ -367,7 +664,10 @@ async def test_pi_supervisor_auto_continue_warns_after_vision_violation(tmp_path
     prompt_events = [event for event in streamed if event["type"] == "pi_prompt_sent"]
     assert len(prompt_events) == 2
     assert "violated the frame-inspection policy" in prompt_events[1]["prompt"]
-    assert "Do not call /agent/plan or /agent/act until the frame read succeeds." in prompt_events[1]["prompt"]
+    assert (
+        "Do not call /agent/plan or /agent/act until both frame reads succeed."
+        in prompt_events[1]["prompt"]
+    )
 
 
 @pytest.mark.asyncio
@@ -629,3 +929,9 @@ def test_parse_model_limits_output_extracts_context_window() -> None:
     assert parsed["context_window"] == "262.1K"
     assert parsed["context_window_tokens"] == 262100
     assert parsed["max_output_tokens"] == 65500
+
+
+def test_continue_prompt_mentions_dialog_action_without_single_cycle_language() -> None:
+    assert "a_until_dialog_end" in CONTINUE_PROMPT
+    assert "one gameplay cycle" not in CONTINUE_PROMPT
+    assert "recent_action.plan_state" not in CONTINUE_PROMPT

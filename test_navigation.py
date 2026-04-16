@@ -79,6 +79,18 @@ def test_location_map_marks_player_tile_passable_even_if_snapshot_disagrees():
     assert location_map.tiles[(10, 10)] is True
 
 
+def test_render_window_ascii_marks_warp_tiles_with_W():
+    snapshot = make_snapshot()
+    snapshot.warps = [{"x": 9, "y": 11, "target_map_id": 5}]
+
+    rendered = snapshot.render_window_ascii()
+    legend = snapshot.to_dict().get("ascii_legend") or {}
+
+    assert "W" in rendered
+    assert "W" in legend
+    assert "step ONTO" in legend["W"].lower() or "warp" in legend["W"].lower()
+
+
 def test_ascii_maps_use_symbols_not_distance_digits():
     snapshot = make_interaction_snapshot(valid_moves=["up", "left", "right"])
     location_map = LocationNavigationMap(map_id=1, map_name="TEST MAP")
@@ -255,6 +267,30 @@ def test_compute_valid_moves_respects_tile_pair_blockers():
 
     assert "up" not in moves
     assert {"down", "left", "right"}.issubset(set(moves))
+
+
+def test_compute_valid_moves_on_warp_tile_includes_all_directions():
+    """Standing on a warp tile must expose every direction so the agent can
+    press the one that fires the transition, even when the tile beyond it is
+    a wall (e.g. a south-edge doormat warp inside Blue's House)."""
+    from pokemon_agent.emulator import PyBoyEmulator
+
+    emu = PyBoyEmulator()
+    terrain = [[1 for _ in range(10)] for _ in range(9)]
+    for x in range(10):
+        terrain[5][x] = 0
+    tilemap = [[0 for _ in range(20)] for _ in range(18)]
+
+    moves = emu._compute_valid_moves(
+        terrain=terrain,
+        tilemap=tilemap,
+        tileset="OVERWORLD",
+        sprites_local=set(),
+        player_coords=(2, 7),
+        warps=[{"x": 2, "y": 7, "warp_id": 0, "target_map_id": 40}],
+    )
+
+    assert set(moves) == {"up", "down", "left", "right"}
 
 
 def test_auto_mode_falls_back_to_persistent_for_visible_offscreen_route(monkeypatch):

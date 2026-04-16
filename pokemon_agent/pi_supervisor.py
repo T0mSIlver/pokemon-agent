@@ -16,7 +16,6 @@ from urllib.parse import urlparse
 
 from pokemon_agent.agent_runtime import utc_now
 from pokemon_agent.harness.prompting import (
-    CONTINUE_PROMPT,
     continue_supervisor_prompt,
     default_supervisor_prompt,
 )
@@ -345,8 +344,8 @@ class PiSupervisor:
         self._process: Optional[asyncio.subprocess.Process] = None
         self._stop_requested = False
         self._requested_process_shutdown = False
-        self._current_cycle_has_tool_call = False
         self._current_turn_completed = False
+        self._current_cycle_has_tool_call = False
 
     @property
     def is_running(self) -> bool:
@@ -372,7 +371,9 @@ class PiSupervisor:
             (str(path) for path in attachment_paths if path.name == ANNOTATED_FRAME_NAME),
             None,
         )
-        raw_path = next((str(path) for path in attachment_paths if path.name == RAW_FRAME_NAME), None)
+        raw_path = next(
+            (str(path) for path in attachment_paths if path.name == RAW_FRAME_NAME), None
+        )
         return {
             "annotated_path": annotated_path,
             "annotated_available": annotated_path is not None,
@@ -400,7 +401,8 @@ class PiSupervisor:
             self.current_turn_vision["raw_read"] = True
             sequence.append(path)
         self.current_turn_vision["used_vision"] = bool(
-            self.current_turn_vision.get("annotated_read") or self.current_turn_vision.get("raw_read")
+            self.current_turn_vision.get("annotated_read")
+            or self.current_turn_vision.get("raw_read")
         )
 
     def _finalize_turn_vision(self) -> JsonDict:
@@ -426,6 +428,21 @@ class PiSupervisor:
         if self.last_turn_vision.get("compliant") is False:
             reason = str(self.last_turn_vision.get("violation_reason") or "")
         return continue_supervisor_prompt(vision_violation_reason=reason)
+
+    def _reset_cycle_state(self, attachment_paths: Optional[list[Path]] = None) -> None:
+        self.current_turn_vision = self._new_turn_vision(
+            attachment_paths if attachment_paths is not None else self._vision_attachment_paths()
+        )
+        self._current_turn_completed = False
+        self._current_cycle_has_tool_call = False
+
+    def _stage_workspace_helpers(self) -> None:
+        source = self.repo_root / "scripts" / "agent_curl.sh"
+        if not source.is_file():
+            raise FileNotFoundError(f"Missing helper script: {source}")
+        destination = self.workspace_dir / "agent_curl.sh"
+        shutil.copy2(source, destination)
+        destination.chmod(0o755)
 
     async def _request_process_shutdown_after_turn(self) -> None:
         if self._requested_process_shutdown:
@@ -568,6 +585,7 @@ class PiSupervisor:
         self.goal = (goal or "").strip()
         self.max_turns = max_turns if max_turns and max_turns > 0 else None
         self.continue_delay_seconds = max(0.0, float(continue_delay_seconds))
+        self._stage_workspace_helpers()
         self.default_prompt = default_supervisor_prompt(
             server_url=self.server_url,
             workspace_dir=self.workspace_dir,
@@ -610,12 +628,11 @@ class PiSupervisor:
         self.last_compaction_tokens_after = None
         self.last_compaction_at = None
         self._pending_thinking_in_message = False
-        self.current_turn_vision = self._new_turn_vision([])
+        self._reset_cycle_state([])
         self.last_turn_vision = self._new_turn_vision([])
         self.vision_violation_count = 0
-        self._current_cycle_has_tool_call = False
-        self._requested_process_shutdown = False
         self._stop_requested = False
+        self._requested_process_shutdown = False
         await self._refresh_model_limits()
 
         await self._emit_major(
@@ -646,9 +663,9 @@ class PiSupervisor:
         self.current_assistant_text = ""
         self.current_assistant_thinking = ""
         self.current_tool_calls.clear()
-        self._current_cycle_has_tool_call = False
+        self._reset_cycle_state(self._vision_attachment_paths())
         self._requested_process_shutdown = False
-        self.current_turn_vision = self._new_turn_vision(self._vision_attachment_paths())
+        self._stage_workspace_helpers()
         await self._refresh_model_limits()
         await self._emit_major(
             "pi_supervisor_status",
@@ -793,12 +810,10 @@ class PiSupervisor:
         self.status_reason = "Pi is processing a turn."
         self.next_auto_continue_at = None
         self._requested_process_shutdown = False
-        self._current_turn_completed = False
         self.current_assistant_text = ""
         self.current_assistant_thinking = ""
-        self._current_cycle_has_tool_call = False
         self.current_tool_calls.clear()
-        self.current_turn_vision = self._new_turn_vision(attachment_paths)
+        self._reset_cycle_state(attachment_paths)
         self.last_event_at = utc_now()
         prompt_entry = self._append_transcript(
             direction="outbound",
@@ -1170,11 +1185,6 @@ class PiSupervisor:
             if thinking_text:
                 self.last_assistant_thinking = thinking_text
             self._refresh_turn_plan_preview_from_workspace()
-            summary_text = message_text or self.current_assistant_text or self.last_assistant_text
-            await self._complete_turn(
-                summary_text=summary_text,
-                tool_result_count=len(event.get("toolResults") or []),
-            )
             return
 
         if event_type == "message_start":
@@ -1279,7 +1289,11 @@ class PiSupervisor:
                     "usage": self.last_message_usage,
                 },
             )
-            if final_text and not self._current_cycle_has_tool_call and not self._current_turn_completed:
+            if (
+                final_text
+                and not self._current_cycle_has_tool_call
+                and not self._current_turn_completed
+            ):
                 await self._complete_turn(summary_text=final_text, tool_result_count=0)
                 await self._request_process_shutdown_after_turn()
             return
@@ -1288,7 +1302,6 @@ class PiSupervisor:
             args = event.get("args") or {}
             file_hint = extract_file_hint(args)
             summary = event.get("toolName", "tool")
-            self._current_cycle_has_tool_call = True
             if file_hint:
                 summary = f"{summary}: {file_hint}"
             entry = {
@@ -1303,6 +1316,7 @@ class PiSupervisor:
                 "result": "",
                 "result_preview": "",
             }
+            self._current_cycle_has_tool_call = True
             self.current_tool_calls[event.get("toolCallId", summary)] = entry
             self.tool_call_count += 1
             turn_plan = extract_turn_plan_candidate(args)

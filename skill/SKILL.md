@@ -70,16 +70,10 @@ curl -s http://localhost:8765/agent/observe | python3 -m json.tool
    - the valid measurable `expected_outcome` fields
    - an `expected_outcome_template` example you can copy and adapt
 
-   `turn_context.json` also surfaces navigation details that matter for Oak's Lab style NPC routing:
-   - `navigation.visible_sprites`
-   - `navigation.ascii_window`
-   - `navigation.ascii_legend`
-   - `objective.route_hint` and `objective.target_npcs`
-
 3. Submit one strict plan for the current observation.
 
 ```bash
-bash scripts/agent_curl.sh /agent/plan <<'JSON' | python3 -m json.tool
+bash agent_curl.sh /agent/plan <<'JSON' | python3 -m json.tool
 {
   "observation_id": "<copy from turn_context.json>",
   "objective_id": "<copy from turn_context.json>",
@@ -97,12 +91,14 @@ JSON
 4. Execute exactly one validated batch.
 
 ```bash
-curl -s -X POST http://localhost:8765/agent/act | python3 -m json.tool
+bash agent_curl.sh /agent/act <<'JSON' | python3 -m json.tool
+{}
+JSON
 ```
 
 5. Re-run `/agent/observe` before planning again.
 
-Never send long blind action chains. Overworld raw batches are capped at 4 actions. Dialog and battle raw batches are capped at 2 actions. Navigation plans are one target per plan.
+Do not exceed the limits exposed in `turn_context.json.planning.mode_rules`.
 
 ## What To Trust In `turn_context.json`
 
@@ -126,44 +122,42 @@ Use these fields as the canonical decision surface:
 
 The screenshot read is mandatory.
 
-- Use the `read` tool on the attached annotated frame every turn before planning.
-- Treat a turn without that annotated-frame read as a failed turn that must be corrected on the next step.
-- Use the `read` tool on the raw frame when the overlay hides important detail, text, or sprite placement.
+- Use the `read` tool on BOTH `latest_frame_annotated.png` AND `latest_frame.png` every turn before planning.
+- The annotated frame shows the navigation grid, warp markers (purple `W` boxes), sprite blockers (orange squares), and the interaction target (orange ring).
+- The raw frame shows in-game art, NPC outfits, dialog text, signposts, and details the overlay can hide.
+- Treat a turn without both reads as a failed turn that must be corrected on the next step.
 - Do not skip image inspection just because `turn_context.json` already exists.
 - Do not infer terrain from text alone.
+
+## Using Warps (Doorways and Stairs)
+
+Warps in Pokemon Red are counter-intuitive. Standing next to a warp does nothing — you must:
+
+1. Navigate ONTO the warp tile itself (the `W` glyph in `navigation.ascii_window`, or the purple `W` box in the annotated frame).
+2. Take ONE more step in the direction of the exit (north for a top doorway, south for a doormat at the bottom of an interior, west/east for side exits).
+
+The map transition only fires on that follow-up step. If you land on a `W` and stop, you will appear stuck. Always plan a navigation target ONE TILE PAST the warp coordinate when leaving a building, or queue a `walk_<direction>` raw action immediately after the navigation reaches the warp tile.
 
 ## Planning Rules
 
 - The plan's `observation_id` must match the current `turn_context.json`.
 - The plan's `objective_id` must match `turn_context.json`'s `planning.objective_id`.
-- `mode=overworld`, `dialog`, and `battle` require a `raw_actions` primary branch.
-- `mode=navigation` requires a `navigation` primary branch.
+- Match the branch shape and limits in `turn_context.json.planning.mode_rules`.
+- Prefer copying `turn_context.json.planning.branch_templates` and editing them instead of inventing a shape from scratch.
+- If `ui.mode` is `dialog`, raw actions may use `a_until_dialog_end` to clear the current dialog.
 - Every plan must include a measurable `expected_outcome`.
 - Prefer copying `planning.expected_outcome_template` and editing it instead of inventing shape from scratch.
 - If `plan_status.state` is `drifted`, `invalid`, or `stale`, stop and re-observe before acting again.
-- Use `bash scripts/agent_curl.sh` with a heredoc for JSON POST bodies instead of hand-written shell quoting.
+- Use `bash agent_curl.sh` with a heredoc for JSON POST bodies instead of hand-written shell quoting.
 
-## Decision Order
-
-Use this order:
-
-1. If the UI is in dialog, clear dialog first.
-2. If the UI is in battle, resolve the battle first.
-3. If `recovery.stuck_level` is `warning` or `danger`, follow `recovery.recommended_actions` verbatim before any further exploration.
-4. If a walkable destination is more than one tile away, prefer `mode=navigation` with the exact target coord. Navigation handles pathfinding around walls and sprites — raw `walk_*` batches drift the moment any step hits a collision.
-5. Use `raw_actions` only for single-step nudges (`walk_*` x1), dialog (`press_a`/`press_b`), or battle menus.
-6. Otherwise use the annotated frame, valid moves, and interaction probe to explore carefully.
-
-If `objective.route_hint` says `You are inside <map>...`, treat that as the current-map objective anchor rather than the older cross-map route summary.
-
-When `recent_action.plan_state` is `drifted` or `partial`, read `recent_action.summary` — it shows exactly how many of the requested actions executed and where the block happened. Drop your next batch to a single action and reassess, or switch to `mode=navigation`.
+Use the current `turn_context.json` as the source of truth for `ui`, `plan_status`, `navigation`, `recent_action`, and `recovery`. Prefer those live fields over stale assumptions from previous turns.
 
 ## Saving And Recovery
 
 Manual save:
 
 ```bash
-bash scripts/agent_curl.sh /save <<'JSON' | python3 -m json.tool
+bash agent_curl.sh /save <<'JSON' | python3 -m json.tool
 {"name": "before_brock"}
 JSON
 ```
@@ -171,7 +165,7 @@ JSON
 Load recovery:
 
 ```bash
-bash scripts/agent_curl.sh /load <<'JSON' | python3 -m json.tool
+bash agent_curl.sh /load <<'JSON' | python3 -m json.tool
 {"name": "before_brock"}
 JSON
 ```

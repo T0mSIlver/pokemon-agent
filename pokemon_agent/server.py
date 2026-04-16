@@ -703,6 +703,13 @@ def _make_runtime_save_event(name: str, path: Path, source: str, reason: str) ->
     }
 
 
+def _current_supervisor_goal_override() -> Optional[str]:
+    if _supervisor is None:
+        return None
+    goal = str(getattr(_supervisor, "goal", "") or "").strip()
+    return goal or None
+
+
 def _refresh_agent_bundle_sync(
     *,
     reason: str,
@@ -732,6 +739,7 @@ def _refresh_agent_bundle_sync(
         navigation_plan=navigation_plan,
         navigation_execution=navigation_execution,
         explicit_save=explicit_save,
+        goal_override=_current_supervisor_goal_override(),
     )
 
 
