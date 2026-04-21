@@ -1,212 +1,200 @@
 ---
 name: pokemon-player
-description: Play Pokémon games via headless emulation. Start a game server, read game state, make strategic decisions, and send actions — all from the terminal.
-tags: [gaming, pokemon, emulator, pyboy, gameplay]
+description: Play Pokemon Red through this repo's strict minimal-turn harness. Inspect the attached frames, refresh `/agent/observe`, read `turn_context.json` and `turn_plan.json`, submit a validated plan with `/agent/plan`, then execute one batch with `/agent/act`.
+tags: [pokemon, emulator, vision, gameplay, dashboard]
 triggers:
   - play pokemon
-  - pokemon game
-  - start pokemon
   - play pokemon red
-  - play pokemon firered
-  - pokemon firered
-  - pokemon red
-  - play gameboy
+  - pokemon harness
+  - pokemon dashboard
+  - pokemon vision
 ---
 
-# Pokémon Player Skill
+# Pokemon Player Skill
 
-Play Pokémon games autonomously via headless emulation. Uses the `pokemon-agent`
-package to run a game server, then interacts via HTTP API.
+Use this repo's local server as the sole harness. Pi is the orchestrator. Do not launch or stop the harness server from inside Pi.
 
-## Setup (First Time Only)
+Red is the only first-class target for this skill.
 
-```bash
-# Install the package + emulator + dashboard
-pip install pokemon-agent[dashboard] pyboy
+If `http://localhost:8765/health` is unreachable, stop and tell the operator the server is not running.
 
-# User must provide their own ROM file
-# The agent CANNOT download or distribute ROMs
-```
+## Server Assumption
 
-Ask the user for the ROM file path if not provided. Common locations:
-- `~/roms/pokemon_red.gb`
-- `~/pokemon_red.gb`
-
-## Starting a Game
+Assume the operator already started the server from the repo root:
 
 ```bash
-# Start the game server as a background process
-pokemon-agent serve --rom <ROM_PATH> --port 8765 &
-
-# Verify it's running
-curl -s http://localhost:8765/health
+uv run pokemon-agent serve \
+  --rom <ROM_PATH> \
+  --port 8765 \
+  --agent-workspace-dir "$(pwd)/.agent-workspace"
 ```
 
-Tell the user: "Dashboard available at http://localhost:8765/dashboard"
+The dashboard is at `http://localhost:8765/dashboard`.
 
-## Gameplay Loop
+If the operator is already using the dashboard supervisor, do not start a second Pi session manually.
 
-Each turn, follow this cycle:
+## Canonical Turn Artifacts
 
-### 1. Observe — Read Game State
+Treat these files as the only model-facing workspace contract:
+
+- `latest_frame_annotated.png`
+- `latest_frame.png`
+- `turn_context.json`
+- `turn_plan.json`
+- `recovery_saves.json` only when `turn_context.json` says the run is risky or stuck
+
+Ignore `.agent-workspace/debug/`. Those files are dashboard and operator support, not part of the Pi contract.
+
+API responses are intentionally concise. Read the workspace files instead of expecting large inline payloads.
+
+## Mandatory Turn Loop
+
+Do this every turn:
+
+1. Refresh the turn context.
 
 ```bash
-curl -s http://localhost:8765/state | python3 -m json.tool
+curl -s http://localhost:8765/agent/observe | python3 -m json.tool
 ```
 
-Parse the JSON to understand:
-- Where am I? (map name, position)
-- What's happening? (overworld, battle, dialog, menu)
-- Party status? (HP, levels, any fainted?)
-- Bag contents? (potions, pokeballs?)
-- Badges earned?
+2. Read these files in this order:
+   - Use the `read` tool on `latest_frame_annotated.png` every turn before any `/agent/plan` or `/agent/act` call
+   - Use the `read` tool on `latest_frame.png` too if the overlay hides detail, text, or sprite placement
+   - `turn_context.json`
+   - `turn_plan.json`
+   - `recovery_saves.json` only if the context says recovery matters
 
-### 2. Decide — What To Do
+   `turn_context.json` includes a `planning` section with:
+   - the exact `planning.observation_id` and `planning.objective_id` to copy
+   - the allowed branch shape for each mode
+   - the valid measurable `expected_outcome` fields
+   - an `expected_outcome_template` example you can copy and adapt
 
-**Priority order:**
-1. If in dialog → press A to advance (`a_until_dialog_end`)
-2. If in battle → choose best move (see Battle Strategy)
-3. If party needs healing → navigate to Pokémon Center
-4. If ready for next gym → navigate toward it
-5. Otherwise → explore, train, catch Pokémon
-
-Use Hermes memory to track:
-- Current objective: `PKM:OBJECTIVE: Defeat Brock in Pewter City`
-- Map knowledge: `PKM:MAP: Viridian Forest has bug catchers, exit north to Pewter`
-- Strategy notes: `PKM:STRATEGY: Brock's Onix is weak to Water — use Bubble`
-
-### 3. Act — Send Commands
+3. Submit one strict plan for the current observation.
 
 ```bash
-# Single action
-curl -s -X POST http://localhost:8765/action \
-  -H "Content-Type: application/json" \
-  -d '{"actions": ["press_a"]}'
-
-# Movement sequence
-curl -s -X POST http://localhost:8765/action \
-  -H "Content-Type: application/json" \
-  -d '{"actions": ["walk_up", "walk_up", "walk_right", "press_a"]}'
-
-# Advance dialog
-curl -s -X POST http://localhost:8765/action \
-  -H "Content-Type: application/json" \
-  -d '{"actions": ["a_until_dialog_end"]}'
+bash agent_curl.sh /agent/plan <<'JSON' | python3 -m json.tool
+{
+  "observation_id": "<copy from turn_context.json>",
+  "objective_id": "<copy from turn_context.json>",
+  "intent": "Probe one tile north.",
+  "mode": "overworld",
+  "primary_branch": {"kind": "raw_actions", "actions": ["walk_up"]},
+  "expected_outcome": {
+    "summary": "Move one tile north.",
+    "position_delta": {"dx": 0, "dy": -1}
+  }
+}
+JSON
 ```
 
-### 4. Verify — Check Result
-
-After each action, the response includes `state_after`. Check:
-- Did I move? (position changed)
-- Did the dialog advance? (new text or cleared)
-- Did the battle state change? (HP, turn)
-
-If stuck (same state after 3+ actions), try:
-1. Press B to cancel menus
-2. Try different direction
-3. Load last save
-
-## Action Reference
-
-| Action | What It Does |
-|--------|-------------|
-| `press_a` | Press A (confirm, talk, interact) |
-| `press_b` | Press B (cancel, run from battle) |
-| `press_start` | Open menu |
-| `press_select` | Select button |
-| `walk_up/down/left/right` | Walk one tile |
-| `wait_60` | Wait ~1 second |
-| `a_until_dialog_end` | Mash A until dialog finishes |
-| `hold_a_30` | Hold A for 30 frames |
-
-## Battle Strategy (Gen 1)
-
-### Type Effectiveness — Key Matchups
-- **Water beats**: Fire, Ground, Rock
-- **Fire beats**: Grass, Bug, Ice
-- **Grass beats**: Water, Ground, Rock
-- **Electric beats**: Water, Flying
-- **Ground beats**: Fire, Electric, Rock, Poison
-- **Ice beats**: Grass, Ground, Flying, Dragon
-- **Fighting beats**: Normal, Rock, Ice
-- **Psychic beats**: Fighting, Poison (VERY strong in Gen 1)
-
-### Decision Tree
-1. Can I one-shot? → Use strongest super-effective move
-2. Am I at type disadvantage? → Switch if possible, or use neutral STAB
-3. Is enemy HP high? → Consider stat moves first (Growl, Tail Whip)
-4. Should I catch? → Weaken to red HP, use Poké Ball
-5. Wild battle, don't need it? → Run (press_b or use "Run" option)
-
-### Gen 1 Quirks
-- Special stat is BOTH Special Attack and Special Defense
-- Psychic type has NO effective counters (Ghost moves bugged, Bug moves weak)
-- Critical hit rate based on Speed stat
-- Wrap/Bind/Fire Spin prevent the opponent from acting
-
-## Saving
+4. Execute exactly one validated batch.
 
 ```bash
-# Save before important battles
-curl -s -X POST http://localhost:8765/save \
-  -d '{"name": "before_brock"}'
-
-# Load if things go wrong
-curl -s -X POST http://localhost:8765/load \
-  -d '{"name": "before_brock"}'
-
-# List available saves
-curl -s http://localhost:8765/saves
+bash agent_curl.sh /agent/act <<'JSON' | python3 -m json.tool
+{}
+JSON
 ```
 
-Save before: Gym battles, catching rare Pokémon, entering dungeons.
+5. Re-run `/agent/observe` before planning again.
 
-## Progression Milestones
+Do not exceed the limits exposed in `turn_context.json.planning.mode_rules`.
 
-Track these in memory as you complete them:
+## What To Trust In `turn_context.json`
 
-1. ☐ Get starter Pokémon from Oak
-2. ☐ Deliver Oak's Parcel, get Pokédex
-3. ☐ Reach Pewter City through Viridian Forest
-4. ☐ **Boulder Badge** (Brock — Rock type, use Water/Grass)
-5. ☐ Reach Cerulean City via Mt. Moon
-6. ☐ **Cascade Badge** (Misty — Water type, use Grass/Electric)
-7. ☐ Board SS Anne, get HM01 Cut
-8. ☐ **Thunder Badge** (Lt. Surge — Electric, use Ground)
-9. ☐ Clear Rock Tunnel to Lavender Town
-10. ☐ **Rainbow Badge** (Erika — Grass, use Fire/Ice/Flying)
-11. ☐ Clear Team Rocket Hideout, get Silph Scope
-12. ☐ **Soul Badge** (Koga — Poison, use Ground/Psychic)
-13. ☐ **Marsh Badge** (Sabrina — Psychic, use Bug... but good luck in Gen 1)
-14. ☐ **Volcano Badge** (Blaine — Fire, use Water/Ground)
-15. ☐ **Earth Badge** (Giovanni — Ground, use Water/Grass/Ice)
-16. ☐ Victory Road
-17. ☐ Elite Four + Champion
+Use these fields as the canonical decision surface:
 
-## Memory Conventions
+- `objective.id`, `objective.summary`, `objective.completion_predicate`
+- `ui.mode`, `ui.screen_text`
+- `position.map_name`, `position.x`, `position.y`, `position.facing`
+- `navigation.valid_moves`
+- `navigation.visible_sprites`
+- `navigation.ascii_window`
+- `navigation.ascii_legend`
+- `navigation.interaction`
+- `navigation.route_hints`
+- `navigation.landmarks`
+- `recent_action`
+- `recovery`
+- `constraints`
+- `planning`
+- `plan_status`
 
-Use these prefixes in Hermes memory for Pokémon-related entries:
-- `PKM:OBJECTIVE:` — Current goal
-- `PKM:MAP:` — Map/navigation knowledge
-- `PKM:STRATEGY:` — Battle/team strategy notes
-- `PKM:PROGRESS:` — Milestone completion
-- `PKM:STUCK:` — Notes about stuck situations and how they were resolved
+The screenshot read is mandatory.
 
-## Taking Screenshots
+- Use the `read` tool on BOTH `latest_frame_annotated.png` AND `latest_frame.png` every turn before planning.
+- The annotated frame shows the navigation grid, warp markers (purple `W` boxes), sprite blockers (orange squares), and the interaction target (orange ring).
+- The raw frame shows in-game art, NPC outfits, dialog text, signposts, and details the overlay can hide.
+- Treat a turn without both reads as a failed turn that must be corrected on the next step.
+- Do not skip image inspection just because `turn_context.json` already exists.
+- Do not infer terrain from text alone.
+
+## Using Warps (Doorways and Stairs)
+
+Warps in Pokemon Red are counter-intuitive. Standing next to a warp does nothing — you must:
+
+1. Navigate ONTO the warp tile itself (the `W` glyph in `navigation.ascii_window`, or the purple `W` box in the annotated frame).
+2. Take ONE more step in the direction of the exit (north for a top doorway, south for a doormat at the bottom of an interior, west/east for side exits).
+
+The map transition only fires on that follow-up step. If you land on a `W` and stop, you will appear stuck. Always plan a navigation target ONE TILE PAST the warp coordinate when leaving a building, or queue a `walk_<direction>` raw action immediately after the navigation reaches the warp tile.
+
+## Planning Rules
+
+- The plan's `observation_id` must match the current `turn_context.json`.
+- The plan's `objective_id` must match `turn_context.json`'s `planning.objective_id`.
+- Match the branch shape and limits in `turn_context.json.planning.mode_rules`.
+- Prefer copying `turn_context.json.planning.branch_templates` and editing them instead of inventing a shape from scratch.
+- If `ui.mode` is `dialog`, raw actions may use `a_until_dialog_end` to clear the current dialog.
+- Every plan must include a measurable `expected_outcome`.
+- Prefer copying `planning.expected_outcome_template` and editing it instead of inventing shape from scratch.
+- If `plan_status.state` is `drifted`, `invalid`, or `stale`, stop and re-observe before acting again.
+- Use `bash agent_curl.sh` with a heredoc for JSON POST bodies instead of hand-written shell quoting.
+
+Use the current `turn_context.json` as the source of truth for `ui`, `plan_status`, `navigation`, `recent_action`, and `recovery`. Prefer those live fields over stale assumptions from previous turns.
+
+## Saving And Recovery
+
+Manual save:
 
 ```bash
-# Save screenshot for vision analysis
-curl -s http://localhost:8765/screenshot -o /tmp/pokemon_screen.png
+bash agent_curl.sh /save <<'JSON' | python3 -m json.tool
+{"name": "before_brock"}
+JSON
 ```
 
-Use `vision_analyze` on the screenshot when:
-- You're unsure what's on screen (menus, NPCs)
-- You need to read in-game text that RAM doesn't capture well
-- You want to verify your position visually
+Load recovery:
 
-## Stopping
+```bash
+bash agent_curl.sh /load <<'JSON' | python3 -m json.tool
+{"name": "before_brock"}
+JSON
+```
 
-When done playing:
-1. Save the game: `curl -X POST localhost:8765/save -d '{"name": "session_end"}'`
-2. Kill the background server process
-3. Save progress notes to memory
+Save when the context or dashboard clearly indicates a checkpoint or risky segment. Reload when `recovery.stuck_level` is `danger` or `recovery_saves.json` presents a clearly safer candidate. If `recovery.recovery_command` is present in `turn_context.json`, you can run it directly.
+
+## Dashboard Use
+
+Keep `/dashboard` open during play.
+
+Use it to verify:
+
+- what frame Pi is reading
+- the current turn context and plan status
+- the validated plan in `turn_plan.json`
+- tool calls, streamed output, and recent events
+- whether auto-continue is armed
+- whether the harness thinks Pi is stuck
+- which recovery save is currently recommended
+
+If the dashboard and `turn_context.json` disagree, refresh `/agent/observe` before acting.
+
+## End Of Session
+
+Before ending a run:
+
+1. Save.
+2. Refresh `/agent/observe` once more.
+3. Leave `turn_plan.json` in a useful validated or clearly invalid state.
+4. Stop Pi from the dashboard if the supervisor is still running.
+
+Server shutdown is operator-owned and outside Pi's responsibilities.

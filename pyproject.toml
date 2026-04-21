@@ -60,6 +60,7 @@ include = ["pokemon_agent*"]
 
 [tool.setuptools.package-data]
 "pokemon_agent.dashboard" = ["static/**/*"]
+"pokemon_agent" = ["data/*.json"]
 
 [tool.ruff]
 line-length = 100

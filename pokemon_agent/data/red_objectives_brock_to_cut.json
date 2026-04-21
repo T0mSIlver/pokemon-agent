@@ -1,0 +1,217 @@
+{
+  "pack_id": "red_brock_to_cut",
+  "order": 20,
+  "title": "Brock To Cut",
+  "objectives": [
+    {
+      "id": "cross_mt_moon_to_cerulean",
+      "title": "Cross Mt. Moon And Reach Cerulean",
+      "summary": "Leave Pewter, cross Route 3 and Mt. Moon, and emerge into Cerulean City.",
+      "completion_predicate": "The current map reaches Cerulean City, Route 24, Route 25, or Bill's House.",
+      "failure_hints": [
+        "Prefer exits and warp landmarks in Mt. Moon over wide freehand exploration.",
+        "Short route cards beat long blind action chains in caves."
+      ],
+      "save_recommendation": "Save after reaching Cerulean City or the Route 24 bridge area.",
+      "route_hint": "Move east from Pewter through Route 3, then chain cave exits through Mt. Moon until Cerulean.",
+      "preferred_landmark_types": [
+        "exit",
+        "warp",
+        "frontier"
+      ],
+      "selector": {
+        "badge_count_gte": 1,
+        "bag_missing_all": [
+          "S.S. Ticket",
+          "HM01"
+        ],
+        "map_in": [
+          "Pewter City",
+          "Pewter Pokecenter",
+          "Pewter Mart",
+          "Route 3",
+          "Mt Moon 1F",
+          "Mt Moon B1F",
+          "Mt Moon B2F",
+          "Mt Moon Pokecenter",
+          "Route 4"
+        ]
+      }
+    },
+    {
+      "id": "help_bill_and_get_ticket",
+      "title": "Reach Bill And Get The S.S. Ticket",
+      "summary": "Travel through Cerulean and Routes 24/25 to Bill's House, then finish the dialog chain to obtain the S.S. Ticket.",
+      "completion_predicate": "The bag contains the S.S. Ticket.",
+      "failure_hints": [
+        "On the bridge and cape routes, use frontier cards to keep moving north/east instead of circling trainers.",
+        "At Bill's House, clear dialog patiently; the ticket comes from interaction, not roaming."
+      ],
+      "save_recommendation": "Save after the S.S. Ticket is received.",
+      "route_hint": "Head to Route 24 and Route 25, enter Bill's House, and finish the interaction sequence.",
+      "preferred_landmark_types": [
+        "interactable",
+        "exit",
+        "frontier"
+      ],
+      "selector": {
+        "badge_count_gte": 1,
+        "bag_missing_all": [
+          "S.S. Ticket",
+          "HM01"
+        ],
+        "map_in": [
+          "Cerulean City",
+          "Cerulean Pokecenter",
+          "Cerulean Gym",
+          "Cerulean Mart",
+          "Cerulean Bike Shop",
+          "Cerulean House (trashed)",
+          "Cerulean House 2",
+          "Cerulean House 3",
+          "Route 24",
+          "Route 25",
+          "Bill's House"
+        ]
+      }
+    },
+    {
+      "id": "head_to_vermilion_with_ticket",
+      "title": "Head To Vermilion With The Ticket",
+      "summary": "With the S.S. Ticket secured, route south and east toward Vermilion City and the harbor.",
+      "completion_predicate": "The current map reaches Vermilion City, Vermilion Dock, or the S.S. Anne exterior.",
+      "failure_hints": [
+        "Favor exits and route landmarks over re-clearing Cerulean interiors.",
+        "If you lose the path, use saved landmark knowledge and avoid recently failed branches."
+      ],
+      "save_recommendation": "Save once Vermilion City or the dock is reached.",
+      "route_hint": "Leave Cerulean, route toward Vermilion, and reach the harbor with the S.S. Ticket.",
+      "preferred_landmark_types": [
+        "exit",
+        "warp",
+        "frontier"
+      ],
+      "selector": {
+        "bag_has_any": [
+          "S.S. Ticket"
+        ],
+        "bag_missing_all": [
+          "HM01"
+        ],
+        "map_not_in": [
+          "Vermilion City",
+          "Vermilion Pokecenter",
+          "Pokemon Fan Club",
+          "Vermilion Mart",
+          "Vermilion Gym",
+          "Vermilion House (old rod)",
+          "Vermilion House 2 (good rod)",
+          "Vermilion House 3 (diary)",
+          "Vermilion Dock",
+          "S.S. Anne Exterior",
+          "S.S. Anne 1F",
+          "S.S. Anne 1F Rooms",
+          "S.S. Anne 2F",
+          "S.S. Anne 2F Rooms",
+          "S.S. Anne B1F",
+          "S.S. Anne B1F Rooms",
+          "S.S. Anne Bow",
+          "S.S. Anne Kitchen",
+          "S.S. Anne Captains Room"
+        ]
+      }
+    },
+    {
+      "id": "board_ss_anne",
+      "title": "Board The S.S. Anne",
+      "summary": "Use the ticket to reach the ship and move inside toward the captain route.",
+      "completion_predicate": "The current map is any interior S.S. Anne map.",
+      "failure_hints": [
+        "Treat the dock and ship entry as warp landmarks and re-observe after each transition.",
+        "Do not wander Vermilion once the ticket objective is live."
+      ],
+      "save_recommendation": "Save after boarding the S.S. Anne cleanly.",
+      "route_hint": "Reach Vermilion Dock, use the ticket, and board the ship.",
+      "preferred_landmark_types": [
+        "warp",
+        "exit",
+        "interactable"
+      ],
+      "selector": {
+        "bag_has_any": [
+          "S.S. Ticket"
+        ],
+        "bag_missing_all": [
+          "HM01"
+        ],
+        "map_in": [
+          "Vermilion City",
+          "Vermilion Pokecenter",
+          "Pokemon Fan Club",
+          "Vermilion Mart",
+          "Vermilion Gym",
+          "Vermilion House (old rod)",
+          "Vermilion House 2 (good rod)",
+          "Vermilion House 3 (diary)",
+          "Vermilion Dock",
+          "S.S. Anne Exterior"
+        ]
+      }
+    },
+    {
+      "id": "get_hm01_cut",
+      "title": "Get HM01 From The Captain",
+      "summary": "Navigate the S.S. Anne interior, reach the captain, and finish the interaction that grants HM01 Cut.",
+      "completion_predicate": "The bag contains HM01.",
+      "failure_hints": [
+        "Inside the ship, route cards and landmark exits are more reliable than freehand room wandering.",
+        "At the captain, clear the dialog chain patiently and avoid overlong menu batches."
+      ],
+      "save_recommendation": "Save immediately after HM01 is obtained.",
+      "route_hint": "Climb through the S.S. Anne interior, find the captain's room, and finish the captain interaction.",
+      "preferred_landmark_types": [
+        "warp",
+        "interactable",
+        "frontier"
+      ],
+      "selector": {
+        "bag_has_any": [
+          "S.S. Ticket"
+        ],
+        "bag_missing_all": [
+          "HM01"
+        ],
+        "map_in": [
+          "S.S. Anne 1F",
+          "S.S. Anne 1F Rooms",
+          "S.S. Anne 2F",
+          "S.S. Anne 2F Rooms",
+          "S.S. Anne B1F",
+          "S.S. Anne B1F Rooms",
+          "S.S. Anne Bow",
+          "S.S. Anne Kitchen",
+          "S.S. Anne Captains Room"
+        ]
+      }
+    },
+    {
+      "id": "phase_complete_cut_access",
+      "title": "Pack Complete: Cut Access",
+      "summary": "HM01 Cut is secured. Stabilize the run and prepare the next progression pack.",
+      "completion_predicate": "The bag contains HM01.",
+      "failure_hints": [
+        "Keep a durable save after receiving HM01 before attempting the next badge route."
+      ],
+      "save_recommendation": "Create a clean post-HM01 save.",
+      "route_hint": "Save, stabilize, and prepare the next pack.",
+      "preferred_landmark_types": [
+        "exit"
+      ],
+      "selector": {
+        "bag_has_any": [
+          "HM01"
+        ]
+      }
+    }
+  ]
+}

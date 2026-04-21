@@ -13,6 +13,13 @@ build/
 venv/
 env/
 
+# Testing / linting
+.pytest_cache/
+.ruff_cache/
+htmlcov/
+.coverage
+coverage.xml
+
 # IDE
 .vscode/
 .idea/
@@ -31,6 +38,17 @@ Thumbs.db
 *.ss*
 saves/
 .pokemon-agent/
+.agent-workspace/
+navigation_maps.json
+
+# Logs
+*.log
+
+# Lock files
+uv.lock
+
+# Kilo local data
+.kilo/
 
 # Environment
 .env

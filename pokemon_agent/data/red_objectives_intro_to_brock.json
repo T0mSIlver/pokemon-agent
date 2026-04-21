@@ -1,0 +1,209 @@
+{
+  "pack_id": "red_intro_to_brock",
+  "order": 10,
+  "title": "Intro To Brock",
+  "objectives": [
+    {
+      "id": "leave_pallet_and_get_starter",
+      "title": "Finish The Intro And Leave Pallet",
+      "summary": "Clear the opening sequence, get a starter from Oak, and be ready to head north from Pallet Town.",
+      "completion_predicate": "The player can move freely in Pallet Town and start the Route 1 trip.",
+      "failure_hints": [
+        "If dialog is active, keep the batch tiny and clear text before moving.",
+        "Use the annotated frame to confirm whether Oak, the lab, or a doorway is in view."
+      ],
+      "save_recommendation": "Save after the intro is complete and the player can freely move in Pallet Town.",
+      "route_hint": "Use raw actions for the intro, then move north out of Pallet Town toward Route 1.",
+      "preferred_landmark_types": [
+        "interactable",
+        "exit",
+        "frontier"
+      ],
+      "selector": {
+        "has_oaks_parcel": false,
+        "has_pokedex": false,
+        "map_in": [
+          "Pallet Town",
+          "Red's House 1F",
+          "Red's House 2F",
+          "Blue's House",
+          "Oak's Lab"
+        ]
+      }
+    },
+    {
+      "id": "get_oaks_parcel",
+      "title": "Reach Viridian Mart And Get Oak's Parcel",
+      "summary": "Travel from Pallet Town to Viridian City and trigger the mart sequence that gives Oak's Parcel.",
+      "completion_predicate": "The bag or flags show Oak's Parcel.",
+      "failure_hints": [
+        "Probe unexplored route segments with short movement batches and re-observe after each one.",
+        "Use navigation once explored tiles make a clean Route 1 path obvious."
+      ],
+      "save_recommendation": "Save once Oak's Parcel has been obtained in Viridian City.",
+      "route_hint": "Head north through Route 1 into Viridian City, then enter the mart.",
+      "preferred_landmark_types": [
+        "frontier",
+        "sign",
+        "interactable",
+        "exit"
+      ],
+      "selector": {
+        "has_oaks_parcel": false,
+        "has_pokedex": false
+      }
+    },
+    {
+      "id": "return_oaks_parcel",
+      "title": "Return Oak's Parcel",
+      "summary": "Bring the parcel back to Oak's Lab and clear the follow-up dialog until the Pokedex is received.",
+      "completion_predicate": "The flags report that the player has the Pokedex.",
+      "failure_hints": [
+        "When back in Oak's Lab, prefer short dialog-clearing action batches instead of long movement chains.",
+        "If unsure which NPC is targeted, use the interaction probe and raw frame together."
+      ],
+      "save_recommendation": "Save after the Pokedex is awarded and the lab dialog is fully cleared.",
+      "route_hint": "Go south to Pallet Town, enter Oak's Lab, and finish the dialog chain.",
+      "preferred_landmark_types": [
+        "npc_target",
+        "interactable",
+        "exit",
+        "frontier"
+      ],
+      "target_npcs": [
+        {
+          "name": "Professor Oak",
+          "map_name": "Oak's Lab",
+          "coord": {"x": 5, "y": 2}
+        }
+      ],
+      "selector": {
+        "has_oaks_parcel": true,
+        "has_pokedex": false
+      }
+    },
+    {
+      "id": "head_to_viridian_forest",
+      "title": "Reach Viridian Forest",
+      "summary": "Travel north from Viridian City toward Route 2 and the south forest gate.",
+      "completion_predicate": "The current map is Route 2, Viridian Forest Gate (S), Viridian Forest, or the north gate while the player already has the Pokedex.",
+      "failure_hints": [
+        "If the route is unclear, trust explored tiles and route cards before freehand wandering.",
+        "Heal if needed, but keep the route anchored on the forest path."
+      ],
+      "save_recommendation": "Save at the south forest gate before crossing the forest.",
+      "route_hint": "Head north in Viridian City to Route 2 and enter Viridian Forest.",
+      "preferred_landmark_types": [
+        "exit",
+        "frontier",
+        "warp"
+      ],
+      "selector": {
+        "has_pokedex": true,
+        "badge_count_lt": 1,
+        "map_in": [
+          "Pallet Town",
+          "Route 1",
+          "Viridian City",
+          "Viridian Mart",
+          "Viridian Pokecenter",
+          "Viridian School",
+          "Viridian House",
+          "Route 2",
+          "Viridian Forest Gate (S)"
+        ]
+      }
+    },
+    {
+      "id": "cross_viridian_forest",
+      "title": "Cross Viridian Forest",
+      "summary": "Navigate through Viridian Forest and exit into Pewter City.",
+      "completion_predicate": "The current map becomes Pewter City or the north gate after the forest.",
+      "failure_hints": [
+        "Use navigation for explored corridors and only probe unknown branches one short batch at a time.",
+        "If the harness raises a stuck warning, recover before burning more turns."
+      ],
+      "save_recommendation": "Save after arriving in Pewter City and before entering the gym.",
+      "route_hint": "Keep moving northward through explored forest routes until the north gate and Pewter exit are reached.",
+      "preferred_landmark_types": [
+        "frontier",
+        "exit",
+        "warp"
+      ],
+      "selector": {
+        "has_pokedex": true,
+        "badge_count_lt": 1,
+        "map_in": [
+          "Viridian Forest",
+          "Viridian Forest Gate (N)"
+        ]
+      }
+    },
+    {
+      "id": "reach_pewter_gym",
+      "title": "Prepare In Pewter And Enter The Gym",
+      "summary": "Arrive in Pewter City, restore the team if needed, and move into Pewter Gym.",
+      "completion_predicate": "The current map is Pewter Gym.",
+      "failure_hints": [
+        "If the team is weak, use the Pokecenter before the gym.",
+        "Treat local building entrances as preferred landmarks instead of open-world probing."
+      ],
+      "save_recommendation": "Create a fresh save before stepping into the Brock fight sequence.",
+      "route_hint": "Use local navigation inside Pewter City to reach the Pokecenter if needed, then the gym entrance.",
+      "preferred_landmark_types": [
+        "warp",
+        "exit",
+        "interactable"
+      ],
+      "selector": {
+        "badge_count_lt": 1,
+        "map_in": [
+          "Pewter City",
+          "Pewter Pokecenter",
+          "Pewter Mart",
+          "Pewter House",
+          "Pewter Museum 1F",
+          "Pewter Museum 2F"
+        ]
+      }
+    },
+    {
+      "id": "defeat_brock",
+      "title": "Defeat Brock",
+      "summary": "Clear the Pewter Gym challenge and defeat Brock to earn the Boulder Badge.",
+      "completion_predicate": "The badge count increases to at least 1.",
+      "failure_hints": [
+        "Keep battle action batches extremely short and re-observe after each menu advance.",
+        "If the fight goes badly, prefer the top recovery save over improvising from a weak state."
+      ],
+      "save_recommendation": "Auto-save on battle entry and again after the badge is earned.",
+      "route_hint": "Finish the gym challenge, then clear the post-battle badge dialog fully.",
+      "preferred_landmark_types": [
+        "interactable"
+      ],
+      "selector": {
+        "badge_count_lt": 1,
+        "map_in": [
+          "Pewter Gym"
+        ]
+      }
+    },
+    {
+      "id": "phase_complete_boulder_badge",
+      "title": "Pack Complete: Brock",
+      "summary": "The Boulder Badge is earned. Stabilize the run and hand off to the next route pack.",
+      "completion_predicate": "The player has at least one badge.",
+      "failure_hints": [
+        "Do not idle in Pewter once the badge is secured; hand off to the next route immediately."
+      ],
+      "save_recommendation": "Keep a clean post-Brock save as a durable checkpoint.",
+      "route_hint": "Leave Pewter and start the Cerulean route.",
+      "preferred_landmark_types": [
+        "exit"
+      ],
+      "selector": {
+        "badge_count_gte": 1
+      }
+    }
+  ]
+}

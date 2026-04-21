@@ -3,154 +3,509 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Hermes Plays Pokémon</title>
-    <link rel="stylesheet" href="style.css?v=3">
-    <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🎮</text></svg>">
+    <title>Pokemon Agent — Dashboard</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Chakra+Petch:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;700&family=Space+Mono:wght@400;700&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="/dashboard/assets/style.css?v=18">
 </head>
 <body>
-    <!-- Header -->
-    <header class="header">
-        <div class="header-title">
-            <pre class="ascii-title">
- ╦ ╦╔═╗╦═╗╔╦╗╔═╗╔═╗  ╔═╗╦  ╔═╗╦ ╦╔═╗
- ╠═╣║╣ ╠╦╝║║║║╣ ╚═╗  ╠═╝║  ╠═╣╚╦╝╚═╗
- ╩ ╩╚═╝╩╚═╩ ╩╚═╝╚═╝  ╩  ╩═╝╩ ╩ ╩ ╚═╝
-        ╔═╗╔═╗╦╔═╔═╗╔╦╗╔═╗╔╗╔
-        ╠═╝║ ║╠╩╗║╣ ║║║║ ║║║║
-        ╩  ╚═╝╩ ╩╚═╝╩ ╩╚═╝╝╚╝</pre>
-        </div>
-        <div class="header-status">
-            <span class="status-dot" id="statusDot"></span>
-            <span class="status-text" id="statusText">Connecting...</span>
-        </div>
-    </header>
-
-    <!-- Main Content Grid -->
-    <main class="main-grid">
-        <!-- Left Panel: AI Log -->
-        <section class="panel log-panel">
-            <div class="panel-header">
-                <span class="panel-icon">🧠</span>
-                <span class="panel-title">AI Thought Process & Action Log</span>
-                <button class="btn-clear" id="btnClearLog" title="Clear log">✕</button>
-            </div>
-            <div class="log-container" id="logContainer">
-                <div class="log-entry log-status">
-                    <span class="log-time">--:--:--</span>
-                    <span class="log-text">Dashboard initializing...</span>
-                </div>
-            </div>
-        </section>
-
-        <!-- Right Panel: Game View -->
-        <section class="panel game-panel">
-            <div class="panel-header">
-                <span class="panel-icon">🎮</span>
-                <span class="panel-title">Game Screen</span>
-                <span class="panel-meta" id="frameCount"></span>
-            </div>
-
-            <!-- Game Screen with corner brackets -->
-            <div class="game-screen-wrapper">
-                <div class="game-screen-frame">
-                    <img id="gameScreen" class="game-screen" alt="Game Screen"
-                         src="data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNkYPj/HwADBwIAMCbHYQAAAABJRU5ErkJggg==">
-                    <div class="game-screen-overlay" id="screenOverlay">
-                        <span class="overlay-text">Waiting for game...</span>
-                    </div>
-                </div>
-            </div>
-
-            <!-- Stats Grid -->
-            <div class="stats-grid">
-                <div class="stat-item">
-                    <span class="stat-label">Badges</span>
-                    <div class="badges-row" id="badgesRow">
-                        <span class="badge-circle empty" title="Boulder">○</span>
-                        <span class="badge-circle empty" title="Cascade">○</span>
-                        <span class="badge-circle empty" title="Thunder">○</span>
-                        <span class="badge-circle empty" title="Rainbow">○</span>
-                        <span class="badge-circle empty" title="Soul">○</span>
-                        <span class="badge-circle empty" title="Marsh">○</span>
-                        <span class="badge-circle empty" title="Volcano">○</span>
-                        <span class="badge-circle empty" title="Earth">○</span>
-                    </div>
-                </div>
-                <div class="stat-item">
-                    <span class="stat-label">Map</span>
-                    <span class="stat-value" id="statMap">---</span>
-                </div>
-                <div class="stat-item">
-                    <span class="stat-label">Position</span>
-                    <span class="stat-value" id="statPosition">(--, --)</span>
-                </div>
-                <div class="stat-item">
-                    <span class="stat-label">Money</span>
-                    <span class="stat-value stat-money" id="statMoney">$---</span>
-                </div>
-                <div class="stat-item">
-                    <span class="stat-label">Play Time</span>
-                    <span class="stat-value" id="statPlayTime">--:--:--</span>
-                </div>
-                <div class="stat-item">
-                    <span class="stat-label">Turns</span>
-                    <span class="stat-value" id="statTurns">0</span>
-                </div>
-            </div>
-
-            <!-- Battle Info (hidden when not in battle) -->
-            <div class="battle-info hidden" id="battleInfo">
-                <div class="panel-header">
-                    <span class="panel-icon">⚔️</span>
-                    <span class="panel-title">Battle</span>
-                </div>
-                <div class="battle-content" id="battleContent"></div>
-            </div>
-        </section>
-    </main>
-
-    <!-- Bottom Panel: Team -->
-    <section class="panel team-panel">
-        <div class="panel-header">
-            <span class="panel-icon">⚡</span>
-            <span class="panel-title">Current Team</span>
-        </div>
-        <div class="team-container" id="teamContainer">
-            <!-- Empty team slots -->
-            <div class="team-card empty-card">
-                <div class="team-name">Empty</div>
-                <div class="empty-pokeball">○</div>
-            </div>
-            <div class="team-card empty-card">
-                <div class="team-name">Empty</div>
-                <div class="empty-pokeball">○</div>
-            </div>
-            <div class="team-card empty-card">
-                <div class="team-name">Empty</div>
-                <div class="empty-pokeball">○</div>
-            </div>
-            <div class="team-card empty-card">
-                <div class="team-name">Empty</div>
-                <div class="empty-pokeball">○</div>
-            </div>
-            <div class="team-card empty-card">
-                <div class="team-name">Empty</div>
-                <div class="empty-pokeball">○</div>
-            </div>
-            <div class="team-card empty-card">
-                <div class="team-name">Empty</div>
-                <div class="empty-pokeball">○</div>
-            </div>
-        </div>
-    </section>
-
-    <!-- Dialog overlay (shown when dialog is active) -->
-    <div class="dialog-overlay hidden" id="dialogOverlay">
-        <div class="dialog-box">
-            <span class="dialog-text" id="dialogText"></span>
-        </div>
+    <!-- Decorative background layers -->
+    <div class="hud-bg" aria-hidden="true">
+        <div class="hud-bg-glow"></div>
+        <div class="hud-bg-grid"></div>
+        <div class="hud-bg-grain"></div>
     </div>
 
-    <script src="app.js?v=3"></script>
+    <!-- SVG sprite -->
+    <svg class="hud-svg-defs" aria-hidden="true" width="0" height="0">
+        <defs>
+            <symbol id="icon-crosshair" viewBox="0 0 24 24">
+                <circle cx="12" cy="12" r="8" fill="none" stroke="currentColor" stroke-width="1"/>
+                <circle cx="12" cy="12" r="1.5" fill="currentColor"/>
+                <line x1="12" y1="0" x2="12" y2="5" stroke="currentColor" stroke-width="1"/>
+                <line x1="12" y1="19" x2="12" y2="24" stroke="currentColor" stroke-width="1"/>
+                <line x1="0" y1="12" x2="5" y2="12" stroke="currentColor" stroke-width="1"/>
+                <line x1="19" y1="12" x2="24" y2="12" stroke="currentColor" stroke-width="1"/>
+            </symbol>
+            <symbol id="icon-chevron" viewBox="0 0 24 24">
+                <path d="M9 6 L15 12 L9 18" fill="none" stroke="currentColor" stroke-width="2"/>
+            </symbol>
+            <symbol id="icon-bracket" viewBox="0 0 24 24">
+                <path d="M3 3 L3 21 M3 3 L9 3 M3 21 L9 21" fill="none" stroke="currentColor" stroke-width="1.4"/>
+            </symbol>
+            <symbol id="icon-diamond" viewBox="0 0 24 24">
+                <path d="M12 2 L22 12 L12 22 L2 12 Z" fill="none" stroke="currentColor" stroke-width="1.4"/>
+            </symbol>
+        </defs>
+    </svg>
+
+    <div class="hud-shell">
+        <!-- ============================================================ -->
+        <!-- TOPBAR                                                        -->
+        <!-- ============================================================ -->
+        <header class="hud-topbar">
+            <div class="hud-topbar-brand">
+                <div class="hud-brand-text">
+                    <h1 class="hud-title">Pokemon Agent Dashboard</h1>
+                </div>
+            </div>
+            <div class="hud-topbar-status">
+                <div class="hud-chip hud-chip--status" id="statusChip">
+                    <span class="hud-dot" id="statusDot"></span>
+                    <span id="statusText">CONNECTING</span>
+                </div>
+                <div class="hud-chip hud-chip--status" id="piStatusChip">
+                    <span class="hud-dot" id="piStatusDot"></span>
+                    <span id="piStatusText">PI IDLE</span>
+                </div>
+                <div class="hud-meta-stack">
+                    <span class="hud-meta-line" id="lastUpdate">◉ NO DATA</span>
+                    <span class="hud-meta-line" id="uiModeChip">◉ UI: UNKNOWN</span>
+                    <span class="hud-meta-line" id="realtimeChip">◉ CLK: —</span>
+                    <span class="hud-meta-line" id="piModelChip">◉ PI: —</span>
+                </div>
+            </div>
+            <span class="hud-topbar-cap" aria-hidden="true"></span>
+        </header>
+
+        <main class="hud-deck">
+            <!-- ============================================================ -->
+            <!-- ROW 1 · HERO · CHAT + FRAME                                   -->
+            <!-- ============================================================ -->
+            <div class="hud-hero">
+                <section class="hud-panel hud-chat" id="hudChat">
+                    <span class="hud-corner hud-corner--tl"></span>
+                    <span class="hud-corner hud-corner--tr"></span>
+                    <span class="hud-corner hud-corner--bl"></span>
+                    <span class="hud-corner hud-corner--br"></span>
+
+                    <header class="hud-panel-header">
+                        <div class="hud-panel-title">
+                            <h2>Live Stream</h2>
+                        </div>
+                        <div class="hud-panel-badges">
+                            <span class="hud-chip" id="piSessionChip">SESSION: NONE</span>
+                            <span class="hud-chip" id="piTurnsChip">TURNS: 0</span>
+                        </div>
+                        <span class="hud-diag" aria-hidden="true"></span>
+                    </header>
+
+                    <div class="hud-chat-body">
+                        <div class="hud-chat-main">
+                            <div class="hud-chat-scroll" id="piTranscript">
+                                <p class="hud-empty">AWAITING TRANSMISSION…</p>
+                            </div>
+                        </div>
+
+                        <aside class="hud-chat-side">
+                            <div class="hud-chat-live" id="hudChatLive">
+                                <div class="hud-live-line" data-channel="thinking">
+                                    <span class="hud-live-label">Thinking</span>
+                                    <pre class="hud-live-stream" id="piCurrentThinking">— silent —</pre>
+                                    <span class="hud-cursor"></span>
+                                </div>
+                                <div class="hud-live-line" data-channel="output">
+                                    <span class="hud-live-label">Response</span>
+                                    <pre class="hud-live-stream" id="piCurrentOutput">— silent —</pre>
+                                    <span class="hud-cursor"></span>
+                                </div>
+                            </div>
+
+                            <section class="hud-tool-pane" aria-label="Pi tool calls">
+                                <div class="hud-tool-pane-head">
+                                    <span class="hud-kicker">Tools</span>
+                                </div>
+                                <div class="hud-tool-toolbar" id="piToolToolbar">
+                                    <div class="hud-tool-search-wrap">
+                                        <input type="text" class="hud-tool-search" id="piToolSearch" placeholder="Search tools…" autocomplete="off" spellcheck="false" />
+                                    </div>
+                                    <div class="hud-tool-filters" id="piToolFilters"></div>
+                                </div>
+                                <div class="hud-tool-list hud-tool-list--stream" id="piToolFeed"></div>
+                            </section>
+                        </aside>
+                    </div>
+                </section>
+
+                <aside class="hud-panel hud-frame" id="hudFrame">
+                    <span class="hud-corner hud-corner--tl"></span>
+                    <span class="hud-corner hud-corner--tr"></span>
+                    <span class="hud-corner hud-corner--bl"></span>
+                    <span class="hud-corner hud-corner--br"></span>
+
+                    <header class="hud-panel-header">
+                        <div class="hud-panel-title">
+                            <h2>Emulator</h2>
+                        </div>
+                        <div class="hud-panel-badges">
+                            <span class="hud-chip" id="frameTimestamp">NO FRAME</span>
+                        </div>
+                        <span class="hud-diag" aria-hidden="true"></span>
+                    </header>
+
+                    <div class="hud-frame-shot">
+                        <div
+                            class="hud-frame-annotated hud-frame-view"
+                            data-frame-image="annotatedFrame"
+                            data-frame-label="annotated emulator"
+                            role="button"
+                            tabindex="0"
+                            aria-label="Toggle fullscreen annotated emulator view"
+                            title="Click to toggle fullscreen"
+                        >
+                            <img id="annotatedFrame" alt="Annotated frame">
+                            <span class="hud-frame-label hud-frame-label--tl">
+                                <svg width="12" height="12"><use href="#icon-crosshair"/></svg>
+                                LIVE
+                            </span>
+                            <span class="hud-frame-label hud-frame-label--tr">ANNOTATED</span>
+                            <span class="hud-frame-bracket hud-frame-bracket--tl"></span>
+                            <span class="hud-frame-bracket hud-frame-bracket--tr"></span>
+                            <span class="hud-frame-bracket hud-frame-bracket--bl"></span>
+                            <span class="hud-frame-bracket hud-frame-bracket--br"></span>
+                        </div>
+                        <div
+                            class="hud-frame-raw hud-frame-view"
+                            data-frame-image="rawFrame"
+                            data-frame-label="raw emulator"
+                            role="button"
+                            tabindex="0"
+                            aria-label="Toggle fullscreen raw emulator view"
+                            title="Click to toggle fullscreen"
+                        >
+                            <img id="rawFrame" alt="Raw frame">
+                            <span class="hud-frame-label hud-frame-label--tr">RAW</span>
+                        </div>
+                    </div>
+
+                    <div class="hud-frame-stats">
+                        <div class="hud-stat" data-type="hp">
+                            <span class="hud-stat-label">PARTY HP</span>
+                            <strong class="hud-stat-value" id="hudFrameHp">—</strong>
+                            <div class="hud-bar"><div class="hud-bar-fill" id="hudFrameHpBar"></div></div>
+                        </div>
+                        <div class="hud-stat">
+                            <span class="hud-stat-label">MAP</span>
+                            <strong class="hud-stat-value" id="hudFrameMap">—</strong>
+                        </div>
+                        <div class="hud-stat">
+                            <span class="hud-stat-label">COORD</span>
+                            <strong class="hud-stat-value" id="hudFrameCoord">—</strong>
+                        </div>
+                        <div class="hud-stat">
+                            <span class="hud-stat-label">FACING</span>
+                            <strong class="hud-stat-value" id="hudFrameFacing">—</strong>
+                        </div>
+                        <div class="hud-stat">
+                            <span class="hud-stat-label">BADGES</span>
+                            <strong class="hud-stat-value" id="hudFrameBadges">—</strong>
+                        </div>
+                        <div class="hud-stat" data-type="progress">
+                            <span class="hud-stat-label">PROGRESS</span>
+                            <strong class="hud-stat-value" id="hudFrameProgress">—</strong>
+                            <div class="hud-bar"><div class="hud-bar-fill" id="hudFrameProgressBar"></div></div>
+                        </div>
+                    </div>
+
+                </aside>
+            </div>
+
+            <!-- ============================================================ -->
+            <!-- ROW 2 · COMMAND DECK                                          -->
+            <!-- ============================================================ -->
+            <section class="hud-panel hud-command" id="hudCommand">
+                <span class="hud-corner hud-corner--tl"></span>
+                <span class="hud-corner hud-corner--tr"></span>
+                <span class="hud-corner hud-corner--bl"></span>
+                <span class="hud-corner hud-corner--br"></span>
+
+                <header class="hud-panel-header">
+                    <div class="hud-panel-title">
+                        <h2 id="piStatusSummary">Awaiting orders.</h2>
+                    </div>
+                    <span class="hud-diag" aria-hidden="true"></span>
+                </header>
+
+                <div class="hud-supervisor-stats" id="piSupervisorStats"></div>
+
+                <div class="hud-command-row">
+                    <label class="hud-field hud-field--grow">
+                        <span>GOAL</span>
+                        <textarea id="piGoalInput" rows="1" spellcheck="false" placeholder="Short mission override…"></textarea>
+                    </label>
+                    <label class="hud-field">
+                        <span>PROVIDER</span>
+                        <input id="piProviderInput" type="text" placeholder="auto">
+                    </label>
+                    <label class="hud-field">
+                        <span>MODEL</span>
+                        <input id="piModelInput" type="text" placeholder="auto">
+                    </label>
+                    <label class="hud-field">
+                        <span>THINKING</span>
+                        <select id="piThinkingSelect">
+                            <option value="">default</option>
+                            <option value="off">off</option>
+                            <option value="minimal">minimal</option>
+                            <option value="low">low</option>
+                            <option value="medium">medium</option>
+                            <option value="high">high</option>
+                            <option value="xhigh">xhigh</option>
+                        </select>
+                    </label>
+                    <label class="hud-checkbox">
+                        <input id="piAutoContinueInput" type="checkbox" checked>
+                        <span>AUTO-CONT</span>
+                    </label>
+                    <div class="hud-button-group">
+                        <button id="piStartButton" class="hud-btn" type="button"><span class="hud-btn-glyph">▶</span>START</button>
+                        <button id="piContinueButton" class="hud-btn hud-btn--ghost" type="button"><span class="hud-btn-glyph">↻</span>CONT</button>
+                        <button id="piStopButton" class="hud-btn hud-btn--danger" type="button"><span class="hud-btn-glyph">■</span>STOP</button>
+                    </div>
+                </div>
+                <p class="hud-command-status" id="piControlStatus">► Use the deck to launch or stop Pi cleanly.</p>
+            </section>
+
+            <!-- ============================================================ -->
+            <!-- ROW 3 · AGENT INTENT                                          -->
+            <!-- ============================================================ -->
+            <section class="hud-panel hud-intent" id="hudIntent">
+                <span class="hud-corner hud-corner--tl"></span>
+                <span class="hud-corner hud-corner--tr"></span>
+                <span class="hud-corner hud-corner--bl"></span>
+                <span class="hud-corner hud-corner--br"></span>
+
+                <header class="hud-panel-header">
+                    <div class="hud-panel-title">
+                        <h2>Agent Intent</h2>
+                    </div>
+                    <span class="hud-diag" aria-hidden="true"></span>
+                </header>
+
+                <div class="hud-intent-grid">
+                    <div class="hud-intent-col">
+                        <span class="hud-kicker">Objective</span>
+                        <div class="hud-objective-head">
+                            <h3 id="objectiveTitle">No objective yet</h3>
+                            <span class="hud-progress-pill" id="objectiveProgress">0%</span>
+                        </div>
+                        <p class="hud-body" id="objectiveSummary">Awaiting observation data.</p>
+                        <div class="hud-bar hud-bar--progress">
+                            <div class="hud-bar-fill hud-bar-fill--stripe" id="progressFill"></div>
+                        </div>
+                        <p class="hud-dim hud-line" id="objectivePredicate"></p>
+                        <p class="hud-dim hud-line" id="objectiveRoute"></p>
+                    </div>
+
+                    <div class="hud-intent-col">
+                        <span class="hud-kicker">Turn Plan</span>
+                        <p class="hud-strong" id="turnPlanSummary">No plan loaded.</p>
+                        <div class="hud-plan-block">
+                            <h4 class="hud-mini-label hud-mini-label--cyan">PLANNED</h4>
+                            <ul class="hud-action-list" data-tone="cyan" id="plannedActions"></ul>
+                        </div>
+                        <div class="hud-plan-block">
+                            <h4 class="hud-mini-label hud-mini-label--hazard">FALLBACK</h4>
+                            <ul class="hud-action-list" data-tone="hazard" id="fallbackActions"></ul>
+                        </div>
+                        <p class="hud-dim hud-line" id="turnPlanNotes"></p>
+                        <details class="hud-details hud-details--inline">
+                            <summary>RAW TURN PLAN JSON</summary>
+                            <pre id="piTurnPlanPreview">No Pi-authored turn plan captured yet.</pre>
+                        </details>
+                    </div>
+
+                    <div class="hud-intent-col">
+                        <span class="hud-kicker">Latest Outcome</span>
+                        <p class="hud-strong" id="recentActionSummary">No recent action.</p>
+                        <h4 class="hud-mini-label">NOTES</h4>
+                        <ul class="hud-divided-list" id="recentActionNotes"></ul>
+                        <h4 class="hud-mini-label">STATE DELTA</h4>
+                        <ul class="hud-divided-list" id="stateDeltaSummary"></ul>
+                        <h4 class="hud-mini-label">MOVEMENT</h4>
+                        <ul class="hud-divided-list" id="movementGuidance"></ul>
+                    </div>
+                </div>
+            </section>
+
+            <!-- ============================================================ -->
+            <!-- ROW 4 · WORLD STATE                                           -->
+            <!-- ============================================================ -->
+            <section class="hud-panel hud-world" id="hudWorld">
+                <span class="hud-corner hud-corner--tl"></span>
+                <span class="hud-corner hud-corner--tr"></span>
+                <span class="hud-corner hud-corner--bl"></span>
+                <span class="hud-corner hud-corner--br"></span>
+
+                <header class="hud-panel-header">
+                    <div class="hud-panel-title">
+                        <h2>World State</h2>
+                    </div>
+                    <span class="hud-diag" aria-hidden="true"></span>
+                </header>
+
+                <div class="hud-world-stats" id="worldStats"></div>
+
+                <div class="hud-world-grid">
+                    <div class="hud-world-col hud-world-col--party">
+                        <span class="hud-kicker">Party Roster</span>
+                        <div class="hud-party" id="partySnapshot">
+                            <p class="hud-empty">NO PARTY DATA</p>
+                        </div>
+                        <details class="hud-details hud-details--inline">
+                            <summary>INTERACTION PROBE</summary>
+                            <pre id="interactionProbe">No interaction data yet.</pre>
+                        </details>
+                    </div>
+                    <div class="hud-world-col">
+                        <span class="hud-kicker">Sector <span class="hud-kicker-sep">//</span> Live</span>
+                        <div class="hud-ascii-frame">
+                            <pre class="hud-ascii" id="liveAscii">Waiting for navigation snapshot.</pre>
+                        </div>
+                    </div>
+                    <div class="hud-world-col">
+                        <span class="hud-kicker">Atlas <span class="hud-kicker-sep">//</span> Explored</span>
+                        <div class="hud-ascii-frame">
+                            <pre class="hud-ascii" id="exploredAscii">Waiting for explored map.</pre>
+                        </div>
+                    </div>
+                </div>
+            </section>
+
+            <!-- ============================================================ -->
+            <!-- ROW 5 · FLIGHT RECORDER (TIMELINE)                            -->
+            <!-- ============================================================ -->
+            <section class="hud-panel hud-timeline" id="hudTimeline">
+                <span class="hud-corner hud-corner--tl"></span>
+                <span class="hud-corner hud-corner--tr"></span>
+                <span class="hud-corner hud-corner--bl"></span>
+                <span class="hud-corner hud-corner--br"></span>
+
+                <header class="hud-panel-header">
+                    <div class="hud-panel-title">
+                        <h2>Event Log</h2>
+                    </div>
+                    <div class="hud-panel-badges" id="timelineCounts"></div>
+                    <span class="hud-diag" aria-hidden="true"></span>
+                </header>
+
+                <div class="hud-timeline-controls">
+                    <div class="hud-timeline-filters" id="timelineFilters"></div>
+                    <div class="hud-timeline-sparkline-wrap">
+                        <span class="hud-kicker-mini">DENSITY</span>
+                        <svg class="hud-timeline-sparkline" id="timelineSpark" viewBox="0 0 300 36" preserveAspectRatio="none"></svg>
+                    </div>
+                </div>
+
+                <div class="hud-timeline-body">
+                    <div class="hud-timeline-rail" aria-hidden="true"></div>
+                    <div class="hud-timeline-list" id="timeline">
+                        <p class="hud-empty">[ NO TRAFFIC ]</p>
+                    </div>
+                </div>
+            </section>
+
+            <!-- ============================================================ -->
+            <!-- ROW 6 · MEMORY BANK                                           -->
+            <!-- ============================================================ -->
+            <section class="hud-panel hud-memory" id="hudMemory">
+                <span class="hud-corner hud-corner--tl"></span>
+                <span class="hud-corner hud-corner--tr"></span>
+                <span class="hud-corner hud-corner--bl"></span>
+                <span class="hud-corner hud-corner--br"></span>
+
+                <header class="hud-panel-header">
+                    <div class="hud-panel-title">
+                        <h2>Memory</h2>
+                    </div>
+                    <span class="hud-diag" aria-hidden="true"></span>
+                </header>
+
+                <div class="hud-memory-grid">
+                    <div class="hud-memory-col">
+                        <span class="hud-kicker">Checkpoints</span>
+                        <ul class="hud-divided-list hud-checkpoint-list" id="checkpointList"></ul>
+                    </div>
+                    <div class="hud-memory-col">
+                        <span class="hud-kicker">Recovery</span>
+                        <p class="hud-strong" id="recoveryRecommendation">No recovery recommendation yet.</p>
+                        <ul class="hud-divided-list" id="recoveryCandidates"></ul>
+                        <div class="hud-subfield">
+                            <h4 class="hud-mini-label">STUCK SIGNAL</h4>
+                            <p id="stuckSignal" class="hud-body">None.</p>
+                        </div>
+                        <div class="hud-subfield">
+                            <h4 class="hud-mini-label">MANUAL SAVE</h4>
+                            <div class="hud-control-row">
+                                <input id="manualSaveNameInput" type="text" placeholder="manual_YYYYMMDD_HHMMSS">
+                                <button id="manualSaveButton" class="hud-btn hud-btn--small" type="button">SAVE</button>
+                            </div>
+                            <p class="hud-dim hud-line" id="manualSaveStatus">Create a manual recovery point.</p>
+                        </div>
+                        <div class="hud-subfield">
+                            <h4 class="hud-mini-label">LOAD SAVE</h4>
+                            <div class="hud-control-row">
+                                <select id="saveSelect">
+                                    <option value="">No saves loaded yet</option>
+                                </select>
+                                <button id="loadSaveButton" class="hud-btn hud-btn--small" type="button">LOAD</button>
+                            </div>
+                            <button id="loadRecommendedButton" class="hud-btn hud-btn--small hud-btn--ghost" type="button">LOAD RECOMMENDED</button>
+                            <p class="hud-dim hud-line" id="loadSaveStatus">Choose a save or load the recommended one.</p>
+                        </div>
+                    </div>
+                    <div class="hud-memory-col">
+                        <span class="hud-kicker">Knowledge Graph</span>
+                        <pre class="hud-dump" id="knowledgeSummary">No knowledge summary yet.</pre>
+                        <span class="hud-kicker">Workspace</span>
+                        <pre class="hud-dump" id="workspaceSummary">No workspace info yet.</pre>
+                    </div>
+                </div>
+            </section>
+
+            <!-- ============================================================ -->
+            <!-- ROW 7 · SIGNAL VAULT                                          -->
+            <!-- ============================================================ -->
+            <section class="hud-panel hud-vault" id="hudVault">
+                <span class="hud-corner hud-corner--tl"></span>
+                <span class="hud-corner hud-corner--tr"></span>
+                <span class="hud-corner hud-corner--bl"></span>
+                <span class="hud-corner hud-corner--br"></span>
+
+                <header class="hud-panel-header">
+                    <div class="hud-panel-title">
+                        <h2>Raw Output</h2>
+                    </div>
+                    <span class="hud-diag" aria-hidden="true"></span>
+                </header>
+
+                <div class="hud-vault-grid">
+                    <details class="hud-details">
+                        <summary><span class="hud-details-glyph">▸</span>RAW OBSERVATION JSON</summary>
+                        <pre class="hud-dump" id="rawObservation">No observation data yet.</pre>
+                    </details>
+                    <details class="hud-details">
+                        <summary><span class="hud-details-glyph">▸</span>RAW NAVIGATION JSON</summary>
+                        <pre class="hud-dump" id="rawNavigation">No navigation data yet.</pre>
+                    </details>
+                    <details class="hud-details">
+                        <summary><span class="hud-details-glyph">▸</span>PI SUPERVISOR JSON</summary>
+                        <pre class="hud-dump" id="rawSupervisor">No supervisor data yet.</pre>
+                    </details>
+                    <details class="hud-details">
+                        <summary><span class="hud-details-glyph">▸</span>PI EVENT TRACE</summary>
+                        <ul class="hud-divided-list" id="piRecentEvents"></ul>
+                    </details>
+                    <details class="hud-details">
+                        <summary><span class="hud-details-glyph">▸</span>PI STDERR / WARNINGS</summary>
+                        <pre class="hud-dump" id="piStderr">No stderr output.</pre>
+                    </details>
+                </div>
+            </section>
+        </main>
+    </div>
+
+    <script src="/dashboard/assets/app.js?v=16"></script>
 </body>
 </html>

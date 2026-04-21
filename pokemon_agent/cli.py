@@ -43,6 +43,12 @@ def cmd_serve(args):
     data_dir = Path(args.data_dir).expanduser().resolve()
     data_dir.mkdir(parents=True, exist_ok=True)
     (data_dir / "saves").mkdir(exist_ok=True)
+    workspace_dir = (
+        Path(args.agent_workspace_dir).expanduser().resolve()
+        if args.agent_workspace_dir
+        else (data_dir / "agent_workspace").resolve()
+    )
+    workspace_dir.mkdir(parents=True, exist_ok=True)
 
     game_type = _detect_game_type(str(rom))
 
@@ -51,20 +57,28 @@ def cmd_serve(args):
     print(f"  Game type: {game_type}")
     print(f"  Port:      {args.port}")
     print(f"  Data dir:  {data_dir}")
+    print(f"  Workspace: {workspace_dir}")
     print()
 
     # Configure the server before uvicorn imports the app
-    from pokemon_agent.server import GameConfig, configure, app  # noqa: F811
+    from pokemon_agent.server import GameConfig, app, configure  # noqa: F811
 
-    configure(GameConfig(
-        rom_path=str(rom),
-        game_type=game_type,
-        port=args.port,
-        data_dir=str(data_dir),
-        load_state=getattr(args, 'load_state', None),
-    ))
+    configure(
+        GameConfig(
+            rom_path=str(rom),
+            game_type=game_type,
+            port=args.port,
+            data_dir=str(data_dir),
+            load_state=getattr(args, "load_state", None),
+            agent_workspace_dir=str(workspace_dir),
+            enable_dashboard=not bool(getattr(args, "no_dashboard", False)),
+            realtime=not bool(getattr(args, "no_realtime", False)),
+            realtime_fps=getattr(args, "realtime_fps", 60),
+        )
+    )
 
     import uvicorn
+
     uvicorn.run(app, host="0.0.0.0", port=args.port, log_level="info")
 
 
@@ -96,9 +110,7 @@ def main():
         prog="pokemon-agent",
         description="Pokemon Agent — AI-powered Pokemon game controller",
     )
-    parser.add_argument(
-        "--version", action="version", version=f"pokemon-agent {__version__}"
-    )
+    parser.add_argument("--version", action="version", version=f"pokemon-agent {__version__}")
 
     sub = parser.add_subparsers(dest="command")
 
@@ -107,16 +119,38 @@ def main():
     serve_p.add_argument("--rom", required=True, help="Path to Pokemon ROM file")
     serve_p.add_argument("--port", type=int, default=8765, help="Server port (default: 8765)")
     serve_p.add_argument(
-        "--data-dir", default="~/.pokemon-agent",
+        "--data-dir",
+        default="~/.pokemon-agent",
         help="Data directory for saves, etc. (default: ~/.pokemon-agent)",
     )
     serve_p.add_argument(
-        "--no-dashboard", action="store_true",
+        "--no-dashboard",
+        action="store_true",
         help="Disable dashboard mounting",
     )
     serve_p.add_argument(
-        "--load-state", default=None,
+        "--load-state",
+        default=None,
         help="Name of a saved state to auto-load on startup (e.g. 'intro_complete')",
+    )
+    serve_p.add_argument(
+        "--agent-workspace-dir",
+        default=None,
+        help=(
+            "Directory for Pi workspace artifacts like screenshots, observation files, "
+            "turn_plan.json, and recovery metadata (default: <data-dir>/agent_workspace)"
+        ),
+    )
+    serve_p.add_argument(
+        "--no-realtime",
+        action="store_true",
+        help="Disable the background realtime emulator clock.",
+    )
+    serve_p.add_argument(
+        "--realtime-fps",
+        type=int,
+        default=60,
+        help="Background realtime emulator FPS when realtime is enabled (default: 60).",
     )
 
     # --- info ---
