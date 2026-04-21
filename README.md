@@ -1,3 +1,20 @@
+# What this fork changes
+
+This is a fork of [NousResearch/pokemon-agent](https://github.com/NousResearch/pokemon-agent) that extends the stock harness with a stricter, more observable agent runtime and a richer operator UI. Highlights relative to upstream:
+
+- **Vision-first Pi supervisor** (`pokemon_agent/pi_supervisor.py`) — supervises a Claude Code–style Pi subprocess, enforces vision policy on every turn, tracks tool calls / thinking / stderr, and handles auto-continue for text-only replies.
+- **Strict turn-plan harness with typed contracts** (`pokemon_agent/harness/`) — `contracts.py`, `context_builder.py`, `planning.py`, and `prompting.py` define a typed per-turn plan/context pipeline so weaker local models get deterministic inputs and validated outputs.
+- **Deterministic navigation + route guidance** (`pokemon_agent/navigation.py`, `navigation_maps.json`, `pokemon_agent/data/red_objectives*.json`) — frontiers, landmarks, distance maps, route cards, avoidances, and NPC-aware objective guidance for Pokémon Red.
+- **Durable semantic memory** — append-only event memory, session brief, and per-map failed-attempt tracking in `pokemon_agent/agent_runtime.py` and `pokemon_agent/memory/red.py`, so loops and resumes keep context.
+- **Expanded dashboard** (`pokemon_agent/dashboard/`) — Pi chat transcript (prompts, assistant replies, thinking, tool calls, stderr, auto-continue), fullscreen frame viewports, improved tool-call payload rendering, and live Pi telemetry.
+- **Server + emulator upgrades** (`pokemon_agent/server.py`, `pokemon_agent/emulator.py`) — larger REST surface for the supervisor workflow, overlay coordinate fixes, and movement/timing corrections.
+- **Test coverage** — `test_agent_runtime.py`, `test_navigation.py`, `test_pi_supervisor.py` cover the new runtime, navigation, and supervisor paths.
+- **Ops scripts** — `scripts/start_pokemon_server.sh`, `scripts/stop_pokemon_server.sh`, `scripts/agent_curl.sh` for running the stack and poking it from the shell.
+
+OCR has been removed; the agent relies on Claude's vision capabilities instead.
+
+---
+
 # 🎮 pokemon-agent
 
 **AI-powered Pokémon gameplay agent with headless emulation, REST API, and a live operator dashboard.**
