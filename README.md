@@ -172,18 +172,30 @@ run — its save-states, its agent workspace, and its Pi brain:
 ```
 
 ```bash
-# Start a new playthrough (becomes the active run)
-curl -X POST http://localhost:8765/games -d '{"name": "Nuzlocke"}'
-
 # List runs, then load one back — saves, memory, and the same Pi brain
 curl http://localhost:8765/games
 curl -X POST http://localhost:8765/games/<id>/activate -d '{}'
+
+# Start a new playthrough from what's currently on screen (e.g. a fresh boot)
+curl -X POST http://localhost:8765/games \
+  -d '{"name": "Nuzlocke", "accept_current_state": true}'
 ```
 
 Activating a run restores the Pi session it was played with, so the agent picks
 up its accumulated context instead of starting cold. The server re-binds to
-whichever run was active when it restarts. Switching runs is refused with `409`
-while Pi is running — stop the supervisor first.
+whichever run was active when it restarts.
+
+**The emulator's state is not part of a session.** It's a single global, so
+binding a run without loading one of *its* saves would adopt whatever the
+previous run left on screen — and the runtime would then auto-save those foreign
+bytes into the new run, so loading it later would resurrect the wrong
+playthrough. The server refuses (`409`) rather than guess. Either load a save
+belonging to the run, or pass `accept_current_state: true` to say the current
+state is deliberately its starting point. Note this means switching runs discards
+*unsaved* progress in the outgoing one — `/save` first.
+
+Switching is also refused with `409` while Pi is running — stop the supervisor
+first.
 
 Sessions are opt-in: with no active run, saves and the workspace use the shared
 `<data-dir>` layout exactly as before.

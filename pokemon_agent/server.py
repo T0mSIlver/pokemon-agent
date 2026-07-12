@@ -85,12 +85,16 @@ class GameSessionCreateRequest(BaseModel):
     game: str = "red"
     objective_pack: Optional[str] = None
     activate: bool = True
+    # A new run has no save to load, so activating it adopts whatever is currently in
+    # the emulator -- which belongs to the *previous* run. See _require_owned_state.
+    accept_current_state: bool = False
 
 
 class GameSessionActivateRequest(BaseModel):
     """Body for POST /games/{session_id}/activate."""
 
     load_latest_save: bool = True
+    accept_current_state: bool = False
 
 
 class NavigationRequest(BaseModel):
@@ -1429,6 +1433,33 @@ def _reject_while_pi_is_running() -> None:
         )
 
 
+def _require_owned_state(*, will_load_save: bool, accept_current_state: bool) -> None:
+    """Refuse to bind a run to emulator state that does not belong to it.
+
+    The emulator is a single global; its state is not part of a session. Binding a
+    run without loading one of *its* saves silently adopts whatever the previous run
+    left on screen -- and the runtime then auto-saves those foreign bytes into the
+    new run, so a later "load" of it resurrects the wrong playthrough.
+
+    Rather than guess, refuse: the caller must either load a save belonging to this
+    run, or say explicitly that the current emulator state is meant to be its
+    starting point (a fresh boot, say, or a deliberate fork of the current game).
+
+    Note this means switching runs discards unsaved progress in the outgoing one.
+    Save it first -- that is the point of being explicit.
+    """
+    if will_load_save or accept_current_state:
+        return
+    raise HTTPException(
+        status_code=409,
+        detail=(
+            "This run has no save to load, so activating it would adopt the current "
+            "emulator state, which belongs to another run. Load one of its saves, or "
+            "pass accept_current_state=true to start it from what is on screen now."
+        ),
+    )
+
+
 def _session_response(session_id: Optional[str]) -> dict:
     sessions = _require_sessions()
     if session_id is None:
@@ -1462,6 +1493,8 @@ async def create_game(req: GameSessionCreateRequest):
     sessions = _require_sessions()
     if req.activate:
         _reject_while_pi_is_running()
+        # A brand-new run has no saves, so there is nothing of its own to load.
+        _require_owned_state(will_load_save=False, accept_current_state=req.accept_current_state)
 
     session = sessions.create(name=req.name, game=req.game, objective_pack=req.objective_pack)
 
@@ -1485,16 +1518,22 @@ async def activate_game(session_id: str, req: GameSessionActivateRequest):
 
     _reject_while_pi_is_running()
 
+    # Decide before binding: binding is what triggers the refresh whose auto-save
+    # would capture the outgoing run's state.
+    save_path = sessions.latest_save_path(session_id) if req.load_latest_save else None
+    _require_owned_state(
+        will_load_save=save_path is not None,
+        accept_current_state=req.accept_current_state,
+    )
+
     sessions.set_current(session_id)
     _bind_session(session_id)
 
     loaded_save = None
-    if req.load_latest_save:
-        save_path = sessions.latest_save_path(session_id)
-        if save_path is not None:
-            _runtime.invalidate_turn_plan(reason=f"session_activate:{session_id}")
-            await _run_emulator_sync(_emulator.load_state, str(save_path))
-            loaded_save = save_path.stem
+    if save_path is not None:
+        _runtime.invalidate_turn_plan(reason=f"session_activate:{session_id}")
+        await _run_emulator_sync(_emulator.load_state, str(save_path))
+        loaded_save = save_path.stem
 
     await _refresh_agent_bundle(reason=f"session_activate:{session_id}", source="session")
 

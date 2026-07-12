@@ -12,20 +12,26 @@ from pokemon_agent.sessions import GameSessionManager
 
 
 class FakeEmulator:
+    """Carries a `blob` standing in for emulator state, so tests can assert that a
+    save holds the state it is supposed to -- not merely that it landed in the right
+    directory."""
+
     def __init__(self) -> None:
         self.frame_count = 1234
         self.saved_paths: list[str] = []
         self.loaded_paths: list[str] = []
+        self.blob = b"INITIAL_STATE"
         self.image = Image.new("RGB", (160, 144), color=(16, 24, 32))
 
     def get_screen(self):
         return self.image
 
     def save_state(self, path: str) -> None:
-        Path(path).write_bytes(b"state")
+        Path(path).write_bytes(self.blob)
         self.saved_paths.append(path)
 
     def load_state(self, path: str) -> None:
+        self.blob = Path(path).read_bytes()
         self.loaded_paths.append(path)
 
     def tick(self, frames: int = 1) -> None:
@@ -79,7 +85,7 @@ def test_no_games_to_begin_with(client):
 
 
 def test_creating_a_game_activates_it_and_lays_out_its_directories(client, data_dir):
-    body = client.post("/games", json={"name": "Nuzlocke"}).json()
+    body = client.post("/games", json={"name": "Nuzlocke", "accept_current_state": True}).json()
 
     session_id = body["session"]["id"]
     assert body["session"]["name"] == "Nuzlocke"
@@ -90,7 +96,9 @@ def test_creating_a_game_activates_it_and_lays_out_its_directories(client, data_
 
 
 def test_creating_without_activating_leaves_the_current_run_alone(client):
-    first = client.post("/games", json={"name": "First"}).json()["session"]["id"]
+    first = client.post("/games", json={"name": "First", "accept_current_state": True}).json()[
+        "session"
+    ]["id"]
     client.post("/games", json={"name": "Second", "activate": False})
 
     assert client.get("/games").json()["current"] == first
@@ -98,7 +106,7 @@ def test_creating_without_activating_leaves_the_current_run_alone(client):
 
 
 def test_the_runtime_is_rebound_to_the_active_run(client, data_dir):
-    session_id = client.post("/games", json={}).json()["session"]["id"]
+    session_id = client.post("/games", json={"accept_current_state": True}).json()["session"]["id"]
 
     # This is the whole mechanism: AgentRuntime auto-saves to data_dir/saves, so
     # scoping the run means handing it the session directory as its data_dir.
@@ -113,7 +121,7 @@ def save_names(client) -> list[str]:
 
 
 def test_manual_saves_are_scoped_to_the_active_run(client, data_dir):
-    session_id = client.post("/games", json={}).json()["session"]["id"]
+    session_id = client.post("/games", json={"accept_current_state": True}).json()["session"]["id"]
 
     assert client.post("/save", json={"name": "pewter"}).status_code == 200
 
@@ -125,7 +133,7 @@ def test_manual_saves_are_scoped_to_the_active_run(client, data_dir):
 def test_runtime_auto_saves_are_scoped_to_the_active_run_too(client, data_dir):
     # AgentRuntime writes auto-saves itself, to `data_dir/saves`. If the runtime were
     # not rebound they would leak into the shared pool that /saves lists.
-    session_id = client.post("/games", json={}).json()["session"]["id"]
+    session_id = client.post("/games", json={"accept_current_state": True}).json()["session"]["id"]
 
     auto = list((data_dir / "games" / session_id / "saves").glob("auto__*.state"))
     assert auto, "expected the runtime to auto-save into the run"
@@ -133,23 +141,27 @@ def test_runtime_auto_saves_are_scoped_to_the_active_run_too(client, data_dir):
 
 
 def test_two_runs_do_not_see_each_others_saves(client):
-    first = client.post("/games", json={"name": "First"}).json()["session"]["id"]
+    first = client.post("/games", json={"name": "First", "accept_current_state": True}).json()[
+        "session"
+    ]["id"]
     client.post("/save", json={"name": "in-first"})
 
-    client.post("/games", json={"name": "Second"})
+    client.post("/games", json={"name": "Second", "accept_current_state": True})
     client.post("/save", json={"name": "in-second"})
     assert "in-second" in save_names(client)
     assert "in-first" not in save_names(client)
 
-    client.post(f"/games/{first}/activate", json={"load_latest_save": False})
+    client.post(
+        f"/games/{first}/activate", json={"load_latest_save": False, "accept_current_state": True}
+    )
     assert "in-first" in save_names(client)
     assert "in-second" not in save_names(client)
 
 
 def test_activating_a_run_loads_its_latest_save(client):
-    session_id = client.post("/games", json={}).json()["session"]["id"]
+    session_id = client.post("/games", json={"accept_current_state": True}).json()["session"]["id"]
     client.post("/save", json={"name": "pewter"})
-    client.post("/games", json={"name": "Other"})  # switch away
+    client.post("/games", json={"name": "Other", "accept_current_state": True})  # switch away
 
     body = client.post(f"/games/{session_id}/activate", json={}).json()
 
@@ -158,43 +170,98 @@ def test_activating_a_run_loads_its_latest_save(client):
 
 
 def test_activating_can_skip_loading_the_save(client):
-    session_id = client.post("/games", json={}).json()["session"]["id"]
+    session_id = client.post("/games", json={"accept_current_state": True}).json()["session"]["id"]
     client.post("/save", json={"name": "pewter"})
-    client.post("/games", json={"name": "Other"})
+    client.post("/games", json={"name": "Other", "accept_current_state": True})
 
-    body = client.post(f"/games/{session_id}/activate", json={"load_latest_save": False}).json()
+    body = client.post(
+        f"/games/{session_id}/activate",
+        json={"load_latest_save": False, "accept_current_state": True},
+    ).json()
 
     assert body["loaded_save"] is None
     assert client.emulator.loaded_paths == []
 
 
-def test_activating_a_run_with_no_saves_is_fine(client):
-    # Created without activating, so nothing has run against it and it has no saves.
+# ------------------------------------------- emulator state must belong to the run
+#
+# The emulator is a single global; its state is not part of a session. Binding a run
+# without loading one of ITS saves adopts whatever the previous run left on screen,
+# and the runtime then auto-saves those foreign bytes into the new run -- so loading
+# that run later resurrects the wrong playthrough. The server refuses rather than
+# guesses.
+
+
+def test_a_new_run_will_not_silently_adopt_the_current_emulator_state(client):
+    assert client.post("/games", json={"name": "B"}).status_code == 409
+
+
+def test_activating_a_run_with_no_saves_is_refused(client):
     session_id = client.post("/games", json={"activate": False}).json()["session"]["id"]
 
-    body = client.post(f"/games/{session_id}/activate", json={}).json()
+    assert client.post(f"/games/{session_id}/activate", json={}).status_code == 409
 
-    assert body["success"] is True
-    assert body["loaded_save"] is None
-    assert client.emulator.loaded_paths == []
+
+def test_activating_without_loading_a_save_is_refused(client):
+    session_id = client.post("/games", json={"accept_current_state": True}).json()["session"]["id"]
+    client.post("/save", json={"name": "pewter"})
+
+    response = client.post(f"/games/{session_id}/activate", json={"load_latest_save": False})
+    assert response.status_code == 409
+
+
+def test_the_operator_can_explicitly_start_a_run_from_the_current_state(client):
+    body = client.post("/games", json={"name": "Fork", "accept_current_state": True})
+
+    assert body.status_code == 200
+    assert body.json()["session"]["active"] is True
+
+
+def test_a_new_run_does_not_inherit_the_previous_runs_state_in_its_auto_saves(client, data_dir):
+    # The regression this guard exists for. Previously: create B while the emulator
+    # held A's progress -> B's bind-time refresh auto-saved A's bytes into B/saves,
+    # so a later "load B" dropped you into A's playthrough.
+    client.post("/games", json={"name": "A", "accept_current_state": True})
+    client.emulator.blob = b"SESSION_A_DEEP_PROGRESS"
+
+    assert client.post("/games", json={"name": "B"}).status_code == 409
+
+    # Nothing of A's leaked anywhere: B was never created as an active run.
+    for state_file in (data_dir / "games").rglob("*.state"):
+        assert state_file.read_bytes() != b"SESSION_A_DEEP_PROGRESS"
+
+
+def test_when_the_operator_accepts_the_current_state_the_auto_save_is_that_state(client, data_dir):
+    # Having said "yes, start from what's on screen", the auto-save SHOULD hold it.
+    client.post("/games", json={"name": "A", "accept_current_state": True})
+    client.emulator.blob = b"FORK_POINT"
+
+    body = client.post("/games", json={"name": "B", "accept_current_state": True})
+    session_id = body.json()["session"]["id"]
+
+    autosaves = list((data_dir / "games" / session_id / "saves").glob("auto__*.state"))
+    assert autosaves
+    assert autosaves[0].read_bytes() == b"FORK_POINT"
 
 
 # ------------------------------------------------------------------- guards
 
 
 def test_switching_runs_is_refused_while_pi_is_running(client, monkeypatch):
-    session_id = client.post("/games", json={}).json()["session"]["id"]
+    session_id = client.post("/games", json={"accept_current_state": True}).json()["session"]["id"]
     monkeypatch.setattr(server, "_supervisor", FakeSupervisor(is_running=True))
 
     # Rebinding under a live Pi turn would leave the subprocess writing into the
     # previous run's workspace.
     assert client.post(f"/games/{session_id}/activate", json={}).status_code == 409
-    assert client.post("/games", json={"name": "New"}).status_code == 409
+    assert (
+        client.post("/games", json={"name": "New", "accept_current_state": True}).status_code == 409
+    )
     assert client.delete(f"/games/{session_id}").status_code == 409
 
 
 def test_creating_without_activating_is_allowed_while_pi_runs(client, monkeypatch):
-    client.post("/games", json={})
+    client.post("/games", json={"accept_current_state": True})
     monkeypatch.setattr(server, "_supervisor", FakeSupervisor(is_running=True))
 
     assert client.post("/games", json={"name": "Queued", "activate": False}).status_code == 200
@@ -213,7 +280,7 @@ def test_a_traversal_style_id_is_rejected_not_resolved(client):
 
 
 def test_deleting_the_active_run_falls_back_to_the_shared_layout(client, data_dir):
-    session_id = client.post("/games", json={}).json()["session"]["id"]
+    session_id = client.post("/games", json={"accept_current_state": True}).json()["session"]["id"]
 
     body = client.delete(f"/games/{session_id}").json()
 
@@ -227,7 +294,7 @@ def test_deleting_the_active_run_falls_back_to_the_shared_layout(client, data_di
 
 
 def test_the_pi_session_is_written_into_the_manifest(client, data_dir):
-    session_id = client.post("/games", json={}).json()["session"]["id"]
+    session_id = client.post("/games", json={"accept_current_state": True}).json()["session"]["id"]
 
     # The supervisor calls its session_sink when Pi reports a session id.
     server._supervisor.session_sink("pi-abc", Path("/tmp/pi-abc.jsonl"))
@@ -238,7 +305,7 @@ def test_the_pi_session_is_written_into_the_manifest(client, data_dir):
 
 
 def test_a_restart_rebinds_to_the_active_run_and_resumes_its_brain(client, data_dir):
-    session_id = client.post("/games", json={}).json()["session"]["id"]
+    session_id = client.post("/games", json={"accept_current_state": True}).json()["session"]["id"]
 
     # Pi reports a session, and writes the transcript the supervisor resolves against.
     pi_dir = data_dir / "games" / session_id / "workspace" / "pi-session"
