@@ -467,6 +467,11 @@ class PyBoyEmulator(Emulator):
                 f"Unexpected collision map shape: {height}x{width} (expected 18x20 or 9x10)"
             )
 
+        # PyBoy derives a native 9x10 walkable matrix and upsamples it, replicating each
+        # value across a 2x2 block, so today every block is uniform. Collapse with all()
+        # rather than any(): the player occupies a whole 16x16 block, so a block is only
+        # walkable if every sub-tile is. Should PyBoy ever emit a true per-8x8-tile map,
+        # this fails closed (agent refuses a half-blocked tile) instead of walking a wall.
         downsampled: List[List[int]] = []
         for y in range(0, 18, 2):
             out_row: List[int] = []
@@ -477,7 +482,7 @@ class PyBoyEmulator(Emulator):
                     rows[y + 1][x],
                     rows[y + 1][x + 1],
                 )
-                out_row.append(1 if any(block) else 0)
+                out_row.append(1 if all(block) else 0)
             downsampled.append(out_row)
         return downsampled
 
