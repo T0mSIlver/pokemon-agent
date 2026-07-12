@@ -23,6 +23,9 @@ from pokemon_agent.harness.prompting import (
 JsonDict = dict[str, Any]
 EventSink = Callable[[JsonDict], Awaitable[None]]
 StreamSink = Callable[[JsonDict], Awaitable[None]]
+# Called with (session_id, session_file) as soon as Pi reports its session, so the
+# owner can persist the brain's identity and resume this run after a restart.
+SessionSink = Callable[[Optional[str], Optional[Path]], None]
 
 DEFAULT_TOOLS = ["read", "bash", "edit", "write", "grep", "find", "ls"]
 VISION_ATTACHMENT_FILES = ("latest_frame_annotated.png", "latest_frame.png")
@@ -271,6 +274,7 @@ class PiSupervisor:
         server_url: str,
         event_sink: Optional[EventSink] = None,
         stream_sink: Optional[StreamSink] = None,
+        session_sink: Optional[SessionSink] = None,
         repo_root: Optional[Path] = None,
         pi_binary: Optional[str] = None,
     ) -> None:
@@ -282,6 +286,7 @@ class PiSupervisor:
         self.pi_binary = pi_binary or shutil.which("pi")
         self.event_sink = event_sink
         self.stream_sink = stream_sink
+        self.session_sink = session_sink
         self.session_dir = self.workspace_dir / "pi-session"
         self.session_dir.mkdir(parents=True, exist_ok=True)
 
@@ -905,6 +910,42 @@ class PiSupervisor:
             "payload": payload,
         }
 
+    def _notify_session(self) -> None:
+        """Hand the brain's identity to the owner so it can be persisted."""
+        if self.session_sink is None:
+            return
+        self.session_sink(self.session_id, self.session_file)
+
+    def adopt_session(
+        self, session_id: Optional[str], session_file: Optional[Path | str] = None
+    ) -> bool:
+        """Re-attach to a Pi session started by a previous process.
+
+        The supervisor otherwise learns ``session_id`` only from Pi's own ``session``
+        event, so a server restart orphans the brain. Given a persisted id, this
+        restores enough state for :meth:`continue_once` to resume that transcript.
+
+        Returns False -- and adopts nothing -- if the transcript cannot be found.
+        Leaving a dangling ``session_id`` would be worse than admitting the loss:
+        ``_build_command`` falls back to ``--continue`` when it has an id but no
+        file, which would silently resume whatever session happens to be newest.
+        """
+        if self.is_running:
+            raise ValueError("Cannot adopt a session while the supervisor is running.")
+        if not session_id:
+            return False
+
+        self.session_id = session_id
+        self.session_file = Path(session_file).expanduser().resolve() if session_file else None
+
+        if self._resolve_session_file() is None:
+            self.session_id = None
+            self.session_file = None
+            return False
+
+        self._push_recent_event("pi_session", f"Resumed session {session_id}.")
+        return True
+
     def _resolve_session_file(self) -> Optional[Path]:
         if self.session_file is not None and self.session_file.is_file():
             return self.session_file
@@ -1129,6 +1170,7 @@ class PiSupervisor:
         if event_type == "session":
             self.session_id = event.get("id")
             self.session_file = self._resolve_session_file()
+            self._notify_session()
             self._push_recent_event(
                 "pi_session",
                 f"Session {self.session_id or 'unknown'} started.",

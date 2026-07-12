@@ -1,4 +1,5 @@
 import asyncio
+import json
 from pathlib import Path
 
 import pytest
@@ -935,3 +936,111 @@ def test_continue_prompt_mentions_dialog_action_without_single_cycle_language() 
     assert "a_until_dialog_end" in CONTINUE_PROMPT
     assert "one gameplay cycle" not in CONTINUE_PROMPT
     assert "recent_action.plan_state" not in CONTINUE_PROMPT
+
+
+# ---------------------------------------------------------------------------
+# Resuming a Pi session started by a previous process (i.e. across a restart).
+# ---------------------------------------------------------------------------
+
+
+def write_session_transcript(session_dir: Path, session_id: str) -> Path:
+    """Mimic the jsonl transcript Pi writes, whose first line is a session header."""
+    session_dir.mkdir(parents=True, exist_ok=True)
+    path = session_dir / f"{session_id}.jsonl"
+    path.write_text(json.dumps({"type": "session", "id": session_id}) + "\n")
+    return path
+
+
+def make_supervisor(tmp_path: Path, **kwargs) -> PiSupervisor:
+    return PiSupervisor(
+        workspace_dir=tmp_path / "workspace",
+        server_url="http://127.0.0.1:8765",
+        pi_binary="/nonexistent/pi",
+        **kwargs,
+    )
+
+
+def test_adopt_session_restores_the_brain_from_a_persisted_id(tmp_path: Path):
+    supervisor = make_supervisor(tmp_path)
+    transcript = write_session_transcript(supervisor.session_dir, "session-abc")
+
+    assert supervisor.adopt_session("session-abc") is True
+    assert supervisor.session_id == "session-abc"
+    assert supervisor.session_file == transcript.resolve()
+
+
+def test_adopt_session_accepts_an_explicit_transcript_path(tmp_path: Path):
+    supervisor = make_supervisor(tmp_path)
+    transcript = write_session_transcript(supervisor.session_dir, "session-abc")
+
+    assert supervisor.adopt_session("session-abc", str(transcript)) is True
+    assert supervisor.session_file == transcript.resolve()
+
+
+def test_adopt_session_refuses_when_the_transcript_is_gone(tmp_path: Path):
+    # The workspace was wiped: the brain is genuinely unrecoverable. Adopting the id
+    # anyway would make continue_once() fall back to --continue and silently resume
+    # whichever session happened to be newest.
+    supervisor = make_supervisor(tmp_path)
+
+    assert supervisor.adopt_session("session-missing") is False
+    assert supervisor.session_id is None
+    assert supervisor.session_file is None
+
+
+def test_adopt_session_ignores_a_transcript_for_a_different_run(tmp_path: Path):
+    supervisor = make_supervisor(tmp_path)
+    write_session_transcript(supervisor.session_dir, "someone-elses-session")
+
+    assert supervisor.adopt_session("session-abc") is False
+    assert supervisor.session_id is None
+
+
+def test_adopt_session_of_nothing_is_a_no_op(tmp_path: Path):
+    supervisor = make_supervisor(tmp_path)
+
+    assert supervisor.adopt_session(None) is False
+    assert supervisor.session_id is None
+
+
+@pytest.mark.asyncio
+async def test_adopted_session_can_be_continued(tmp_path: Path):
+    # The end-to-end point of the feature: a fresh supervisor object (as after a
+    # server restart) resumes the previous transcript instead of refusing.
+    fake_pi = make_fake_pi_script(tmp_path)
+    first = PiSupervisor(
+        workspace_dir=tmp_path / "workspace",
+        server_url="http://127.0.0.1:8765",
+        pi_binary=str(fake_pi),
+    )
+    await first.start(goal="Reach the next checkpoint.", auto_continue=False)
+    await first.wait_until_idle(timeout=5)
+    persisted_id = first.session_id
+    assert persisted_id
+
+    restarted = PiSupervisor(
+        workspace_dir=tmp_path / "workspace",
+        server_url="http://127.0.0.1:8765",
+        pi_binary=str(fake_pi),
+    )
+    with pytest.raises(ValueError, match="no previous session"):
+        await restarted.continue_once()
+
+    assert restarted.adopt_session(persisted_id) is True
+    await restarted.continue_once()
+    await restarted.wait_until_idle(timeout=5)
+
+    snapshot = restarted.state_snapshot()
+    assert snapshot["session_id"] == persisted_id
+    assert snapshot["last_assistant_text"] == "Continued turn."
+    assert snapshot["status"] == "completed"
+
+
+def test_session_sink_is_notified_when_pi_reports_its_session(tmp_path: Path):
+    seen: list[tuple] = []
+    supervisor = make_supervisor(tmp_path, session_sink=lambda sid, f: seen.append((sid, f)))
+    transcript = write_session_transcript(supervisor.session_dir, "session-abc")
+
+    asyncio.run(supervisor._handle_event({"type": "session", "id": "session-abc"}))
+
+    assert seen == [("session-abc", transcript.resolve())]
