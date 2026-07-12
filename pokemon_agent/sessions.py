@@ -153,8 +153,12 @@ class GameSessionManager:
         path = self.session_dir(session_id)
         if not path.exists():
             return False
+        # Read the pointer BEFORE removing the directory: current_id() resolves
+        # through exists(), so once the manifest is gone it reports None and the
+        # comparison below would never fire, orphaning the pointer.
+        was_current = self.current_id() == session_id
         shutil.rmtree(path)
-        if self.current_id() == session_id:
+        if was_current:
             self.clear_current()
         return True
 

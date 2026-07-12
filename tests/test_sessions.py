@@ -192,3 +192,25 @@ def test_from_dict_tolerates_a_minimal_manifest():
     session = GameSession.from_dict({"id": "x", "name": "y"})
     assert session.game == "red"
     assert session.stats == {"turns": 0, "actions": 0, "saves": 0}
+
+
+def test_delete_clears_the_current_pointer_instead_of_orphaning_it(manager, tmp_path):
+    # current_id() resolves through exists(), so reading it AFTER the rmtree reports
+    # None and the pointer would never be cleared.
+    session = manager.create()
+    manager.set_current(session.id)
+
+    manager.delete(session.id)
+
+    assert not (manager.root / "current.json").exists()
+    assert GameSessionManager(tmp_path).current_id() is None
+
+
+def test_deleting_a_non_current_session_leaves_the_pointer_alone(manager):
+    active = manager.create()
+    other = manager.create()
+    manager.set_current(active.id)
+
+    manager.delete(other.id)
+
+    assert manager.current_id() == active.id

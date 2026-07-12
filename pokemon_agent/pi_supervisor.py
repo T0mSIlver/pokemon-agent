@@ -936,7 +936,12 @@ class PiSupervisor:
             return False
 
         self.session_id = session_id
-        self.session_file = Path(session_file).expanduser().resolve() if session_file else None
+        # The path comes from a manifest on disk, not from Pi. Only trust it if its
+        # header actually names this session -- otherwise fall through to the glob,
+        # which checks. A tampered or stale manifest must not make us resume some
+        # other run's transcript as this run's brain.
+        candidate = Path(session_file).expanduser().resolve() if session_file else None
+        self.session_file = candidate if self._session_file_matches(candidate) else None
 
         if self._resolve_session_file() is None:
             self.session_id = None
@@ -945,6 +950,16 @@ class PiSupervisor:
 
         self._push_recent_event("pi_session", f"Resumed session {session_id}.")
         return True
+
+    def _session_file_matches(self, candidate: Optional[Path]) -> bool:
+        """True when `candidate` is a Pi transcript whose header names this session."""
+        if candidate is None or not self.session_id or not candidate.is_file():
+            return False
+        try:
+            header = json.loads(candidate.read_text(encoding="utf-8").splitlines()[0])
+        except (IndexError, OSError, UnicodeDecodeError, json.JSONDecodeError):
+            return False
+        return header.get("type") == "session" and header.get("id") == self.session_id
 
     def _resolve_session_file(self) -> Optional[Path]:
         if self.session_file is not None and self.session_file.is_file():
@@ -960,11 +975,7 @@ class PiSupervisor:
         except OSError:
             return None
         for candidate in candidates:
-            try:
-                header = json.loads(candidate.read_text(encoding="utf-8").splitlines()[0])
-            except (IndexError, OSError, UnicodeDecodeError, json.JSONDecodeError):
-                continue
-            if header.get("type") == "session" and header.get("id") == self.session_id:
+            if self._session_file_matches(candidate):
                 self.session_file = candidate.resolve()
                 return self.session_file
         return None

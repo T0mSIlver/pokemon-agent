@@ -251,3 +251,19 @@ def test_a_restart_rebinds_to_the_active_run_and_resumes_its_brain(client, data_
 
     assert server._active_session_id == session_id
     assert server._supervisor.session_id == "pi-abc"  # the brain came back
+
+
+@pytest.mark.parametrize(
+    "bad_name",
+    ["../../../../tmp/pwn", "..", ".", "a/b", "with space", "", "x" * 201],
+)
+def test_save_names_that_escape_the_saves_dir_are_rejected(client, bad_name):
+    # `saves_dir / f"{name}.state"` interpolates the name straight into a path.
+    assert client.post("/save", json={"name": bad_name}).status_code == 422
+    assert client.post("/load", json={"name": bad_name}).status_code == 422
+
+
+def test_ordinary_save_names_still_work(client):
+    # Including the shape the runtime generates for its own auto-saves.
+    for name in ["pewter", "before_brock", "auto__20260101T000000Z__checkpoint__pallet-town"]:
+        assert client.post("/save", json={"name": name}).status_code == 200

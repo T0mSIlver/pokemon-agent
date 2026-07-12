@@ -1044,3 +1044,23 @@ def test_session_sink_is_notified_when_pi_reports_its_session(tmp_path: Path):
     asyncio.run(supervisor._handle_event({"type": "session", "id": "session-abc"}))
 
     assert seen == [("session-abc", transcript.resolve())]
+
+
+def test_adopt_session_rejects_a_manifest_pointing_at_another_runs_transcript(tmp_path: Path):
+    # The path comes from a manifest on disk. If it were trusted blindly, a stale or
+    # tampered manifest would resume someone else's brain as this run's.
+    supervisor = make_supervisor(tmp_path)
+    other = write_session_transcript(supervisor.session_dir, "someone-elses-session")
+
+    assert supervisor.adopt_session("session-abc", str(other)) is False
+    assert supervisor.session_id is None
+    assert supervisor.session_file is None
+
+
+def test_adopt_session_falls_back_to_the_glob_when_the_manifest_path_is_stale(tmp_path: Path):
+    supervisor = make_supervisor(tmp_path)
+    real = write_session_transcript(supervisor.session_dir, "session-abc")
+
+    # Manifest points somewhere that no longer exists; the real transcript is present.
+    assert supervisor.adopt_session("session-abc", tmp_path / "gone.jsonl") is True
+    assert supervisor.session_file == real.resolve()

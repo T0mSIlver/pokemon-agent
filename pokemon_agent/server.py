@@ -19,7 +19,8 @@ from typing import Literal, Optional, Set
 from fastapi import FastAPI, HTTPException, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, JSONResponse, Response
-from pydantic import BaseModel
+from pydantic import BaseModel, field_validator
+from pydantic import Field as PydanticField
 
 from pokemon_agent.agent_runtime import AgentRuntime
 from pokemon_agent.harness.contracts import TurnPlanInput
@@ -63,7 +64,18 @@ class ActionRequest(BaseModel):
 class SaveRequest(BaseModel):
     """Body for POST /save and POST /load."""
 
-    name: str
+    # Interpolated straight into `<saves_dir>/{name}.state`, so an unconstrained
+    # string lets a caller write outside the saves directory ("../../x"). Save names
+    # the runtime itself generates look like `auto__20260101T000000Z__trigger__map`.
+    name: str = PydanticField(pattern=r"^[A-Za-z0-9._-]+$", max_length=200)
+
+    @field_validator("name")
+    @classmethod
+    def _reject_dot_segments(cls, value: str) -> str:
+        # The pattern above already excludes "/", so "." and ".." are all that remain.
+        if value in {".", ".."}:
+            raise ValueError("Invalid save name")
+        return value
 
 
 class GameSessionCreateRequest(BaseModel):
@@ -785,12 +797,15 @@ async def _refresh_agent_bundle(
 
 
 def _sync_live_artifacts_sync() -> Optional[dict]:
-    if _runtime is None or _emulator is None:
+    # Bind once: _bind_session() can swap _runtime between the guard and the call,
+    # which would write this frame into the newly-bound run's workspace.
+    runtime, emulator = _runtime, _emulator
+    if runtime is None or emulator is None:
         return None
     state = _get_state_dict()
     navigation = _get_live_navigation_payload_sync()
-    return _runtime.sync_live_view(
-        emulator=_emulator,
+    return runtime.sync_live_view(
+        emulator=emulator,
         state=state,
         navigation=navigation,
         navigation_store=_navigation_store,
