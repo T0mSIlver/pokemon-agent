@@ -8,10 +8,12 @@ Now let's find the MINIMUM total frames needed for a reliable one-tile walk.
 """
 
 import sys
+
 sys.path.insert(0, ".")
 
 from pokemon_agent.emulator import create_emulator
-from pokemon_agent.memory.red import ADDR_MAP_X, ADDR_MAP_Y, ADDR_MAP_ID
+from pokemon_agent.memory.red import ADDR_MAP_ID, ADDR_MAP_X, ADDR_MAP_Y
+
 
 def main():
     print("Loading ROM + saved state...")
@@ -42,10 +44,12 @@ def main():
 
         ex = emu.read_u8(ADDR_MAP_X)
         ey = emu.read_u8(ADDR_MAP_Y)
-        moved = (ex != sx or ey != sy)
+        moved = ex != sx or ey != sy
         status = "MOVED" if moved else "     "
-        print(f"  total={total_frames:2d} (hold={hold}+wait={wait:2d}): "
-              f"({sx},{sy})->({ex},{ey}) {status}")
+        print(
+            f"  total={total_frames:2d} (hold={hold}+wait={wait:2d}): "
+            f"({sx},{sy})->({ex},{ey}) {status}"
+        )
 
     print("\n=== Minimum frame test: hold=4 frames, vary wait ===")
     for total_frames in range(4, 25):
@@ -62,10 +66,12 @@ def main():
 
         ex = emu.read_u8(ADDR_MAP_X)
         ey = emu.read_u8(ADDR_MAP_Y)
-        moved = (ex != sx or ey != sy)
+        moved = ex != sx or ey != sy
         status = "MOVED" if moved else "     "
-        print(f"  total={total_frames:2d} (hold={hold}+wait={wait:2d}): "
-              f"({sx},{sy})->({ex},{ey}) {status}")
+        print(
+            f"  total={total_frames:2d} (hold={hold}+wait={wait:2d}): "
+            f"({sx},{sy})->({ex},{ey}) {status}"
+        )
 
     print("\n=== Minimum frame test: hold=8 frames, vary wait ===")
     for total_frames in range(8, 25):
@@ -82,10 +88,12 @@ def main():
 
         ex = emu.read_u8(ADDR_MAP_X)
         ey = emu.read_u8(ADDR_MAP_Y)
-        moved = (ex != sx or ey != sy)
+        moved = ex != sx or ey != sy
         status = "MOVED" if moved else "     "
-        print(f"  total={total_frames:2d} (hold={hold}+wait={wait:2d}): "
-              f"({sx},{sy})->({ex},{ey}) {status}")
+        print(
+            f"  total={total_frames:2d} (hold={hold}+wait={wait:2d}): "
+            f"({sx},{sy})->({ex},{ey}) {status}"
+        )
 
     print("\n=== Double-step test: does holding longer cause 2 tiles? ===")
     for hold_frames in [8, 16, 20, 24, 32]:
@@ -119,23 +127,25 @@ def main():
         sx = emu.read_u8(ADDR_MAP_X)
         sy = emu.read_u8(ADDR_MAP_Y)
         mid = emu.read_u8(ADDR_MAP_ID)
-        
+
         # Try to walk right toward stairs
         direction = "right" if step < 5 else "up" if step < 15 else "right"
         emu.press(direction, 8)
         emu.tick(16)
-        
+
         ex = emu.read_u8(ADDR_MAP_X)
         ey = emu.read_u8(ADDR_MAP_Y)
         new_mid = emu.read_u8(ADDR_MAP_ID)
-        moved = (ex != sx or ey != sy or new_mid != mid)
+        moved = ex != sx or ey != sy or new_mid != mid
         warp = new_mid != mid
-        
-        print(f"  Step {step:2d}: {direction:5s} ({sx},{sy})->({ex},{ey}) "
-              f"map={mid}->{new_mid} {'WARP!' if warp else ''}")
-        
+
+        print(
+            f"  Step {step:2d}: {direction:5s} ({sx},{sy})->({ex},{ey}) "
+            f"map={mid}->{new_mid} {'WARP!' if warp else ''}"
+        )
+
         if warp:
-            print(f"  *** Warped to a new map! ***")
+            print("  *** Warped to a new map! ***")
             break
 
     emu.close()

@@ -6,12 +6,12 @@ get to the overworld, and verify walk_* commands move exactly one tile.
 """
 
 import sys
-import time
 
 sys.path.insert(0, ".")
 
 from pokemon_agent.emulator import create_emulator
-from pokemon_agent.memory.red import PokemonRedReader, ADDR_MAP_X, ADDR_MAP_Y, ADDR_MAP_ID
+from pokemon_agent.memory.red import ADDR_MAP_ID, ADDR_MAP_X, ADDR_MAP_Y, PokemonRedReader
+
 
 def main():
     print("Loading ROM...")
@@ -91,7 +91,7 @@ def main():
         for i in range(200):
             emu.press("a", 4)
             emu.tick(16)
-        
+
         map_id = emu.read_u8(ADDR_MAP_ID)
         x = emu.read_u8(ADDR_MAP_X)
         y = emu.read_u8(ADDR_MAP_Y)
@@ -103,7 +103,7 @@ def main():
     # -----------------------------------------------------------------------
     if x > 0 or y > 0 or map_id > 10:
         print("\n=== Phase 3: Movement Test ===")
-        
+
         # Record starting position
         start_x = emu.read_u8(ADDR_MAP_X)
         start_y = emu.read_u8(ADDR_MAP_Y)
@@ -115,7 +115,7 @@ def main():
         emu.tick(16)
         x_after = emu.read_u8(ADDR_MAP_X)
         y_after = emu.read_u8(ADDR_MAP_Y)
-        moved = (x_after != start_x or y_after != start_y)
+        moved = x_after != start_x or y_after != start_y
         print(f"  After: ({x_after}, {y_after}) - moved={moved}")
 
         # Test 2: Try a shorter hold (4 frames) + longer wait
@@ -125,7 +125,7 @@ def main():
         emu.tick(20)
         x_after2 = emu.read_u8(ADDR_MAP_X)
         y_after2 = emu.read_u8(ADDR_MAP_Y)
-        moved2 = (x_after2 != start_x2 or y_after2 != start_y2)
+        moved2 = x_after2 != start_x2 or y_after2 != start_y2
         print(f"  After: ({x_after2}, {y_after2}) - moved={moved2}")
 
         # Test 3: Try 1 frame press + 15 frame wait = 16 total
@@ -135,7 +135,7 @@ def main():
         emu.tick(15)
         x_after3 = emu.read_u8(ADDR_MAP_X)
         y_after3 = emu.read_u8(ADDR_MAP_Y)
-        moved3 = (x_after3 != start_x3 or y_after3 != start_y3)
+        moved3 = x_after3 != start_x3 or y_after3 != start_y3
         print(f"  After: ({x_after3}, {y_after3}) - moved={moved3}")
 
         # Test 4: Systematic -- try different total frame counts
@@ -144,10 +144,10 @@ def main():
             # Reset - walk up first to make room
             emu.press("up", 8)
             emu.tick(16)
-            
+
             sx = emu.read_u8(ADDR_MAP_X)
             sy = emu.read_u8(ADDR_MAP_Y)
-            
+
             # Now walk down with specific timing
             hold_frames = 4
             wait_frames = total_frames - hold_frames
@@ -155,12 +155,14 @@ def main():
                 wait_frames = 0
             emu.press("down", hold_frames)
             emu.tick(wait_frames)
-            
+
             ex = emu.read_u8(ADDR_MAP_X)
             ey = emu.read_u8(ADDR_MAP_Y)
-            moved_t = (ex != sx or ey != sy)
-            print(f"    hold={hold_frames} + wait={wait_frames} (total={total_frames}): "
-                  f"({sx},{sy})->({ex},{ey}) moved={moved_t}")
+            moved_t = ex != sx or ey != sy
+            print(
+                f"    hold={hold_frames} + wait={wait_frames} (total={total_frames}): "
+                f"({sx},{sy})->({ex},{ey}) moved={moved_t}"
+            )
     else:
         print("\n  NOT in-game yet. Need to handle the intro differently.")
         print(f"  map={map_id} x={x} y={y}")
@@ -174,6 +176,7 @@ def main():
         print(f"  Save failed: {e}")
 
     from pokemon_agent.state.builder import build_game_state, build_state_summary
+
     state = build_game_state(reader)
     print("\n" + build_state_summary(state))
 

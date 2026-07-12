@@ -1834,7 +1834,7 @@ class AgentRuntime:
                 source="navigation",
                 notes=[
                     f"target_map_id={target_map_id}",
-                    *( [f"target_map_name={target_map_name}"] if target_map_name else [] ),
+                    *([f"target_map_name={target_map_name}"] if target_map_name else []),
                 ],
                 target_map_name=target_map_name,
                 evidence=evidence,
@@ -3044,7 +3044,9 @@ class AgentRuntime:
             "Top route cards:",
         ]
         for card in navigation_guidance.get("route_cards", [])[:5]:
-            target_map = f" | target={card.get('target_map_name')}" if card.get("target_map_name") else ""
+            target_map = (
+                f" | target={card.get('target_map_name')}" if card.get("target_map_name") else ""
+            )
             evidence = f" | evidence={card.get('evidence')}" if card.get("evidence") else ""
             lines.append(
                 f"- {card.get('title')} | "
@@ -3857,10 +3859,15 @@ class AgentRuntime:
                 reason=navigation_execution.get("status"),
                 actions=requested_actions or [],
             )
-        if requested_actions and evaluated_plan.execution is not None and evaluated_plan.status.state in {
-            "partial",
-            "drifted",
-        }:
+        if (
+            requested_actions
+            and evaluated_plan.execution is not None
+            and evaluated_plan.status.state
+            in {
+                "partial",
+                "drifted",
+            }
+        ):
             self._record_semantic_memory(
                 "failure",
                 evaluated_plan.status.reason or f"Plan outcome {evaluated_plan.status.state}.",

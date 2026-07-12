@@ -14,10 +14,10 @@ from typing import Dict, List, Optional, Tuple
 
 # Direction vectors: name -> (dx, dy)
 DIRECTIONS: Dict[str, Tuple[int, int]] = {
-    "up":    (0, -1),
-    "down":  (0,  1),
-    "left":  (-1, 0),
-    "right": (1,  0),
+    "up": (0, -1),
+    "down": (0, 1),
+    "left": (-1, 0),
+    "right": (1, 0),
 }
 
 # Reverse lookup: delta -> direction name
@@ -27,6 +27,7 @@ _DELTA_TO_DIR: Dict[Tuple[int, int], str] = {v: k for k, v in DIRECTIONS.items()
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
+
 
 def manhattan(a: Tuple[int, int], b: Tuple[int, int]) -> int:
     """Manhattan distance heuristic."""
@@ -69,6 +70,7 @@ def neighbors(
 # ---------------------------------------------------------------------------
 # A* pathfinding
 # ---------------------------------------------------------------------------
+
 
 def find_path(
     start: Tuple[int, int],
@@ -172,6 +174,7 @@ def _reconstruct(
 # Action conversion
 # ---------------------------------------------------------------------------
 
+
 def directions_to_actions(directions: List[str]) -> List[str]:
     """Convert direction strings to ``walk_<dir>`` action strings.
 
@@ -190,6 +193,7 @@ def directions_to_actions(directions: List[str]) -> List[str]:
 # ---------------------------------------------------------------------------
 # Convenience helpers
 # ---------------------------------------------------------------------------
+
 
 def navigate(
     start: Tuple[int, int],

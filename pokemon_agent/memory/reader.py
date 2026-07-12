@@ -88,15 +88,11 @@ class GameMemoryReader(ABC):
 
     def read_tileset(self) -> str:
         """Return the current map's tileset name."""
-        raise NotImplementedError(
-            f"{self.__class__.__name__}.read_tileset() is not implemented."
-        )
+        raise NotImplementedError(f"{self.__class__.__name__}.read_tileset() is not implemented.")
 
     def read_warps(self) -> List[Dict[str, Any]]:
         """Return warp definitions for the current map."""
-        raise NotImplementedError(
-            f"{self.__class__.__name__}.read_warps() is not implemented."
-        )
+        raise NotImplementedError(f"{self.__class__.__name__}.read_warps() is not implemented.")
 
     def read_signs(self) -> List[Dict[str, int]]:
         """Return background sign events for the current map."""

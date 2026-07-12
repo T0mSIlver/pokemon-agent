@@ -82,10 +82,7 @@ def _build_interaction_probe(
             "sign_text_id": sign.get("text_id") if sign is not None else None,
         }
 
-    sign_lookup = {
-        (int(sign["x"]), int(sign["y"])): sign
-        for sign in signs
-    }
+    sign_lookup = {(int(sign["x"]), int(sign["y"])): sign for sign in signs}
     sprite_set = snapshot.sprite_set
 
     if checks is None:
@@ -186,8 +183,7 @@ def _build_interaction_probe(
         kind = "unknown"
         source = "dialog_lock"
         reason = (
-            "Dialog is active, but no sprite or sign was detected in the immediate "
-            "interaction ray."
+            "Dialog is active, but no sprite or sign was detected in the immediate interaction ray."
         )
 
     return {
@@ -209,6 +205,7 @@ def _build_interaction_probe(
 # ---------------------------------------------------------------------------
 # Abstract base
 # ---------------------------------------------------------------------------
+
 
 class Emulator(ABC):
     """Abstract emulator interface.
@@ -326,6 +323,7 @@ class Emulator(ABC):
 # PyBoy backend (Game Boy / Game Boy Color)
 # ---------------------------------------------------------------------------
 
+
 class PyBoyEmulator(Emulator):
     """Wraps the *PyBoy* library for .gb / .gbc ROMs.
 
@@ -344,8 +342,7 @@ class PyBoyEmulator(Emulator):
             from pyboy import PyBoy  # type: ignore[import-untyped]
         except ImportError as exc:
             raise ImportError(
-                "PyBoy is required for .gb/.gbc ROMs.  "
-                "Install it with:  pip install pyboy"
+                "PyBoy is required for .gb/.gbc ROMs.  Install it with:  pip install pyboy"
             ) from exc
 
         rom_path = str(Path(rom_path).expanduser().resolve())
@@ -837,6 +834,7 @@ class PyBoyEmulator(Emulator):
 # PyGBA backend (Game Boy Advance)
 # ---------------------------------------------------------------------------
 
+
 class PyGBAEmulator(Emulator):
     """Wraps the *PyGBA / mgba-py* library for .gba ROMs.
 
@@ -867,8 +865,7 @@ class PyGBAEmulator(Emulator):
             from pygba import PyGBA  # type: ignore[import-untyped]
         except ImportError as exc:
             raise ImportError(
-                "PyGBA (mgba-py) is required for .gba ROMs.  "
-                "Install it with:  pip install pygba"
+                "PyGBA (mgba-py) is required for .gba ROMs.  Install it with:  pip install pygba"
             ) from exc
 
         rom_path = str(Path(rom_path).expanduser().resolve())
@@ -970,10 +967,7 @@ def create_emulator(rom_path: str) -> Emulator:
     ext = Path(rom_path).suffix.lower()
     cls = _EXT_MAP.get(ext)
     if cls is None:
-        raise ValueError(
-            f"Unsupported ROM extension '{ext}'. "
-            f"Supported: {', '.join(_EXT_MAP)}"
-        )
+        raise ValueError(f"Unsupported ROM extension '{ext}'. Supported: {', '.join(_EXT_MAP)}")
     emu = cls()
     emu.load(rom_path)
     return emu

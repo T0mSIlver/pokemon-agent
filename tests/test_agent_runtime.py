@@ -953,9 +953,7 @@ def test_pallet_town_warp_is_not_mislabeled_as_map_exit(tmp_path: Path):
 
     landmarks = result["bundle"]["navigation_guidance"]["landmarks"]
     blue_house = next(
-        landmark
-        for landmark in landmarks
-        if landmark.get("coord") == {"x": 13, "y": 5}
+        landmark for landmark in landmarks if landmark.get("coord") == {"x": 13, "y": 5}
     )
     route_hints = result["bundle"]["turn_context"]["navigation"]["route_hints"]
 
@@ -1028,7 +1026,9 @@ def test_repeated_partial_failures_create_avoidance_memory_and_suppress_failed_w
             first_route_title = result["bundle"]["navigation_guidance"]["route_cards"][0]["title"]
 
     avoidances = runtime._build_navigation_avoidances(map_key=after_snapshot.key, current=(10, 9))
-    route_titles = [card["title"] for card in result["bundle"]["navigation_guidance"]["route_cards"]]
+    route_titles = [
+        card["title"] for card in result["bundle"]["navigation_guidance"]["route_cards"]
+    ]
 
     assert avoidances
     assert avoidances[0]["coord"] == {"x": 10, "y": 4}
@@ -1499,7 +1499,9 @@ def test_agent_act_endpoint_executes_validated_plan_and_updates_result_on_observ
     assert act_response.json()["plan_status"]["state"] == "executed_waiting_observe"
     assert act_response.json()["requires_observe"] is True
     assert stale_plan_response.status_code == 400
-    assert stale_plan_response.json()["detail"] == "Run /agent/observe before submitting another plan."
+    assert (
+        stale_plan_response.json()["detail"] == "Run /agent/observe before submitting another plan."
+    )
     assert observe_after.status_code == 200
     assert observe_after.json()["plan_status"]["state"] == "matched"
     assert runtime.load_turn_plan_model().status.state == "matched"

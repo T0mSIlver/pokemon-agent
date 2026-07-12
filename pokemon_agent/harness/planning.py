@@ -172,7 +172,9 @@ def _match_expected_outcome(plan: TurnPlan, bundle: dict) -> tuple[int, int, lis
         return 0, 0, []
     current_state = bundle.get("state") or {}
     current_map = str((current_state.get("map") or {}).get("map_name") or "")
-    baseline_map = str((plan.execution.baseline_map_name if plan.execution is not None else "") or "")
+    baseline_map = str(
+        (plan.execution.baseline_map_name if plan.execution is not None else "") or ""
+    )
     map_changed = bool(baseline_map and current_map and current_map != baseline_map)
     current_position = (current_state.get("player") or {}).get("position") or {}
     dialog_active = bool(
@@ -261,7 +263,9 @@ def evaluate_plan_outcome(plan: TurnPlan, bundle: dict) -> TurnPlan:
     checked_at = utc_now()
     current_state = bundle.get("state") or {}
     current_map = str((current_state.get("map") or {}).get("map_name") or "")
-    baseline_map = str((plan.execution.baseline_map_name if plan.execution is not None else "") or "")
+    baseline_map = str(
+        (plan.execution.baseline_map_name if plan.execution is not None else "") or ""
+    )
     map_changed = bool(baseline_map and current_map and current_map != baseline_map)
     movement = _movement_from_execution_baseline(plan, bundle) or {}
     dx = int(movement.get("dx") or 0)

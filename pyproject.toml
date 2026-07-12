@@ -5,12 +5,15 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "pokemon-agent"
 version = "0.1.0"
-description = "AI-powered Pokemon gameplay agent with headless emulation, REST API, and live dashboard."
+description = "Vision-first Pokemon gameplay agent: headless emulation, REST API, Pi supervisor, and live operator dashboard."
 readme = "README.md"
 license = {text = "MIT"}
 requires-python = ">=3.10"
 authors = [
-    {name = "Nous Research", email = "team@nousresearch.com"},
+    {name = "Tom Vaucourt"},
+]
+maintainers = [
+    {name = "Tom Vaucourt"},
 ]
 keywords = ["pokemon", "ai", "agent", "emulator", "gameboy", "gba", "llm"]
 classifiers = [
@@ -48,9 +51,10 @@ all = [
 ]
 
 [project.urls]
-Homepage = "https://github.com/NousResearch/pokemon-agent"
-Repository = "https://github.com/NousResearch/pokemon-agent"
-Issues = "https://github.com/NousResearch/pokemon-agent/issues"
+Homepage = "https://github.com/T0mSIlver/pokemon-agent"
+Repository = "https://github.com/T0mSIlver/pokemon-agent"
+Issues = "https://github.com/T0mSIlver/pokemon-agent/issues"
+Upstream = "https://github.com/NousResearch/pokemon-agent"
 
 [project.scripts]
 pokemon-agent = "pokemon_agent.cli:main"
@@ -71,3 +75,4 @@ select = ["E", "F", "I", "W"]
 
 [tool.pytest.ini_options]
 asyncio_mode = "auto"
+testpaths = ["tests"]
