@@ -32,17 +32,23 @@ weaker design, or collides head-on with a deliberate architectural choice.
   type into *both* type bytes, so a Squirtle was reporting `["Water", "Water"]`. Ported by
   hand; covered by `tests/test_species_types.py`.
 
-## Still open — the one real gap
+## The one real gap — closed
 
-**`sessions.py` — run-scoped game sessions.** Upstream binds a playthrough's brain session
-ID, its own `saves/` directory, objectives and a milestone timeline under
-`<data>/games/<session_id>/manifest.json`. We have no equivalent:
+**`sessions.py` — run-scoped game sessions.** This was the single thing upstream had that we
+genuinely lacked: saves went to one flat global directory, the workspace was a shared folder,
+and `PiSupervisor.session_id` was never persisted, so a restart kept the emulator state but
+orphaned the agent's brain.
 
-- `POST /save` / `POST /load` write to one flat global saves directory.
-- The workspace (frames, `turn_context.json`, checkpoints) is a single shared folder.
-- `PiSupervisor.session_id` is **never persisted** — restart the server mid-run and the
-  emulator state survives but the agent's brain does not.
+Built in `pokemon_agent/sessions.py` and wired up as the `/games` endpoints — **adapted, not
+copied**. Differences from upstream's version:
 
-This blocks "New Game / Load Game" and any two playthroughs running side by side. Worth
-building, adapted to Pi rather than copied — upstream's `_latest_badges()` is a stub, and we
-should read badges from our own RAM reader.
+- Keyed on the Pi session id, not `hermes_session_id`.
+- The session directory doubles as the `AgentRuntime` `data_dir`, so the runtime's *auto*
+  saves follow the run too. Upstream only scoped server-written saves.
+- The run owns the agent workspace (memory, frames, Pi transcript), not just saves.
+- Dropped upstream's `_latest_badges()` — it returns `1` whenever any badge milestone exists,
+  which is simply wrong. Badge count should come from the RAM reader.
+- Dropped upstream's free-text `DEFAULT_OBJECTIVES` in favour of a reference to our objective
+  packs (`objective_pack`), so it doesn't fork the `ObjectiveEngine`.
+- `adopt_session()` fails closed when a transcript is missing, rather than leaving a dangling
+  id that would make Pi silently resume whichever session happened to be newest.

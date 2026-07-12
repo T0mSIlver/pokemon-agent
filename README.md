@@ -159,6 +159,35 @@ curl -X POST http://localhost:8765/save -d '{"name": "before_brock"}'
 curl -X POST http://localhost:8765/load -d '{"name": "before_brock"}'
 ```
 
+### Game sessions (New Game / Load Game)
+
+A *game session* is one playthrough, and it owns everything belonging to that
+run — its save-states, its agent workspace, and its Pi brain:
+
+```
+<data-dir>/games/<session-id>/
+    manifest.json
+    saves/            # both manual and auto saves for THIS run
+    workspace/        # agent memory, frames, and Pi's transcript
+```
+
+```bash
+# Start a new playthrough (becomes the active run)
+curl -X POST http://localhost:8765/games -d '{"name": "Nuzlocke"}'
+
+# List runs, then load one back — saves, memory, and the same Pi brain
+curl http://localhost:8765/games
+curl -X POST http://localhost:8765/games/<id>/activate -d '{}'
+```
+
+Activating a run restores the Pi session it was played with, so the agent picks
+up its accumulated context instead of starting cold. The server re-binds to
+whichever run was active when it restarts. Switching runs is refused with `409`
+while Pi is running — stop the supervisor first.
+
+Sessions are opt-in: with no active run, saves and the workspace use the shared
+`<data-dir>` layout exactly as before.
+
 For vision-first agents, prefer:
 
 ```bash
@@ -305,9 +334,14 @@ The skill teaches Hermes battle strategy, exploration patterns, team management,
 | `/agent/act` | POST | Execute the validated primary or fallback plan branch |
 | `/agent/navigator` | GET | Return the best deterministic route card and alternatives |
 | `/action` | POST | Execute game actions |
-| `/save` | POST | Save emulator state |
+| `/save` | POST | Save emulator state (into the active run) |
 | `/load` | POST | Load emulator state |
-| `/saves` | GET | List saved states |
+| `/saves` | GET | List saved states (of the active run) |
+| `/games` | GET | List playthroughs, newest first |
+| `/games` | POST | Start a new playthrough |
+| `/games/current` | GET | The active playthrough |
+| `/games/{id}/activate` | POST | Load a playthrough: its saves, workspace, and Pi brain |
+| `/games/{id}` | DELETE | Delete a playthrough and everything it owns |
 | `/minimap` | GET | ASCII minimap |
 | `/navigation/map` | GET | Current live and explored navigation maps |
 | `/navigation/path` | POST | Plan a route without executing it |
