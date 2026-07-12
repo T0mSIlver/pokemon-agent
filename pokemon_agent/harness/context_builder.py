@@ -164,6 +164,12 @@ def build_turn_context(
             title=_truncate(card.get("title"), 80),
             why=_truncate(card.get("why_now"), 100),
             actions=list(card.get("route_actions") or [])[:4],
+            kind=str(card.get("kind") or "") or None,
+            target_map_name=(
+                _truncate(card.get("target_map_name"), 80) if card.get("target_map_name") else None
+            ),
+            evidence=_truncate(card.get("evidence"), 140) if card.get("evidence") else None,
+            confidence=card.get("confidence"),
         )
         for card in route_cards[:2]
     ]
@@ -172,6 +178,15 @@ def build_turn_context(
             kind=str(landmark.get("kind") or "unknown"),
             title=_truncate(landmark.get("title"), 80),
             distance=landmark.get("distance"),
+            target_map_name=(
+                _truncate(landmark.get("target_map_name"), 80)
+                if landmark.get("target_map_name")
+                else None
+            ),
+            evidence=(
+                _truncate(landmark.get("evidence"), 140) if landmark.get("evidence") else None
+            ),
+            confidence=landmark.get("confidence"),
         )
         for landmark in landmarks[:3]
     ]
@@ -276,6 +291,8 @@ def build_turn_context(
         artifacts=TurnContextArtifacts(
             latest_frame=str(artifacts.get("latest_frame") or ""),
             latest_frame_annotated=str(artifacts.get("latest_frame_annotated") or ""),
+            live_frame=str(artifacts.get("live_frame") or "") or None,
+            live_frame_annotated=str(artifacts.get("live_frame_annotated") or "") or None,
             turn_context_json=str(artifacts.get("turn_context_json") or ""),
             turn_plan_json=str(artifacts.get("turn_plan_json") or ""),
             recovery_saves_json=str(artifacts.get("recovery_saves_json") or "") or None,

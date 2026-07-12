@@ -1862,18 +1862,28 @@
             : '◉ CLK: PAUSED';
         els.frameTimestamp.textContent = timeLabel(visuals.frame_timestamp);
 
-        if (artifactUrls.latest_frame_annotated) {
+        const preferLiveArtifacts =
+            String(visuals.annotated_frame_path || '').includes('live_frame_annotated') ||
+            String(visuals.raw_frame_path || '').includes('live_frame');
+        const annotatedArtifactUrl = preferLiveArtifacts
+            ? (artifactUrls.live_frame_annotated || artifactUrls.latest_frame_annotated)
+            : artifactUrls.latest_frame_annotated;
+        const rawArtifactUrl = preferLiveArtifacts
+            ? (artifactUrls.live_frame || artifactUrls.latest_frame)
+            : artifactUrls.latest_frame;
+
+        if (annotatedArtifactUrl) {
             schedulePreload(
                 'annotated',
                 els.annotatedFrame,
-                withCacheBust(artifactUrls.latest_frame_annotated, visuals.frame_timestamp),
+                withCacheBust(annotatedArtifactUrl, visuals.frame_timestamp),
             );
         }
-        if (artifactUrls.latest_frame) {
+        if (rawArtifactUrl) {
             schedulePreload(
                 'raw',
                 els.rawFrame,
-                withCacheBust(artifactUrls.latest_frame, visuals.frame_timestamp),
+                withCacheBust(rawArtifactUrl, visuals.frame_timestamp),
             );
         }
 

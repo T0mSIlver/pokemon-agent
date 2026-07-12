@@ -356,11 +356,11 @@ async def _live_artifact_loop() -> None:
                 {
                     "type": "screenshot",
                     "data": {
-                        "raw_frame_path": artifacts.get("latest_frame"),
-                        "annotated_frame_path": artifacts.get("latest_frame_annotated"),
-                        "raw_frame_url": _artifact_urls_from_paths(artifacts).get("latest_frame"),
+                        "raw_frame_path": artifacts.get("live_frame"),
+                        "annotated_frame_path": artifacts.get("live_frame_annotated"),
+                        "raw_frame_url": _artifact_urls_from_paths(artifacts).get("live_frame"),
                         "annotated_frame_url": _artifact_urls_from_paths(artifacts).get(
-                            "latest_frame_annotated"
+                            "live_frame_annotated"
                         ),
                         "frame_timestamp": generated_at,
                         "source": payload.get("source"),
@@ -487,6 +487,8 @@ def _public_artifact_paths(artifacts: Optional[dict]) -> dict:
     allowlist = (
         "latest_frame",
         "latest_frame_annotated",
+        "live_frame",
+        "live_frame_annotated",
         "turn_context_json",
         "turn_plan_json",
         "recovery_saves_json",

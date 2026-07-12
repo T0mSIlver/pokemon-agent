@@ -222,6 +222,34 @@ def make_oaks_lab_snapshot() -> LiveNavigationSnapshot:
     )
 
 
+def make_pallet_town_snapshot() -> LiveNavigationSnapshot:
+    return LiveNavigationSnapshot(
+        map_id=0,
+        map_name="Pallet Town",
+        player_position=(13, 6),
+        facing="up",
+        tileset="OVERWORLD",
+        window_top_left=(9, 2),
+        terrain=[[1 for _ in range(10)] for _ in range(9)],
+        sprite_positions=[],
+        valid_moves=["up", "down", "left", "right"],
+        warps=[
+            {"x": 13, "y": 5, "warp_id": 1, "target_map_id": 39},
+            {"x": 12, "y": 11, "warp_id": 2, "target_map_id": 40},
+            {"x": 5, "y": 5, "warp_id": 3, "target_map_id": 37},
+        ],
+        signs=[],
+        map_dimensions={
+            "width": 20,
+            "height": 18,
+            "width_blocks": 10,
+            "height_blocks": 9,
+            "width_tiles": 20,
+            "height_tiles": 18,
+        },
+    )
+
+
 def make_navigation_payload(store: NavigationStore, snapshot: LiveNavigationSnapshot) -> dict:
     location_map = store.update(snapshot)
     distances = location_map.distance_map(
@@ -904,6 +932,111 @@ def test_turn_context_surfaces_warps_with_target_map_names(tmp_path: Path):
     assert first_warp["distance"] == 6
 
 
+def test_pallet_town_warp_is_not_mislabeled_as_map_exit(tmp_path: Path):
+    emulator = FakeEmulator()
+    store = NavigationStore(tmp_path / "navigation.json")
+    snapshot = make_pallet_town_snapshot()
+    navigation = make_navigation_payload(store, snapshot)
+    runtime = AgentRuntime(
+        data_dir=tmp_path / "data",
+        workspace_dir=tmp_path / "workspace",
+    )
+
+    result = runtime.refresh(
+        emulator=emulator,
+        state=make_state(map_name="Pallet Town", map_id=0, x=13, y=6),
+        navigation=navigation,
+        navigation_store=store,
+        reason="pallet_warp",
+        source="observe",
+    )
+
+    landmarks = result["bundle"]["navigation_guidance"]["landmarks"]
+    blue_house = next(
+        landmark
+        for landmark in landmarks
+        if landmark.get("coord") == {"x": 13, "y": 5}
+    )
+    route_hints = result["bundle"]["turn_context"]["navigation"]["route_hints"]
+
+    assert blue_house["kind"] == "warp"
+    assert blue_house["title"] == "Warp to Blue's House at (13, 5)"
+    assert blue_house["target_map_name"] == "Blue's House"
+    assert blue_house["evidence"] == "Warp table entry targeting Blue's House."
+    assert all("Map exit" not in hint["title"] for hint in route_hints)
+
+
+def test_repeated_partial_failures_create_avoidance_memory_and_suppress_failed_warp(
+    tmp_path: Path,
+):
+    emulator = FakeEmulator()
+    store = NavigationStore(tmp_path / "navigation.json")
+    runtime = AgentRuntime(
+        data_dir=tmp_path / "data",
+        workspace_dir=tmp_path / "workspace",
+    )
+    requested_actions = ["walk_up"] * 4
+    first_route_title = None
+
+    for attempt in range(2):
+        observe_snapshot = make_snapshot()
+        observe_navigation = make_navigation_payload(store, observe_snapshot)
+        observe = runtime.refresh(
+            emulator=emulator,
+            state=make_state(map_name="Viridian City", map_id=1, x=10, y=10),
+            navigation=observe_navigation,
+            navigation_store=store,
+            reason=f"observe_{attempt}",
+            source="observe",
+        )
+        runtime.validate_and_store_turn_plan(
+            {
+                "observation_id": observe["bundle"]["observation_id"],
+                "objective_id": observe["bundle"]["objective"]["current"]["id"],
+                "intent": "Walk toward the mart doorway.",
+                "mode": "overworld",
+                "primary_branch": {"kind": "raw_actions", "actions": requested_actions},
+                "expected_outcome": {
+                    "summary": "Reach the mart doorway.",
+                    "position": {"x": 10, "y": 4},
+                },
+            }
+        )
+        runtime.mark_turn_plan_executed(
+            branch="primary",
+            branch_kind="raw_actions",
+            requested_actions=requested_actions,
+            executed_actions=1,
+            baseline_map_name="Viridian City",
+            baseline_position={"x": 10, "y": 10},
+            summary="Batch blocked after the first step.",
+        )
+        after_snapshot = make_snapshot()
+        after_snapshot.player_position = (10, 9)
+        after_snapshot.window_top_left = (6, 5)
+        after_navigation = make_navigation_payload(store, after_snapshot)
+        result = runtime.refresh(
+            emulator=emulator,
+            state=make_state(map_name="Viridian City", map_id=1, x=10, y=9),
+            navigation=after_navigation,
+            navigation_store=store,
+            reason=f"after_attempt_{attempt}",
+            source="action",
+            requested_actions=requested_actions,
+        )
+        if attempt == 0:
+            first_route_title = result["bundle"]["navigation_guidance"]["route_cards"][0]["title"]
+
+    avoidances = runtime._build_navigation_avoidances(map_key=after_snapshot.key, current=(10, 9))
+    route_titles = [card["title"] for card in result["bundle"]["navigation_guidance"]["route_cards"]]
+
+    assert avoidances
+    assert avoidances[0]["coord"] == {"x": 10, "y": 4}
+    assert avoidances[0]["times_seen"] >= 2
+    assert first_route_title != "Warp to Viridian Mart at (10, 4)"
+    assert not any("Viridian Mart" in title for title in route_titles)
+
+
 def test_turn_context_surfaces_visible_sprites_ascii_and_npc_targets(tmp_path: Path):
     emulator = FakeEmulator()
     store = NavigationStore(tmp_path / "navigation.json")
@@ -1345,12 +1478,28 @@ def test_agent_act_endpoint_executes_validated_plan_and_updates_result_on_observ
             },
         )
         act_response = client.post("/agent/act")
+        stale_plan_response = client.post(
+            "/agent/plan",
+            json={
+                "observation_id": observe["observation_id"],
+                "objective_id": "head_to_viridian_forest",
+                "intent": "Try to plan again without observing.",
+                "mode": "overworld",
+                "primary_branch": {"kind": "raw_actions", "actions": ["walk_up"]},
+                "expected_outcome": {
+                    "summary": "Move one tile north.",
+                    "position_delta": {"dx": 0, "dy": -1},
+                },
+            },
+        )
         observe_after = client.post("/agent/observe", json={"reason": "after_act"})
 
     assert plan_response.status_code == 200
     assert act_response.status_code == 200
     assert act_response.json()["plan_status"]["state"] == "executed_waiting_observe"
     assert act_response.json()["requires_observe"] is True
+    assert stale_plan_response.status_code == 400
+    assert stale_plan_response.json()["detail"] == "Run /agent/observe before submitting another plan."
     assert observe_after.status_code == 200
     assert observe_after.json()["plan_status"]["state"] == "matched"
     assert runtime.load_turn_plan_model().status.state == "matched"
@@ -1444,6 +1593,18 @@ async def test_live_artifact_loop_refreshes_workspace_and_broadcasts(monkeypatch
     )
 
     events: list[dict] = []
+    observe = runtime.refresh(
+        emulator=emulator,
+        state=make_state(map_name="Route 1", map_id=12),
+        navigation=navigation,
+        navigation_store=store,
+        reason="initial_observe",
+        source="observe",
+    )
+    observed_frame = observe["bundle"]["artifacts"]["latest_frame"]
+    observed_turn_context = json.loads(
+        runtime.artifacts["turn_context_json"].read_text(encoding="utf-8")
+    )
 
     async def fake_broadcast(event: dict) -> None:
         events.append(event)
@@ -1472,8 +1633,19 @@ async def test_live_artifact_loop_refreshes_workspace_and_broadcasts(monkeypatch
 
     assert Path(runtime.artifacts["latest_frame"]).exists()
     assert Path(runtime.artifacts["latest_frame_annotated"]).exists()
+    assert Path(runtime.artifacts["live_frame"]).exists()
+    assert Path(runtime.artifacts["live_frame_annotated"]).exists()
     assert server._live_artifact_last_sync_at is not None
     assert any(event.get("type") == "screenshot" for event in events)
     screenshot_events = [event for event in events if event.get("type") == "screenshot"]
     assert screenshot_events[-1]["data"]["source"] == "live_sync"
+    assert screenshot_events[-1]["data"]["raw_frame_path"].endswith("live_frame.png")
     assert screenshot_events[-1]["data"]["frame_timestamp"]
+    assert runtime.live_bundle["artifacts"]["latest_frame"] == observed_frame
+    assert runtime.live_bundle["artifacts"]["live_frame"].endswith("live_frame.png")
+    refreshed_turn_context = json.loads(
+        runtime.artifacts["turn_context_json"].read_text(encoding="utf-8")
+    )
+    assert observed_turn_context["artifacts"]["latest_frame"] == observed_frame
+    assert refreshed_turn_context["artifacts"]["latest_frame"] == observed_frame
+    assert observed_frame != runtime.live_bundle["artifacts"]["live_frame"]

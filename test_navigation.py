@@ -2,7 +2,7 @@ from pathlib import Path
 
 import pokemon_agent.server as server
 from pokemon_agent.emulator import _build_interaction_probe
-from pokemon_agent.memory.red import PokemonRedReader
+from pokemon_agent.memory.red import ADDR_MAP_HEIGHT, ADDR_MAP_WIDTH, PokemonRedReader
 from pokemon_agent.navigation import (
     LiveNavigationSnapshot,
     LocationNavigationMap,
@@ -353,6 +353,28 @@ class FakeMemoryEmulator:
 
     def read_range(self, addr, size):
         return bytes(self.values.get(addr + offset, 0) for offset in range(size))
+
+
+def test_read_map_dimensions_exposes_tile_and_block_units():
+    reader = PokemonRedReader(
+        FakeMemoryEmulator(
+            {
+                ADDR_MAP_WIDTH: 10,
+                ADDR_MAP_HEIGHT: 9,
+            }
+        )
+    )
+
+    dimensions = reader.read_map_dimensions()
+
+    assert dimensions == {
+        "width": 20,
+        "height": 18,
+        "width_blocks": 10,
+        "height_blocks": 9,
+        "width_tiles": 20,
+        "height_tiles": 18,
+    }
 
 
 def test_read_dialog_treats_visible_window_as_active():

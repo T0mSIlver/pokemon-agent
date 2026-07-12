@@ -197,6 +197,9 @@ class LandmarkRecord:
     seen_count: int = 1
     source: str = "runtime"
     notes: list[str] = field(default_factory=list)
+    target_map_name: Optional[str] = None
+    evidence: Optional[str] = None
+    confidence: Optional[float] = None
 
     def to_dict(self) -> JsonDict:
         return asdict(self)
@@ -235,6 +238,37 @@ def _coord_payload(coord: Optional[tuple[int, int]]) -> Optional[JsonDict]:
     if coord is None:
         return None
     return {"x": coord[0], "y": coord[1]}
+
+
+def _int_or_zero(value: Any) -> int:
+    try:
+        return int(value or 0)
+    except (TypeError, ValueError):
+        return 0
+
+
+def _tile_map_dimensions(map_dimensions: Optional[JsonDict]) -> tuple[int, int]:
+    dims = map_dimensions or {}
+    width = _int_or_zero(dims.get("width_tiles") or dims.get("width"))
+    height = _int_or_zero(dims.get("height_tiles") or dims.get("height"))
+    return width, height
+
+
+def _boundary_sides_for_coord(
+    coord: tuple[int, int],
+    map_dimensions: Optional[JsonDict],
+) -> list[str]:
+    width, height = _tile_map_dimensions(map_dimensions)
+    sides: list[str] = []
+    if coord[1] <= 0:
+        sides.append("north")
+    if coord[0] <= 0:
+        sides.append("west")
+    if width > 0 and coord[0] >= width - 1:
+        sides.append("east")
+    if height > 0 and coord[1] >= height - 1:
+        sides.append("south")
+    return sides
 
 
 def _manhattan(a: Optional[tuple[int, int]], b: Optional[tuple[int, int]]) -> int:
@@ -1265,6 +1299,8 @@ class AgentRuntime:
         return {
             "latest_frame": self.workspace_dir / "latest_frame.png",
             "latest_frame_annotated": self.workspace_dir / "latest_frame_annotated.png",
+            "live_frame": self.workspace_dir / "live_frame.png",
+            "live_frame_annotated": self.workspace_dir / "live_frame_annotated.png",
             "turn_context_json": self.workspace_dir / "turn_context.json",
             "turn_plan_json": self.workspace_dir / "turn_plan.json",
             "recovery_saves_json": self.workspace_dir / "recovery_saves.json",
@@ -1446,6 +1482,9 @@ class AgentRuntime:
         return self.load_turn_plan_model().status.model_dump(mode="json")
 
     def validate_and_store_turn_plan(self, submission: JsonDict) -> TurnPlan:
+        current_plan = self.load_turn_plan_model()
+        if current_plan.status.state == "executed_waiting_observe":
+            raise ValueError("Run /agent/observe before submitting another plan.")
         try:
             current_context = TurnContext.model_validate(self.load_turn_context())
             payload = TurnPlanInput.model_validate(submission)
@@ -1624,6 +1663,9 @@ class AgentRuntime:
         title: str,
         source: str,
         notes: Optional[list[str]] = None,
+        target_map_name: Optional[str] = None,
+        evidence: Optional[str] = None,
+        confidence: Optional[float] = None,
     ) -> tuple[JsonDict, bool]:
         now = utc_now()
         landmark_id = f"landmark:{_stable_id(map_id, kind, _coord_to_key(coord))}"
@@ -1638,6 +1680,12 @@ class AgentRuntime:
                 if note and note not in merged_notes:
                     merged_notes.append(note)
             existing["notes"] = merged_notes[:6]
+            if target_map_name:
+                existing["target_map_name"] = target_map_name
+            if evidence:
+                existing["evidence"] = evidence
+            if confidence is not None:
+                existing["confidence"] = round(float(confidence), 2)
             self.landmarks_by_id[landmark_id] = existing
             return existing, False
 
@@ -1652,6 +1700,9 @@ class AgentRuntime:
             last_seen_at=now,
             source=source,
             notes=list(notes or [])[:6],
+            target_map_name=target_map_name,
+            evidence=evidence,
+            confidence=round(float(confidence), 2) if confidence is not None else None,
         ).to_dict()
         self.landmarks_by_id[landmark_id] = record
         return record, True
@@ -1755,33 +1806,39 @@ class AgentRuntime:
 
         created: list[JsonDict] = []
         changed = False
-        width = int((snapshot.map_dimensions or {}).get("width") or 0)
-        height = int((snapshot.map_dimensions or {}).get("height") or 0)
 
         for warp in snapshot.warps:
             coord = _tuple_coord_from_any(warp)
             if coord is None:
                 continue
-            edge_exit = (
-                coord[0] == 0
-                or coord[1] == 0
-                or (width > 0 and coord[0] >= width - 1)
-                or (height > 0 and coord[1] >= height - 1)
-            )
-            kind = "exit" if edge_exit else "warp"
+            target_map_id = warp.get("target_map_id")
+            target_map_name = None
+            if target_map_id is not None:
+                target_map_name = RED_MAP_NAMES.get(_int_or_zero(target_map_id))
             title = (
-                f"Map exit at ({coord[0]}, {coord[1]})"
-                if edge_exit
+                f"Warp to {target_map_name} at ({coord[0]}, {coord[1]})"
+                if target_map_name
                 else f"Warp at ({coord[0]}, {coord[1]})"
+            )
+            evidence = (
+                f"Warp table entry targeting {target_map_name}."
+                if target_map_name
+                else f"Warp table entry targeting map_id={target_map_id}."
             )
             record, is_new = self._upsert_landmark(
                 map_id=snapshot.map_id,
                 map_name=snapshot.map_name,
-                kind=kind,
+                kind="warp",
                 coord=coord,
                 title=title,
                 source="navigation",
-                notes=[f"target_map_id={warp.get('target_map_id')}"],
+                notes=[
+                    f"target_map_id={target_map_id}",
+                    *( [f"target_map_name={target_map_name}"] if target_map_name else [] ),
+                ],
+                target_map_name=target_map_name,
+                evidence=evidence,
+                confidence=0.95 if target_map_name else 0.7,
             )
             changed = True
             if is_new:
@@ -1881,6 +1938,26 @@ class AgentRuntime:
             )
         return result
 
+    def _nearby_failure_count(
+        self,
+        *,
+        coord: tuple[int, int],
+        avoidances: list[JsonDict],
+    ) -> int:
+        nearby_counts = [
+            _int_or_zero(entry.get("times_seen"))
+            for entry in avoidances
+            if _manhattan(coord, _tuple_coord_from_any(entry.get("coord"))) <= 1
+        ]
+        return max(nearby_counts, default=0)
+
+    def _failure_evidence_suffix(self, failure_count: int) -> Optional[str]:
+        if failure_count >= 2:
+            return f"Suppressed after {failure_count} failed attempts nearby."
+        if failure_count == 1:
+            return "Down-ranked because a recent attempt failed nearby."
+        return None
+
     def _build_navigation_assistance(
         self,
         *,
@@ -1915,11 +1992,6 @@ class AgentRuntime:
             (objective.get("current") or {}).get("route_hint", "")
         )
         avoidances = self._build_navigation_avoidances(map_key=snapshot.key, current=current)
-        blocked_coords = {
-            _tuple_coord_from_any(entry.get("coord"))
-            for entry in avoidances
-            if _tuple_coord_from_any(entry.get("coord")) is not None
-        }
 
         distances = location_map.distance_map(current, extra_blockers=snapshot.sprite_set)
         frontiers: list[JsonDict] = []
@@ -1949,25 +2021,51 @@ class AgentRuntime:
                 allow_partial=False,
             )
             progress_bonus = max(0, _progress_amount(preferred_direction or "", current, coord))
-            blocked = any(_manhattan(coord, blocked_coord) <= 1 for blocked_coord in blocked_coords)
+            failure_count = self._nearby_failure_count(coord=coord, avoidances=avoidances)
+            blocked = failure_count > 0
+            boundary_sides = _boundary_sides_for_coord(coord, snapshot.map_dimensions)
+            is_boundary_exit = bool(boundary_sides) and (
+                not preferred_direction
+                or preferred_direction in boundary_sides
+                or progress_bonus > 0
+            )
+            if failure_count >= 2:
+                continue
             novelty_score = max(
                 1,
                 35
                 + (len(unknown_neighbors) * 12)
                 + (progress_bonus * 4)
                 - (distance * 2)
-                - (25 if blocked else 0),
+                + (18 if is_boundary_exit else 0)
+                - min(48, failure_count * 30),
             )
-            title = f"Probe frontier at ({coord[0]}, {coord[1]})"
+            title = (
+                f"Boundary exit frontier at ({coord[0]}, {coord[1]})"
+                if is_boundary_exit
+                else f"Probe frontier at ({coord[0]}, {coord[1]})"
+            )
             why_now_parts = [f"reveals {len(unknown_neighbors)} unknown edge(s)"]
             if progress_bonus > 0 and preferred_direction:
                 why_now_parts.append(f"advances {preferred_direction}")
+            if is_boundary_exit:
+                why_now_parts.append(f"touches the {'/'.join(boundary_sides)} map boundary")
             if blocked:
                 why_now_parts.append("near a recently failed branch")
+            evidence_parts = [
+                f"Explored frontier adjacent to {len(unknown_neighbors)} unknown tile(s)."
+            ]
+            if is_boundary_exit:
+                evidence_parts.append(
+                    f"Touches the {'/'.join(boundary_sides)} tile boundary of the current map."
+                )
+            failure_evidence = self._failure_evidence_suffix(failure_count)
+            if failure_evidence:
+                evidence_parts.append(failure_evidence)
             frontiers.append(
                 {
                     "id": f"frontier:{_stable_id(snapshot.key, _coord_to_key(coord))}",
-                    "kind": "frontier",
+                    "kind": "exit" if is_boundary_exit else "frontier",
                     "coord": _coord_payload(coord),
                     "title": title,
                     "novelty_score": novelty_score,
@@ -1976,6 +2074,10 @@ class AgentRuntime:
                     "first_action": route.actions[0] if route.actions else None,
                     "why_now": ", ".join(why_now_parts),
                     "blocked_by_recent_failure": blocked,
+                    "target_map_name": None,
+                    "evidence": " ".join(evidence_parts),
+                    "confidence": 0.7 if is_boundary_exit else 0.45,
+                    "failure_count": failure_count,
                 }
             )
             seen_frontier_coords.add(coord)
@@ -2010,6 +2112,8 @@ class AgentRuntime:
                     "title": f"Talk to {npc.get('name') or 'target NPC'}",
                     "coord": _coord_payload(coord),
                     "source": "objective",
+                    "evidence": "Objective target NPC on the current map.",
+                    "confidence": 0.98,
                 },
             )
         for landmark in sorted(
@@ -2039,9 +2143,19 @@ class AgentRuntime:
                 extra_blockers=snapshot.sprite_set,
                 allow_partial=True,
             )
-            blocked = any(_manhattan(coord, blocked_coord) <= 1 for blocked_coord in blocked_coords)
+            failure_count = self._nearby_failure_count(coord=coord, avoidances=avoidances)
+            blocked = failure_count > 0
+            if failure_count >= 2 and str(landmark.get("kind")) != "npc_target":
+                continue
             type_bonus = 24 if str(landmark.get("kind")) in preferred_types else 0
             objective_target_bonus = 40 if str(landmark.get("kind")) == "npc_target" else 0
+            evidence = str(
+                landmark.get("evidence")
+                or (landmark.get("notes") or ["Known landmark with a concrete route."])[0]
+            )
+            failure_evidence = self._failure_evidence_suffix(failure_count)
+            if failure_evidence:
+                evidence = f"{evidence} {failure_evidence}"
             score = max(
                 1,
                 55
@@ -2049,7 +2163,7 @@ class AgentRuntime:
                 + objective_target_bonus
                 + (12 if visible else 0)
                 - (distance * 2)
-                - (18 if blocked else 0)
+                - min(44, failure_count * 26)
                 - (8 if str(landmark.get("kind")) == "dead_end" else 0),
             )
             route_cards.append(
@@ -2071,6 +2185,10 @@ class AgentRuntime:
                     ),
                     "blocked_by_recent_failure": blocked,
                     "target_id": landmark.get("id"),
+                    "target_map_name": landmark.get("target_map_name"),
+                    "evidence": evidence,
+                    "confidence": landmark.get("confidence"),
+                    "failure_count": failure_count,
                 }
             )
 
@@ -2088,6 +2206,10 @@ class AgentRuntime:
                     "why_now": frontier["why_now"],
                     "blocked_by_recent_failure": frontier["blocked_by_recent_failure"],
                     "target_id": frontier["id"],
+                    "target_map_name": frontier.get("target_map_name"),
+                    "evidence": frontier.get("evidence"),
+                    "confidence": frontier.get("confidence"),
+                    "failure_count": frontier.get("failure_count"),
                 }
             )
 
@@ -2922,10 +3044,13 @@ class AgentRuntime:
             "Top route cards:",
         ]
         for card in navigation_guidance.get("route_cards", [])[:5]:
+            target_map = f" | target={card.get('target_map_name')}" if card.get("target_map_name") else ""
+            evidence = f" | evidence={card.get('evidence')}" if card.get("evidence") else ""
             lines.append(
                 f"- {card.get('title')} | "
+                f"kind={card.get('kind')}{target_map} | "
                 f"actions={', '.join(card.get('route_actions') or []) or 'none'} | "
-                f"why={card.get('why_now')}"
+                f"why={card.get('why_now')}{evidence}"
             )
         lines.extend(
             [
@@ -2934,9 +3059,13 @@ class AgentRuntime:
             ]
         )
         for landmark in navigation_guidance.get("landmarks", [])[:5]:
+            target_map = (
+                f" -> {landmark.get('target_map_name')}" if landmark.get("target_map_name") else ""
+            )
+            evidence = f" | {landmark.get('evidence')}" if landmark.get("evidence") else ""
             lines.append(
-                f"- {landmark.get('kind')}: {landmark.get('title')} "
-                f"(distance {landmark.get('distance')})"
+                f"- {landmark.get('kind')}: {landmark.get('title')}{target_map} "
+                f"(distance {landmark.get('distance')}){evidence}"
             )
         lines.extend(
             [
@@ -2975,10 +3104,37 @@ class AgentRuntime:
             lines.append(f"- {note}")
         return "\n".join(lines) + "\n"
 
-    def _artifact_payload(self) -> JsonDict:
+    def _latest_observed_frame_artifacts(self) -> JsonDict:
+        artifacts = ((self.latest_bundle or {}).get("artifacts") or {}).copy()
+        latest_frame = str(artifacts.get("latest_frame") or self.artifacts["latest_frame"])
+        latest_frame_annotated = str(
+            artifacts.get("latest_frame_annotated") or self.artifacts["latest_frame_annotated"]
+        )
         return {
-            "latest_frame": str(self.artifacts["latest_frame"]),
-            "latest_frame_annotated": str(self.artifacts["latest_frame_annotated"]),
+            "latest_frame": latest_frame,
+            "latest_frame_annotated": latest_frame_annotated,
+        }
+
+    def _observation_frame_paths(self, observation_id: str) -> dict[str, Path]:
+        observation_dir = self.workspace_dir / "observations" / observation_id
+        observation_dir.mkdir(parents=True, exist_ok=True)
+        return {
+            "latest_frame": observation_dir / "latest_frame.png",
+            "latest_frame_annotated": observation_dir / "latest_frame_annotated.png",
+        }
+
+    def _artifact_payload(
+        self,
+        *,
+        latest_frame: Optional[str] = None,
+        latest_frame_annotated: Optional[str] = None,
+    ) -> JsonDict:
+        observed = self._latest_observed_frame_artifacts()
+        return {
+            "latest_frame": latest_frame or observed["latest_frame"],
+            "latest_frame_annotated": latest_frame_annotated or observed["latest_frame_annotated"],
+            "live_frame": str(self.artifacts["live_frame"]),
+            "live_frame_annotated": str(self.artifacts["live_frame_annotated"]),
             "turn_context_json": str(self.artifacts["turn_context_json"]),
             "latest_observation_json": str(self.artifacts["latest_observation_json"]),
             "latest_observation_md": str(self.artifacts["latest_observation_md"]),
@@ -3098,14 +3254,16 @@ class AgentRuntime:
         *,
         screen: Image.Image,
         annotated: Image.Image,
+        frame_path: Path,
+        annotated_path: Path,
     ) -> None:
-        self.artifacts["latest_frame"].parent.mkdir(parents=True, exist_ok=True)
+        frame_path.parent.mkdir(parents=True, exist_ok=True)
         buf = io.BytesIO()
         screen.save(buf, format="PNG")
-        _atomic_write_bytes(self.artifacts["latest_frame"], buf.getvalue())
+        _atomic_write_bytes(frame_path, buf.getvalue())
         buf = io.BytesIO()
         annotated.save(buf, format="PNG")
-        _atomic_write_bytes(self.artifacts["latest_frame_annotated"], buf.getvalue())
+        _atomic_write_bytes(annotated_path, buf.getvalue())
 
     def sync_live_view(
         self,
@@ -3124,7 +3282,12 @@ class AgentRuntime:
             objective=current_objective["current"],
             goal=None,
         )
-        self._write_frame_artifacts(screen=screen, annotated=annotated)
+        self._write_frame_artifacts(
+            screen=screen,
+            annotated=annotated,
+            frame_path=self.artifacts["live_frame"],
+            annotated_path=self.artifacts["live_frame_annotated"],
+        )
 
         previous_bundle = self.live_bundle or self.latest_bundle or {}
         previous_screen_text = previous_bundle.get("screen_text") or {}
@@ -3281,6 +3444,8 @@ class AgentRuntime:
             "artifacts": {
                 "latest_frame": artifacts.get("latest_frame"),
                 "latest_frame_annotated": artifacts.get("latest_frame_annotated"),
+                "live_frame": artifacts.get("live_frame"),
+                "live_frame_annotated": artifacts.get("live_frame_annotated"),
                 "turn_context_json": artifacts.get("turn_context_json"),
                 "latest_observation_md": artifacts.get("latest_observation_md"),
                 "current_objective_json": artifacts.get("current_objective_json"),
@@ -3399,6 +3564,51 @@ class AgentRuntime:
             "stuck": bundle.get("stuck"),
         }
 
+    def _expected_outcome_coord(self, plan: TurnPlan) -> Optional[tuple[int, int]]:
+        expected = plan.expected_outcome
+        if expected is None:
+            return None
+        if expected.position is not None:
+            return expected.position.x, expected.position.y
+        if (
+            expected.position_delta is not None
+            and plan.execution is not None
+            and plan.execution.baseline_position is not None
+        ):
+            baseline = plan.execution.baseline_position
+            return (
+                baseline.x + expected.position_delta.dx,
+                baseline.y + expected.position_delta.dy,
+            )
+        return None
+
+    def _failure_coord_for_attempt(
+        self,
+        *,
+        snapshot: Optional[LiveNavigationSnapshot],
+        current_position: Optional[tuple[int, int]],
+        plan: Optional[TurnPlan],
+        navigation_plan: Optional[JsonDict],
+        navigation_execution: Optional[JsonDict],
+    ) -> Optional[tuple[int, int]]:
+        if navigation_execution:
+            coord = _tuple_coord_from_any(navigation_execution.get("target"))
+            if coord is not None:
+                return coord
+        if navigation_plan:
+            coord = _tuple_coord_from_any(navigation_plan.get("target"))
+            if coord is not None:
+                return coord
+        if plan is not None:
+            coord = self._expected_outcome_coord(plan)
+            if coord is not None:
+                return coord
+        if snapshot is not None:
+            coord = _tuple_coord_from_any((snapshot.interaction or {}).get("target_coord"))
+            if coord is not None:
+                return coord
+        return current_position
+
     def refresh(
         self,
         *,
@@ -3424,6 +3634,13 @@ class AgentRuntime:
                 goal = (int(goal_data["x"]), int(goal_data["y"]))
 
         snapshot = self._snapshot_from_navigation_payload(navigation)
+        generated_at = utc_now()
+        observation_id = self._next_observation_id(
+            generated_at=generated_at,
+            reason=reason,
+            state=state,
+        )
+        observation_frames = self._observation_frame_paths(observation_id)
 
         annotated = render_navigation_overlay(
             screen,
@@ -3476,11 +3693,6 @@ class AgentRuntime:
             objective=current_objective,
         )
         landmark_creations = self._discover_landmarks(snapshot=snapshot)
-        navigation_guidance = self._build_navigation_assistance(
-            snapshot=snapshot,
-            navigation_store=navigation_store,
-            objective=current_objective,
-        )
         dialog_guidance, dialog_change = self._update_dialog_guidance(
             screen_text=screen_text,
             state=state,
@@ -3619,10 +3831,13 @@ class AgentRuntime:
                 reason=save_event.get("reason"),
             )
 
-        failure_coord = None
-        if snapshot is not None:
-            failure_coord = _tuple_coord_from_any((snapshot.interaction or {}).get("target_coord"))
-        failure_coord = failure_coord or current_position
+        failure_coord = self._failure_coord_for_attempt(
+            snapshot=snapshot,
+            current_position=current_position,
+            plan=evaluated_plan if evaluated_plan.execution is not None else None,
+            navigation_plan=navigation_plan,
+            navigation_execution=navigation_execution,
+        )
 
         if (
             source == "navigation"
@@ -3640,6 +3855,23 @@ class AgentRuntime:
                 coord=_coord_payload(failure_coord),
                 coord_key=_coord_to_key(failure_coord) if failure_coord else None,
                 reason=navigation_execution.get("status"),
+                actions=requested_actions or [],
+            )
+        if requested_actions and evaluated_plan.execution is not None and evaluated_plan.status.state in {
+            "partial",
+            "drifted",
+        }:
+            self._record_semantic_memory(
+                "failure",
+                evaluated_plan.status.reason or f"Plan outcome {evaluated_plan.status.state}.",
+                map_key=map_key,
+                map_id=map_id,
+                map_name=map_name,
+                objective_id=objective_id,
+                type=f"plan_{evaluated_plan.status.state}",
+                coord=_coord_payload(failure_coord),
+                coord_key=_coord_to_key(failure_coord) if failure_coord else None,
+                reason=evaluated_plan.status.reason,
                 actions=requested_actions or [],
             )
         elif requested_actions and "no_progress" in (action_feedback.get("tags") or []):
@@ -3673,6 +3905,11 @@ class AgentRuntime:
                 actions=requested_actions or [],
             )
 
+        navigation_guidance = self._build_navigation_assistance(
+            snapshot=snapshot,
+            navigation_store=navigation_store,
+            objective=current_objective,
+        )
         memory_snapshot = self._build_memory_snapshot(
             objective=current_objective,
             navigation_guidance=navigation_guidance,
@@ -3681,7 +3918,18 @@ class AgentRuntime:
             state=state,
         )
 
-        self._write_frame_artifacts(screen=screen, annotated=annotated)
+        self._write_frame_artifacts(
+            screen=screen,
+            annotated=annotated,
+            frame_path=observation_frames["latest_frame"],
+            annotated_path=observation_frames["latest_frame_annotated"],
+        )
+        self._write_frame_artifacts(
+            screen=screen,
+            annotated=annotated,
+            frame_path=self.artifacts["latest_frame"],
+            annotated_path=self.artifacts["latest_frame_annotated"],
+        )
         self._write_session_brief(
             objective=current_objective,
             navigation_guidance=navigation_guidance,
@@ -3690,19 +3938,15 @@ class AgentRuntime:
             battle_guidance=battle_guidance,
             state=state,
         )
-
-        generated_at = utc_now()
-        observation_id = self._next_observation_id(
-            generated_at=generated_at,
-            reason=reason,
-            state=state,
-        )
         bundle = {
             "generated_at": generated_at,
             "observation_id": observation_id,
             "reason": reason,
             "source": source,
-            "artifacts": self._artifact_payload(),
+            "artifacts": self._artifact_payload(
+                latest_frame=str(observation_frames["latest_frame"]),
+                latest_frame_annotated=str(observation_frames["latest_frame_annotated"]),
+            ),
             "state": state,
             "navigation": navigation,
             "screen_text": screen_text,
@@ -3838,13 +4082,25 @@ class AgentRuntime:
         recovery = bundle.get("recovery") or {}
         knowledge_graph = bundle.get("knowledge_graph") or {}
         memory_snapshot = bundle.get("memory") or {}
+        visual_artifacts = bundle.get("artifacts") or {}
+        use_live_frames = (
+            bundle.get("source") == "live_sync"
+            and visual_artifacts.get("live_frame")
+            and visual_artifacts.get("live_frame_annotated")
+        )
         return {
             "observation_id": bundle.get("observation_id") or turn_context.get("observation_id"),
             "generated_at": bundle.get("generated_at"),
             "visuals": {
-                "raw_frame_path": (bundle.get("artifacts") or {}).get("latest_frame"),
-                "annotated_frame_path": (bundle.get("artifacts") or {}).get(
-                    "latest_frame_annotated"
+                "raw_frame_path": (
+                    visual_artifacts.get("live_frame")
+                    if use_live_frames
+                    else visual_artifacts.get("latest_frame")
+                ),
+                "annotated_frame_path": (
+                    visual_artifacts.get("live_frame_annotated")
+                    if use_live_frames
+                    else visual_artifacts.get("latest_frame_annotated")
                 ),
                 "frame_timestamp": bundle.get("generated_at"),
                 "ui_mode": (bundle.get("screen_text") or {}).get("ui_mode"),

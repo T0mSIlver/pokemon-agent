@@ -201,6 +201,10 @@ class RouteHint(BaseModel):
     title: str
     why: str
     actions: list[str] = Field(default_factory=list)
+    kind: Optional[str] = None
+    target_map_name: Optional[str] = None
+    evidence: Optional[str] = None
+    confidence: Optional[float] = None
 
 
 class LandmarkHint(BaseModel):
@@ -209,6 +213,9 @@ class LandmarkHint(BaseModel):
     kind: str
     title: str
     distance: Optional[int] = None
+    target_map_name: Optional[str] = None
+    evidence: Optional[str] = None
+    confidence: Optional[float] = None
 
 
 class InteractionHint(BaseModel):
@@ -254,6 +261,8 @@ class TurnContextArtifacts(BaseModel):
 
     latest_frame: str
     latest_frame_annotated: str
+    live_frame: Optional[str] = None
+    live_frame_annotated: Optional[str] = None
     turn_context_json: str
     turn_plan_json: str
     recovery_saves_json: Optional[str] = None

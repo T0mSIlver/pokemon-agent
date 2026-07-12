@@ -873,10 +873,18 @@ class RedBlueMemoryReader(GameMemoryReader):
         return sorted(TALK_OVER_TILES.get(self.read_tileset(), set()))
 
     def read_map_dimensions(self) -> Dict[str, int]:
-        """Read current map dimensions in block coordinates."""
+        """Read current map dimensions with both block and tile units."""
+        width_blocks = self.emu.read_u8(ADDR_MAP_WIDTH)
+        height_blocks = self.emu.read_u8(ADDR_MAP_HEIGHT)
+        width_tiles = width_blocks * 2
+        height_tiles = height_blocks * 2
         return {
-            "width": self.emu.read_u8(ADDR_MAP_WIDTH),
-            "height": self.emu.read_u8(ADDR_MAP_HEIGHT),
+            "width": width_tiles,
+            "height": height_tiles,
+            "width_blocks": width_blocks,
+            "height_blocks": height_blocks,
+            "width_tiles": width_tiles,
+            "height_tiles": height_tiles,
         }
 
     def read_map_info(self) -> Dict[str, Any]:
