@@ -24,6 +24,7 @@ from pydantic import BaseModel
 from pokemon_agent.agent_runtime import AgentRuntime
 from pokemon_agent.harness.contracts import TurnPlanInput
 from pokemon_agent.pi_supervisor import PiSupervisor
+from pokemon_agent.sessions import GameSessionManager
 
 __version__ = "0.1.0"
 
@@ -63,6 +64,21 @@ class SaveRequest(BaseModel):
     """Body for POST /save and POST /load."""
 
     name: str
+
+
+class GameSessionCreateRequest(BaseModel):
+    """Body for POST /games."""
+
+    name: Optional[str] = None
+    game: str = "red"
+    objective_pack: Optional[str] = None
+    activate: bool = True
+
+
+class GameSessionActivateRequest(BaseModel):
+    """Body for POST /games/{session_id}/activate."""
+
+    load_latest_save: bool = True
 
 
 class NavigationRequest(BaseModel):
@@ -114,6 +130,9 @@ _reader = None  # GameMemoryReader subclass instance
 _navigation_store = None  # NavigationStore instance
 _runtime: Optional[AgentRuntime] = None
 _supervisor: Optional[PiSupervisor] = None
+_sessions: Optional[GameSessionManager] = None
+# Id of the active run, or None for the legacy un-scoped data_dir layout.
+_active_session_id: Optional[str] = None
 _start_time: float = 0.0
 _loop: Optional[asyncio.AbstractEventLoop] = None
 _dashboard_dir: Optional[Path] = None
@@ -1012,6 +1031,82 @@ def configure(config: GameConfig):
     _config = config
 
 
+def _legacy_dirs() -> tuple[Path, Path]:
+    """The un-scoped layout used when no game session is active."""
+    data_dir = Path(_config.data_dir).expanduser().resolve()
+    workspace_dir = (
+        Path(_config.agent_workspace_dir).expanduser().resolve()
+        if _config.agent_workspace_dir
+        else (data_dir / "agent_workspace").resolve()
+    )
+    return data_dir, workspace_dir
+
+
+def _persist_pi_session(session_id: Optional[str], session_file: Optional[Path]) -> None:
+    """Session sink: write the brain's identity into the active run's manifest.
+
+    Without this the id lives only in the supervisor's memory and a restart
+    orphans the brain.
+    """
+    if _sessions is None or _active_session_id is None:
+        return
+    session = _sessions.load(_active_session_id)
+    if session is None:
+        return
+    _sessions.record_pi_session(session, session_id, session_file)
+
+
+def _bind_session(session_id: Optional[str]) -> None:
+    """Point the runtime and supervisor at a run's directories.
+
+    ``AgentRuntime`` writes auto-saves to ``data_dir/saves`` and ``PiSupervisor``
+    hangs ``pi-session/`` off ``workspace_dir``, so handing them the session
+    directory is all that's needed to scope a run. ``session_id=None`` restores
+    the legacy shared layout.
+
+    If the run has a persisted Pi session, the new supervisor adopts it, so a
+    restart resumes the same brain rather than starting a fresh one.
+    """
+    global _runtime, _supervisor, _active_session_id
+
+    if session_id is not None and _sessions is not None:
+        data_dir = _sessions.session_dir(session_id)
+        workspace_dir = _sessions.workspace_dir(session_id)
+    else:
+        session_id = None
+        data_dir, workspace_dir = _legacy_dirs()
+
+    (data_dir / "saves").mkdir(parents=True, exist_ok=True)
+    _active_session_id = session_id
+
+    _runtime = AgentRuntime(data_dir=data_dir, workspace_dir=workspace_dir)
+    _supervisor = PiSupervisor(
+        workspace_dir=workspace_dir,
+        server_url=f"http://127.0.0.1:{_config.port}",
+        event_sink=_record_existing_event_and_broadcast,
+        stream_sink=broadcast,
+        session_sink=_persist_pi_session,
+    )
+
+    if session_id is not None and _sessions is not None:
+        session = _sessions.load(session_id)
+        if session is not None and session.pi_session_id:
+            resumed = _supervisor.adopt_session(session.pi_session_id, session.pi_session_file)
+            if not resumed:
+                # The transcript is gone; the run continues but with a fresh brain.
+                print(
+                    f"[server] WARNING: could not resume Pi session "
+                    f"{session.pi_session_id} for run {session_id}"
+                )
+
+
+def _active_saves_dir() -> Path:
+    """Saves directory for the active run, or the shared one when no run is active."""
+    if _sessions is not None and _active_session_id is not None:
+        return _sessions.saves_dir(_active_session_id)
+    return _legacy_dirs()[0] / "saves"
+
+
 @app.on_event("startup")
 async def _startup():
     global \
@@ -1020,6 +1115,8 @@ async def _startup():
         _navigation_store, \
         _runtime, \
         _supervisor, \
+        _sessions, \
+        _active_session_id, \
         _start_time, \
         _config, \
         _loop, \
@@ -1083,18 +1180,13 @@ async def _startup():
     from pokemon_agent.navigation import NavigationStore
 
     _navigation_store = NavigationStore(data_dir / "navigation_maps.json")
-    workspace_dir = (
-        Path(_config.agent_workspace_dir).expanduser().resolve()
-        if _config.agent_workspace_dir
-        else (data_dir / "agent_workspace").resolve()
-    )
-    _runtime = AgentRuntime(data_dir=data_dir, workspace_dir=workspace_dir)
-    _supervisor = PiSupervisor(
-        workspace_dir=workspace_dir,
-        server_url=f"http://127.0.0.1:{_config.port}",
-        event_sink=_record_existing_event_and_broadcast,
-        stream_sink=broadcast,
-    )
+
+    # Navigation maps stay shared across runs -- map geometry is a property of the
+    # game, not of a playthrough. Everything else is bound to the active run, if any.
+    _sessions = GameSessionManager(data_dir)
+    _bind_session(_sessions.current_id())
+    if _active_session_id:
+        print(f"[server] Resumed game session: {_active_session_id}")
     _realtime_frames_per_second = max(1, int(_config.realtime_fps))
     _realtime_enabled = bool(_config.realtime)
     configured_broadcast_fps = getattr(_config, "live_artifact_broadcast_fps", None)
@@ -1124,7 +1216,7 @@ async def _startup():
 
     # Auto-load a save state if specified
     if _config.load_state:
-        saves_dir = data_dir / "saves"
+        saves_dir = _active_saves_dir()
         state_path = saves_dir / f"{_config.load_state}.state"
         if state_path.exists():
             try:
@@ -1160,7 +1252,7 @@ async def _startup():
         print("[server] Realtime emulation disabled")
 
     print(f"[server] Ready — listening on port {_config.port}")
-    print(f"[server] Agent workspace: {workspace_dir}")
+    print(f"[server] Agent workspace: {_runtime.workspace_dir}")
     print("[server] Endpoints:")
     print("[server]   GET  /          — server info")
     print("[server]   GET  /state     — game state")
@@ -1304,6 +1396,118 @@ async def supervisor_state():
     if _supervisor is None:
         raise HTTPException(status_code=503, detail="Pi supervisor is not initialised")
     return JSONResponse(content=_compact_supervisor_status(_supervisor.state_snapshot()))
+
+
+def _require_sessions() -> GameSessionManager:
+    if _sessions is None:
+        raise HTTPException(status_code=503, detail="Game sessions are not initialised")
+    return _sessions
+
+
+def _reject_while_pi_is_running() -> None:
+    # Rebinding the runtime and supervisor under a live Pi turn would leave the
+    # subprocess writing into the previous run's workspace.
+    if _supervisor is not None and _supervisor.is_running:
+        raise HTTPException(
+            status_code=409,
+            detail="Stop the Pi supervisor before switching game sessions.",
+        )
+
+
+def _session_response(session_id: Optional[str]) -> dict:
+    sessions = _require_sessions()
+    if session_id is None:
+        return {"session": None}
+    session = sessions.load(session_id)
+    if session is None:
+        return {"session": None}
+    payload = session.to_dict()
+    payload["saves"] = sessions.list_saves(session_id)
+    payload["active"] = session_id == _active_session_id
+    return {"session": payload}
+
+
+@app.get("/games")
+async def list_games():
+    """All playthroughs, newest-updated first."""
+    sessions = _require_sessions()
+    return {"sessions": sessions.list(), "current": _active_session_id}
+
+
+@app.get("/games/current")
+async def current_game():
+    """The active playthrough, or null when running the legacy shared layout."""
+    _require_sessions()
+    return _session_response(_active_session_id)
+
+
+@app.post("/games")
+async def create_game(req: GameSessionCreateRequest):
+    """Start a new playthrough. Activating one gives it a fresh brain and saves dir."""
+    sessions = _require_sessions()
+    if req.activate:
+        _reject_while_pi_is_running()
+
+    session = sessions.create(name=req.name, game=req.game, objective_pack=req.objective_pack)
+
+    if req.activate:
+        sessions.set_current(session.id)
+        _bind_session(session.id)
+        await _refresh_agent_bundle(reason=f"session_new:{session.id}", source="session")
+
+    return {"success": True, **_session_response(session.id)}
+
+
+@app.post("/games/{session_id}/activate")
+async def activate_game(session_id: str, req: GameSessionActivateRequest):
+    """Load a playthrough: its saves, its workspace, and its Pi brain."""
+    sessions = _require_sessions()
+    try:
+        if not sessions.exists(session_id):
+            raise HTTPException(status_code=404, detail=f"Unknown session: {session_id}")
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+
+    _reject_while_pi_is_running()
+
+    sessions.set_current(session_id)
+    _bind_session(session_id)
+
+    loaded_save = None
+    if req.load_latest_save:
+        save_path = sessions.latest_save_path(session_id)
+        if save_path is not None:
+            _runtime.invalidate_turn_plan(reason=f"session_activate:{session_id}")
+            await _run_emulator_sync(_emulator.load_state, str(save_path))
+            loaded_save = save_path.stem
+
+    await _refresh_agent_bundle(reason=f"session_activate:{session_id}", source="session")
+
+    response = _session_response(session_id)
+    response["loaded_save"] = loaded_save
+    response["resumed_brain"] = _supervisor is not None and _supervisor.session_id is not None
+    return {"success": True, **response}
+
+
+@app.delete("/games/{session_id}")
+async def delete_game(session_id: str):
+    """Delete a playthrough and everything it owns."""
+    sessions = _require_sessions()
+    if session_id == _active_session_id:
+        _reject_while_pi_is_running()
+
+    try:
+        deleted = sessions.delete(session_id)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+    if not deleted:
+        raise HTTPException(status_code=404, detail=f"Unknown session: {session_id}")
+
+    if session_id == _active_session_id:
+        # Its directories are gone; fall back to the shared layout.
+        _bind_session(None)
+
+    return {"success": True, "deleted": session_id, "current": _active_session_id}
 
 
 @app.post("/supervisor/start")
@@ -1669,7 +1873,7 @@ async def save_state(req: SaveRequest):
     if not _config:
         raise HTTPException(status_code=503, detail="Server not configured")
     try:
-        saves_dir = Path(_config.data_dir).expanduser().resolve() / "saves"
+        saves_dir = _active_saves_dir()
         saves_dir.mkdir(parents=True, exist_ok=True)
         save_path = saves_dir / f"{req.name}.state"
         await _run_emulator_sync(_emulator.save_state, str(save_path))
@@ -1702,7 +1906,7 @@ async def load_state(req: SaveRequest):
     if not _config:
         raise HTTPException(status_code=503, detail="Server not configured")
     try:
-        saves_dir = Path(_config.data_dir).expanduser().resolve() / "saves"
+        saves_dir = _active_saves_dir()
         save_path = saves_dir / f"{req.name}.state"
         if not save_path.exists():
             raise HTTPException(status_code=404, detail=f"Save not found: {req.name}")
@@ -1746,7 +1950,7 @@ async def list_saves():
     if not _config:
         raise HTTPException(status_code=503, detail="Server not configured")
     try:
-        saves_dir = Path(_config.data_dir).expanduser().resolve() / "saves"
+        saves_dir = _active_saves_dir()
         if not saves_dir.exists():
             return {"saves": []}
         files = sorted(saves_dir.glob("*.state"))
