@@ -1,8 +1,7 @@
 """FastAPI dashboard mounting for the Hermes Plays Pokémon dashboard."""
 
-from pathlib import Path
-from typing import Optional
 import logging
+from pathlib import Path
 
 logger = logging.getLogger(__name__)
 
@@ -21,9 +20,7 @@ def mount_dashboard(app):
     try:
         from fastapi.staticfiles import StaticFiles
     except ImportError:
-        logger.warning(
-            "FastAPI not installed. Install with: pip install pokemon-agent[dashboard]"
-        )
+        logger.warning("FastAPI not installed. Install with: pip install pokemon-agent[dashboard]")
         return
 
     if not STATIC_DIR.exists():

@@ -61,9 +61,7 @@ def build_game_state(
             state[f"{key}_error"] = str(exc)
         except Exception as exc:  # noqa: BLE001
             state[key] = None
-            state[f"{key}_error"] = (
-                f"{type(exc).__name__}: {exc}\n{traceback.format_exc()}"
-            )
+            state[f"{key}_error"] = f"{type(exc).__name__}: {exc}\n{traceback.format_exc()}"
 
     return state
 
@@ -71,6 +69,7 @@ def build_game_state(
 # -----------------------------------------------------------------------
 # Text summary
 # -----------------------------------------------------------------------
+
 
 def build_state_summary(state: Dict[str, Any]) -> str:
     """Render a game state dict as a concise text summary for an LLM prompt.
@@ -115,7 +114,10 @@ def build_state_summary(state: Dict[str, Any]) -> str:
         badges = player.get("badges", [])
         lines.append(f"Badges  : {len(badges)} — {', '.join(badges) if badges else 'none'}")
         pos = player.get("position", {})
-        lines.append(f"Position: ({pos.get('x', '?')}, {pos.get('y', '?')})  facing {player.get('facing', '?')}")
+        lines.append(
+            f"Position: ({pos.get('x', '?')}, {pos.get('y', '?')})"
+            f"  facing {player.get('facing', '?')}"
+        )
         lines.append(f"Playtime: {player.get('play_time', '?')}")
     elif state.get("player_error"):
         lines.append(f"\n[Player read error: {state['player_error']}]")

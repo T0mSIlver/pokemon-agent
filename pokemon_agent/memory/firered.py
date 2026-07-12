@@ -29,9 +29,7 @@ from __future__ import annotations
 
 from typing import Any, Dict, List
 
-from pokemon_agent.emulator import Emulator
 from pokemon_agent.memory.reader import GameMemoryReader
-
 
 # ===================================================================
 # Address constants (FireRed USA 1.0)
@@ -41,28 +39,48 @@ ADDR_SAVEBLOCK1_PTR = 0x0300500C
 ADDR_SAVEBLOCK2_PTR = 0x03005010
 
 # Offsets from SaveBlock1
-OFF_PARTY_COUNT     = 0x0234
-OFF_PARTY_DATA      = 0x0238     # 100 bytes × 6
-OFF_MONEY           = 0x0290     # 4 bytes, XOR-encrypted with key at +0x0290
-OFF_BAG_ITEMS       = 0x0310
-OFF_MAP_GROUP       = 0x0004
-OFF_MAP_NUMBER      = 0x0005
-OFF_POS_X           = 0x0000     # local coords within map
-OFF_POS_Y           = 0x0002
+OFF_PARTY_COUNT = 0x0234
+OFF_PARTY_DATA = 0x0238  # 100 bytes × 6
+OFF_MONEY = 0x0290  # 4 bytes, XOR-encrypted with key at +0x0290
+OFF_BAG_ITEMS = 0x0310
+OFF_MAP_GROUP = 0x0004
+OFF_MAP_NUMBER = 0x0005
+OFF_POS_X = 0x0000  # local coords within map
+OFF_POS_Y = 0x0002
 
 # Offsets from SaveBlock2
-OFF_PLAYER_NAME     = 0x0000     # 8 bytes
-OFF_PLAYER_GENDER   = 0x0008
-OFF_TRAINER_ID      = 0x000A     # 4 bytes (TID + SID)
-OFF_PLAY_TIME       = 0x000E     # hours(2) + minutes(1) + seconds(1)
-OFF_BADGES          = 0x00F8     # 2 bytes bitmask
+OFF_PLAYER_NAME = 0x0000  # 8 bytes
+OFF_PLAYER_GENDER = 0x0008
+OFF_TRAINER_ID = 0x000A  # 4 bytes (TID + SID)
+OFF_PLAY_TIME = 0x000E  # hours(2) + minutes(1) + seconds(1)
+OFF_BADGES = 0x00F8  # 2 bytes bitmask
 
 # Pokemon substructure order lookup (24 permutations)
 SUBSTRUCTURE_ORDER = [
-    "GAEM", "GAME", "GEAM", "GEMA", "GMAE", "GMEA",
-    "AGEM", "AGME", "AEGM", "AEMG", "AMGE", "AMEG",
-    "EGAM", "EGMA", "EAGM", "EAMG", "EMGA", "EMAG",
-    "MGAE", "MGEA", "MAGE", "MAEG", "MEGA", "MEAG",
+    "GAEM",
+    "GAME",
+    "GEAM",
+    "GEMA",
+    "GMAE",
+    "GMEA",
+    "AGEM",
+    "AGME",
+    "AEGM",
+    "AEMG",
+    "AMGE",
+    "AMEG",
+    "EGAM",
+    "EGMA",
+    "EAGM",
+    "EAMG",
+    "EMGA",
+    "EMAG",
+    "MGAE",
+    "MGEA",
+    "MAGE",
+    "MAEG",
+    "MEGA",
+    "MEAG",
 ]
 
 PARTY_MON_SIZE_GEN3 = 100
@@ -130,34 +148,29 @@ class FireRedMemoryReader(GameMemoryReader):
     def read_bag(self) -> List[Dict[str, Any]]:
         """Read bag contents (Phase 2)."""
         raise NotImplementedError(
-            "FireRedMemoryReader.read_bag() is not yet implemented. "
-            "Planned for Phase 2."
+            "FireRedMemoryReader.read_bag() is not yet implemented. Planned for Phase 2."
         )
 
     def read_battle(self) -> Dict[str, Any]:
         """Read battle state (Phase 2)."""
         raise NotImplementedError(
-            "FireRedMemoryReader.read_battle() is not yet implemented. "
-            "Planned for Phase 2."
+            "FireRedMemoryReader.read_battle() is not yet implemented. Planned for Phase 2."
         )
 
     def read_dialog(self) -> Dict[str, Any]:
         """Read dialog state (Phase 2)."""
         raise NotImplementedError(
-            "FireRedMemoryReader.read_dialog() is not yet implemented. "
-            "Planned for Phase 2."
+            "FireRedMemoryReader.read_dialog() is not yet implemented. Planned for Phase 2."
         )
 
     def read_map_info(self) -> Dict[str, Any]:
         """Read map info (Phase 2)."""
         raise NotImplementedError(
-            "FireRedMemoryReader.read_map_info() is not yet implemented. "
-            "Planned for Phase 2."
+            "FireRedMemoryReader.read_map_info() is not yet implemented. Planned for Phase 2."
         )
 
     def read_flags(self) -> Dict[str, Any]:
         """Read story flags (Phase 2)."""
         raise NotImplementedError(
-            "FireRedMemoryReader.read_flags() is not yet implemented. "
-            "Planned for Phase 2."
+            "FireRedMemoryReader.read_flags() is not yet implemented. Planned for Phase 2."
         )

@@ -1,10 +1,16 @@
 """Quick test: verify facing direction address works correctly."""
+
 import sys
+
 sys.path.insert(0, ".")
 
 from pokemon_agent.emulator import create_emulator
 from pokemon_agent.memory.red import (
-    PokemonRedReader, ADDR_MAP_X, ADDR_MAP_Y, ADDR_FACING, FACING_NAMES
+    ADDR_FACING,
+    ADDR_MAP_X,
+    ADDR_MAP_Y,
+    FACING_NAMES,
+    PokemonRedReader,
 )
 
 emu = create_emulator("roms/pokemon_red.gb")
@@ -22,29 +28,31 @@ reader = PokemonRedReader(emu)
 for direction in ["down", "up", "left", "right"]:
     emu.press(direction, 8)
     emu.tick(12)
-    
+
     facing_byte = emu.read_u8(ADDR_FACING)
     facing_name = FACING_NAMES.get(facing_byte, f"unknown(0x{facing_byte:02X})")
     x = emu.read_u8(ADDR_MAP_X)
     y = emu.read_u8(ADDR_MAP_Y)
-    
+
     # Also check the sprite state data for facing
     # wSpritePlayerStateData1FacingDirection is at C109
     sprite_facing = emu.read_u8(0xC109)
-    
-    print(f"Pressed {direction:5s}: ADDR_FACING=0x{facing_byte:02X}({facing_name}) "
-          f"sprite=0x{sprite_facing:02X} pos=({x},{y})")
+
+    print(
+        f"Pressed {direction:5s}: ADDR_FACING=0x{facing_byte:02X}({facing_name}) "
+        f"sprite=0x{sprite_facing:02X} pos=({x},{y})"
+    )
 
 # Check which address actually tracks facing
 print("\nScanning for facing direction byte...")
 # wPlayerDirection is at 0xD367 according to some sources
-# wSpritePlayerStateData1FacingDirection is at 0xC109  
+# wSpritePlayerStateData1FacingDirection is at 0xC109
 # Let's check a range
 
 # Walk down and check various candidates
 emu.press("down", 8)
 emu.tick(12)
-print(f"After walk_down:")
+print("After walk_down:")
 for name, addr in [
     ("0xD367 (wPlayerDirection)", 0xD367),
     ("0xC109 (sprite facing)", 0xC109),
@@ -65,7 +73,7 @@ for name, addr in [
 # Walk up and compare
 emu.press("up", 8)
 emu.tick(12)
-print(f"\nAfter walk_up:")
+print("\nAfter walk_up:")
 for name, addr in [
     ("0xD367 (wPlayerDirection)", 0xD367),
     ("0xC109 (sprite facing)", 0xC109),
@@ -76,7 +84,7 @@ for name, addr in [
 # Walk left and compare
 emu.press("left", 8)
 emu.tick(12)
-print(f"\nAfter walk_left:")
+print("\nAfter walk_left:")
 for name, addr in [
     ("0xD367 (wPlayerDirection)", 0xD367),
     ("0xC109 (sprite facing)", 0xC109),
@@ -87,7 +95,7 @@ for name, addr in [
 # Walk right and compare
 emu.press("right", 8)
 emu.tick(12)
-print(f"\nAfter walk_right:")
+print("\nAfter walk_right:")
 for name, addr in [
     ("0xD367 (wPlayerDirection)", 0xD367),
     ("0xC109 (sprite facing)", 0xC109),

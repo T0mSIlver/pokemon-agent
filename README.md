@@ -13,6 +13,10 @@ This is a fork of [NousResearch/pokemon-agent](https://github.com/NousResearch/p
 
 OCR has been removed; the agent relies on Claude's vision capabilities instead.
 
+We do **not** track upstream `main` — it has diverged in incompatible directions. See
+[`docs/upstream.md`](docs/upstream.md) for what upstream has, what we rejected and why, and
+the one gap still worth closing.
+
 ---
 
 # 🎮 pokemon-agent
@@ -57,15 +61,43 @@ Let any AI agent — [Hermes Agent](https://github.com/NousResearch/hermes-agent
 
 ### Installation
 
-```bash
-# Core (emulator + API server)
-pip install pokemon-agent pyboy
+This fork is not published to PyPI — install it from source. (`pip install pokemon-agent`
+would fetch upstream NousResearch, not this fork.)
 
-# With dashboard (optional web GUI)
-pip install pokemon-agent[dashboard] pyboy
+```bash
+git clone https://github.com/T0mSIlver/pokemon-agent.git
+cd pokemon-agent
+
+uv venv
+uv pip install -e ".[pyboy,dashboard,dev]"
 ```
 
-> **Note:** You must provide your own ROM file. This package does not include any game ROMs.
+Drop `dev` if you only want to run the stack, and `dashboard` if you don't want the web GUI.
+
+### The ROM
+
+> **You must provide your own ROM.** No game ROMs are included, and none can be committed.
+
+Put it wherever you like and pass `--rom`. The manual diagnostic scripts in `scripts/manual/`
+assume `roms/pokemon_red.gb` relative to the repo root, so that's the convenient default:
+
+```bash
+mkdir -p roms && cp /path/to/pokemon_red.gb roms/
+```
+
+`roms/`, `*.gb`, and save states are all gitignored.
+
+### Development
+
+```bash
+uv run pytest          # full suite — no ROM needed
+uv run ruff check .    # lint
+uv run ruff format .   # format
+```
+
+`pytest` collects only `tests/`. The scripts in `scripts/manual/` are interactive
+diagnostics that boot a real emulator against a ROM — run them by hand, e.g.
+`uv run python scripts/manual/check_movement.py`.
 
 ### Start the Server Manually
 

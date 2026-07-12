@@ -1,11 +1,11 @@
 """Event logging and history for the Hermes Plays Pokémon dashboard."""
 
 import json
+import logging
 import time
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Dict, List, Optional
-import logging
 
 logger = logging.getLogger(__name__)
 
@@ -232,7 +232,11 @@ def _compact_state(state: Optional[Dict]) -> Optional[Dict]:
     party = state.get("party")
     if party:
         compact["party_summary"] = [
-            {"name": p.get("nickname", p.get("species", "?")), "hp": p.get("hp"), "max_hp": p.get("max_hp")}
+            {
+                "name": p.get("nickname", p.get("species", "?")),
+                "hp": p.get("hp"),
+                "max_hp": p.get("max_hp"),
+            }
             for p in party
         ]
     if state.get("battle"):
