@@ -1073,6 +1073,14 @@ class RedBlueMemoryReader(GameMemoryReader):
             parts.append("PAR")
         return "/".join(parts) if parts else "OK"
 
+    @staticmethod
+    def _decode_types(type1: int, type2: int) -> List[str]:
+        """Decode the two type bytes, collapsing the pair a mono-type stores twice."""
+        types = [TYPE_NAMES.get(type1, f"???({type1})")]
+        if type2 != type1:
+            types.append(TYPE_NAMES.get(type2, f"???({type2})"))
+        return types
+
     def _decode_species(self, species_id: int) -> Dict[str, Any]:
         """Decode a Gen 1 internal species index to stable species metadata."""
         pokedex_id = INTERNAL_SPECIES_TO_DEX.get(species_id)
@@ -1153,10 +1161,7 @@ class RedBlueMemoryReader(GameMemoryReader):
             "hp": (data[1] << 8) | data[2],
             "max_hp": (data[34] << 8) | data[35],
             "status": self._decode_status(data[4]),
-            "types": [
-                TYPE_NAMES.get(data[5], f"???({data[5]})"),
-                TYPE_NAMES.get(data[6], f"???({data[6]})"),
-            ],
+            "types": self._decode_types(data[5], data[6]),
             "moves": moves,
             "stats": {
                 "attack": (data[36] << 8) | data[37],
@@ -1193,10 +1198,7 @@ class RedBlueMemoryReader(GameMemoryReader):
             "hp": (data[1] << 8) | data[2],
             "max_hp": (data[15] << 8) | data[16],
             "status": self._decode_status(data[4]),
-            "types": [
-                TYPE_NAMES.get(data[5], f"???({data[5]})"),
-                TYPE_NAMES.get(data[6], f"???({data[6]})"),
-            ],
+            "types": self._decode_types(data[5], data[6]),
             "moves": moves,
         }
 
