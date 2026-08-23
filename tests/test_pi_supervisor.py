@@ -431,6 +431,38 @@ async def test_pi_supervisor_stages_agent_curl_in_workspace(tmp_path: Path):
 
 
 @pytest.mark.asyncio
+async def test_pi_supervisor_counts_attached_frames_as_inspected(tmp_path: Path):
+    events: list[dict] = []
+    fake_pi = make_fake_pi_script(tmp_path)
+    workspace_dir = tmp_path / "workspace"
+    workspace_dir.mkdir(parents=True, exist_ok=True)
+    (workspace_dir / "latest_frame_annotated.png").write_bytes(b"annotated-frame")
+    (workspace_dir / "latest_frame.png").write_bytes(b"raw-frame")
+
+    async def sink(event: dict) -> None:
+        events.append(event)
+
+    supervisor = PiSupervisor(
+        workspace_dir=workspace_dir,
+        server_url="http://127.0.0.1:8765",
+        event_sink=sink,
+        pi_binary=str(fake_pi),
+    )
+
+    await supervisor.start(goal="Reach the next checkpoint.", auto_continue=False)
+    await supervisor.wait_until_idle(timeout=5)
+
+    snapshot = supervisor.state_snapshot()
+    vision = snapshot["vision"]["last_turn"]
+    assert vision["annotated_attached"] is True
+    assert vision["annotated_read"] is False
+    assert vision["used_vision"] is True
+    assert vision["compliant"] is True
+    assert snapshot["vision"]["violations"] == 0
+    assert not [event for event in events if event["type"] == "pi_turn_vision_violation"]
+
+
+@pytest.mark.asyncio
 async def test_pi_supervisor_flags_turns_that_skip_annotated_frame_reads(tmp_path: Path):
     events: list[dict] = []
     fake_pi = make_fake_pi_script(tmp_path)
@@ -447,6 +479,7 @@ async def test_pi_supervisor_flags_turns_that_skip_annotated_frame_reads(tmp_pat
         server_url="http://127.0.0.1:8765",
         event_sink=sink,
         pi_binary=str(fake_pi),
+        require_frame_reads=True,
     )
 
     await supervisor.start(goal="Reach the next checkpoint.", auto_continue=False)
@@ -651,6 +684,7 @@ async def test_pi_supervisor_auto_continue_warns_after_vision_violation(tmp_path
         server_url="http://127.0.0.1:8765",
         stream_sink=stream,
         pi_binary=str(fake_pi),
+        require_frame_reads=True,
     )
 
     await supervisor.start(
@@ -935,3 +969,38 @@ def test_continue_prompt_mentions_dialog_action_without_single_cycle_language() 
     assert "a_until_dialog_end" in CONTINUE_PROMPT
     assert "one gameplay cycle" not in CONTINUE_PROMPT
     assert "recent_action.plan_state" not in CONTINUE_PROMPT
+
+
+@pytest.mark.asyncio
+async def test_pi_supervisor_stops_auto_continue_after_idle_turns(tmp_path: Path):
+    events: list[dict] = []
+    fake_pi = make_fake_pi_script(tmp_path, include_write_tool=False)
+    workspace_dir = tmp_path / "workspace"
+    workspace_dir.mkdir(parents=True, exist_ok=True)
+    (workspace_dir / "latest_frame_annotated.png").write_bytes(b"annotated-frame")
+    (workspace_dir / "latest_frame.png").write_bytes(b"raw-frame")
+
+    async def sink(event: dict) -> None:
+        events.append(event)
+
+    supervisor = PiSupervisor(
+        workspace_dir=workspace_dir,
+        server_url="http://127.0.0.1:8765",
+        event_sink=sink,
+        pi_binary=str(fake_pi),
+        max_idle_turns=2,
+    )
+
+    await supervisor.start(
+        goal="Reach the next checkpoint.",
+        auto_continue=True,
+        continue_delay_seconds=0,
+    )
+    await supervisor.wait_until_idle(timeout=10)
+
+    snapshot = supervisor.state_snapshot()
+    assert snapshot["status"] == "stuck"
+    assert "no tool calls" in snapshot["status_reason"]
+    assert snapshot["turns_completed"] == 2
+    stuck_event = next(event for event in events if event["type"] == "pi_supervisor_stuck")
+    assert stuck_event["idle_turns"] == 2

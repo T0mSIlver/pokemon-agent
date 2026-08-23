@@ -5,13 +5,14 @@ from __future__ import annotations
 from pathlib import Path
 
 VISUAL_INSPECTION_GUIDANCE = (
-    "Before any planning or action each turn, use the read tool on BOTH "
-    "latest_frame_annotated.png and latest_frame.png. The annotated frame shows the "
-    "navigation grid, warp markers (purple W boxes), sprite blockers (orange squares), "
-    "and the interaction target (orange ring); the raw frame shows in-game art, NPC "
-    "outfits, dialog text, signposts, and details the overlay can hide. Treat both reads "
-    "as mandatory primary evidence — turn_context.json never substitutes for the image. "
-    "If you skipped a read, do it now before any /agent/plan or /agent/act."
+    "Both frames are attached to this turn as images: latest_frame_annotated.png and "
+    "latest_frame.png. Study both before planning or acting — the annotated frame shows "
+    "the navigation grid, warp markers (purple W boxes), sprite blockers (orange "
+    "squares), and the interaction target (orange ring); the raw frame shows in-game "
+    "art, NPC outfits, dialog text, signposts, and details the overlay can hide. Treat "
+    "both as mandatory primary evidence — turn_context.json never substitutes for the "
+    "image. Re-read them with the read tool only if an attachment is missing or "
+    "unreadable."
 )
 
 WARP_GUIDANCE = (
@@ -82,8 +83,7 @@ def default_supervisor_prompt(*, server_url: str, workspace_dir: Path, goal: str
         "Play Pokemon Red through the local pokemon-agent harness. "
         "Assume the server is already running. "
         f"Server URL: {server_url}. Workspace: {workspace_dir}. "
-        "Read BOTH latest_frame_annotated.png and latest_frame.png every turn — neither "
-        "alone is sufficient. "
+        "Study BOTH attached frames every turn — neither alone is sufficient. "
         "Refresh with GET /agent/observe, read turn_context.json and turn_plan.json, use the "
         "planning section in turn_context.json to submit valid plans with /agent/plan, and "
         "execute them with /agent/act. "

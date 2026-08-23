@@ -273,7 +273,11 @@ class PiSupervisor:
         stream_sink: Optional[StreamSink] = None,
         repo_root: Optional[Path] = None,
         pi_binary: Optional[str] = None,
+        require_frame_reads: bool = False,
+        max_idle_turns: int = 3,
     ) -> None:
+        self.require_frame_reads = bool(require_frame_reads)
+        self.max_idle_turns = max_idle_turns if max_idle_turns and max_idle_turns > 0 else 0
         self.workspace_dir = workspace_dir.expanduser().resolve()
         self.workspace_dir.mkdir(parents=True, exist_ok=True)
         self.server_url = server_url
@@ -346,6 +350,7 @@ class PiSupervisor:
         self._requested_process_shutdown = False
         self._current_turn_completed = False
         self._current_cycle_has_tool_call = False
+        self._consecutive_idle_turns = 0
 
     @property
     def is_running(self) -> bool:
@@ -364,6 +369,8 @@ class PiSupervisor:
             "session_dir": str(self.session_dir),
             "server_url": self.server_url,
             "tools": DEFAULT_TOOLS,
+            "require_frame_reads": self.require_frame_reads,
+            "max_idle_turns": self.max_idle_turns,
         }
 
     def _new_turn_vision(self, attachment_paths: list[Path]) -> JsonDict:
@@ -377,9 +384,11 @@ class PiSupervisor:
         return {
             "annotated_path": annotated_path,
             "annotated_available": annotated_path is not None,
+            "annotated_attached": annotated_path is not None,
             "annotated_read": False,
             "raw_path": raw_path,
             "raw_available": raw_path is not None,
+            "raw_attached": raw_path is not None,
             "raw_read": False,
             "read_sequence": [],
             "used_vision": False,
@@ -411,12 +420,22 @@ class PiSupervisor:
         raw_available = bool(vision.get("raw_available"))
         annotated_read = bool(vision.get("annotated_read"))
         raw_read = bool(vision.get("raw_read"))
-        vision["used_vision"] = annotated_read or raw_read
+
+        # A frame attached to the prompt is already in front of the model as an image;
+        # re-reading the same file with the read tool adds nothing. Only require the
+        # explicit read when the caller asked for it.
+        if self.require_frame_reads:
+            annotated_seen = annotated_read
+            raw_seen = raw_read
+        else:
+            annotated_seen = annotated_read or bool(vision.get("annotated_attached"))
+            raw_seen = raw_read or bool(vision.get("raw_attached"))
+        vision["used_vision"] = annotated_seen or raw_seen
 
         violation_reason = ""
-        if annotated_available and not annotated_read:
+        if annotated_available and not annotated_seen:
             violation_reason = f"{ANNOTATED_FRAME_NAME} was attached but never read"
-        elif not annotated_available and raw_available and not raw_read:
+        elif not annotated_available and raw_available and not raw_seen:
             violation_reason = f"{RAW_FRAME_NAME} was attached but no frame was read"
 
         vision["violation_reason"] = violation_reason
@@ -631,6 +650,7 @@ class PiSupervisor:
         self._reset_cycle_state([])
         self.last_turn_vision = self._new_turn_vision([])
         self.vision_violation_count = 0
+        self._consecutive_idle_turns = 0
         self._stop_requested = False
         self._requested_process_shutdown = False
         await self._refresh_model_limits()
@@ -748,6 +768,26 @@ class PiSupervisor:
                 if self.max_turns is not None and self.turns_completed >= self.max_turns:
                     self.status = "completed"
                     self.status_reason = f"Reached max turns ({self.max_turns})."
+                    break
+                if self._current_cycle_has_tool_call:
+                    self._consecutive_idle_turns = 0
+                else:
+                    self._consecutive_idle_turns += 1
+                if self.max_idle_turns and self._consecutive_idle_turns >= self.max_idle_turns:
+                    self.status = "stuck"
+                    self.status_reason = (
+                        f"Stopping auto-continue: {self._consecutive_idle_turns} turns in a row "
+                        "produced no tool calls."
+                    )
+                    await self._emit_major(
+                        "pi_supervisor_stuck",
+                        {
+                            "summary": self.status_reason,
+                            "idle_turns": self._consecutive_idle_turns,
+                            "turns_completed": self.turns_completed,
+                            "last_turn_summary": self.latest_turn_summary,
+                        },
+                    )
                     break
                 self.continue_count += 1
                 current_prompt = self._current_continue_prompt()

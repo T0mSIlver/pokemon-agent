@@ -138,6 +138,28 @@ The dashboard will then show:
 - stuck/recovery signals
 - a manual `Save Now` button
 
+Or start a run from the shell — this waits for the model endpoint to answer first,
+which matters for local models that get swapped in on demand:
+
+```bash
+MODEL=llamacpp/qwen38-27b GOAL="Reach Viridian City" scripts/start_pi_run.sh
+```
+
+### Watching a Run Remotely
+
+Run the server on the box with the ROM and reach it over an SSH tunnel:
+
+```bash
+# on your laptop
+scripts/tunnel.sh dev@192.168.1.98
+# then open http://localhost:8765/dashboard
+```
+
+Frames are also fetchable directly — `/artifacts/live_frame_annotated`,
+`/artifacts/latest_frame_annotated`, `/screenshot`. See
+[`docs/remote-access.md`](docs/remote-access.md) for the full URL list and
+troubleshooting.
+
 ### Play from Any Agent
 
 The Pi supervisor flow above is the preferred path. The lower-level HTTP API is still available for custom agents and scripts:
