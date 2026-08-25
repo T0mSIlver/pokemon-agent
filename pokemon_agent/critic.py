@@ -27,7 +27,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Awaitable, Callable, Iterable, Iterator, Optional
 
-from pokemon_agent.agent_cli import expand_actions, resolve_action
+from pokemon_agent.agent_cli import ActionError, expand_actions
 from pokemon_agent.pi_supervisor import (
     IMAGE_SUFFIXES,
     extract_leading_comment,
@@ -114,7 +114,10 @@ RESULT_SCAN_LIMIT = 8_000
 _ACTIONS_RE = re.compile(r'"actions"\s*:\s*(\[[^\]]*\])')
 #: ``./poke act up up a`` — the CLI that replaced hand-written curl. Anchored so
 #: prose like "# poke around the sign" is not read as a command.
-_POKE_RE = re.compile(r"(?m)(?:\./poke|(?:^|[;&|])\s*poke)\s+(\w+)([^\n|;&]*)")
+_POKE_RE = re.compile(r"(?m)(?:\./poke|(?:^|[;&|])\s*poke)\s+([^\n|;&]*)")
+#: The options `poke` accepts on either side of its subcommand. Each takes a
+#: value, so `poke --port 9000 act up` still runs `act` with one button.
+_POKE_GLOBAL_OPTIONS = frozenset({"--port", "--url"})
 _ACTION_RESPONSE_KEYS = ("moved", "blocked_after", "facing", "on_warp", "mode", "battle")
 
 
@@ -226,13 +229,32 @@ def action_response(result_text: str) -> Optional[JsonDict]:
     return None
 
 
+def _drop_global_options(tokens: list[str]) -> list[str]:
+    """The tokens argparse would leave behind after `poke`'s own options."""
+
+    kept: list[str] = []
+    index = 0
+    while index < len(tokens):
+        token = tokens[index]
+        name, has_value, _ = token.partition("=")
+        if name in _POKE_GLOBAL_OPTIONS:
+            index += 1 if has_value else 2
+            continue
+        kept.append(token)
+        index += 1
+    return kept
+
+
 def poke_subcommand(command: str) -> Optional[tuple[str, list[str]]]:
     """``(subcommand, arguments)`` for a ``poke`` call, or None."""
 
     match = _POKE_RE.search(command or "")
     if not match:
         return None
-    return match.group(1), match.group(2).split()
+    tokens = _drop_global_options(match.group(1).split())
+    if not tokens:
+        return None
+    return tokens[0], tokens[1:]
 
 
 def parse_actions(command: str) -> list[str]:
@@ -240,10 +262,13 @@ def parse_actions(command: str) -> list[str]:
 
     call = poke_subcommand(command)
     if call and call[0] == "act":
-        # Flags and typos never became button presses: the CLI rejects the whole
-        # batch before it reaches the server, so they do not belong in the count.
-        tokens = [token for token in call[1] if resolve_action(token.partition(":")[0])]
-        return expand_actions(tokens) if tokens else []
+        # The CLI expands the batch or refuses it whole: one bad token and no
+        # request is ever sent, so nothing in it reached the game. Expanding it
+        # here through the CLI's own function is the only way the two agree.
+        try:
+            return expand_actions(call[1])
+        except ActionError:
+            return []
     match = _ACTIONS_RE.search(command or "")
     if not match:
         return []

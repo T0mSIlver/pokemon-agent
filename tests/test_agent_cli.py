@@ -496,3 +496,259 @@ def test_run_outside_a_battle_reports_the_refusal(stub, capsys):
     assert run(stub, "run") == agent_cli.EXIT_HTTP_ERROR
 
     assert "Not in a battle" in capsys.readouterr().err
+
+
+# ---------------------------------------------------------------------------
+# Batch limits
+#
+# The server holds its single emulator lock for a whole batch, so an uncapped
+# frame count takes the game away from everything else. `wait_1000000000` was
+# reachable and would have run for hundreds of days.
+# ---------------------------------------------------------------------------
+
+
+def test_a_single_action_cannot_ask_for_an_absurd_frame_count():
+    with pytest.raises(agent_cli.ActionError, match="the limit is"):
+        agent_cli.expand_actions(["wait_1000000000"])
+    with pytest.raises(agent_cli.ActionError, match="the limit is"):
+        agent_cli.expand_actions(["hold_up_1000000000"])
+
+
+def test_frame_counts_inside_the_limit_still_work():
+    assert agent_cli.expand_actions(["wait_600"]) == ["wait_600"]
+    assert agent_cli.frames_for("wait_600") == 600
+    assert agent_cli.frames_for("walk_up") == agent_cli.FRAMES_PER_INPUT
+
+
+def test_a_batch_longer_than_the_cap_is_refused():
+    too_many = ["up"] * (agent_cli.MAX_ACTIONS_PER_BATCH + 1)
+    with pytest.raises(agent_cli.ActionError, match="the limit is"):
+        agent_cli.expand_actions(too_many)
+
+
+def test_a_batch_within_the_action_cap_can_still_bust_the_frame_budget():
+    with pytest.raises(agent_cli.ActionError, match="frames"):
+        agent_cli.expand_actions(["wait_600"] * 10)
+
+
+def test_the_caps_match_the_numbers_the_server_enforces():
+    assert agent_cli.MAX_ACTIONS_PER_BATCH == 40
+    assert agent_cli.MAX_FRAMES_PER_ACTION == 600
+    assert agent_cli.MAX_FRAMES_PER_BATCH == 3600
+
+
+# ---------------------------------------------------------------------------
+# Route, goto, calc, frontier, sim, guide, progress
+# ---------------------------------------------------------------------------
+
+
+def test_route_prints_hops_and_never_claims_button_presses(stub, capsys):
+    stub.route(
+        "GET",
+        "/route?to=Cerulean%20City",
+        {
+            "from": "Pewter City",
+            "to": "Cerulean City",
+            "distance": 3,
+            "hops": [
+                {
+                    "from": "Pewter City",
+                    "to": "Route 3",
+                    "kind": "connection",
+                    "at": None,
+                    "edge": "east",
+                },
+                {
+                    "from": "Route 4",
+                    "to": "Cerulean City",
+                    "kind": "warp",
+                    "at": [12, 8],
+                    "edge": None,
+                },
+            ],
+        },
+    )
+    assert run(stub, "route", "Cerulean", "City") == agent_cli.EXIT_OK
+    out = capsys.readouterr().out
+    assert "2 hops" in out
+    assert "Route 3" in out and "(12, 8)" in out
+
+
+def test_route_says_so_when_there_is_no_way_through(stub, capsys):
+    stub.route("GET", "/route?to=Nowhere", {"from": "Pewter City", "to": "Nowhere", "hops": None})
+    assert run(stub, "route", "Nowhere") == agent_cli.EXIT_OK
+    assert "no route" in capsys.readouterr().out
+
+
+def test_route_reports_arrival_rather_than_an_empty_list(stub, capsys):
+    stub.route(
+        "GET",
+        "/route?to=Pewter%20City",
+        {"from": "Pewter City", "to": "Pewter City", "hops": []},
+    )
+    assert run(stub, "route", "Pewter", "City") == agent_cli.EXIT_OK
+    assert "already on" in capsys.readouterr().out
+
+
+def test_goto_sends_a_map_name(stub):
+    stub.route("POST", "/goto", {"walked": 18, "arrived": True, "stopped_because": "arrived"})
+    assert run(stub, "goto", "Cerulean", "City") == agent_cli.EXIT_OK
+    assert stub.requests[-1]["body"] == {"target": "Cerulean City"}
+
+
+def test_goto_sends_coordinates_when_given_a_pair(stub):
+    stub.route("POST", "/goto", {"walked": 4, "arrived": True, "stopped_because": "arrived"})
+    assert run(stub, "goto", "12,8") == agent_cli.EXIT_OK
+    assert stub.requests[-1]["body"] == {"x": 12, "y": 8}
+
+
+def test_calc_shows_damage_and_what_can_kill_you(stub, capsys):
+    stub.route(
+        "GET",
+        "/calc",
+        {
+            "enemy": {"species": "Onix", "level": 14, "hp": 43, "types": ["Rock", "Ground"]},
+            "moves": [
+                {
+                    "move": "Bubble",
+                    "type": "Water",
+                    "power": 20,
+                    "effectiveness": 4.0,
+                    "damage": [28, 34],
+                    "turns_to_ko": 2,
+                },
+                {
+                    "move": "Tackle",
+                    "type": "Normal",
+                    "power": 35,
+                    "effectiveness": 1.0,
+                    "damage": [4, 6],
+                    "turns_to_ko": None,
+                },
+            ],
+            "threat": 21,
+        },
+    )
+    assert run(stub, "calc") == agent_cli.EXIT_OK
+    out = capsys.readouterr().out
+    assert "Onix L14" in out
+    assert "x4" in out
+    assert "KO in 2" in out
+    assert "cannot KO" in out
+    assert "worst incoming: 21" in out
+
+
+def test_sim_names_the_step_that_would_hit_the_wall(stub, capsys):
+    stub.route(
+        "POST",
+        "/sim",
+        {
+            "end": [12, 8],
+            "facing": "up",
+            "steps": 3,
+            "blocked_at": 3,
+            "blocked_by": "wall",
+            "warp_at": None,
+        },
+    )
+    assert run(stub, "sim", "up:6") == agent_cli.EXIT_OK
+    out = capsys.readouterr().out
+    assert "blocked at step 3" in out
+    assert "walk_up" in out and "wall" in out
+
+
+def test_sim_reports_a_clean_plan(stub, capsys):
+    stub.route(
+        "POST",
+        "/sim",
+        {
+            "end": [12, 2],
+            "facing": "up",
+            "steps": 6,
+            "blocked_at": None,
+            "blocked_by": None,
+            "warp_at": None,
+        },
+    )
+    assert run(stub, "sim", "up:6") == agent_cli.EXIT_OK
+    assert "clean" in capsys.readouterr().out
+
+
+def test_sim_refuses_a_bad_plan_without_asking_the_server(stub):
+    assert run(stub, "sim", "sideways") == agent_cli.EXIT_BAD_USAGE
+    assert stub.requests == []
+
+
+def test_frontier_truncates_a_long_list_but_says_it_did(stub, capsys):
+    stub.route(
+        "GET",
+        "/frontier",
+        {
+            "map": "Mt Moon B1F",
+            "from": [4, 4],
+            "tiles": [[x, 0] for x in range(30)],
+            "count": 30,
+        },
+    )
+    assert run(stub, "frontier", "--limit", "5") == agent_cli.EXIT_OK
+    out = capsys.readouterr().out
+    assert "30 unseen" in out
+    assert "and 25 more" in out
+
+
+def test_guide_with_no_argument_lists_sections(stub, capsys):
+    stub.route("GET", "/guide", {"outline": "speedrun_glitchless/mt-moon  Cross Mt. Moon"})
+    assert run(stub, "guide") == agent_cli.EXIT_OK
+    assert "mt-moon" in capsys.readouterr().out
+
+
+def test_guide_reads_one_section_by_reference(stub, capsys):
+    stub.route(
+        "GET",
+        "/guide?ref=speedrun_glitchless/mt-moon",
+        {
+            "guide": "speedrun_glitchless",
+            "slug": "mt-moon",
+            "title": "Mt. Moon",
+            "body": "Head north from the centre.",
+        },
+    )
+    assert run(stub, "guide", "speedrun_glitchless/mt-moon") == agent_cli.EXIT_OK
+    assert "Head north" in capsys.readouterr().out
+
+
+def test_guide_search_lists_matches(stub, capsys):
+    stub.route(
+        "GET",
+        "/guide?q=mt%20moon",
+        {
+            "results": [
+                {
+                    "ref": "speedrun_glitchless/mt-moon",
+                    "title": "Mt. Moon",
+                    "summary": "Cross to Route 4",
+                }
+            ]
+        },
+    )
+    assert run(stub, "guide", "-s", "mt", "moon") == agent_cli.EXIT_OK
+    assert "Cross to Route 4" in capsys.readouterr().out
+
+
+def test_progress_reports_the_ladder_and_the_cost(stub, capsys):
+    stub.route(
+        "GET",
+        "/progress",
+        {
+            "count": 23,
+            "total": 63,
+            "furthest": "EVENT_BEAT_BROCK",
+            "furthest_label": "Defeated Brock",
+            "latest": ["Defeated Brock"],
+            "presses": 4207,
+        },
+    )
+    assert run(stub, "progress") == agent_cli.EXIT_OK
+    out = capsys.readouterr().out
+    assert "23/63" in out
+    assert "4207 presses" in out

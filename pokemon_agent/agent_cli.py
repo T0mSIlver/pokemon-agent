@@ -22,6 +22,7 @@ import os
 import sys
 import time
 import urllib.error
+import urllib.parse
 import urllib.request
 from pathlib import Path
 from typing import Optional
@@ -55,8 +56,22 @@ ALIASES = {
     "adialog": "a_until_dialog_end",
 }
 
-#: A batch longer than this is a loop, not a plan.
-MAX_REPEAT = 64
+#: A batch longer than this is a loop, not a plan. These mirror the server's
+#: limits exactly; the server is the one that enforces them, and refusing here
+#: too only means the model learns from a fast local error instead of a 400.
+#: The server holds its single emulator lock for the whole batch, so an
+#: uncapped `wait_1000000000` would take the game away for hundreds of days.
+MAX_REPEAT = 40
+MAX_ACTIONS_PER_BATCH = 40
+MAX_FRAMES_PER_ACTION = 600
+MAX_FRAMES_PER_BATCH = 3600
+
+#: What each action costs in emulator frames, for the batch budget. Walks and
+#: presses are the fixed press-plus-wait cadence. `a_until_dialog_end` is counted
+#: at the server's own worst case, ten presses of 30 frames: budget it any
+#: cheaper here and the CLI waves through batches the server then refuses.
+FRAMES_PER_INPUT = 20
+FRAMES_DIALOG_WORST_CASE = 300
 
 FRAME_FILES = {
     "raw": "latest_frame.png",
@@ -108,6 +123,19 @@ def resolve_action(token: str) -> Optional[str]:
     return None
 
 
+def frames_for(action: str) -> int:
+    """Emulator frames one canonical action costs, for the batch budget."""
+
+    if action == "a_until_dialog_end":
+        return FRAMES_DIALOG_WORST_CASE
+    parts = action.split("_")
+    if parts[0] == "wait":
+        return int(parts[1])
+    if parts[0] == "hold":
+        return int(parts[2])
+    return FRAMES_PER_INPUT
+
+
 def action_help() -> str:
     return (
         "actions: up down left right a b start select wait adialog\n"
@@ -139,9 +167,26 @@ def expand_actions(tokens: list[str]) -> list[str]:
         action = resolve_action(name)
         if action is None:
             raise ActionError(f"unknown action {name!r}\n{action_help()}")
+        frames = frames_for(action)
+        if frames > MAX_FRAMES_PER_ACTION:
+            raise ActionError(
+                f"{token!r} asks for {frames} frames; the limit is "
+                f"{MAX_FRAMES_PER_ACTION} ({MAX_FRAMES_PER_ACTION // 60} seconds)"
+            )
         actions.extend([action] * count)
     if not actions:
         raise ActionError(f"no actions given\n{action_help()}")
+    if len(actions) > MAX_ACTIONS_PER_BATCH:
+        raise ActionError(
+            f"that batch is {len(actions)} actions; the limit is "
+            f"{MAX_ACTIONS_PER_BATCH}. Send fewer and look at the frame after."
+        )
+    total = sum(frames_for(action) for action in actions)
+    if total > MAX_FRAMES_PER_BATCH:
+        raise ActionError(
+            f"that batch runs {total} frames; the limit is {MAX_FRAMES_PER_BATCH} "
+            f"({MAX_FRAMES_PER_BATCH // 60} seconds)"
+        )
     return actions
 
 
@@ -339,6 +384,132 @@ def cmd_map(args: argparse.Namespace, url: str) -> int:
     return EXIT_OK
 
 
+def cmd_route(args: argparse.Namespace, url: str) -> int:
+    """Which maps lie between here and somewhere else.
+
+    Hops, never button presses. Route 4 is one map whose halves are separated
+    by Mt. Moon, so "you are on Route 4" does not say which side you are on.
+    """
+    target = urllib.parse.quote(" ".join(args.to))
+    payload = fetch_json(url, f"/route?to={target}")
+    if args.json:
+        print(compact(payload))
+        return EXIT_OK
+    hops = payload.get("hops")
+    if hops is None:
+        print(f"no route from {payload.get('from')} to {payload.get('to')}")
+        return EXIT_OK
+    if not hops:
+        print(f"already on {payload.get('to')}")
+        return EXIT_OK
+    print(f"{payload.get('from')} to {payload.get('to')}, {len(hops)} hops:")
+    for hop in hops:
+        where = f" at {tuple(hop['at'])}" if hop.get("at") else ""
+        edge = f" ({hop['edge']})" if hop.get("edge") else ""
+        print(f"  {hop['kind']:<11}{edge:<9} -> {hop['to']}{where}")
+    return EXIT_OK
+
+
+def cmd_goto(args: argparse.Namespace, url: str) -> int:
+    """Walk toward a map or a tile, re-planning on each map as you go."""
+    target = " ".join(args.target)
+    if "," in target and all(part.strip().lstrip("-").isdigit() for part in target.split(",", 1)):
+        x, y = (int(part) for part in target.split(",", 1))
+        payload = {"x": x, "y": y}
+    else:
+        payload = {"target": target}
+    print(compact(fetch_json(url, "/goto", method="POST", payload=payload)))
+    return EXIT_OK
+
+
+def cmd_calc(args: argparse.Namespace, url: str) -> int:
+    """What each of your moves would do to what you are fighting."""
+    payload = fetch_json(url, "/calc")
+    if args.json:
+        print(compact(payload))
+        return EXIT_OK
+    enemy = payload.get("enemy") or {}
+    types = "/".join(enemy.get("types") or [])
+    print(f"vs {enemy.get('species')} L{enemy.get('level')} {enemy.get('hp')} HP ({types})")
+    for move in payload.get("moves") or []:
+        damage = move.get("damage") or [0, 0]
+        effect = move.get("effectiveness")
+        marker = "" if effect in (1, 1.0, None) else f"  x{effect:g}"
+        kos = move.get("turns_to_ko")
+        ko_text = f"  KO in {kos}" if kos else "  cannot KO"
+        print(f"  {move['move']:<16} {damage[0]:>3}-{damage[1]:<3}{ko_text}{marker}")
+    threat = payload.get("threat")
+    if threat is not None:
+        print(f"  worst incoming: {threat}")
+    return EXIT_OK
+
+
+def cmd_frontier(args: argparse.Namespace, url: str) -> int:
+    """Tiles you can reach on this map that you have never stood on."""
+    payload = fetch_json(url, "/frontier")
+    if args.json:
+        print(compact(payload))
+        return EXIT_OK
+    tiles = payload.get("tiles") or []
+    print(f"{payload.get('map')} from {tuple(payload.get('from') or ())}: {len(tiles)} unseen")
+    for tile in tiles[: args.limit]:
+        print(f"  {tuple(tile)}")
+    if len(tiles) > args.limit:
+        print(f"  ... and {len(tiles) - args.limit} more")
+    return EXIT_OK
+
+
+def cmd_sim(args: argparse.Namespace, url: str) -> int:
+    """Try a plan without spending it. Nothing here touches the game."""
+    actions = expand_actions(args.actions)
+    payload = fetch_json(url, "/sim", method="POST", payload={"actions": actions})
+    if args.json:
+        print(compact(payload))
+        return EXIT_OK
+    blocked = payload.get("blocked_at")
+    if blocked is None:
+        print(f"clean: ends at {tuple(payload['end'])} facing {payload.get('facing')}")
+    else:
+        print(
+            f"blocked at step {blocked} ({actions[blocked]}) by "
+            f"{payload.get('blocked_by')}, stops at {tuple(payload['end'])}"
+        )
+    if payload.get("warp_at") is not None:
+        print(f"steps onto a warp at step {payload['warp_at']}")
+    return EXIT_OK
+
+
+def cmd_guide(args: argparse.Namespace, url: str) -> int:
+    """Read a walkthrough section. Nothing is ever pushed at you; you choose."""
+    if args.search:
+        query = urllib.parse.quote(" ".join(args.search))
+        payload = fetch_json(url, f"/guide?q={query}")
+        for hit in payload.get("results") or []:
+            print(f"  {hit['ref']:<38} {hit.get('summary', '')}")
+        return EXIT_OK
+    if args.ref:
+        payload = fetch_json(url, f"/guide?ref={urllib.parse.quote(args.ref)}")
+        print(payload.get("body", ""))
+        return EXIT_OK
+    print(fetch_json(url, "/guide").get("outline", ""))
+    return EXIT_OK
+
+
+def cmd_progress(args: argparse.Namespace, url: str) -> int:
+    """How far through the game you are, and what it has cost so far."""
+    payload = fetch_json(url, "/progress")
+    if args.json:
+        print(compact(payload))
+        return EXIT_OK
+    count, total = payload.get("count", 0), payload.get("total", 0)
+    print(f"{count}/{total} milestones, {payload.get('presses', 0)} presses")
+    if payload.get("furthest_label"):
+        print(f"furthest: {payload['furthest_label']}")
+    for label in payload.get("latest") or []:
+        print(f"  reached {label}")
+    return EXIT_OK
+
+
 def workspace_dir(url: str) -> Path:
     """Where the frames are written.
 
@@ -496,6 +667,50 @@ def build_parser() -> argparse.ArgumentParser:
 
     health = subparsers.add_parser("health", parents=[common], help="is the server answering")
     health.set_defaults(func=cmd_health)
+
+    route = subparsers.add_parser(
+        "route", parents=[common], help="which maps lie between here and somewhere"
+    )
+    route.add_argument("to", nargs="+", help="destination map name")
+    route.add_argument("--json", action="store_true")
+    route.set_defaults(func=cmd_route)
+
+    goto = subparsers.add_parser("goto", parents=[common], help="walk to a map or a tile")
+    goto.add_argument("target", nargs="+", help="map name, or x,y on this map")
+    goto.set_defaults(func=cmd_goto)
+
+    calc = subparsers.add_parser(
+        "calc", parents=[common], help="damage each of your moves would do right now"
+    )
+    calc.add_argument("--json", action="store_true")
+    calc.set_defaults(func=cmd_calc)
+
+    frontier = subparsers.add_parser(
+        "frontier", parents=[common], help="reachable tiles on this map you have not seen"
+    )
+    frontier.add_argument("--limit", type=int, default=12)
+    frontier.add_argument("--json", action="store_true")
+    frontier.set_defaults(func=cmd_frontier)
+
+    sim = subparsers.add_parser(
+        "sim", parents=[common], help="try a plan without sending it to the game"
+    )
+    sim.add_argument("actions", nargs="+")
+    sim.add_argument("--json", action="store_true")
+    sim.set_defaults(func=cmd_sim)
+
+    guide = subparsers.add_parser(
+        "guide", parents=[common], help="walkthrough sections; no argument lists them"
+    )
+    guide.add_argument("ref", nargs="?", help="a section reference, guide/slug")
+    guide.add_argument("-s", "--search", nargs="+", help="find sections by keyword")
+    guide.set_defaults(func=cmd_guide)
+
+    progress = subparsers.add_parser(
+        "progress", parents=[common], help="milestones reached and presses spent"
+    )
+    progress.add_argument("--json", action="store_true")
+    progress.set_defaults(func=cmd_progress)
 
     return parser
 

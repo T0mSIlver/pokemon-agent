@@ -303,6 +303,26 @@ def test_action_lines_show_the_buttons_and_the_outcome_not_the_curl_line():
     assert all(len(line) <= 200 for line in lines)
 
 
+def test_a_batch_the_cli_rejects_contributes_no_actions():
+    """`poke` refuses the whole batch on the first bad token and sends nothing."""
+    rejected = ToolCall(name="bash", command="./poke act up typo down")
+
+    assert parse_actions(rejected.command) == []
+    assert parse_actions("./poke act up:0") == []
+    assert parse_actions("./poke act --json up") == []
+    assert parse_actions("./poke act") == []
+    stats = compute_behaviour_stats([rejected])
+    assert (stats["action_batches"], stats["total_buttons"]) == (1, 0)
+
+
+def test_global_options_before_the_subcommand_are_not_mistaken_for_actions():
+    assert parse_actions("poke --port 9000 act up up") == ["walk_up", "walk_up"]
+    assert parse_actions("./poke --url http://box:1/ act a:2") == ["press_a", "press_a"]
+    assert parse_actions("./poke act --port 9000 down") == ["walk_down"]
+    assert classify_call(ToolCall(name="bash", command="poke --port 9000 act up")) == "action"
+    assert classify_call(ToolCall(name="bash", command="poke --port 9000 state")) == "state"
+
+
 def test_action_lines_fall_back_to_a_label_when_the_agent_wrote_no_comment():
     call = action_call(["walk_left", "walk_left", "press_a"], comment="")
 

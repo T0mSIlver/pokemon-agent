@@ -12,6 +12,10 @@ MAP_COORDINATE_NOTE = (
     "In the annotated frame, columns are x and rows are y."
 )
 
+#: PyBoy reports background tiles through the signed 0x8800 addressing window,
+#: so every tile id it hands us is the pokered tile id plus this offset.
+TILE_ID_OFFSET = 0x100
+
 TILE_PAIR_BLOCKERS: dict[str, set[frozenset[int]]] = {
     "CAVERN": {
         frozenset((288, 261)),
@@ -32,6 +36,52 @@ TILE_PAIR_BLOCKERS: dict[str, set[frozenset[int]]] = {
         frozenset((328, 302)),
     },
 }
+
+
+#: pokered ``data/tilesets/ledge_tiles.asm``, keyed by the direction pressed and
+#: holding ``(tile the player stands on, tile being jumped)`` pairs. Ledges are
+#: directional and OVERWORLD-only: ``engine/overworld/ledges.asm`` returns early
+#: for every other tileset, and the table has no upward entry at all.
+LEDGE_TILE_PAIRS: dict[str, dict[str, set[tuple[int, int]]]] = {
+    "OVERWORLD": {
+        "down": {
+            (0x2C + TILE_ID_OFFSET, 0x37 + TILE_ID_OFFSET),
+            (0x39 + TILE_ID_OFFSET, 0x36 + TILE_ID_OFFSET),
+            (0x39 + TILE_ID_OFFSET, 0x37 + TILE_ID_OFFSET),
+        },
+        "left": {
+            (0x2C + TILE_ID_OFFSET, 0x27 + TILE_ID_OFFSET),
+            (0x39 + TILE_ID_OFFSET, 0x27 + TILE_ID_OFFSET),
+        },
+        "right": {
+            (0x2C + TILE_ID_OFFSET, 0x0D + TILE_ID_OFFSET),
+            (0x2C + TILE_ID_OFFSET, 0x1D + TILE_ID_OFFSET),
+            (0x39 + TILE_ID_OFFSET, 0x0D + TILE_ID_OFFSET),
+        },
+    },
+}
+
+#: pokered ``data/tilesets/warp_carpet_tile_ids.asm``. Walking into one of these
+#: while standing on a warp entry fires the warp; every other blocked direction
+#: is an ordinary wall. Used by ``IsWarpTileInFrontOfPlayer``.
+WARP_CARPET_TILES: dict[str, set[int]] = {
+    "down": {tile + TILE_ID_OFFSET for tile in (0x01, 0x12, 0x17, 0x3D, 0x04, 0x18, 0x33)},
+    "up": {tile + TILE_ID_OFFSET for tile in (0x01, 0x5C)},
+    "left": {tile + TILE_ID_OFFSET for tile in (0x1A, 0x4B)},
+    "right": {tile + TILE_ID_OFFSET for tile in (0x0F, 0x4E)},
+}
+
+#: Tilesets whose warps are checked with ``IsWarpTileInFrontOfPlayer`` rather
+#: than ``IsPlayerFacingEdgeOfMap`` (pokered ``ExtraWarpCheck``).
+WARP_FRONT_TILE_TILESETS = frozenset({"OVERWORLD", "SHIP", "SHIP_PORT", "PLATEAU"})
+
+#: ``ExtraWarpCheck`` overrides its tileset rule for five maps: Rocket Hideout
+#: B1F/B2F/B4F and Rock Tunnel 1F use the front-tile rule despite their indoor
+#: tilesets, and S.S. Anne 3F uses the map-edge rule despite the SHIP tileset.
+WARP_FRONT_TILE_MAPS = frozenset({0x52, 0xC7, 0xC8, 0xCA})
+WARP_MAP_EDGE_MAPS = frozenset({0x61})
+
+MOVE_DIRECTIONS: tuple[str, ...] = ("up", "down", "left", "right")
 
 
 def location_key(map_id: int, map_name: str) -> str:
@@ -63,6 +113,65 @@ def tile_pair_allows(
     return frozenset((tile_a, tile_b)) not in blocked_pairs
 
 
+def ledge_hop_allows(
+    tileset: Optional[str],
+    direction: str,
+    standing_tile: Optional[int],
+    ledge_tile: Optional[int],
+) -> bool:
+    """Return whether pressing *direction* jumps a ledge instead of colliding.
+
+    A ledge cell reads as blocked in the collision map, but ``HandleLedges``
+    runs before the collision check, so the jump wins.
+    """
+    if tileset is None or standing_tile is None or ledge_tile is None:
+        return False
+    pairs = LEDGE_TILE_PAIRS.get(tileset, {}).get(direction)
+    if not pairs:
+        return False
+    return (standing_tile, ledge_tile) in pairs
+
+
+def ledge_landing(coord: Coord, direction: str) -> Coord:
+    """Where a ledge hop in *direction* puts the player: two tiles, not one."""
+    x, y = coord
+    delta = {"up": (0, -2), "down": (0, 2), "left": (-2, 0), "right": (2, 0)}[direction]
+    return (x + delta[0], y + delta[1])
+
+
+def warp_uses_front_tile_rule(tileset: Optional[str], map_id: Optional[int]) -> bool:
+    """Which of ``ExtraWarpCheck``'s two rules governs this map's warps."""
+    if map_id in WARP_MAP_EDGE_MAPS:
+        return False
+    if map_id in WARP_FRONT_TILE_MAPS:
+        return True
+    return tileset in WARP_FRONT_TILE_TILESETS
+
+
+def facing_edge_of_map(
+    coord: Coord,
+    direction: str,
+    map_dimensions: Optional[Dict[str, int]],
+) -> Optional[bool]:
+    """Whether the player faces the outer edge of the map, or None if unknown."""
+    if not map_dimensions:
+        return None
+    width = map_dimensions.get("width_tiles", map_dimensions.get("width"))
+    height = map_dimensions.get("height_tiles", map_dimensions.get("height"))
+    if width is None or height is None:
+        return None
+    x, y = coord
+    if direction == "up":
+        return y == 0
+    if direction == "down":
+        return y == int(height) - 1
+    if direction == "left":
+        return x == 0
+    if direction == "right":
+        return x == int(width) - 1
+    return None
+
+
 @dataclass(slots=True)
 class LiveNavigationSnapshot:
     """Live navigation state derived from the current emulator frame."""
@@ -81,6 +190,10 @@ class LiveNavigationSnapshot:
     map_dimensions: Optional[Dict[str, int]] = None
     tile_ids: Dict[Coord, int] = field(default_factory=dict)
     interaction: Optional[Dict[str, object]] = None
+    ledge_hops: Dict[str, Coord] = field(default_factory=dict)
+    warp_exit_directions: List[str] = field(default_factory=list)
+    warp_exit_armed: bool = False
+    warp_exit_note: Optional[str] = None
 
     @property
     def key(self) -> str:
@@ -170,6 +283,13 @@ class LiveNavigationSnapshot:
             "signs": self.signs,
             "map_dimensions": self.map_dimensions,
             "interaction": self.interaction,
+            "ledge_hops": {
+                direction: _coord_dict(landing)
+                for direction, landing in sorted(self.ledge_hops.items())
+            },
+            "warp_exit_directions": self.warp_exit_directions,
+            "warp_exit_armed": self.warp_exit_armed,
+            "warp_exit_note": self.warp_exit_note,
             "ascii": self.render_window_ascii(goal=goal),
             "ascii_legend": {
                 "P": "player",
@@ -178,5 +298,16 @@ class LiveNavigationSnapshot:
                 "S": "visible sprite blocker",
                 ".": "passable tile",
                 "#": "blocked tile",
+            },
+            "movement_legend": {
+                "ledge_hops": (
+                    "One-way ledge jumps. Legal even though the tile reads as blocked, "
+                    "and they land two tiles away, not one."
+                ),
+                "warp_exit_directions": (
+                    "Directions that fire the warp the player is standing on. They are "
+                    "not walkable steps, so they are not in valid_moves, and they only "
+                    "fire while warp_exit_armed is true."
+                ),
             },
         }

@@ -29,9 +29,31 @@ def _detect_game_type(rom_path: str) -> str:
     ext = Path(rom_path).suffix.lower()
     if ext in (".gb", ".gbc"):
         return "red"
-    elif ext == ".gba":
-        return "firered"
+    if ext == ".gba":
+        # memory/firered.py is a stub: every read method raises, and the server
+        # imports a name it does not define. Starting here used to get as far as
+        # creating an emulator and then die on ImportError. Refuse up front and
+        # say why, rather than advertising a backend that cannot perceive.
+        return "unsupported_gba"
     return "unknown"
+
+
+def _reject_unsupported(game_type: str, rom: Path) -> None:
+    if game_type == "unsupported_gba":
+        print(
+            f"ERROR: {rom.name} is a Game Boy Advance ROM. Only Game Boy Pokemon "
+            "Red and Blue are supported; the FireRed memory reader is a stub and "
+            "cannot read party or map data.",
+            file=sys.stderr,
+        )
+        sys.exit(1)
+    if game_type == "unknown":
+        print(
+            f"ERROR: cannot tell what game {rom.name} is. Expected a .gb or .gbc "
+            "Pokemon Red or Blue ROM.",
+            file=sys.stderr,
+        )
+        sys.exit(1)
 
 
 def cmd_serve(args):
@@ -52,6 +74,7 @@ def cmd_serve(args):
     workspace_dir.mkdir(parents=True, exist_ok=True)
 
     game_type = _detect_game_type(str(rom))
+    _reject_unsupported(game_type, rom)
 
     print(BANNER.format(version=__version__))
     print(f"  ROM:       {rom}")

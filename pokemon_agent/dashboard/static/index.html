@@ -71,6 +71,91 @@
 
         <main class="hud-deck">
             <!-- ============================================================ -->
+            <!-- ROW 0 · CAMPAIGN · LADDER + PRESSES + HEALTH                  -->
+            <!-- ============================================================ -->
+            <section class="hud-panel hud-campaign" id="hudCampaign">
+                <span class="hud-corner hud-corner--tl"></span>
+                <span class="hud-corner hud-corner--tr"></span>
+                <span class="hud-corner hud-corner--bl"></span>
+                <span class="hud-corner hud-corner--br"></span>
+
+                <header class="hud-panel-header">
+                    <div class="hud-panel-title">
+                        <h2>Campaign</h2>
+                        <span class="hud-kicker">Red ladder <span class="hud-kicker-sep">//</span> 63 rungs</span>
+                    </div>
+                    <div class="hud-panel-badges">
+                        <span class="hud-chip" id="campaignRungChip">RUNG —/63</span>
+                        <span class="hud-chip" id="campaignPressesChip">PRESSES —</span>
+                        <span class="hud-chip hud-chip--tiny" id="campaignSourceChip">SOURCE: —</span>
+                    </div>
+                    <span class="hud-diag" aria-hidden="true"></span>
+                </header>
+
+                <p class="hud-campaign-headline" id="campaignHeadline">Waiting for the scoreboard.</p>
+
+                <div class="hud-campaign-grid">
+                    <div class="hud-campaign-col hud-campaign-col--rail">
+                        <div class="hud-campaign-stats" id="campaignStats"></div>
+
+                        <div class="hud-rail-head">
+                            <span class="hud-kicker-mini">Ladder</span>
+                            <span class="hud-rail-legend" aria-hidden="true">
+                                <span class="hud-rail-key" data-key="done">reached</span>
+                                <span class="hud-rail-key" data-key="current">current</span>
+                                <span class="hud-rail-key" data-key="todo">ahead</span>
+                                <span class="hud-rail-key" data-key="badge">badge</span>
+                            </span>
+                        </div>
+
+                        <div class="hud-rail-scroll">
+                            <div class="hud-rail" id="campaignRail" role="group" aria-label="Milestone ladder, 63 rungs"></div>
+                        </div>
+                        <div class="hud-rail-underline" aria-hidden="true">
+                            <span class="hud-rail-underline-fill" id="campaignRailFill"></span>
+                        </div>
+                        <p class="hud-rail-readout" id="campaignRailReadout">Point at a rung for its name and price.</p>
+
+                        <details class="hud-details hud-details--ladder" id="campaignLadderDetails">
+                            <summary><span class="hud-details-glyph">▸</span>LADDER DETAIL · ALL 63 RUNGS</summary>
+                            <div class="hud-ladder-scroll">
+                                <table class="hud-ladder-table">
+                                    <thead>
+                                        <tr>
+                                            <th scope="col">#</th>
+                                            <th scope="col">Milestone</th>
+                                            <th scope="col">Kind</th>
+                                            <th scope="col">Presses</th>
+                                            <th scope="col">Δ</th>
+                                        </tr>
+                                    </thead>
+                                    <tbody id="campaignLadderRows"></tbody>
+                                </table>
+                            </div>
+                        </details>
+
+                        <div class="hud-health">
+                            <div class="hud-health-head">
+                                <span class="hud-kicker">Run health</span>
+                                <span class="hud-chip hud-chip--tiny" id="healthWindowChip">WINDOW: —</span>
+                            </div>
+                            <div class="hud-health-strip" id="healthStrip"></div>
+                        </div>
+                    </div>
+
+                    <div class="hud-campaign-col hud-campaign-col--chart">
+                        <span class="hud-kicker-mini">Presses to milestone</span>
+                        <svg class="hud-presses-chart" id="campaignChart" viewBox="0 0 320 96"
+                             role="img" aria-label="Cumulative button presses at each ladder rung reached"></svg>
+                        <p class="hud-chart-caption" id="campaignChartCaption">No press ledger yet.</p>
+
+                        <span class="hud-kicker-mini">First gym <span class="hud-kicker-sep">//</span> reference</span>
+                        <div class="hud-benchmark" id="campaignBenchmark"></div>
+                    </div>
+                </div>
+            </section>
+
+            <!-- ============================================================ -->
             <!-- ROW 1 · HERO · CHAT + FRAME                                   -->
             <!-- ============================================================ -->
             <div class="hud-hero">
@@ -536,6 +621,6 @@
         </main>
     </div>
 
-    <script src="/dashboard/assets/app.js?v=18"></script>
+    <script src="/dashboard/assets/app.js?v=19"></script>
 </body>
 </html>

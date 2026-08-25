@@ -19,20 +19,37 @@ import time
 from collections import deque
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
-from functools import partial
 from pathlib import Path
 from typing import Optional, Set
 
 from fastapi import FastAPI, HTTPException, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import FileResponse, JSONResponse, Response
-from pydantic import BaseModel
+from fastapi.responses import JSONResponse, Response
+from pydantic import BaseModel, field_validator
 from starlette.routing import Mount
 
+from pokemon_agent import capabilities
 from pokemon_agent.agent_runtime import AgentRuntime
+from pokemon_agent.coordinator import (
+    MAX_FRAMES_PER_BATCH,
+    ActionLimitError,
+    EmulatorCoordinator,
+    UnknownActionError,
+    presses_for_action,
+    validate_action_batch,
+)
 from pokemon_agent.explored_map import ExploredMaps
+from pokemon_agent.guides import GuideLog
 from pokemon_agent.memory.red import MAP_NAMES, MOVE_NAMES
+from pokemon_agent.milestones import MilestoneTracker
 from pokemon_agent.pi_supervisor import NoLiveSessionError, PiSupervisor
+from pokemon_agent.saves import (
+    SaveNameError,
+    list_save_files,
+    resolve_save_path,
+    validate_save_name,
+)
+from pokemon_agent.world import World
 
 __version__ = "0.1.0"
 
@@ -71,9 +88,33 @@ class ActionRequest(BaseModel):
 
 
 class SaveRequest(BaseModel):
-    """Body for POST /save and POST /load."""
+    """Body for POST /save and POST /load.
+
+    The name is validated here, once, so no endpoint can be written that forgets
+    to: a save name is a plain file name and never a path. ``../escaped`` used
+    to report success and write outside the saves directory entirely.
+    """
 
     name: str
+
+    @field_validator("name")
+    @classmethod
+    def _plain_file_name(cls, value: str) -> str:
+        return validate_save_name(value)
+
+
+class GotoRequest(BaseModel):
+    """Body for POST /goto — a map to reach, or a tile on the current map."""
+
+    target: Optional[str] = None
+    x: Optional[int] = None
+    y: Optional[int] = None
+
+
+class SimRequest(BaseModel):
+    """Body for POST /sim."""
+
+    actions: list[str]
 
 
 class BattleFightRequest(BaseModel):
@@ -133,6 +174,21 @@ _live_artifact_last_sync_at: Optional[float] = None
 # the agent reads it back on demand from GET /map. Writing it out on every
 # snapshot would mean a disk write per emulated frame, hence the throttle.
 _explored_maps: Optional[ExploredMaps] = None
+
+# The static map graph behind GET /route and POST /goto, and the record of which
+# guide sections the agent chose to open. Both are read-only as far as the
+# emulator is concerned, so neither ever waits on the emulator lock.
+_world: Optional[World] = None
+_guide_log: Optional[GuideLog] = None
+
+#: Buttons sent since startup. The run metric is quoted in presses, so this is
+#: the number GET /progress reports alongside the milestone ladder.
+_press_count: int = 0
+
+#: Why the emulator was never created, if it was not. An unsupported ROM is
+#: reported here rather than as an ImportError three steps later.
+_startup_error: Optional[str] = None
+
 EXPLORED_SAVE_INTERVAL_SECONDS = 10.0
 EXPLORED_SAVE_EVERY_RECORDS = 50
 _explored_last_save_at: float = 0.0
@@ -177,6 +233,24 @@ app.add_middleware(
 # ---------------------------------------------------------------------------
 
 
+#: Games with a working memory reader. FireRed is detected and named but its
+#: reader is a stub whose every method raises, so it is not playable.
+SUPPORTED_GAME_TYPES = ("red",)
+
+#: Games the extension table names but cannot actually drive.
+UNSUPPORTED_GAME_TYPES = {
+    "firered": (
+        "Pokemon FireRed is not supported: the GBA memory reader is a stub, so the "
+        "server would start an emulator it cannot read a single fact out of. Use a "
+        "Pokemon Red or Blue .gb/.gbc ROM."
+    ),
+}
+
+
+class UnsupportedGameError(ValueError):
+    """A ROM this server cannot actually read, named before anything is created."""
+
+
 def _detect_game_type(rom_path: str) -> str:
     """Pick reader type based on file extension."""
     ext = Path(rom_path).suffix.lower()
@@ -185,6 +259,22 @@ def _detect_game_type(rom_path: str) -> str:
     elif ext == ".gba":
         return "firered"
     raise ValueError(f"Unrecognised ROM extension: {ext}")
+
+
+def _resolve_game_type(rom_path: str, configured: str) -> str:
+    """The game type to run, or raise before an emulator exists.
+
+    The reader import used to be the thing that failed, three steps after the
+    emulator had already been created and a window opened. One check, up front,
+    with one message.
+    """
+    game_type = _detect_game_type(rom_path) if configured == "auto" else configured
+    if game_type in UNSUPPORTED_GAME_TYPES:
+        raise UnsupportedGameError(UNSUPPORTED_GAME_TYPES[game_type])
+    if game_type not in SUPPORTED_GAME_TYPES:
+        supported = ", ".join(SUPPORTED_GAME_TYPES)
+        raise UnsupportedGameError(f"Unknown game type: {game_type}. Supported: {supported}.")
+    return game_type
 
 
 def _ensure_emulator():
@@ -200,18 +290,58 @@ def _ensure_runtime() -> AgentRuntime:
     return _runtime
 
 
-async def _run_sync(func, *args, **kwargs):
-    """Run a blocking emulator call in the default executor."""
-    loop = asyncio.get_running_loop()
-    return await loop.run_in_executor(None, partial(func, *args, **kwargs))
+class _ServerOps:
+    """The emulator plumbing, resolved from module state at call time.
+
+    Every attribute is a live lookup rather than something captured at
+    construction: the server's emulator, reader, runtime and lock are all
+    created during startup and replaced by tests, and a coordinator holding
+    stale references would drive a machine nobody else is looking at.
+    """
+
+    @property
+    def lock(self) -> Optional[asyncio.Lock]:
+        return _emulator_lock
+
+    @property
+    def emulator(self):
+        return _emulator
+
+    @property
+    def reader(self):
+        return _reader
+
+    @property
+    def runtime(self) -> Optional[AgentRuntime]:
+        return _runtime
+
+    def state_dict(self) -> dict:
+        return _get_state_dict()
+
+    def execute_batch(self, actions: list[str]) -> dict:
+        return _execute_action_batch_sync(actions)
+
+    def reject_unsafe_battle_actions(self, actions: list[str]) -> None:
+        _reject_unsafe_battle_actions(actions)
+
+    def refresh_bundle(self, **kwargs) -> Optional[dict]:
+        return _refresh_agent_bundle_sync(**kwargs)
+
+
+#: One coordinator for the process. It owns no state of its own — the lock and
+#: the emulator are looked up through the ops object above — so it survives the
+#: server being configured, started and restarted underneath it.
+_coordinator = EmulatorCoordinator(_ServerOps())
 
 
 async def _run_emulator_sync(func, *args, **kwargs):
-    """Run a blocking emulator call while holding the emulator lock."""
-    if _emulator_lock is None:
-        return await _run_sync(func, *args, **kwargs)
-    async with _emulator_lock:
-        return await _run_sync(func, *args, **kwargs)
+    """Run one blocking emulator call while holding the emulator lock.
+
+    For reads with no follow-up only. Anything that mutates and then observes
+    belongs in a coordinator transaction: the gap between two of these calls is
+    exactly where a concurrent request used to change the machine underneath.
+    """
+    return await _coordinator.run(func, *args, **kwargs)
 
 
 async def broadcast(event: dict):
@@ -296,14 +426,30 @@ def _get_screenshot_bytes() -> bytes:
 
 
 def _get_dashboard_static_dir() -> Optional[Path]:
+    """Where the dashboard shell lives, or None if it is not installed.
+
+    The dashboard package owns both the answer and the routes; this only guards
+    the import, so a build without the dashboard still starts a game server.
+    """
     try:
-        import pokemon_agent.dashboard as dashboard_mod
+        from pokemon_agent.dashboard import dashboard_static_dir
     except ImportError:
         return None
-    dash_dir = Path(dashboard_mod.__file__).parent / "static"
-    if dash_dir.is_dir() and (dash_dir / "index.html").exists():
-        return dash_dir
-    return None
+    return dashboard_static_dir()
+
+
+def _mount_dashboard_routes() -> Optional[Path]:
+    """Put the dashboard on this app, and say where its files came from.
+
+    ``mount_dashboard`` registers /dashboard, /dashboard/ and /dashboard/assets
+    and skips whatever is already there, so the server no longer keeps a second
+    copy of those two routes that could drift from the page they serve.
+    """
+    try:
+        from pokemon_agent.dashboard import mount_dashboard
+    except ImportError:
+        return None
+    return _get_dashboard_static_dir() if mount_dashboard(app) else None
 
 
 async def _realtime_emulator_loop() -> None:
@@ -484,11 +630,11 @@ def _public_artifact_paths(artifacts: Optional[dict]) -> dict:
 
 
 def _warp_step_direction(coord: dict, dimensions: dict) -> Optional[str]:
-    """Which way to walk to trigger a warp on the map boundary.
+    """Fallback for which way to walk off a warp, from map edges alone.
 
-    Boundary warps are the ones that strand an agent: the tile beyond is off-map,
-    so the overlay paints it blocked and the model concludes the exit is a wall.
-    Interior doors are ambiguous from coordinates alone, so they get no hint.
+    Only used when the navigation snapshot has no answer. The engine picks
+    between two rules and neither is derivable from coordinates, so this guesses
+    the boundary case and stays quiet about interior doors.
     """
     x, y = coord.get("x"), coord.get("y")
     width, height = dimensions.get("width"), dimensions.get("height")
@@ -501,6 +647,38 @@ def _warp_step_direction(coord: dict, dimensions: dict) -> Optional[str]:
     if width and x == width - 1:
         return "right"
     return None
+
+
+def _warp_exit_hint(snapshot: dict, coord: dict) -> dict:
+    """Which way to step off the warp under you, and whether it will fire.
+
+    `warp_exit_directions` comes from the engine's own two rules: the overworld
+    tilesets check the tile in front against pokered's warp-carpet lists, the
+    rest check whether the player faces the edge of the map. Both beat guessing
+    from coordinates.
+
+    The armed flag matters more than it looks. Gen 1 only arms a warp when the
+    player *walks onto* it, so a loaded save state that starts on a warp tile
+    has an exit that silently does nothing until you step off and back on.
+    Reporting the direction without that caveat sends the model into a loop
+    pressing a button that cannot work.
+    """
+    hint: dict = {}
+    directions = list(snapshot.get("warp_exit_directions") or [])
+    if directions:
+        hint["step"] = directions[0]
+        if len(directions) > 1:
+            hint["steps"] = directions
+    else:
+        step = _warp_step_direction(coord, snapshot.get("map_dimensions") or {})
+        if step:
+            hint["step"] = step
+    if snapshot.get("warp_exit_armed") is False:
+        hint["armed"] = False
+        hint["note"] = snapshot.get("warp_exit_note") or (
+            "This warp is not armed. Step off the tile and back onto it, then take the exit step."
+        )
+    return hint
 
 
 def _observation_summary(bundle: Optional[dict]) -> dict:
@@ -553,9 +731,7 @@ def _observation_summary(bundle: Optional[dict]) -> dict:
         target = MAP_NAMES.get(warp.get("target_map_id"))
         if target and target != "???":
             hint["to"] = target
-        step = _warp_step_direction(coord, snapshot.get("map_dimensions") or {})
-        if step:
-            hint["step"] = step
+        hint.update(_warp_exit_hint(snapshot, coord))
         if hint:
             summary["warp"] = hint
         break
@@ -808,33 +984,49 @@ def _reject_unsafe_battle_actions(actions: list[str]) -> None:
     )
 
 
-async def _run_actions(actions: list[str], *, source: str, reason: str) -> dict:
+def _check_action_limits(actions: list[str]) -> None:
+    """Refuse a batch that would monopolise the emulator, before it starts.
+
+    The caps are enforced here rather than inside the executor because the point
+    is to never begin: ``wait_1000000000`` ticked for hundreds of days holding
+    the lock, and the client that asked for it had long since timed out.
+    """
+    try:
+        validate_action_batch(actions)
+    except ActionLimitError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except UnknownActionError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
+async def _run_actions(
+    actions: list[str], *, source: str, reason: str, rate_check: bool = True
+) -> dict:
     """Execute one batch of actions with the standard before/after bookkeeping.
 
-    Returns the executed count plus the observation bundle produced afterwards.
+    The batch, the refresh and both state reads happen inside one coordinator
+    transaction, so the position reported back is the position this batch
+    produced. Events are broadcast afterwards, with the lock already released.
     """
-    _check_action_rate()
-    await _run_emulator_sync(_reject_unsafe_battle_actions, actions)
-    state_before = await _run_emulator_sync(_get_state_dict)
+    if rate_check:
+        _check_action_rate()
+    _check_action_limits(actions)
+    result = await _coordinator.act_and_observe(actions, source=source, reason=reason)
+    bundle = result["bundle"]
+    executed = result["actions_executed"]
+
     await _record_and_broadcast(
         "action",
-        {"actions": actions, "source": source, "state_before": state_before},
+        {"actions": actions, "source": source, "state_before": result["state_before"]},
     )
-    outcome = await _run_emulator_sync(_execute_action_batch_sync, actions)
-    executed = outcome["executed"]
-    bundle = await _refresh_and_broadcast(
-        reason=reason,
-        source=source,
-        requested_actions=actions,
-    )
-    state_after = bundle.get("state") or await _run_emulator_sync(_get_state_dict)
+    await _broadcast_runtime_refresh(result)
     await _record_and_broadcast(
         "action_result",
         {
             "actions": actions,
             "actions_executed": executed,
             "source": source,
-            "state_after": state_after,
+            "state_after": result["state_after"],
             "feedback": bundle.get("recent_action"),
             "state_delta": bundle.get("state_delta"),
             "objective_status": (bundle.get("objective") or {}).get("current"),
@@ -842,12 +1034,37 @@ async def _run_actions(actions: list[str], *, source: str, reason: str) -> dict:
             "screen_text": bundle.get("screen_text"),
         },
     )
-    return {"actions_executed": executed, "bundle": bundle, "outcome": outcome}
+    return {"actions_executed": executed, "bundle": bundle, "outcome": result["outcome"]}
 
 
 # ---------------------------------------------------------------------------
 # Action parser
 # ---------------------------------------------------------------------------
+
+
+#: The fixed cadence a press used to use: 8 frames held, 12 waiting. It is a
+#: fallback now, kept only for emulators that predate `settle` (the fakes in
+#: tests, and FireRed's stub).
+LEGACY_PRESS_FRAMES = 8
+LEGACY_WAIT_FRAMES = 12
+
+
+def _press_and_settle_or_wait(button: str) -> None:
+    """Press, then wait for the result to actually be observable.
+
+    A fixed 20-frame wait returns while the game is still moving the player. A
+    ledge hop takes about 40 frames, so the old cadence read the mid-air tile
+    and recorded it into the explored map as ground the player had walked. It
+    also left the emulator frozen mid-animation, where the next input is
+    swallowed. `settle` watches the walk counter, the sprite step vectors, the
+    ledge and spin flags and the map id instead, so it returns when the game
+    hands control back rather than after a guess.
+    """
+    if hasattr(_emulator, "press_and_settle"):
+        _emulator.press_and_settle(button, LEGACY_PRESS_FRAMES)
+        return
+    _emulator.press(button, LEGACY_PRESS_FRAMES)
+    _emulator.tick(LEGACY_WAIT_FRAMES)
 
 
 def _execute_action_sync(action_str: str) -> None:
@@ -860,11 +1077,14 @@ def _execute_action_sync(action_str: str) -> None:
         wait_N        — tick N frames with no input
         a_until_dialog_end — press A every 30 frames until dialog clears (max 300)
     """
+    global _press_count
     action_str = action_str.strip().lower()
+    _press_count += presses_for_action(action_str)
 
     if action_str == "a_until_dialog_end":
         for _ in range(10):  # max 300 frames = 10 * 30
             _emulator.press("a")
+            _press_count += 1
             _emulator.tick(30)
             # Check dialog flag via reader if available
             try:
@@ -880,23 +1100,11 @@ def _execute_action_sync(action_str: str) -> None:
 
     if parts[0] == "press" and len(parts) >= 2:
         button = "_".join(parts[1:])
-        # Hold button for 8 frames so the game registers the press,
-        # then wait 12 frames for the game to process it.
-        _emulator.press(button, 8)
-        _emulator.tick(12)
+        _press_and_settle_or_wait(button)
         return
 
     if parts[0] == "walk" and len(parts) >= 2:
-        direction = parts[1]
-        # Gen 1 movement timing (empirically tested):
-        #   - Button must be held >= 4 frames for the game's vblank joypad
-        #     poll to register the input reliably.
-        #   - wWalkCounter starts at 8, decrements each frame (2 px/frame
-        #     = 16 px = 1 tile). Total walk animation = ~16 frames.
-        #   - Minimum total frames for a confirmed tile move = 17.
-        #   - We use hold=8 + wait=12 = 20 total for a safety margin.
-        _emulator.press(direction, 8)
-        _emulator.tick(12)
+        _press_and_settle_or_wait(parts[1])
         return
 
     if parts[0] == "hold" and len(parts) >= 3:
@@ -1183,20 +1391,31 @@ def _battle_run_sync() -> dict:
 
 
 async def _run_battle_sequence(intent: dict, func, *args) -> dict:
-    """One battle command, with the bookkeeping an /action batch would get."""
+    """One battle command, with the bookkeeping an /action batch would get.
+
+    The menu walk and the observation of its result are one transaction: every
+    cursor read in the sequence has to see the machine the previous press left.
+    """
     _check_action_rate()
-    state_before = await _run_emulator_sync(_get_state_dict)
-    await _record_and_broadcast(
-        "action",
-        {"actions": [], "source": "battle", "intent": intent, "state_before": state_before},
-    )
-    outcome = await _run_emulator_sync(func, *args)
-    bundle = await _refresh_and_broadcast(
+    result = await _coordinator.battle_and_observe(
+        func=func,
+        args=args,
         reason="battle_command",
         source="battle",
-        requested_actions=outcome["actions"],
     )
-    state_after = bundle.get("state") or await _run_emulator_sync(_get_state_dict)
+    outcome = result["outcome"]
+    bundle = result["bundle"]
+
+    await _record_and_broadcast(
+        "action",
+        {
+            "actions": [],
+            "source": "battle",
+            "intent": intent,
+            "state_before": result["state_before"],
+        },
+    )
+    await _broadcast_runtime_refresh(result)
     await _record_and_broadcast(
         "action_result",
         {
@@ -1204,7 +1423,7 @@ async def _run_battle_sequence(intent: dict, func, *args) -> dict:
             "actions_executed": len(outcome["actions"]),
             "source": "battle",
             "intent": intent,
-            "state_after": state_after,
+            "state_after": result["state_after"],
             "screen_text": bundle.get("screen_text"),
         },
     )
@@ -1270,10 +1489,21 @@ async def _startup():
         _explored_maps, \
         _map_image_state, \
         _explored_last_save_at, \
-        _explored_records_since_save
+        _explored_records_since_save, \
+        _world, \
+        _guide_log, \
+        _press_count, \
+        _startup_error
     _loop = asyncio.get_running_loop()
     _start_time = time.time()
     _emulator_lock = asyncio.Lock()
+    # A startup that gives up must not leave the previous run's emulator visible
+    # to /health and /action.
+    _emulator = None
+    _reader = None
+    _runtime = None
+    _press_count = 0
+    _startup_error = None
     _realtime_ticks = 0
     _realtime_last_tick_at = None
     _live_artifact_last_sync_at = None
@@ -1291,10 +1521,14 @@ async def _startup():
         print(f"[server] ERROR: ROM not found: {rom}")
         return
 
-    # Auto-detect game type
-    game_type = _config.game_type
-    if game_type == "auto":
-        game_type = _detect_game_type(str(rom))
+    # Decide what this ROM is *before* creating anything that would have to be
+    # torn down again.
+    try:
+        game_type = _resolve_game_type(str(rom), _config.game_type)
+    except (UnsupportedGameError, ValueError) as exc:
+        _startup_error = str(exc)
+        print(f"[server] ERROR: {_startup_error}")
+        return
     _config.game_type = game_type
 
     print(f"[server] Loading ROM: {rom}")
@@ -1306,16 +1540,9 @@ async def _startup():
     _emulator = create_emulator(str(rom))
 
     # Create memory reader
-    if game_type == "red":
-        from pokemon_agent.memory.red import PokemonRedReader
+    from pokemon_agent.memory.red import PokemonRedReader
 
-        _reader = PokemonRedReader(_emulator)
-    elif game_type == "firered":
-        from pokemon_agent.memory.firered import PokemonFireRedReader
-
-        _reader = PokemonFireRedReader(_emulator)
-    else:
-        raise ValueError(f"Unknown game type: {game_type}")
+    _reader = PokemonRedReader(_emulator)
 
     # Create data directories
     data_dir = Path(_config.data_dir).expanduser().resolve()
@@ -1329,6 +1556,11 @@ async def _startup():
     # and the fresh Pi sessions the watchdog starts every ~110k tokens.
     _explored_maps = ExploredMaps(data_dir / "explored_maps.json")
     print(f"[server] Explored maps: {len(_explored_maps.map_ids())} known — {_explored_maps.path}")
+    # The static map graph and the guide-read log. Both live beside the explored
+    # map: they are run memory, not workspace scratch.
+    _world = World.load()
+    print(f"[server] World graph: {len(_world)} maps — {_world.source or 'not generated yet'}")
+    _guide_log = GuideLog(data_dir / "guide_reads.jsonl")
     _map_image_state = None
     _runtime = AgentRuntime(
         data_dir=data_dir,
@@ -1357,33 +1589,30 @@ async def _startup():
         _live_artifact_frames_per_second = max(1, int(configured_broadcast_fps))
 
     if _config.enable_dashboard:
-        _dashboard_dir = _get_dashboard_static_dir()
+        # One mounting path, owned by the dashboard package: the shell at
+        # /dashboard and /dashboard/, its assets under /dashboard/assets. The
+        # call is idempotent, so a restarted lifespan re-uses what is there.
+        _dashboard_dir = _mount_dashboard_routes()
         if _dashboard_dir is not None:
-            from fastapi.staticfiles import StaticFiles
-
-            if not any(
-                getattr(route, "path", None) == "/dashboard/assets" for route in app.router.routes
-            ):
-                app.mount(
-                    "/dashboard/assets",
-                    StaticFiles(directory=str(_dashboard_dir), html=False),
-                    name="dashboard-assets",
-                )
-            print("[server] Dashboard assets mounted at /dashboard/assets")
+            print("[server] Dashboard mounted at /dashboard (assets under /dashboard/assets)")
         else:
             print("[server] Dashboard static files not found — /dashboard unavailable")
 
-    # Auto-load a save state if specified
+    # Auto-load a save state if specified. Same resolver as POST /load: a name
+    # from a config file is no more trusted than a name from the network.
     if _config.load_state:
-        saves_dir = data_dir / "saves"
-        state_path = saves_dir / f"{_config.load_state}.state"
-        if state_path.exists():
+        try:
+            state_path = resolve_save_path(data_dir / "saves", _config.load_state)
+        except SaveNameError as exc:
+            state_path = None
+            print(f"[server] WARNING: Refusing to auto-load '{_config.load_state}': {exc}")
+        if state_path is not None and state_path.exists():
             try:
                 _emulator.load_state(str(state_path))
                 print(f"[server] Loaded save state: {_config.load_state}")
             except Exception as e:
                 print(f"[server] WARNING: Failed to load state '{_config.load_state}': {e}")
-        else:
+        elif state_path is not None:
             print(f"[server] WARNING: Save state not found: {state_path}")
 
     try:
@@ -1465,22 +1694,8 @@ async def health():
         "dashboard_ready": _dashboard_dir is not None,
         "emulation": _server_runtime_snapshot(),
         "pi_supervisor": _compact_supervisor_status(supervisor_snapshot),
+        "startup_error": _startup_error,
     }
-
-
-@app.get("/dashboard")
-@app.get("/dashboard/")
-async def dashboard_index():
-    """Serve the telemetry dashboard shell."""
-    if _dashboard_dir is None:
-        raise HTTPException(
-            status_code=404,
-            detail="Dashboard static files are not available in this installation.",
-        )
-    return FileResponse(
-        _dashboard_dir / "index.html",
-        headers={"Cache-Control": "no-store, max-age=0"},
-    )
 
 
 @app.get("/artifacts/{artifact_key}")
@@ -1553,6 +1768,8 @@ async def supervisor_start(req: PiSupervisorStartRequest):
             skill_path=req.skill_path,
         )
         return {"success": True, "supervisor": _compact_supervisor_status(state)}
+    except HTTPException:
+        raise
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc))
     except Exception as exc:  # noqa: BLE001
@@ -1567,6 +1784,8 @@ async def supervisor_continue(req: PiSupervisorContinueRequest):
     try:
         state = await _supervisor.continue_once()
         return {"success": True, "supervisor": _compact_supervisor_status(state)}
+    except HTTPException:
+        raise
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc))
     except Exception as exc:  # noqa: BLE001
@@ -1607,6 +1826,8 @@ async def supervisor_stop():
     try:
         state = await _supervisor.stop()
         return {"success": True, "supervisor": _compact_supervisor_status(state)}
+    except HTTPException:
+        raise
     except Exception as exc:  # noqa: BLE001
         raise HTTPException(status_code=500, detail=f"Supervisor stop error: {exc}")
 
@@ -1618,6 +1839,8 @@ async def get_state():
     try:
         state = await _run_emulator_sync(_get_state_dict)
         return JSONResponse(content=state)
+    except HTTPException:
+        raise
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Error reading state: {e}")
 
@@ -1659,6 +1882,8 @@ async def screenshot():
     try:
         png_bytes = await _run_emulator_sync(_get_screenshot_bytes)
         return Response(content=png_bytes, media_type="image/png")
+    except HTTPException:
+        raise
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Screenshot error: {e}")
 
@@ -1671,6 +1896,8 @@ async def screenshot_base64():
         png_bytes = await _run_emulator_sync(_get_screenshot_bytes)
         b64 = base64.b64encode(png_bytes).decode("ascii")
         return {"image": b64, "format": "png"}
+    except HTTPException:
+        raise
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Screenshot error: {e}")
 
@@ -1730,20 +1957,31 @@ async def battle_run():
         raise HTTPException(status_code=500, detail=f"Battle error: {e}")
 
 
+def _saves_dir() -> Path:
+    if not _config:
+        raise HTTPException(status_code=503, detail="Server not configured")
+    return Path(_config.data_dir).expanduser().resolve() / "saves"
+
+
+def _save_path_for(name: str) -> Path:
+    """Resolve one save name, or answer 400. The only way to build a save path."""
+    try:
+        return resolve_save_path(_saves_dir(), name)
+    except SaveNameError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
 @app.post("/save")
 async def save_state(req: SaveRequest):
     """Save emulator state to disk."""
     _ensure_emulator()
-    if not _config:
-        raise HTTPException(status_code=503, detail="Server not configured")
+    saves_dir = _saves_dir()
+    saves_dir.mkdir(parents=True, exist_ok=True)
+    save_path = _save_path_for(req.name)
     try:
-        saves_dir = Path(_config.data_dir).expanduser().resolve() / "saves"
-        saves_dir.mkdir(parents=True, exist_ok=True)
-        save_path = saves_dir / f"{req.name}.state"
-        await _run_emulator_sync(_emulator.save_state, str(save_path))
-        bundle = await _refresh_and_broadcast(
+        result = await _coordinator.save_and_observe(
+            path=str(save_path),
             reason=f"manual_save:{req.name}",
-            source="save",
             explicit_save=_make_runtime_save_event(
                 req.name,
                 save_path,
@@ -1751,55 +1989,58 @@ async def save_state(req: SaveRequest):
                 reason="manual_save",
             ),
         )
-        return {
-            "success": True,
-            "save": {"name": req.name, "path": str(save_path)},
-            **_observation_summary(bundle),
-        }
+    except HTTPException:
+        raise
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Save error: {e}")
+    await _broadcast_runtime_refresh(result)
+    return {
+        "success": True,
+        "save": {"name": req.name, "path": str(save_path)},
+        **_observation_summary(result["bundle"]),
+    }
 
 
 @app.post("/load")
 async def load_state(req: SaveRequest):
-    """Load emulator state from disk."""
+    """Load emulator state from disk, let it settle, and report where it landed."""
     _ensure_emulator()
-    if not _config:
-        raise HTTPException(status_code=503, detail="Server not configured")
+    save_path = _save_path_for(req.name)
+    if not save_path.exists():
+        raise HTTPException(status_code=404, detail=f"Save not found: {req.name}")
     try:
-        saves_dir = Path(_config.data_dir).expanduser().resolve() / "saves"
-        save_path = saves_dir / f"{req.name}.state"
-        if not save_path.exists():
-            raise HTTPException(status_code=404, detail=f"Save not found: {req.name}")
-        await _run_emulator_sync(_emulator.load_state, str(save_path))
-        bundle = await _refresh_and_broadcast(
+        result = await _coordinator.load_settle_and_observe(
+            path=str(save_path),
             reason=f"manual_load:{req.name}",
-            source="load",
         )
-        state_after = bundle.get("state") or await _run_emulator_sync(_get_state_dict)
-        await _record_and_broadcast("load", {"name": req.name, "path": str(save_path)})
-        await broadcast({"type": "state_update", "reason": "load", "state": state_after})
-        return {
-            "success": True,
-            "save": {"name": req.name, "path": str(save_path)},
-            **_observation_summary(bundle),
-        }
     except HTTPException:
         raise
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Load error: {e}")
 
+    bundle = result["bundle"]
+    if result.get("settled", True):
+        await _broadcast_runtime_refresh(result)
+    await _record_and_broadcast("load", {"name": req.name, "path": str(save_path)})
+    await broadcast({"type": "state_update", "reason": "load", "state": result["state_after"]})
+    payload = {
+        "success": True,
+        "save": {"name": req.name, "path": str(save_path)},
+        **_observation_summary(bundle),
+    }
+    if not result.get("settled", True):
+        # The save was captured mid-transition and the game never came to rest.
+        # Nothing was published and nothing was auto-saved: the map store would
+        # have taken the *previous* map's geometry and never let go of it.
+        payload["settled"] = False
+    return payload
+
 
 @app.get("/saves")
 async def list_saves():
     """List available save-state files."""
-    if not _config:
-        raise HTTPException(status_code=503, detail="Server not configured")
+    saves_dir = _saves_dir()
     try:
-        saves_dir = Path(_config.data_dir).expanduser().resolve() / "saves"
-        if not saves_dir.exists():
-            return {"saves": []}
-        files = sorted(saves_dir.glob("*.state"))
         saves = [
             {
                 "name": f.stem,
@@ -1807,11 +2048,271 @@ async def list_saves():
                 "size_bytes": f.stat().st_size,
                 "modified": f.stat().st_mtime,
             }
-            for f in files
+            for f in list_save_files(saves_dir)
         ]
         return {"saves": saves}
+    except HTTPException:
+        raise
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Error listing saves: {e}")
+
+
+# ---------------------------------------------------------------------------
+# Capabilities: routing, walking, damage, frontier, simulation, guides, progress
+#
+# Five finished modules answer these; the routes below validate, call one
+# service function, and translate its refusal into a status code. The agent's
+# CLI is stdlib-only and staged standalone, so HTTP is the only way it can
+# reach any of them.
+# ---------------------------------------------------------------------------
+
+
+def _ensure_world() -> World:
+    if _world is None:
+        raise HTTPException(status_code=503, detail="World graph is not loaded")
+    if len(_world) == 0:
+        raise HTTPException(
+            status_code=503,
+            detail=(
+                "The world graph is empty — pokemon_agent/data/game/world.json has not been "
+                "generated. Run: .venv/bin/python scripts/gen_gamedata.py"
+            ),
+        )
+    return _world
+
+
+def _capability_error(exc: capabilities.CapabilityError) -> HTTPException:
+    return HTTPException(status_code=exc.status, detail=exc.detail)
+
+
+def _navigation_snapshot_sync() -> Optional[dict]:
+    """The live collision window, without folding it into the explored map."""
+    if _emulator is None:
+        return None
+    try:
+        snapshot = _emulator.get_navigation_snapshot(_reader)
+    except NotImplementedError:
+        return None
+    except Exception:  # noqa: BLE001 — perception must never fail a read
+        return None
+    return snapshot.to_dict()
+
+
+def _observation_sync() -> dict:
+    """State and live collision together, read in one locked pass."""
+    return {"state": _get_state_dict(), "navigation": {"snapshot": _navigation_snapshot_sync()}}
+
+
+async def _require_snapshot() -> dict:
+    _ensure_emulator()
+    snapshot = await _run_emulator_sync(_navigation_snapshot_sync)
+    if not snapshot:
+        raise HTTPException(
+            status_code=503,
+            detail="No live collision window right now — the game is not on the overworld.",
+        )
+    return snapshot
+
+
+def _explored_grid(map_id: Optional[int]) -> Optional[dict]:
+    if _explored_maps is None or map_id is None:
+        return None
+    try:
+        return _explored_maps.grid(int(map_id))
+    except Exception:  # noqa: BLE001 — map memory must never fail a request
+        return None
+
+
+def _current_map_name_sync() -> Optional[str]:
+    if _reader is None:
+        return None
+    try:
+        return (_reader.read_map_info() or {}).get("map_name")
+    except Exception:  # noqa: BLE001
+        return None
+
+
+@app.get("/route")
+async def get_route(to: Optional[str] = None):
+    """Hops from the current map to another, as a plan rather than as buttons."""
+    _ensure_emulator()
+    world = _ensure_world()
+    current = await _run_emulator_sync(_current_map_name_sync)
+    if not current:
+        raise HTTPException(status_code=503, detail="The current map is not readable right now.")
+    try:
+        return capabilities.route_payload(world, current, to or "")
+    except capabilities.CapabilityError as exc:
+        raise _capability_error(exc) from exc
+
+
+@app.post("/goto")
+async def goto(req: GotoRequest):
+    """Walk toward a map or a tile, re-planning on live collision each map.
+
+    A hop is a plan, not a guarantee — Route 4 is one map whose halves are
+    separated by Mt. Moon — so this stops and says why rather than grinding into
+    rock, and it never spends more frames than one action batch may.
+    """
+    _ensure_emulator()
+    _check_action_rate()
+    if req.target and (req.x is not None or req.y is not None):
+        raise HTTPException(
+            status_code=400, detail="Send either a target map or an x and y, not both."
+        )
+    target_xy = None
+    if req.x is not None or req.y is not None:
+        if req.x is None or req.y is None:
+            raise HTTPException(status_code=400, detail="A tile target needs both x and y.")
+        target_xy = (int(req.x), int(req.y))
+    elif not req.target:
+        raise HTTPException(status_code=400, detail="Nothing to walk to: send target, or x and y.")
+    # Walking to a tile on the current map needs no map graph at all.
+    world = _ensure_world() if req.target else World({})
+
+    async def observe() -> dict:
+        return capabilities.observation_from_bundle(await _run_emulator_sync(_observation_sync))
+
+    async def act(actions: list[str]) -> dict:
+        return await _run_actions(actions, source="goto", reason="goto", rate_check=False)
+
+    try:
+        result = await capabilities.walk_to(
+            observe=observe,
+            act=act,
+            world=world,
+            explored_grid=_explored_grid,
+            target_map=req.target,
+            target_xy=target_xy,
+            frame_budget=MAX_FRAMES_PER_BATCH,
+        )
+    except capabilities.CapabilityError as exc:
+        raise _capability_error(exc) from exc
+
+    bundle = result["bundle"]
+    if "screen_text" not in bundle:
+        # Nothing was walked, so no batch refreshed the workspace. Answer with a
+        # real observation rather than half of one.
+        bundle = await _refresh_and_broadcast(reason="goto", source="goto")
+    summary = _observation_summary(bundle)
+    _annotate_explored_map(summary, bundle)
+    return {
+        "actions_executed": result["actions_executed"],
+        **summary,
+        "walked": result["walked"],
+        "arrived": result["arrived"],
+        "stopped_because": result["stopped_because"],
+    }
+
+
+def _calc_inputs_sync() -> dict:
+    battle = (_reader.read_battle() if _reader is not None else None) or {}
+    party = (_reader.read_party() if _reader is not None else None) or []
+    moves: list[dict] = []
+    if battle.get("in_battle"):
+        try:
+            moves = _reader.read_battle_moves() or []
+        except Exception:  # noqa: BLE001 — an unreadable move list is not a crash
+            moves = []
+    return {"battle": battle, "party": party, "moves": moves}
+
+
+@app.get("/calc")
+async def calc():
+    """Damage each of the active Pokemon's moves would do, and what it faces back."""
+    _ensure_emulator()
+    inputs = await _run_emulator_sync(_calc_inputs_sync)
+    try:
+        return capabilities.calc_payload(inputs["battle"], inputs["party"], inputs["moves"])
+    except capabilities.CapabilityError as exc:
+        raise _capability_error(exc) from exc
+
+
+@app.get("/frontier")
+async def frontier():
+    """Reachable ground on this map that has never been stood on, nearest first.
+
+    "Unseen" is *unwalked*, not unrendered: every tile the window has ever shown
+    is recorded as seen the moment it is shown, so the useful question is which
+    reachable ground the player has not actually been to.
+    """
+    snapshot = await _require_snapshot()
+    grid = _explored_grid(snapshot.get("map_id"))
+    walked = (grid or {}).get("walked") or set()
+    try:
+        return capabilities.frontier_payload(snapshot, grid, walked)
+    except capabilities.CapabilityError as exc:
+        raise _capability_error(exc) from exc
+
+
+@app.post("/sim")
+async def sim(req: SimRequest):
+    """Dry-run a plan against live collision. Presses nothing."""
+    snapshot = await _require_snapshot()
+    try:
+        return capabilities.simulate_payload(
+            req.actions, snapshot, _explored_grid(snapshot.get("map_id"))
+        )
+    except capabilities.CapabilityError as exc:
+        raise _capability_error(exc) from exc
+
+
+def _record_guide_read(guide: str, slug: str) -> None:
+    """Note which section was opened, and where in the run it happened.
+
+    The map and the press count are what make the record answerable later: did
+    reading this section change how the segment that followed went?
+    """
+    if _guide_log is None:
+        return
+    at_map = None
+    if _runtime is not None:
+        bundle = _runtime.live_bundle or _runtime.latest_bundle or {}
+        at_map = ((bundle.get("state") or {}).get("map") or {}).get("map_name")
+    if at_map is None and _explored_maps is not None:
+        current = _explored_maps.current_map_id
+        at_map = MAP_NAMES.get(current) if current is not None else None
+    try:
+        _guide_log.record_read(guide, slug, at_map=at_map, presses=_press_count)
+    except Exception as exc:  # noqa: BLE001 — telemetry must never fail a read
+        print(f"[server] WARNING: guide read not recorded: {exc}")
+
+
+@app.get("/guide")
+async def guide(ref: Optional[str] = None, q: Optional[str] = None):
+    """The walkthrough library: an outline, a search, or one section's body."""
+    if ref and q:
+        raise HTTPException(status_code=400, detail="Send either ref or q, not both.")
+    try:
+        if ref:
+            payload = capabilities.guide_section(ref)
+            _record_guide_read(payload["guide"], payload["slug"])
+            return payload
+        if q:
+            return capabilities.guide_search(q)
+        return capabilities.guide_outline()
+    except capabilities.CapabilityError as exc:
+        raise _capability_error(exc) from exc
+
+
+def _milestone_summary_sync() -> dict:
+    return MilestoneTracker(_reader).summary()
+
+
+@app.get("/progress")
+async def progress():
+    """How far along the run is, in verified milestones and in buttons spent."""
+    _ensure_emulator()
+    if _reader is None or not hasattr(_reader, "read_bits"):
+        raise HTTPException(
+            status_code=503,
+            detail="Milestone tracking needs a Pokemon Red memory reader.",
+        )
+    try:
+        summary = await _run_emulator_sync(_milestone_summary_sync)
+    except Exception as exc:  # noqa: BLE001
+        raise HTTPException(status_code=503, detail=f"Milestones unreadable: {exc}") from exc
+    return capabilities.progress_payload(summary, _press_count)
 
 
 # ---------------------------------------------------------------------------

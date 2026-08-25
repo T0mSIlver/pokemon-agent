@@ -10,17 +10,39 @@ from pokemon_agent.explored_map import ExploredMaps
 from pokemon_agent.navigation import LiveNavigationSnapshot
 
 FOREST_ID = 51
-FOREST_NAME = "VIRIDIAN FOREST"
+FOREST_NAME = "Viridian Forest"
+FOREST_SIZE = (34, 48)
+#: A real Viridian Forest warp, so a store round trip does not repair it away.
+FOREST_WARP = {"x": 2, "y": 0}
+
+CITY_ID = 1
+CITY_NAME = "Viridian City"
+
+#: A map id the canonical size table does not cover, for the tests that care
+#: about the geometry machinery rather than about any particular map.
+UNSIZED_MAP_ID = 11
+
+#: Two plausible map sizes: a gate-sized room and a city.
+SMALL_ROOM = {"width": 10, "height": 8}
+BIG_OUTDOOR = {"width": 40, "height": 36}
+
+
+def canonical_dimensions(map_id):
+    entry = explored_map.canonical_maps().get(map_id)
+    if entry is None:
+        return {"width": 20, "height": 18}
+    return {"width": entry.width, "height": entry.height}
 
 
 def make_snapshot(**overrides):
     """A `LiveNavigationSnapshot.to_dict()`-shaped payload with sensible defaults."""
+    map_id = overrides.pop("map_id", FOREST_ID)
     player = overrides.pop("player", (5, 5))
     terrain = overrides.pop("terrain", [[1] * 10 for _ in range(9)])
     top_left = overrides.pop("top_left", (player[0] - 4, player[1] - 4))
-    dimensions = overrides.pop("dimensions", {"width": 20, "height": 18})
+    dimensions = overrides.pop("dimensions", canonical_dimensions(map_id))
     snapshot = {
-        "map_id": overrides.pop("map_id", FOREST_ID),
+        "map_id": map_id,
         "map_name": overrides.pop("map_name", FOREST_NAME),
         "player_position": {"x": player[0], "y": player[1]},
         "window_top_left": {"x": top_left[0], "y": top_left[1]},
@@ -77,8 +99,8 @@ def test_a_snapshot_marks_the_window_seen_and_the_player_tile_walked(tmp_path):
         "seen": 90,  # the whole 10x9 window at (1, 1)..(10, 9)
         "walkable_seen": 90,
         "walked": 1,
-        "total": 360,
-        "percent": 25.0,
+        "total": 34 * 48,
+        "percent": 5.5,
     }
 
 
@@ -144,7 +166,7 @@ def test_a_real_navigation_snapshot_is_ingested(tmp_path):
         tileset="FOREST",
         window_top_left=(1, 1),
         terrain=[[1] * 10 for _ in range(9)],
-        warps=[{"x": 3, "y": 3, "warp_id": 0, "target_map_id": 13}],
+        warps=[{**FOREST_WARP, "warp_id": 0, "target_map_id": 13}],
         map_dimensions={"width": 34, "height": 48},
     )
 
@@ -153,7 +175,7 @@ def test_a_real_navigation_snapshot_is_ingested(tmp_path):
     assert maps.visited(FOREST_ID) == {(5, 5)}
     assert maps.coverage(FOREST_ID)["total"] == 34 * 48
     image = maps.render_image(FOREST_ID, tile_px=TILE_PX)
-    assert tile_color(image, 3, 3) == explored_map.COLOR_WARP
+    assert tile_color(image, 2, 0) == explored_map.COLOR_WARP
 
 
 def test_snapshots_without_a_map_id_are_ignored(tmp_path):
@@ -169,12 +191,193 @@ def test_each_map_id_is_remembered_separately(tmp_path):
     maps = store(tmp_path)
 
     maps.record(make_snapshot(player=(5, 5)))
-    maps.record(make_snapshot(map_id=1, map_name="VIRIDIAN CITY", player=(9, 9)))
+    maps.record(make_snapshot(map_id=CITY_ID, map_name=CITY_NAME, player=(9, 9)))
 
-    assert maps.map_ids() == [1, FOREST_ID]
+    assert maps.map_ids() == [CITY_ID, FOREST_ID]
     assert maps.visited(FOREST_ID) == {(5, 5)}
-    assert maps.visited(1) == {(9, 9)}
-    assert maps.current_map_id == 1
+    assert maps.visited(CITY_ID) == {(9, 9)}
+    assert maps.current_map_id == CITY_ID
+
+
+# ---------------------------------------------------------------------------
+# Coherence and repair
+# ---------------------------------------------------------------------------
+
+#: Viridian School: an 8x8 house entered from a 40x36 city, which is what the
+#: game still reports for a frame or two after the warp.
+SCHOOL_ID = 43
+SCHOOL_NAME = "Viridian School"
+CITY_WARPS = [{"x": 23, "y": 25}, {"x": 29, "y": 19}, {"x": 21, "y": 15}]
+SCHOOL_WARPS = [{"x": 2, "y": 7}, {"x": 3, "y": 7}]
+
+
+def transition_snapshot():
+    """The new map's id carrying the map the player just left."""
+    return make_snapshot(
+        map_id=SCHOOL_ID,
+        map_name=SCHOOL_NAME,
+        player=(21, 15),
+        tileset="OVERWORLD",
+        dimensions={"width": 40, "height": 36, "width_blocks": 20, "height_blocks": 18},
+        warps=CITY_WARPS,
+    )
+
+
+def settled_snapshot(player=(2, 7)):
+    return make_snapshot(
+        map_id=SCHOOL_ID,
+        map_name=SCHOOL_NAME,
+        player=player,
+        top_left=(0, 0),
+        terrain=[[1] * 8 for _ in range(8)],
+        tileset="HOUSE",
+        dimensions={"width": 8, "height": 8, "width_blocks": 4, "height_blocks": 4},
+        warps=SCHOOL_WARPS,
+    )
+
+
+def test_a_transition_snapshot_is_rejected_instead_of_merged(tmp_path):
+    """One bad frame used to fix a house at city size for good."""
+    maps = store(tmp_path)
+
+    assert maps.record(transition_snapshot()) is False
+    assert maps.knows(SCHOOL_ID) is False
+    assert maps.rejected == 1
+
+    assert maps.record(settled_snapshot()) is True
+
+    summary = maps.summary(SCHOOL_ID)
+    assert (summary["width"], summary["height"]) == (8, 8)
+    assert summary["warps"] == SCHOOL_WARPS
+    assert summary["coverage"]["seen"] == 64
+
+
+@pytest.mark.parametrize(
+    ("reason", "overrides"),
+    [
+        ("a coordinate outside its own map", {"player": (30, 4)}),
+        ("a warp outside its own map", {"warps": [{"x": 30, "y": 4}]}),
+        ("tiles and blocks that disagree", {"dimensions": {**SMALL_ROOM, "width_blocks": 9}}),
+        ("a room tileset on an outdoor map", {"tileset": "HOUSE", "dimensions": BIG_OUTDOOR}),
+        ("the overworld tileset on a room", {"tileset": "OVERWORLD"}),
+    ],
+)
+def test_a_snapshot_that_contradicts_itself_is_not_evidence(tmp_path, reason, overrides):
+    maps = store(tmp_path)
+    snapshot = make_snapshot(map_id=UNSIZED_MAP_ID, **{"dimensions": dict(SMALL_ROOM), **overrides})
+
+    assert explored_map.incoherence(snapshot, UNSIZED_MAP_ID) is not None, reason
+    assert maps.record(snapshot) is False
+    assert maps.map_ids() == []
+
+
+def test_a_snapshot_with_no_dimensions_is_read_against_the_size_already_known(tmp_path):
+    """Without dimensions of its own, a stray coordinate cannot grow the map."""
+    maps = store(tmp_path)
+    maps.record(settled_snapshot())
+
+    assert maps.record(make_snapshot(map_id=SCHOOL_ID, player=(21, 15), dimensions=None)) is False
+    assert maps.grid(SCHOOL_ID)["width"] == 8
+
+
+def test_a_shrinking_observation_prunes_the_tiles_outside_the_new_bounds(tmp_path):
+    maps = store(tmp_path)
+    maps.record(
+        make_snapshot(
+            map_id=UNSIZED_MAP_ID, player=(15, 12), dimensions={"width": 20, "height": 18}
+        )
+    )
+    assert (15, 12) in maps.grid(UNSIZED_MAP_ID)["walked"]
+
+    maps.record(
+        make_snapshot(
+            map_id=UNSIZED_MAP_ID,
+            player=(2, 2),
+            top_left=(0, 0),
+            terrain=[[1] * 8 for _ in range(8)],
+            dimensions={"width": 8, "height": 8},
+        )
+    )
+
+    grid = maps.grid(UNSIZED_MAP_ID)
+    assert (grid["width"], grid["height"]) == (8, 8)
+    assert (15, 12) not in grid["walked"]
+    assert all(x < 8 and y < 8 for x, y in grid["seen"])
+
+
+def test_the_warp_table_is_replaced_by_the_latest_reading(tmp_path):
+    """The game reports a whole warp table each frame; unioning them mixes maps."""
+    maps = store(tmp_path)
+    warps = [{"x": 1, "y": 1}, {"x": 2, "y": 2}]
+
+    maps.record(make_snapshot(map_id=UNSIZED_MAP_ID, warps=warps))
+    maps.record(make_snapshot(map_id=UNSIZED_MAP_ID, warps=warps[:1]))
+
+    assert maps.grid(UNSIZED_MAP_ID)["warps"] == {(1, 1)}
+
+
+def corrupt_school_record():
+    """A Viridian School record as a store written before this fix holds it."""
+    record = explored_map._MapRecord(SCHOOL_ID, SCHOOL_NAME)
+    record.width, record.height = 40, 36
+    record.seen = {(x, y) for x in range(40) for y in range(36)}
+    record.walkable = set(record.seen)
+    record.visits = {(2, 7): 1, (21, 15): 1}
+    record.warps = {(warp["x"], warp["y"]) for warp in CITY_WARPS + SCHOOL_WARPS}
+    record.player = (2, 7)
+    return record
+
+
+def write_store(path, record):
+    path.write_text(
+        json.dumps(
+            {
+                "version": explored_map.STORE_VERSION,
+                "current_map_id": record.map_id,
+                "maps": {str(record.map_id): record.to_json()},
+            }
+        ),
+        encoding="utf-8",
+    )
+
+
+def test_loading_repairs_a_store_that_holds_impossible_geometry(tmp_path):
+    path = tmp_path / "explored_maps.json"
+    write_store(path, corrupt_school_record())
+
+    maps = ExploredMaps(path)
+
+    assert SCHOOL_ID in maps.repairs
+    summary = maps.summary(SCHOOL_ID)
+    assert (summary["width"], summary["height"]) == (8, 8)
+    assert summary["warps"] == SCHOOL_WARPS
+    assert summary["coverage"]["seen"] == 64  # the 1440 city tiles are gone
+    assert maps.visited(SCHOOL_ID) == {(2, 7)}
+    assert maps.dirty is True
+
+    maps.save()
+    assert ExploredMaps(path).repairs == {}
+
+
+def test_repair_leaves_a_map_the_game_agrees_with_alone(tmp_path):
+    maps = store(tmp_path)
+    maps.record(settled_snapshot())
+    maps.save()
+
+    assert ExploredMaps(maps.path).repairs == {}
+
+
+def test_the_store_still_works_without_the_canonical_map_table(tmp_path, monkeypatch):
+    """The data file is data, not a dependency: no table, no canonical checks."""
+    monkeypatch.setattr(explored_map, "_gamedata", None)
+    monkeypatch.setattr(explored_map, "_CANONICAL", None)
+    maps = store(tmp_path)
+
+    assert explored_map.canonical_maps() == {}
+    assert maps.record(make_snapshot(map_id=SCHOOL_ID, dimensions=dict(SMALL_ROOM))) is True
+    assert (
+        maps.record(make_snapshot(map_id=SCHOOL_ID, player=(30, 4), dimensions=SMALL_ROOM)) is False
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -189,8 +392,8 @@ def test_the_map_image_is_one_block_per_tile_plus_chrome(tmp_path):
     image = maps.render_image(FOREST_ID, tile_px=TILE_PX)
 
     assert image.size == (
-        MAP_LEFT_PX + (20 * TILE_PX) + explored_map._EDGE_PAD_PX,
-        MAP_TOP_PX + (18 * TILE_PX) + explored_map._EDGE_PAD_PX,
+        MAP_LEFT_PX + (FOREST_SIZE[0] * TILE_PX) + explored_map._EDGE_PAD_PX,
+        MAP_TOP_PX + (FOREST_SIZE[1] * TILE_PX) + explored_map._EDGE_PAD_PX,
     )
 
 
@@ -198,9 +401,15 @@ def test_the_map_image_is_one_block_per_tile_plus_chrome(tmp_path):
 def test_auto_sizing_keeps_the_long_edge_readable(tmp_path, width, height):
     """34x48 is Viridian Forest; it must fit on screen without a squint."""
     maps = store(tmp_path)
-    maps.record(make_snapshot(player=(5, 5), dimensions={"width": width, "height": height}))
+    maps.record(
+        make_snapshot(
+            map_id=UNSIZED_MAP_ID,
+            player=(5, 5),
+            dimensions={"width": width, "height": height},
+        )
+    )
 
-    image = maps.render_image(FOREST_ID)
+    image = maps.render_image(UNSIZED_MAP_ID)
 
     assert 200 <= max(image.size) <= 400
 
@@ -212,30 +421,36 @@ def test_every_kind_of_tile_gets_its_own_colour(tmp_path):
         make_snapshot(
             player=(5, 5),
             terrain=terrain_for((1, 1), walls),
-            warps=[{"x": 3, "y": 3}],
+            warps=[FOREST_WARP],
         )
     )
-    maps.record(make_snapshot(player=(4, 5), terrain=terrain_for((0, 1), walls)))
+    maps.record(
+        make_snapshot(
+            player=(4, 5),
+            terrain=terrain_for((0, 1), walls),
+            warps=[FOREST_WARP],
+        )
+    )
 
     image = maps.render_image(FOREST_ID, tile_px=TILE_PX)
 
     assert tile_color(image, 4, 5) == explored_map.COLOR_PLAYER
     assert tile_color(image, 5, 5) == explored_map.COLOR_WALKED
     assert tile_color(image, 6, 5) == explored_map.COLOR_WALL
-    assert tile_color(image, 3, 3) == explored_map.COLOR_WARP
+    assert tile_color(image, 2, 0) == explored_map.COLOR_WARP
     assert tile_color(image, 2, 2) == explored_map.COLOR_SEEN
     assert tile_color(image, 15, 15) == explored_map.COLOR_UNKNOWN
-    probes = [(4, 5), (5, 5), (6, 5), (3, 3), (2, 2), (15, 15)]
+    probes = [(4, 5), (5, 5), (6, 5), (2, 0), (2, 2), (15, 15)]
     assert len({tile_color(image, x, y) for x, y in probes}) == len(probes)
 
 
 def test_a_warp_outranks_the_tile_underneath_it(tmp_path):
     maps = store(tmp_path)
-    maps.record(make_snapshot(player=(5, 5), warps=[{"x": 3, "y": 3, "target_map_id": 13}]))
+    maps.record(make_snapshot(player=(5, 5), warps=[{**FOREST_WARP, "target_map_id": 13}]))
 
     image = maps.render_image(FOREST_ID, tile_px=TILE_PX)
 
-    assert tile_color(image, 3, 3) == explored_map.COLOR_WARP
+    assert tile_color(image, 2, 0) == explored_map.COLOR_WARP
 
 
 def test_the_player_wears_a_ring_so_one_block_is_not_lost_in_the_map(tmp_path):
@@ -291,16 +506,16 @@ def test_write_image_lands_one_readable_png_and_no_temp_files(tmp_path):
 
 def test_the_summary_is_shape_and_counts_with_no_grid_in_it(tmp_path):
     maps = store(tmp_path)
-    maps.record(make_snapshot(player=(5, 5), warps=[{"x": 3, "y": 3}]))
+    maps.record(make_snapshot(player=(5, 5), warps=[FOREST_WARP]))
 
     payload = maps.summary(FOREST_ID)
 
     assert payload["map_id"] == FOREST_ID
     assert payload["map_name"] == FOREST_NAME
-    assert (payload["width"], payload["height"]) == (20, 18)
+    assert (payload["width"], payload["height"]) == FOREST_SIZE
     assert payload["player"] == {"x": 5, "y": 5}
-    assert payload["warps"] == [{"x": 3, "y": 3}]
-    assert payload["coverage"]["total"] == 360
+    assert payload["warps"] == [FOREST_WARP]
+    assert payload["coverage"]["total"] == 34 * 48
     assert "ascii" not in payload
 
 
@@ -330,17 +545,23 @@ def test_grid_hands_back_the_raw_tile_sets(tmp_path):
         make_snapshot(
             player=(5, 5),
             terrain=terrain_for((1, 1), walls),
-            warps=[{"x": 3, "y": 3}],
+            warps=[FOREST_WARP],
         )
     )
-    maps.record(make_snapshot(player=(4, 5), terrain=terrain_for((0, 1), walls)))
+    maps.record(
+        make_snapshot(
+            player=(4, 5),
+            terrain=terrain_for((0, 1), walls),
+            warps=[FOREST_WARP],
+        )
+    )
 
     grid = maps.grid(FOREST_ID)
 
     assert set(grid) == {"width", "height", "seen", "walkable", "walked", "warps"}
-    assert (grid["width"], grid["height"]) == (20, 18)
+    assert (grid["width"], grid["height"]) == FOREST_SIZE
     assert grid["walked"] == {(5, 5), (4, 5)}
-    assert grid["warps"] == {(3, 3)}
+    assert grid["warps"] == {(2, 0)}
     assert (6, 5) in grid["seen"]
     assert (6, 5) not in grid["walkable"]
     assert grid["walked"] <= grid["walkable"] <= grid["seen"]
@@ -369,6 +590,7 @@ def test_unexplored_nearest_finds_the_closest_unwalked_tile(tmp_path):
     maps = store(tmp_path)
     maps.record(
         make_snapshot(
+            map_id=UNSIZED_MAP_ID,
             player=(1, 1),
             terrain=[[1] * 3 for _ in range(3)],
             top_left=(0, 0),
@@ -376,27 +598,29 @@ def test_unexplored_nearest_finds_the_closest_unwalked_tile(tmp_path):
         )
     )
 
-    assert maps.summary(FOREST_ID)["unexplored_nearest"] == {"x": 1, "y": 0, "distance": 1.0}
+    assert maps.summary(UNSIZED_MAP_ID)["unexplored_nearest"] == {"x": 1, "y": 0, "distance": 1.0}
 
 
 def test_unexplored_nearest_is_null_once_everything_walkable_is_walked(tmp_path):
     maps = store(tmp_path)
     corridor = dict(
+        map_id=UNSIZED_MAP_ID,
         terrain=[[1, 1]],
         top_left=(0, 0),
         dimensions={"width": 2, "height": 1},
     )
 
     maps.record(make_snapshot(player=(0, 0), **corridor))
-    assert maps.summary(FOREST_ID)["unexplored_nearest"] is not None
+    assert maps.summary(UNSIZED_MAP_ID)["unexplored_nearest"] is not None
 
     maps.record(make_snapshot(player=(1, 0), **corridor))
-    assert maps.summary(FOREST_ID)["unexplored_nearest"] is None
+    assert maps.summary(UNSIZED_MAP_ID)["unexplored_nearest"] is None
 
 
 def test_unexplored_nearest_measures_from_an_explicit_player_position(tmp_path):
     maps = store(tmp_path)
     patch = dict(
+        map_id=UNSIZED_MAP_ID,
         terrain=[[1] * 3 for _ in range(3)],
         top_left=(0, 0),
         dimensions={"width": 3, "height": 3},
@@ -404,7 +628,7 @@ def test_unexplored_nearest_measures_from_an_explicit_player_position(tmp_path):
     maps.record(make_snapshot(player=(1, 1), **patch))
     maps.record(make_snapshot(player=(2, 2), **patch))
 
-    payload = maps.summary(FOREST_ID, player=(1, 1))
+    payload = maps.summary(UNSIZED_MAP_ID, player=(1, 1))
 
     assert payload["player"] == {"x": 1, "y": 1}  # not the stored (2, 2)
     assert payload["unexplored_nearest"] == {"x": 1, "y": 0, "distance": 1.0}
@@ -419,9 +643,9 @@ def test_save_and_load_round_trip_exactly(tmp_path):
     maps = store(tmp_path)
     terrain = [[1] * 10 for _ in range(9)]
     terrain[2] = [0] * 10
-    maps.record(make_snapshot(player=(5, 5), terrain=terrain, warps=[{"x": 3, "y": 3}]))
-    maps.record(make_snapshot(player=(6, 5), terrain=terrain))
-    maps.record(make_snapshot(map_id=1, map_name="VIRIDIAN CITY", player=(9, 9)))
+    maps.record(make_snapshot(player=(5, 5), terrain=terrain, warps=[FOREST_WARP]))
+    maps.record(make_snapshot(player=(6, 5), terrain=terrain, warps=[FOREST_WARP]))
+    maps.record(make_snapshot(map_id=CITY_ID, map_name=CITY_NAME, player=(9, 9)))
     maps.save()
 
     reloaded = ExploredMaps(maps.path)
@@ -524,7 +748,7 @@ def test_coming_back_to_a_map_counts_as_an_arrival(tmp_path):
     maps = store(tmp_path)
 
     maps.record(make_snapshot(player=(5, 5)))
-    maps.record(make_snapshot(map_id=1, map_name="VIRIDIAN CITY", player=(9, 9)))
+    maps.record(make_snapshot(map_id=CITY_ID, map_name=CITY_NAME, player=(9, 9)))
     maps.record(make_snapshot(player=(5, 5)))
 
     assert maps.visit_count(FOREST_ID, 5, 5) == 2

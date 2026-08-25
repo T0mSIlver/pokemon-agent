@@ -1,6 +1,11 @@
 from pokemon_agent.emulator import _build_interaction_probe
 from pokemon_agent.memory.red import ADDR_MAP_HEIGHT, ADDR_MAP_WIDTH, PokemonRedReader
-from pokemon_agent.navigation import LiveNavigationSnapshot
+from pokemon_agent.navigation import (
+    LEDGE_TILE_PAIRS,
+    TILE_ID_OFFSET,
+    LiveNavigationSnapshot,
+    ledge_hop_allows,
+)
 
 
 def make_snapshot() -> LiveNavigationSnapshot:
@@ -157,17 +162,22 @@ def test_compute_valid_moves_respects_tile_pair_blockers():
     assert {"down", "left", "right"}.issubset(set(moves))
 
 
-def test_compute_valid_moves_on_warp_tile_includes_all_directions():
-    """Standing on a warp tile must expose every direction so the agent can
-    press the one that fires the transition, even when the tile beyond it is
-    a wall (e.g. a south-edge doormat warp inside Blue's House)."""
-    from pokemon_agent.emulator import PyBoyEmulator
-
-    emu = PyBoyEmulator()
+def _warp_scene(front_tile: int) -> tuple[list[list[int]], list[list[int]]]:
+    """A player boxed in from below, standing on the map's bottom-edge warp."""
     terrain = [[1 for _ in range(10)] for _ in range(9)]
     for x in range(10):
         terrain[5][x] = 0
     tilemap = [[0 for _ in range(20)] for _ in range(18)]
+    tilemap[9][8] = 0x2C + TILE_ID_OFFSET
+    tilemap[11][8] = front_tile
+    return terrain, tilemap
+
+
+def test_compute_valid_moves_leaves_warp_directions_to_the_warp_rule():
+    from pokemon_agent.emulator import PyBoyEmulator
+
+    emu = PyBoyEmulator()
+    terrain, tilemap = _warp_scene(0x12 + TILE_ID_OFFSET)
 
     moves = emu._compute_valid_moves(
         terrain=terrain,
@@ -178,7 +188,168 @@ def test_compute_valid_moves_on_warp_tile_includes_all_directions():
         warps=[{"x": 2, "y": 7, "warp_id": 0, "target_map_id": 40}],
     )
 
-    assert set(moves) == {"up", "down", "left", "right"}
+    assert set(moves) == {"up", "left", "right"}
+
+
+def test_warp_exit_comes_from_the_carpet_tile_in_front_outdoors():
+    from pokemon_agent.emulator import PyBoyEmulator
+
+    emu = PyBoyEmulator()
+    terrain, tilemap = _warp_scene(0x12 + TILE_ID_OFFSET)
+
+    exits, armed, note = emu._compute_warp_exits(
+        terrain=terrain,
+        tilemap=tilemap,
+        tileset="OVERWORLD",
+        map_id=13,
+        map_dimensions={"width_tiles": 20, "height_tiles": 72},
+        player_coords=(3, 11),
+        warps=[{"x": 3, "y": 11, "warp_id": 1, "target_map_id": 47}],
+        armed=True,
+    )
+
+    assert exits == ["down"]
+    assert armed is True
+    assert note is None
+
+
+def test_warp_exit_is_empty_when_no_neighbour_matches():
+    from pokemon_agent.emulator import PyBoyEmulator
+
+    emu = PyBoyEmulator()
+    terrain, tilemap = _warp_scene(0x50 + TILE_ID_OFFSET)
+
+    exits, armed, note = emu._compute_warp_exits(
+        terrain=terrain,
+        tilemap=tilemap,
+        tileset="OVERWORLD",
+        map_id=13,
+        map_dimensions={"width_tiles": 20, "height_tiles": 72},
+        player_coords=(3, 11),
+        warps=[{"x": 3, "y": 11, "warp_id": 1, "target_map_id": 47}],
+        armed=True,
+    )
+
+    assert exits == []
+    assert armed is False
+    assert note is not None
+
+
+def test_warp_exit_indoors_comes_from_the_map_edge():
+    from pokemon_agent.emulator import PyBoyEmulator
+
+    emu = PyBoyEmulator()
+    terrain, tilemap = _warp_scene(0x50 + TILE_ID_OFFSET)
+
+    exits, armed, _ = emu._compute_warp_exits(
+        terrain=terrain,
+        tilemap=tilemap,
+        tileset="HOUSE",
+        map_id=39,
+        map_dimensions={"width_tiles": 8, "height_tiles": 8},
+        player_coords=(2, 7),
+        warps=[{"x": 2, "y": 7, "warp_id": 1, "target_map_id": 255}],
+        armed=True,
+    )
+
+    assert exits == ["down"]
+    assert armed is True
+
+
+def test_warp_exit_says_so_when_the_map_edge_cannot_be_checked():
+    from pokemon_agent.emulator import PyBoyEmulator
+
+    emu = PyBoyEmulator()
+    terrain, tilemap = _warp_scene(0x50 + TILE_ID_OFFSET)
+
+    exits, armed, note = emu._compute_warp_exits(
+        terrain=terrain,
+        tilemap=tilemap,
+        tileset="HOUSE",
+        map_id=39,
+        map_dimensions=None,
+        player_coords=(2, 7),
+        warps=[{"x": 2, "y": 7, "warp_id": 1, "target_map_id": 255}],
+        armed=True,
+    )
+
+    assert exits == []
+    assert armed is False
+    assert "dimensions" in note
+
+
+def test_warp_exit_reports_the_direction_but_not_armed_after_a_state_load():
+    """The engine arms a warp when the player *walks onto* it, so a save state
+    dropped on one has the exit direction but no way to fire it yet."""
+    from pokemon_agent.emulator import PyBoyEmulator
+
+    emu = PyBoyEmulator()
+    terrain, tilemap = _warp_scene(0x50 + TILE_ID_OFFSET)
+
+    exits, armed, note = emu._compute_warp_exits(
+        terrain=terrain,
+        tilemap=tilemap,
+        tileset="HOUSE",
+        map_id=52,
+        map_dimensions={"width_tiles": 20, "height_tiles": 8},
+        player_coords=(7, 7),
+        warps=[{"x": 7, "y": 7, "warp_id": 0, "target_map_id": 53}],
+        armed=False,
+    )
+
+    assert exits == ["down"]
+    assert armed is False
+    assert "Step off and back on" in note
+
+
+def test_ledge_tiles_are_directional_and_overworld_only():
+    # pokered's table has no upward ledge and no entry outside OVERWORLD.
+    assert ledge_hop_allows("OVERWORLD", "down", 0x39 + TILE_ID_OFFSET, 0x37 + TILE_ID_OFFSET)
+    assert not ledge_hop_allows("OVERWORLD", "up", 0x39 + TILE_ID_OFFSET, 0x37 + TILE_ID_OFFSET)
+    assert not ledge_hop_allows("FOREST", "down", 0x39 + TILE_ID_OFFSET, 0x37 + TILE_ID_OFFSET)
+    assert not ledge_hop_allows("OVERWORLD", "down", 0x39 + TILE_ID_OFFSET, 0x27 + TILE_ID_OFFSET)
+    assert ledge_hop_allows("OVERWORLD", "left", 0x2C + TILE_ID_OFFSET, 0x27 + TILE_ID_OFFSET)
+    assert ledge_hop_allows("OVERWORLD", "right", 0x2C + TILE_ID_OFFSET, 0x1D + TILE_ID_OFFSET)
+    assert not LEDGE_TILE_PAIRS["OVERWORLD"].get("up")
+
+
+def test_compute_valid_moves_offers_a_ledge_the_collision_map_calls_blocked():
+    from pokemon_agent.emulator import PyBoyEmulator
+
+    emu = PyBoyEmulator()
+    terrain = [[1 for _ in range(10)] for _ in range(9)]
+    terrain[5][4] = 0  # the ledge itself is never walkable terrain
+    tilemap = [[0 for _ in range(20)] for _ in range(18)]
+    tilemap[9][8] = 0x39 + TILE_ID_OFFSET
+    tilemap[11][8] = 0x37 + TILE_ID_OFFSET
+
+    hops = emu._compute_ledge_hops(tilemap, "OVERWORLD", (3, 46))
+    moves = emu._compute_valid_moves(
+        terrain=terrain,
+        tilemap=tilemap,
+        tileset="OVERWORLD",
+        sprites_local=set(),
+        player_coords=(3, 46),
+        warps=[],
+        ledge_hops=hops,
+    )
+
+    assert "down" in moves
+    assert hops == {"down": (3, 48)}
+
+
+def test_snapshot_publishes_ledge_hops_and_warp_exits():
+    snapshot = make_snapshot()
+    snapshot.ledge_hops = {"down": (10, 12)}
+    snapshot.warp_exit_directions = ["down"]
+    snapshot.warp_exit_armed = True
+
+    payload = snapshot.to_dict()
+
+    assert payload["ledge_hops"] == {"down": {"x": 10, "y": 12}}
+    assert payload["warp_exit_directions"] == ["down"]
+    assert payload["warp_exit_armed"] is True
+    assert "valid_moves" in payload["movement_legend"]["warp_exit_directions"]
 
 
 class FakeMemoryEmulator:
@@ -307,3 +478,74 @@ def test_read_party_decodes_internal_species_index():
     assert party[0]["pokedex_id"] == 4
     assert party[0]["species"] == "Charmander"
     assert party[0]["level"] == 6
+
+
+class FakeMemory(dict):
+    def __missing__(self, addr):
+        return 0
+
+
+class FakePyBoy:
+    """Enough PyBoy to drive settle(): a memory map and a frame counter."""
+
+    def __init__(self, script):
+        self.script = script
+        self.frame = 0
+        self.memory = FakeMemory()
+
+    def tick(self):
+        self.frame += 1
+        self.memory = FakeMemory(self.script(self.frame))
+
+
+def make_settle_emulator(script):
+    from pokemon_agent.emulator import PyBoyEmulator
+
+    emu = PyBoyEmulator()
+    emu._pyboy = FakePyBoy(script)
+    emu._pyboy.tick()
+    return emu
+
+
+def test_settle_returns_once_the_player_holds_still():
+    from pokemon_agent.emulator import ADDR_PLAYER_Y, ADDR_WALK_COUNTER
+
+    def script(frame):
+        # One tile of walking, then nothing.
+        if frame <= 16:
+            return {ADDR_WALK_COUNTER: 8 - frame // 2, ADDR_PLAYER_Y: 46}
+        return {ADDR_PLAYER_Y: 47}
+
+    emu = make_settle_emulator(script)
+
+    assert emu.settle(max_frames=200, quiet_frames=10) is True
+    assert emu._pyboy.frame < 40
+
+
+def test_settle_gives_up_at_the_frame_cap():
+    from pokemon_agent.emulator import ADDR_WALK_COUNTER
+
+    emu = make_settle_emulator(lambda frame: {ADDR_WALK_COUNTER: 4})
+
+    assert emu.settle(max_frames=50, quiet_frames=10) is False
+    assert emu._pyboy.frame == 51  # the priming tick plus the cap, and no more
+
+
+def test_settle_does_not_stop_on_the_intermediate_tile_of_a_ledge_hop():
+    from pokemon_agent.emulator import ADDR_MOVEMENT_FLAGS, ADDR_PLAYER_Y
+
+    mid_hop = {ADDR_MOVEMENT_FLAGS: 0x40}  # wMovementFlags bit 6, the ledge hop
+
+    def script(frame):
+        # y reaches the intermediate tile early and rests there long enough to
+        # look settled; only the ledge flag says otherwise.
+        if frame < 10:
+            return {ADDR_PLAYER_Y: 46, **mid_hop}
+        if frame < 40:
+            return {ADDR_PLAYER_Y: 47, **mid_hop}
+        return {ADDR_PLAYER_Y: 48}
+
+    emu = make_settle_emulator(script)
+
+    assert emu.settle(max_frames=200, quiet_frames=10) is True
+    assert emu.read_u8(ADDR_PLAYER_Y) == 48

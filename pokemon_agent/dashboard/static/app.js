@@ -106,6 +106,21 @@
         hudFrameBadges: $('hudFrameBadges'),
         hudFrameProgress: $('hudFrameProgress'),
         hudFrameProgressBar: $('hudFrameProgressBar'),
+        campaignRungChip: $('campaignRungChip'),
+        campaignPressesChip: $('campaignPressesChip'),
+        campaignSourceChip: $('campaignSourceChip'),
+        campaignHeadline: $('campaignHeadline'),
+        campaignStats: $('campaignStats'),
+        campaignRail: $('campaignRail'),
+        campaignRailFill: $('campaignRailFill'),
+        campaignRailReadout: $('campaignRailReadout'),
+        campaignChart: $('campaignChart'),
+        campaignChartCaption: $('campaignChartCaption'),
+        campaignBenchmark: $('campaignBenchmark'),
+        campaignLadderDetails: $('campaignLadderDetails'),
+        campaignLadderRows: $('campaignLadderRows'),
+        healthWindowChip: $('healthWindowChip'),
+        healthStrip: $('healthStrip'),
     };
 
     let ws = null;
@@ -163,6 +178,103 @@
         { key: 'state:error',   label: 'ERRORS' },
     ];
     const STREAM_TOOL_CHIP_LIMIT = 8;
+
+    /* ------------------------------------------------------------------ */
+    /* Campaign ladder                                                     */
+    /* ------------------------------------------------------------------ */
+
+    // The 63-rung Red ladder, mirrored from pokemon_agent/data/red_milestones.json.
+    // The browser has no endpoint for that file and this page has no build step,
+    // so it is embedded. tests/test_dashboard.py fails if the two drift apart.
+    const RED_LADDER_RAW = [
+        ["EVENT_GOT_STARTER", "Chose a starter Pokemon", "event"],
+        ["EVENT_BATTLED_RIVAL_IN_OAKS_LAB", "Fought the rival in Oak's Lab", "event"],
+        ["EVENT_GOT_OAKS_PARCEL", "Picked up Oak's Parcel in Viridian", "event"],
+        ["EVENT_OAK_GOT_PARCEL", "Delivered Oak's Parcel", "event"],
+        ["EVENT_GOT_POKEDEX", "Received the Pokedex", "event"],
+        ["EVENT_GOT_TOWN_MAP", "Got the Town Map from Daisy", "event"],
+        ["EVENT_BEAT_ROUTE22_RIVAL_1ST_BATTLE", "Beat the rival on Route 22", "event"],
+        ["EVENT_BEAT_BROCK", "Defeated Brock", "event"],
+        ["BADGE_BOULDER", "Boulder Badge", "badge"],
+        ["EVENT_BEAT_MT_MOON_EXIT_SUPER_NERD", "Beat the Super Nerd guarding the Mt. Moon fossils", "event"],
+        ["EVENT_GOT_DOME_FOSSIL", "Took the Dome Fossil", "event"],
+        ["EVENT_GOT_HELIX_FOSSIL", "Took the Helix Fossil", "event"],
+        ["EVENT_BEAT_CERULEAN_RIVAL", "Beat the rival in Cerulean City", "event"],
+        ["EVENT_BEAT_MISTY", "Defeated Misty", "event"],
+        ["BADGE_CASCADE", "Cascade Badge", "badge"],
+        ["EVENT_MET_BILL", "Met Bill on Route 25", "event"],
+        ["EVENT_GOT_SS_TICKET", "Got the S.S. Ticket", "event"],
+        ["EVENT_RUBBED_CAPTAINS_BACK", "Cured the S.S. Anne captain", "event"],
+        ["EVENT_GOT_HM01", "Got HM01 Cut", "event"],
+        ["EVENT_SS_ANNE_LEFT", "The S.S. Anne set sail", "event"],
+        ["EVENT_BEAT_LT_SURGE", "Defeated Lt. Surge", "event"],
+        ["BADGE_THUNDER", "Thunder Badge", "badge"],
+        ["EVENT_GOT_OLD_AMBER", "Got the Old Amber in the Pewter Museum", "event"],
+        ["EVENT_GOT_BIKE_VOUCHER", "Got the Bike Voucher", "event"],
+        ["EVENT_GOT_BICYCLE", "Got the Bicycle", "event"],
+        ["EVENT_GOT_HM05", "Got HM05 Flash", "event"],
+        ["EVENT_FOUND_ROCKET_HIDEOUT", "Found the Rocket Hideout under the Game Corner", "event"],
+        ["ITEM_LIFT_KEY", "Have the Lift Key", "item"],
+        ["EVENT_BEAT_ROCKET_HIDEOUT_GIOVANNI", "Defeated Giovanni in the Rocket Hideout", "event"],
+        ["ITEM_SILPH_SCOPE", "Have the Silph Scope", "item"],
+        ["EVENT_BEAT_ERIKA", "Defeated Erika", "event"],
+        ["BADGE_RAINBOW", "Rainbow Badge", "badge"],
+        ["EVENT_BEAT_POKEMON_TOWER_RIVAL", "Beat the rival in Pokemon Tower", "event"],
+        ["EVENT_BEAT_GHOST_MAROWAK", "Laid the Marowak ghost to rest", "event"],
+        ["EVENT_RESCUED_MR_FUJI", "Rescued Mr. Fuji", "event"],
+        ["EVENT_GOT_POKE_FLUTE", "Got the Poke Flute", "event"],
+        ["EVENT_BEAT_ROUTE12_SNORLAX", "Cleared the Snorlax on Route 12", "event"],
+        ["EVENT_GOT_HM02", "Got HM02 Fly", "event"],
+        ["EVENT_GOT_HM03", "Got HM03 Surf in the Safari Zone", "event"],
+        ["EVENT_GAVE_GOLD_TEETH", "Returned the Gold Teeth to the Warden", "event"],
+        ["EVENT_GOT_HM04", "Got HM04 Strength", "event"],
+        ["EVENT_BEAT_KOGA", "Defeated Koga", "event"],
+        ["BADGE_SOUL", "Soul Badge", "badge"],
+        ["ITEM_CARD_KEY", "Have the Card Key", "item"],
+        ["EVENT_BEAT_SILPH_CO_RIVAL", "Beat the rival in Silph Co.", "event"],
+        ["EVENT_BEAT_SILPH_CO_GIOVANNI", "Defeated Giovanni in Silph Co.", "event"],
+        ["EVENT_GOT_MASTER_BALL", "Got the Master Ball", "event"],
+        ["EVENT_BEAT_SABRINA", "Defeated Sabrina", "event"],
+        ["BADGE_MARSH", "Marsh Badge", "badge"],
+        ["ITEM_SECRET_KEY", "Have the Secret Key", "item"],
+        ["EVENT_BEAT_BLAINE", "Defeated Blaine", "event"],
+        ["BADGE_VOLCANO", "Volcano Badge", "badge"],
+        ["EVENT_BEAT_VIRIDIAN_GYM_GIOVANNI", "Defeated Giovanni in the Viridian Gym", "event"],
+        ["BADGE_EARTH", "Earth Badge", "badge"],
+        ["EVENT_BEAT_ROUTE22_RIVAL_2ND_BATTLE", "Beat the rival on Route 22 again", "event"],
+        ["EVENT_VICTORY_ROAD_2_BOULDER_ON_SWITCH2", "Opened the Victory Road 2F barrier", "event"],
+        ["EVENT_AUTOWALKED_INTO_LORELEIS_ROOM", "Cleared Victory Road and reached the Elite Four", "event"],
+        ["EVENT_BEAT_LORELEIS_ROOM_TRAINER_0", "Defeated Lorelei", "event"],
+        ["EVENT_BEAT_BRUNOS_ROOM_TRAINER_0", "Defeated Bruno", "event"],
+        ["EVENT_BEAT_AGATHAS_ROOM_TRAINER_0", "Defeated Agatha", "event"],
+        ["EVENT_BEAT_LANCE", "Defeated Lance", "event"],
+        ["EVENT_BEAT_CHAMPION_RIVAL", "Defeated the Champion", "event"],
+        ["EVENT_HALL_OF_FAME_DEX_RATING", "Entered the Hall of Fame", "event"],
+    ];
+    const RED_LADDER = RED_LADDER_RAW.map(([id, label, kind], index) => ({ id, label, kind, index }));
+    const LADDER_BY_ID = new Map(RED_LADDER.map((rung) => [rung.id, rung]));
+    const LADDER_BY_LABEL = new Map(RED_LADDER.map((rung) => [rung.label.toLowerCase(), rung]));
+    const FIRST_GYM_ID = 'EVENT_BEAT_BROCK';
+
+    // Published reference points, the same three the bench report quotes.
+    const REF_POKEAGENT_BEST = 1608;
+    const REF_POKEAGENT_EFFICIENT = 649;
+    const REF_HUMAN_SPEEDRUN_SECONDS = 18 * 60;
+
+    const LEDGER_STORAGE_KEY = 'poke-dash-press-ledger:v2';
+    const PRESS_SAMPLE_LIMIT = 90;
+    const PROGRESS_RETRY_INTERVAL = 30000;
+
+    const HEALTH_GLYPH = { good: '\u25cf', warn: '\u25b2', crit: '\u2715', idle: '\u00b7' };
+
+    // value >= crit is critical, value >= warn is a warning, below both is fine.
+    const HEALTH_SPECS = [
+        { key: 'blocked',   label: 'Blocked',   warn: 0.10, crit: 0.25 },
+        { key: 'toolerr',   label: 'Tool err',  warn: 0.02, crit: 0.08 },
+        { key: 'revisit',   label: 'Revisit',   warn: 2.0,  crit: 3.5  },
+        { key: 'whiteouts', label: 'Whiteouts', warn: 1,    crit: 3    },
+        { key: 'reloads',   label: 'Reloads',   warn: 2,    crit: 5    },
+    ];
     const streamFilters = new Set(['all']);
     let streamSearchQuery = '';
 
@@ -2337,6 +2449,1030 @@
         els.critiqueText.textContent = critique.text || 'No retrospective yet.';
     }
 
+    /* ------------------------------------------------------------------ */
+    /* Campaign: progress rail, presses to milestone, run health           */
+    /* ------------------------------------------------------------------ */
+
+    const BENCHMARK_ROWS = [
+        { key: 'ours-presses', group: 'Presses', role: 'ours', name: 'This run' },
+        { key: 'pa-best',      group: 'Presses', role: 'ref',  name: 'PokeAgent best' },
+        { key: 'pa-eff',       group: 'Presses', role: 'ref',  name: 'PokeAgent efficient' },
+        { key: 'ours-clock',   group: 'Clock',   role: 'ours', name: 'This run' },
+        { key: 'human',        group: 'Clock',   role: 'ref',  name: 'Human speedrun' },
+    ];
+
+    const progressState = {
+        available: false,
+        lastAttempt: 0,
+        count: null,
+        total: RED_LADDER.length,
+        furthest: null,
+        furthestLabel: '',
+        latest: [],
+        presses: null,
+        startedAt: null,
+        elapsedSeconds: null,
+        runKey: '',
+        health: {},
+    };
+
+    const pressLedger = new Map();   // ladder id -> { presses, at, seconds, source }
+    const pressSamples = [];         // { t, presses } — the window the rate is read from
+    let ledgerBaseline = false;
+
+    const healthState = {
+        lastObservationId: null,
+        observations: 0,
+        blocked: 0,
+        positionSamples: 0,
+        uniquePositions: new Set(),
+        lastPartyHp: null,
+        whiteouts: 0,
+        reloads: 0,
+        historyWhiteouts: 0,
+        historyReloads: 0,
+    };
+
+    let railButtons = [];
+    let ladderRowCells = [];
+    let benchmarkRows = new Map();
+    let healthPills = new Map();
+    let railFocusIndex = 0;
+    let railPinnedIndex = 0;
+    // What the pointer or keyboard is on right now, so a 3s poll does not yank
+    // the readout out from under someone reading it.
+    let railHoverIndex = null;
+
+    // Number(null) and Number('') are both 0, which would silently invent a
+    // reading of zero out of a field the server left empty. Everything that
+    // reads a number off /progress goes through here.
+    function finiteOrNull(value) {
+        if (value === null || value === undefined || value === '') return null;
+        const number = Number(value);
+        return Number.isFinite(number) ? number : null;
+    }
+
+    function formatInt(value) {
+        const number = Number(value);
+        if (!Number.isFinite(number)) return '—';
+        return Math.round(number).toLocaleString('en-US');
+    }
+
+    function formatRate(ratio) {
+        if (!Number.isFinite(ratio)) return '—';
+        return `${(ratio * 100).toFixed(ratio < 0.1 ? 1 : 0)}%`;
+    }
+
+    function formatDuration(seconds) {
+        if (!Number.isFinite(seconds) || seconds < 0) return '—';
+        const total = Math.round(seconds);
+        const hours = Math.floor(total / 3600);
+        const minutes = Math.floor((total % 3600) / 60);
+        const rest = total % 60;
+        if (hours) return `${hours}h ${String(minutes).padStart(2, '0')}m`;
+        if (minutes) return `${minutes}m ${String(rest).padStart(2, '0')}s`;
+        return `${rest}s`;
+    }
+
+    function resolveRung(reference) {
+        if (!reference) return null;
+        if (typeof reference === 'object') {
+            return resolveRung(
+                reference.id || reference.milestone_id || reference.milestone || reference.label
+            );
+        }
+        const key = String(reference).trim();
+        if (!key) return null;
+        return LADDER_BY_ID.get(key) || LADDER_BY_LABEL.get(key.toLowerCase()) || null;
+    }
+
+    /* -- press ledger, kept across reloads so the curve survives F5 ------ */
+
+    function loadLedger(runKey) {
+        pressLedger.clear();
+        try {
+            const raw = window.localStorage.getItem(LEDGER_STORAGE_KEY);
+            if (!raw) return;
+            const saved = JSON.parse(raw);
+            if (!saved || saved.runKey !== runKey || !Array.isArray(saved.entries)) return;
+            saved.entries.forEach((pair) => {
+                if (!Array.isArray(pair)) return;
+                const [id, value] = pair;
+                if (!LADDER_BY_ID.has(id) || !value) return;
+                const presses = finiteOrNull(value.presses);
+                if (presses === null) return;
+                pressLedger.set(id, {
+                    presses,
+                    at: finiteOrNull(value.at),
+                    seconds: finiteOrNull(value.seconds),
+                    source: value.source === 'server' ? 'server' : 'observed',
+                });
+            });
+        } catch (error) {
+            // Private mode, blocked storage, corrupt value: start from an empty ledger.
+        }
+    }
+
+    function saveLedger(runKey) {
+        try {
+            window.localStorage.setItem(
+                LEDGER_STORAGE_KEY,
+                JSON.stringify({ runKey, entries: Array.from(pressLedger.entries()) })
+            );
+        } catch (error) {
+            // Storage unavailable: the in-memory ledger still drives this session.
+        }
+    }
+
+    function ingestServerLedger(data) {
+        let changed = false;
+        const record = (reference, presses, seconds) => {
+            const rung = resolveRung(reference);
+            const cost = finiteOrNull(presses);
+            if (!rung || cost === null) return;
+            const existing = pressLedger.get(rung.id);
+            if (existing && existing.source === 'server' && existing.presses === cost) return;
+            const clock = finiteOrNull(seconds);
+            pressLedger.set(rung.id, {
+                presses: cost,
+                at: existing ? existing.at : null,
+                seconds: clock !== null ? clock : (existing ? existing.seconds : null),
+                source: 'server',
+            });
+            changed = true;
+        };
+
+        const pressesTo = data.presses_to;
+        if (pressesTo && typeof pressesTo === 'object' && !Array.isArray(pressesTo)) {
+            Object.keys(pressesTo).forEach((id) => record(id, pressesTo[id], null));
+        }
+        if (Array.isArray(data.attainments)) {
+            data.attainments.forEach((entry) => record(entry, entry && entry.presses, entry && entry.seconds));
+        }
+        return changed;
+    }
+
+    function progressRunKey(data) {
+        const explicit = data.run_id || data.run || data.session_id;
+        if (explicit) return String(explicit);
+        if (data.started_at) return `start:${data.started_at}`;
+        return 'unkeyed';
+    }
+
+    function applyProgressPayload(payload) {
+        const data = (payload && typeof payload === 'object') ? payload : {};
+        const runKey = progressRunKey(data);
+        const count = finiteOrNull(data.count);
+        const presses = finiteOrNull(data.presses);
+        const previousCount = progressState.count;
+        const previousPresses = progressState.presses;
+
+        // A counter that went backwards means a different run, not a fixed one.
+        const rewound =
+            (count !== null && previousCount !== null && count < previousCount) ||
+            (presses !== null && previousPresses !== null && presses < previousPresses);
+
+        if (runKey !== progressState.runKey || rewound) {
+            progressState.runKey = runKey;
+            pressSamples.length = 0;
+            ledgerBaseline = false;
+            if (rewound) {
+                pressLedger.clear();
+                saveLedger(runKey);
+            } else {
+                loadLedger(runKey);
+            }
+        }
+
+        progressState.available = true;
+        progressState.count = count;
+        progressState.total = (finiteOrNull(data.total) || 0) > 0
+            ? finiteOrNull(data.total)
+            : RED_LADDER.length;
+        progressState.presses = presses;
+        progressState.latest = Array.isArray(data.latest) ? data.latest.slice() : [];
+        progressState.startedAt = data.started_at || null;
+        progressState.elapsedSeconds = finiteOrNull(data.elapsed_seconds);
+        progressState.health = (data.health && typeof data.health === 'object') ? data.health : data;
+
+        const furthestRung = resolveRung(data.furthest) || resolveRung(data.furthest_label);
+        progressState.furthest = furthestRung
+            ? furthestRung.id
+            : (data.furthest ? String(data.furthest) : null);
+        progressState.furthestLabel =
+            data.furthest_label || (furthestRung ? furthestRung.label : '');
+
+        // A server that prices the rungs itself always outranks what this page saw.
+        let ledgerChanged = ingestServerLedger(data);
+
+        if (presses !== null) {
+            pressSamples.push({ t: Date.now(), presses });
+            while (pressSamples.length > PRESS_SAMPLE_LIMIT) pressSamples.shift();
+
+            // Only price a rung this page watched appear. On the first payload the
+            // ladder is already partly climbed and today's press count says nothing
+            // about what those earlier rungs cost.
+            const climbed =
+                ledgerBaseline && count !== null && previousCount !== null && count > previousCount;
+            if (climbed) {
+                const seen = progressState.latest.map(resolveRung).filter(Boolean);
+                if (furthestRung) seen.push(furthestRung);
+                seen.forEach((rung) => {
+                    if (pressLedger.has(rung.id)) return;
+                    pressLedger.set(rung.id, {
+                        presses,
+                        at: Date.now(),
+                        seconds: null,
+                        source: 'observed',
+                    });
+                    ledgerChanged = true;
+                });
+            }
+            ledgerBaseline = true;
+        }
+
+        if (ledgerChanged) saveLedger(progressState.runKey);
+    }
+
+    /* -- derived readings ----------------------------------------------- */
+
+    function furthestIndex() {
+        const rung = progressState.furthest ? LADDER_BY_ID.get(progressState.furthest) : null;
+        if (rung) return rung.index;
+        if (Number.isFinite(progressState.count) && progressState.count > 0) {
+            return Math.min(RED_LADDER.length - 1, progressState.count - 1);
+        }
+        return -1;
+    }
+
+    function rungState(index) {
+        const furthest = furthestIndex();
+        if (index <= furthest) return 'done';
+        if (index === furthest + 1 && progressState.available) return 'current';
+        return 'todo';
+    }
+
+    function rungsReached() {
+        if (Number.isFinite(progressState.count)) return progressState.count;
+        return Math.max(0, furthestIndex() + 1);
+    }
+
+    function ledgerPoints() {
+        const points = [];
+        pressLedger.forEach((value, id) => {
+            const rung = LADDER_BY_ID.get(id);
+            if (!rung || !Number.isFinite(value.presses)) return;
+            points.push({
+                index: rung.index,
+                id,
+                label: rung.label,
+                presses: value.presses,
+                at: value.at,
+                source: value.source,
+            });
+        });
+        points.sort((a, b) => a.index - b.index);
+        return points;
+    }
+
+    function pressRatePerMinute() {
+        if (pressSamples.length < 2) return null;
+        const first = pressSamples[0];
+        const last = pressSamples[pressSamples.length - 1];
+        const minutes = (last.t - first.t) / 60000;
+        if (minutes < 0.25) return null;
+        const delta = last.presses - first.presses;
+        if (delta < 0) return null;
+        return delta / minutes;
+    }
+
+    function runStartMs() {
+        const started = parseTs(progressState.startedAt);
+        return Number.isNaN(started) ? null : started;
+    }
+
+    function runElapsed() {
+        if (Number.isFinite(progressState.elapsedSeconds)) {
+            return { seconds: progressState.elapsedSeconds, exact: true };
+        }
+        const start = runStartMs();
+        if (start !== null) return { seconds: (Date.now() - start) / 1000, exact: true };
+        if (pressSamples.length) {
+            return { seconds: (Date.now() - pressSamples[0].t) / 1000, exact: false };
+        }
+        return { seconds: null, exact: false };
+    }
+
+    function firstGymSeconds() {
+        const gym = pressLedger.get(FIRST_GYM_ID);
+        if (!gym) return null;
+        if (Number.isFinite(gym.seconds)) return gym.seconds;
+        const start = runStartMs();
+        if (start !== null && Number.isFinite(gym.at)) return Math.max(0, (gym.at - start) / 1000);
+        return null;
+    }
+
+    function severityFor(value, warnAt, critAt) {
+        if (!Number.isFinite(value)) return 'idle';
+        if (value >= critAt) return 'crit';
+        if (value >= warnAt) return 'warn';
+        return 'good';
+    }
+
+    /* -- run health ------------------------------------------------------ */
+
+    function toolCallHealth() {
+        let calls = 0;
+        let errors = 0;
+        streamEntries.forEach((entry) => {
+            if (streamEntryKind(entry) !== 'tool') return;
+            const state = streamEntryState(entry);
+            if (state === 'running') return;
+            calls += 1;
+            if (state === 'error') errors += 1;
+        });
+        return { calls, errors };
+    }
+
+    function recordObservationSample(payload) {
+        const stamp = payload.observation_id || payload.generated_at;
+        if (!stamp || stamp === healthState.lastObservationId) return;
+        healthState.lastObservationId = stamp;
+        healthState.observations += 1;
+
+        const world = payload.world_state || {};
+        const interaction = world.interaction || {};
+        if (String(interaction.source || '') === 'blocked_tile') {
+            healthState.blocked += 1;
+        }
+
+        const position = (world.player || {}).position || {};
+        const x = Number(position.x);
+        const y = Number(position.y);
+        if (Number.isFinite(x) && Number.isFinite(y)) {
+            healthState.positionSamples += 1;
+            healthState.uniquePositions.add(`${(world.map || {}).map_name || '?'}|${x},${y}`);
+        }
+
+        const party = Array.isArray(world.party) ? world.party : [];
+        if (party.length) {
+            const hp = party.reduce((total, mon) => total + (Number(mon.hp) || 0), 0);
+            if (healthState.lastPartyHp !== null && healthState.lastPartyHp > 0 && hp === 0) {
+                healthState.whiteouts += 1;
+            }
+            healthState.lastPartyHp = hp;
+        }
+    }
+
+    function recordHistoryHealth(events) {
+        let whiteouts = 0;
+        let reloads = 0;
+        events.forEach((event) => {
+            const type = String(event.type || '').toLowerCase();
+            let blob = type;
+            try {
+                blob = `${type} ${JSON.stringify(event)}`.toLowerCase();
+            } catch (error) {
+                // Cyclic or exotic payload: the type alone still classifies it.
+            }
+            if (/white[_\s-]?out|black[_\s-]?out/.test(blob)) whiteouts += 1;
+            if (type === 'load' || type === 'recovery' || /\bload\b|restore/.test(type)) reloads += 1;
+        });
+        healthState.historyWhiteouts = whiteouts;
+        healthState.historyReloads = reloads;
+    }
+
+    function healthReadings() {
+        const server = progressState.health || {};
+        const tools = toolCallHealth();
+        const num = finiteOrNull;
+        const pick = (serverValue, local) => (serverValue !== null ? serverValue : local);
+        const note = (serverValue, localNote) => (serverValue !== null ? 'scored by server' : localNote);
+
+        const blockedServer = num(server.blocked_rate);
+        const toolServer = num(server.tool_error_rate);
+        const revisitServer = num(server.revisit_ratio);
+        const whiteoutServer = num(server.whiteouts);
+        const reloadServer = num(server.reloads);
+
+        const blocked = pick(
+            blockedServer,
+            healthState.observations ? healthState.blocked / healthState.observations : null
+        );
+        const toolErr = pick(toolServer, tools.calls ? tools.errors / tools.calls : null);
+        const revisit = pick(
+            revisitServer,
+            healthState.uniquePositions.size
+                ? healthState.positionSamples / healthState.uniquePositions.size
+                : null
+        );
+        const whiteouts = pick(
+            whiteoutServer,
+            Math.max(healthState.whiteouts, healthState.historyWhiteouts)
+        );
+        const reloads = pick(reloadServer, Math.max(healthState.reloads, healthState.historyReloads));
+
+        return {
+            blocked: {
+                value: blocked,
+                text: formatRate(blocked),
+                note: note(blockedServer, `${formatInt(healthState.blocked)} of ${formatInt(healthState.observations)} obs`),
+            },
+            toolerr: {
+                value: toolErr,
+                text: formatRate(toolErr),
+                note: note(toolServer, `${formatInt(tools.errors)} of ${formatInt(tools.calls)} calls`),
+            },
+            revisit: {
+                value: revisit,
+                text: Number.isFinite(revisit) ? `${revisit.toFixed(2)}×` : '—',
+                note: note(
+                    revisitServer,
+                    `${formatInt(healthState.positionSamples)} steps / ${formatInt(healthState.uniquePositions.size)} tiles`
+                ),
+            },
+            whiteouts: {
+                value: whiteouts,
+                text: formatInt(whiteouts),
+                note: note(whiteoutServer, 'party wiped'),
+            },
+            reloads: {
+                value: reloads,
+                text: formatInt(reloads),
+                note: note(reloadServer, 'save restored'),
+            },
+        };
+    }
+
+    function thresholdText(spec) {
+        const asText = (value) => (spec.crit < 1 ? `${(value * 100).toFixed(0)}%` : String(value));
+        return `warning at ${asText(spec.warn)}, critical at ${asText(spec.crit)}`;
+    }
+
+    /* -- build (once) ---------------------------------------------------- */
+
+    function buildRail() {
+        if (!els.campaignRail) return;
+        const fragment = document.createDocumentFragment();
+        railButtons = RED_LADDER.map((rung) => {
+            const button = document.createElement('button');
+            button.type = 'button';
+            button.className = 'hud-rung';
+            button.dataset.index = String(rung.index);
+            button.dataset.kind = rung.kind;
+            button.dataset.state = 'todo';
+            button.tabIndex = -1;
+            fragment.appendChild(button);
+            return button;
+        });
+        els.campaignRail.replaceChildren(fragment);
+        if (railButtons.length) railButtons[0].tabIndex = 0;
+        els.campaignRail.addEventListener('mouseover', onRailPoint);
+        els.campaignRail.addEventListener('focusin', onRailPoint);
+        els.campaignRail.addEventListener('mouseleave', onRailLeave);
+        els.campaignRail.addEventListener('focusout', onRailLeave);
+        els.campaignRail.addEventListener('click', onRailClick);
+        els.campaignRail.addEventListener('keydown', onRailKeydown);
+    }
+
+    function rungFromEvent(event) {
+        const target = event.target;
+        if (!target || typeof target.closest !== 'function') return null;
+        const button = target.closest('.hud-rung');
+        if (!button) return null;
+        const index = Number(button.dataset.index);
+        return Number.isFinite(index) ? index : null;
+    }
+
+    function onRailPoint(event) {
+        const index = rungFromEvent(event);
+        if (index === null) return;
+        railHoverIndex = index;
+        setRailReadout(index);
+    }
+
+    function onRailLeave() {
+        railHoverIndex = null;
+        setRailReadout(null);
+    }
+
+    function moveRailFocus(index) {
+        if (!railButtons.length) return;
+        const clamped = Math.max(0, Math.min(railButtons.length - 1, index));
+        railButtons.forEach((button, position) => {
+            button.tabIndex = position === clamped ? 0 : -1;
+        });
+        railFocusIndex = clamped;
+    }
+
+    function onRailClick(event) {
+        const index = rungFromEvent(event);
+        if (index === null) return;
+        moveRailFocus(index);
+        if (!els.campaignLadderDetails) return;
+        els.campaignLadderDetails.open = true;
+        const cells = ladderRowCells[index];
+        if (cells && cells.row && typeof cells.row.scrollIntoView === 'function') {
+            cells.row.scrollIntoView({ block: 'nearest' });
+        }
+    }
+
+    function onRailKeydown(event) {
+        const steps = { ArrowLeft: -1, ArrowRight: 1, ArrowUp: -1, ArrowDown: 1 };
+        let next = null;
+        if (Object.prototype.hasOwnProperty.call(steps, event.key)) {
+            next = railFocusIndex + steps[event.key];
+        } else if (event.key === 'Home') {
+            next = 0;
+        } else if (event.key === 'End') {
+            next = railButtons.length - 1;
+        } else {
+            return;
+        }
+        event.preventDefault();
+        moveRailFocus(next);
+        const button = railButtons[railFocusIndex];
+        if (button) button.focus();
+    }
+
+    function buildLadderRows() {
+        if (!els.campaignLadderRows) return;
+        const fragment = document.createDocumentFragment();
+        ladderRowCells = RED_LADDER.map((rung) => {
+            const row = document.createElement('tr');
+            row.dataset.index = String(rung.index);
+            row.dataset.kind = rung.kind;
+            row.dataset.state = 'todo';
+
+            const ordinal = document.createElement('td');
+            ordinal.textContent = String(rung.index + 1);
+            const label = document.createElement('td');
+            label.textContent = rung.label;
+            label.title = rung.id;
+            const kind = document.createElement('td');
+            kind.className = 'hud-ladder-kind';
+            kind.textContent = rung.kind;
+            const presses = document.createElement('td');
+            presses.textContent = '—';
+            const delta = document.createElement('td');
+            delta.textContent = '';
+
+            row.append(ordinal, label, kind, presses, delta);
+            fragment.appendChild(row);
+            return { row, presses, delta };
+        });
+        els.campaignLadderRows.replaceChildren(fragment);
+    }
+
+    function buildBenchmark() {
+        if (!els.campaignBenchmark) return;
+        const fragment = document.createDocumentFragment();
+        benchmarkRows = new Map();
+        let currentGroup = null;
+        let groupNode = null;
+        BENCHMARK_ROWS.forEach((spec) => {
+            if (spec.group !== currentGroup) {
+                currentGroup = spec.group;
+                groupNode = document.createElement('div');
+                groupNode.className = 'hud-benchmark-group';
+                const kicker = document.createElement('span');
+                kicker.className = 'hud-kicker-mini';
+                kicker.textContent = spec.group;
+                groupNode.appendChild(kicker);
+                fragment.appendChild(groupNode);
+            }
+            const row = document.createElement('div');
+            row.className = 'hud-benchmark-row';
+            row.dataset.role = spec.role;
+            row.dataset.sev = 'idle';
+            const name = document.createElement('span');
+            name.className = 'hud-benchmark-name';
+            name.textContent = spec.name;
+            const value = document.createElement('span');
+            value.className = 'hud-benchmark-value';
+            value.textContent = '—';
+            const bar = document.createElement('span');
+            bar.className = 'hud-benchmark-bar';
+            const fill = document.createElement('span');
+            fill.className = 'hud-benchmark-bar-fill';
+            bar.appendChild(fill);
+            row.append(name, bar, value);
+            groupNode.appendChild(row);
+            benchmarkRows.set(spec.key, { row, value, fill });
+        });
+        els.campaignBenchmark.replaceChildren(fragment);
+    }
+
+    function buildHealthStrip() {
+        if (!els.healthStrip) return;
+        const fragment = document.createDocumentFragment();
+        healthPills = new Map();
+        HEALTH_SPECS.forEach((spec) => {
+            const pill = document.createElement('div');
+            pill.className = 'hud-health-pill';
+            pill.dataset.key = spec.key;
+            pill.dataset.sev = 'idle';
+
+            const glyph = document.createElement('span');
+            glyph.className = 'hud-health-glyph';
+            glyph.setAttribute('aria-hidden', 'true');
+            glyph.textContent = HEALTH_GLYPH.idle;
+            const label = document.createElement('span');
+            label.className = 'hud-health-label';
+            label.textContent = spec.label;
+            const value = document.createElement('strong');
+            value.className = 'hud-health-value';
+            value.textContent = '—';
+            const meter = document.createElement('span');
+            meter.className = 'hud-health-meter';
+            const fill = document.createElement('span');
+            fill.className = 'hud-health-meter-fill';
+            meter.appendChild(fill);
+            const note = document.createElement('span');
+            note.className = 'hud-health-note';
+            note.textContent = 'no samples yet';
+
+            pill.append(glyph, label, value, meter, note);
+            fragment.appendChild(pill);
+            healthPills.set(spec.key, { pill, glyph, value, fill, note });
+        });
+        els.healthStrip.replaceChildren(fragment);
+    }
+
+    /* -- render (every refresh) ------------------------------------------ */
+
+    function setRailReadout(index) {
+        if (!els.campaignRailReadout) return;
+        const position = (index === null || index === undefined) ? railPinnedIndex : index;
+        const rung = RED_LADDER[position];
+        if (!rung) return;
+        const state = rungState(rung.index);
+        const word = state === 'done' ? 'reached' : (state === 'current' ? 'next up' : 'ahead');
+        const priced = pressLedger.get(rung.id);
+        const price = priced
+            ? `${formatInt(priced.presses)} presses`
+            : (state === 'done' ? 'price not recorded' : 'unpriced');
+        els.campaignRailReadout.innerHTML =
+            `<strong>${String(rung.index + 1).padStart(2, '0')} · ${escapeHtml(rung.label)}</strong> ` +
+            `<span class="hud-dim">${escapeHtml(rung.kind)}</span> — ${word} · ` +
+            `<span class="hud-rail-price">${escapeHtml(price)}</span>`;
+    }
+
+    function renderCampaignChips() {
+        const total = progressState.total || RED_LADDER.length;
+        if (els.campaignRungChip) {
+            els.campaignRungChip.textContent = `RUNG ${formatInt(rungsReached())}/${formatInt(total)}`;
+        }
+        if (els.campaignPressesChip) {
+            els.campaignPressesChip.textContent = `PRESSES ${formatInt(progressState.presses)}`;
+        }
+        if (els.campaignSourceChip) {
+            els.campaignSourceChip.textContent = progressState.available
+                ? 'SOURCE: /PROGRESS'
+                : 'SOURCE: OFFLINE';
+            els.campaignSourceChip.dataset.status = progressState.available ? 'running' : 'stopping';
+        }
+        if (!els.campaignHeadline) return;
+        if (!progressState.available) {
+            els.campaignHeadline.textContent =
+                'Scoreboard offline — /progress is not answering. The full 63-rung ladder is below.';
+            return;
+        }
+        const furthest = furthestIndex();
+        const next = RED_LADDER[Math.min(RED_LADDER.length - 1, furthest + 1)];
+        const nextText = furthest >= RED_LADDER.length - 1
+            ? 'ladder complete'
+            : `next: ${escapeHtml(next ? next.label : '—')}`;
+        if (furthest < 0) {
+            els.campaignHeadline.innerHTML =
+                `<em>No rung reached yet</em> · <b>${formatInt(progressState.presses)}</b> presses · ${nextText}`;
+            return;
+        }
+        const name = progressState.furthestLabel || RED_LADDER[furthest].label;
+        // The rail is positional; `count` is what the server actually confirmed.
+        // When they disagree the run passed a rung whose flag never read true,
+        // and the operator should see that rather than guess which number wins.
+        const gap = Number.isFinite(progressState.count)
+            ? (furthest + 1) - progressState.count
+            : 0;
+        const unconfirmed = gap > 0
+            ? ` · <span class="hud-dim">${gap} unconfirmed</span>`
+            : '';
+        els.campaignHeadline.innerHTML =
+            `<em>${escapeHtml(name)}</em> · rung ${furthest + 1} of ${total} · ` +
+            `<b>${formatInt(progressState.presses)}</b> presses · ${nextText}${unconfirmed}`;
+    }
+
+    function renderCampaignStats() {
+        if (!els.campaignStats) return;
+        const reached = rungsReached();
+        const presses = progressState.presses;
+        const perRung = (Number.isFinite(presses) && reached > 0) ? presses / reached : null;
+        const points = ledgerPoints();
+        const lastPriced = points.length ? points[points.length - 1] : null;
+        const sinceLast = (Number.isFinite(presses) && lastPriced)
+            ? Math.max(0, presses - lastPriced.presses)
+            : null;
+        const rate = pressRatePerMinute();
+        const elapsed = runElapsed();
+        renderKeyValueCards(els.campaignStats, [
+            ['RUNGS', `${formatInt(reached)}/${formatInt(progressState.total || RED_LADDER.length)}`, 'ladder'],
+            ['PRESSES', formatInt(presses), 'presses'],
+            ['PRESSES/RUNG', perRung === null ? '—' : formatInt(perRung), 'presses'],
+            ['SINCE LAST', sinceLast === null ? '—' : formatInt(sinceLast), 'presses'],
+            ['RATE', rate === null ? '—' : `${rate.toFixed(0)}/min`, 'clock'],
+            [
+                'ELAPSED',
+                elapsed.seconds === null
+                    ? '—'
+                    : `${elapsed.exact ? '' : '~'}${formatDuration(elapsed.seconds)}`,
+                'clock',
+            ],
+        ]);
+    }
+
+    function renderRail() {
+        if (!railButtons.length) return;
+        const furthest = furthestIndex();
+        railButtons.forEach((button, index) => {
+            const rung = RED_LADDER[index];
+            const state = rungState(index);
+            if (button.dataset.state !== state) button.dataset.state = state;
+            const priced = pressLedger.get(rung.id);
+            const label = `${index + 1}. ${rung.label} — ${state}` +
+                (priced ? ` at ${formatInt(priced.presses)} presses` : '');
+            if (button.title !== label) {
+                button.title = label;
+                button.setAttribute('aria-label', label);
+            }
+        });
+        const fraction = Math.max(0, Math.min(1, (furthest + 1) / RED_LADDER.length));
+        if (els.campaignRailFill) {
+            els.campaignRailFill.style.width = `${(fraction * 100).toFixed(2)}%`;
+        }
+        railPinnedIndex = Math.max(0, Math.min(RED_LADDER.length - 1, furthest + 1));
+    }
+
+    function svgNode(name, attrs) {
+        const node = document.createElementNS('http://www.w3.org/2000/svg', name);
+        Object.keys(attrs || {}).forEach((key) => node.setAttribute(key, String(attrs[key])));
+        return node;
+    }
+
+    function renderPressChart() {
+        const svg = els.campaignChart;
+        if (!svg) return;
+        svg.replaceChildren();
+
+        const WIDTH = 320;
+        const HEIGHT = 96;   // must match the viewBox on #campaignChart
+        const padLeft = 38;
+        const padRight = 10;
+        const padTop = 8;
+        const padBottom = 15;
+        const plotW = WIDTH - padLeft - padRight;
+        const plotH = HEIGHT - padTop - padBottom;
+        const rungs = RED_LADDER.length;
+
+        const series = ledgerPoints().map((point) => ({ x: point.index, y: point.presses }));
+        const furthest = furthestIndex();
+        const presses = progressState.presses;
+        if (Number.isFinite(presses)) {
+            const liveX = Math.max(0, Math.min(rungs - 1, furthest + 1));
+            const last = series[series.length - 1];
+            if (!last || (presses >= last.y && liveX >= last.x)) {
+                series.push({ x: liveX, y: presses, live: true });
+            }
+        }
+
+        if (!series.length) {
+            if (els.campaignChartCaption) {
+                els.campaignChartCaption.textContent =
+                    'No press ledger yet — rungs get priced as the run reaches them.';
+            }
+            return;
+        }
+
+        const gymRung = LADDER_BY_ID.get(FIRST_GYM_ID);
+        let yMax = series.reduce((top, point) => Math.max(top, point.y), 0);
+        if (gymRung && yMax < REF_POKEAGENT_BEST) yMax = REF_POKEAGENT_BEST;
+        yMax = Math.max(1, yMax);
+
+        const xOf = (index) => padLeft + (rungs <= 1 ? 0 : (index / (rungs - 1)) * plotW);
+        const yOf = (value) => padTop + plotH - (Math.max(0, Math.min(value, yMax)) / yMax) * plotH;
+
+        // Faint grid first, so the data always sits on top of it.
+        [0, 0.5, 1].forEach((fraction) => {
+            const y = yOf(yMax * fraction);
+            svg.appendChild(svgNode('line', {
+                x1: padLeft, x2: WIDTH - padRight, y1: y, y2: y,
+                stroke: 'var(--hud-grid)', 'stroke-width': 1,
+            }));
+            const label = svgNode('text', { x: padLeft - 4, y: y + 2.5, 'text-anchor': 'end' });
+            label.textContent = fraction === 0 ? '0' : formatInt(yMax * fraction);
+            svg.appendChild(label);
+        });
+
+        let line = `M ${xOf(series[0].x)} ${yOf(series[0].y)}`;
+        for (let i = 1; i < series.length; i += 1) {
+            line += ` L ${xOf(series[i].x)} ${yOf(series[i - 1].y)}`;
+            line += ` L ${xOf(series[i].x)} ${yOf(series[i].y)}`;
+        }
+
+        const baseline = yOf(0);
+        svg.appendChild(svgNode('path', {
+            d: `${line} L ${xOf(series[series.length - 1].x)} ${baseline} L ${xOf(series[0].x)} ${baseline} Z`,
+            fill: 'var(--hud-cyan-soft)',
+            stroke: 'none',
+        }));
+        svg.appendChild(svgNode('path', {
+            d: line,
+            fill: 'none',
+            stroke: 'var(--hud-cyan)',
+            'stroke-width': 1.4,
+            'stroke-linejoin': 'round',
+        }));
+
+        // The two published first-gym numbers, plotted where they belong: at the
+        // gym rung, so the curve either clears them or does not.
+        if (gymRung) {
+            const gymX = xOf(gymRung.index);
+            svg.appendChild(svgNode('line', {
+                x1: gymX, x2: gymX, y1: padTop, y2: baseline,
+                stroke: 'var(--hud-line)', 'stroke-width': 1, 'stroke-dasharray': '2 3',
+            }));
+            [
+                [REF_POKEAGENT_EFFICIENT, 'eff 649'],
+                [REF_POKEAGENT_BEST, 'best 1608'],
+            ].forEach(([value, text]) => {
+                if (value > yMax) return;
+                const y = yOf(value);
+                svg.appendChild(svgNode('circle', {
+                    cx: gymX, cy: y, r: 2.4,
+                    fill: 'none', stroke: 'var(--hud-ghost)', 'stroke-width': 1,
+                }));
+                const label = svgNode('text', { x: gymX + 5, y: y - 3, class: 'hud-chart-ref' });
+                label.textContent = text;
+                svg.appendChild(label);
+            });
+        }
+
+        // Emphasised endpoint: where the run stands right now.
+        const end = series[series.length - 1];
+        svg.appendChild(svgNode('circle', {
+            cx: xOf(end.x), cy: yOf(end.y), r: 5,
+            fill: 'var(--hud-hazard)', opacity: 0.22,
+        }));
+        svg.appendChild(svgNode('circle', {
+            cx: xOf(end.x), cy: yOf(end.y), r: 2.6, fill: 'var(--hud-hazard)',
+        }));
+
+        svg.appendChild(svgNode('line', {
+            x1: padLeft, x2: WIDTH - padRight, y1: baseline, y2: baseline,
+            stroke: 'var(--hud-line)', 'stroke-width': 1,
+        }));
+        const first = svgNode('text', { x: padLeft, y: HEIGHT - 6, class: 'hud-chart-axis-label' });
+        first.textContent = 'rung 1';
+        svg.appendChild(first);
+        const last = svgNode('text', {
+            x: WIDTH - padRight, y: HEIGHT - 6, 'text-anchor': 'end', class: 'hud-chart-axis-label',
+        });
+        last.textContent = `rung ${rungs}`;
+        svg.appendChild(last);
+
+        if (els.campaignChartCaption) {
+            const priced = ledgerPoints().length;
+            els.campaignChartCaption.textContent = priced
+                ? `${formatInt(priced)} rungs priced · peak ${formatInt(yMax)} presses on the y-axis`
+                : 'Live position only — no rung has been priced during this session yet.';
+        }
+    }
+
+    function renderBenchmark() {
+        if (!benchmarkRows.size) return;
+        const gym = pressLedger.get(FIRST_GYM_ID);
+        const ourPresses = gym && Number.isFinite(gym.presses) ? gym.presses : null;
+        const ourClock = firstGymSeconds();
+
+        const pressScale = Math.max(ourPresses || 0, REF_POKEAGENT_BEST);
+        const clockScale = Math.max(ourClock || 0, REF_HUMAN_SPEEDRUN_SECONDS);
+
+        const apply = (key, text, value, scale, sev) => {
+            const node = benchmarkRows.get(key);
+            if (!node) return;
+            node.value.textContent = text;
+            node.row.dataset.sev = sev || 'idle';
+            const width = (Number.isFinite(value) && scale > 0)
+                ? Math.max(0, Math.min(100, (value / scale) * 100))
+                : 0;
+            node.fill.style.width = `${width.toFixed(1)}%`;
+        };
+
+        apply(
+            'ours-presses',
+            ourPresses === null ? 'not reached' : `${formatInt(ourPresses)} presses`,
+            ourPresses,
+            pressScale,
+            ourPresses === null
+                ? 'idle'
+                : severityFor(ourPresses, REF_POKEAGENT_EFFICIENT, REF_POKEAGENT_BEST)
+        );
+        apply('pa-best', `${formatInt(REF_POKEAGENT_BEST)} actions`, REF_POKEAGENT_BEST, pressScale, 'idle');
+        apply('pa-eff', `${formatInt(REF_POKEAGENT_EFFICIENT)} actions`, REF_POKEAGENT_EFFICIENT, pressScale, 'idle');
+        apply(
+            'ours-clock',
+            ourClock === null ? 'not observed' : formatDuration(ourClock),
+            ourClock,
+            clockScale,
+            ourClock === null
+                ? 'idle'
+                : severityFor(
+                    ourClock,
+                    REF_HUMAN_SPEEDRUN_SECONDS * 3,
+                    REF_HUMAN_SPEEDRUN_SECONDS * 10
+                )
+        );
+        apply('human', '~18m', REF_HUMAN_SPEEDRUN_SECONDS, clockScale, 'idle');
+    }
+
+    function renderLadderRows() {
+        if (!ladderRowCells.length) return;
+        const priceByIndex = new Map(ledgerPoints().map((point) => [point.index, point.presses]));
+        let previous = null;
+        RED_LADDER.forEach((rung) => {
+            const cells = ladderRowCells[rung.index];
+            if (!cells) return;
+            const state = rungState(rung.index);
+            if (cells.row.dataset.state !== state) cells.row.dataset.state = state;
+            const price = priceByIndex.get(rung.index);
+            if (Number.isFinite(price)) {
+                cells.presses.textContent = formatInt(price);
+                cells.delta.textContent = previous === null ? '' : `+${formatInt(price - previous)}`;
+                previous = price;
+            } else {
+                cells.presses.textContent = state === 'done' ? '·' : '—';
+                cells.delta.textContent = '';
+            }
+        });
+    }
+
+    function renderHealth() {
+        if (!healthPills.size) return;
+        const readings = healthReadings();
+        HEALTH_SPECS.forEach((spec) => {
+            const node = healthPills.get(spec.key);
+            const reading = readings[spec.key];
+            if (!node || !reading) return;
+            const level = severityFor(reading.value, spec.warn, spec.crit);
+            node.pill.dataset.sev = level;
+            node.pill.title = `${spec.label}: ${reading.text} — ${thresholdText(spec)}`;
+            node.glyph.textContent = HEALTH_GLYPH[level];
+            node.value.textContent = reading.text;
+            node.note.textContent = reading.note;
+            const width = (Number.isFinite(reading.value) && spec.crit > 0)
+                ? Math.max(0, Math.min(100, (reading.value / spec.crit) * 100))
+                : 0;
+            node.fill.style.width = `${width.toFixed(1)}%`;
+        });
+        if (els.healthWindowChip) {
+            const tools = toolCallHealth();
+            els.healthWindowChip.textContent =
+                `WINDOW: ${formatInt(healthState.observations)} OBS · ${formatInt(tools.calls)} TOOL`;
+        }
+    }
+
+    function renderCampaign() {
+        renderCampaignChips();
+        renderCampaignStats();
+        renderRail();
+        renderPressChart();
+        renderBenchmark();
+        renderLadderRows();
+        setRailReadout(railHoverIndex);
+        renderHealth();
+    }
+
+    async function fetchProgress() {
+        const now = Date.now();
+        // /progress may not exist on this server build. Back off instead of
+        // hammering it once it has answered badly.
+        if (!progressState.available && progressState.lastAttempt
+            && now - progressState.lastAttempt < PROGRESS_RETRY_INTERVAL) {
+            return null;
+        }
+        progressState.lastAttempt = now;
+        try {
+            const response = await fetch(api('/progress'));
+            if (!response.ok) throw new Error(`HTTP ${response.status}`);
+            const payload = await response.json();
+            applyProgressPayload(payload);
+            return payload;
+        } catch (error) {
+            progressState.available = false;
+            return null;
+        }
+    }
+
     function renderDashboardState(payload) {
         const visuals = payload.visuals || {};
         const intent = payload.agent_intent || {};
@@ -2440,6 +3576,7 @@
 
         renderSupervisor(supervisor);
         els.rawNavigation.textContent = formatJSON(world.navigation || {});
+        recordObservationSample(payload);
     }
 
     async function refreshArtifactPanels(payload) {
@@ -2478,6 +3615,7 @@
             throw new Error(`HTTP ${response.status}`);
         }
         const payload = await response.json();
+        recordHistoryHealth(payload.events || []);
         renderTimeline(payload.events || []);
     }
 
@@ -2511,9 +3649,16 @@
         }
         refreshInFlight = (async () => {
             try {
-                await Promise.all([fetchDashboardState(), fetchDashboardHistory(), fetchSaves()]);
+                await Promise.all([
+                    fetchDashboardState(),
+                    fetchDashboardHistory(),
+                    fetchSaves(),
+                    fetchProgress(),
+                ]);
+                renderCampaign();
             } catch (error) {
                 setStatus(false, 'Server unavailable');
+                renderCampaign();
                 throw error;
             } finally {
                 refreshInFlight = null;
@@ -2653,6 +3798,7 @@
         els.loadSaveStatus.textContent = `Loading ${trimmed}...`;
         try {
             const payload = await postJson('/load', { name: trimmed });
+            healthState.reloads += 1;
             els.loadSaveStatus.textContent = `Loaded ${payload.save?.name || trimmed}.`;
             els.saveSelect.value = payload.save?.name || trimmed;
             await refreshAll();
@@ -2842,6 +3988,11 @@
         sessionOriginMs = Date.now();
         renderTimelineFilters({});
         initStreamControls();
+        buildRail();
+        buildLadderRows();
+        buildBenchmark();
+        buildHealthStrip();
+        renderCampaign();
         els.piStartButton.addEventListener('click', startSupervisor);
         els.piContinueButton.addEventListener('click', continueSupervisor);
         els.piStopButton.addEventListener('click', stopSupervisor);

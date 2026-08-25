@@ -52,10 +52,23 @@ class FakeEmulator:
         self.x = 5
         self.y = 6
         self.facing = "down"
+        self.map_name = "PALLET TOWN"
+        self.map_id = 0
+        # (map, x, y) -> (map, map_id, x, y). A door the fake overworld honours.
+        self.transitions: dict[tuple, tuple] = {}
+        # Where walking off the top of the map lands, if anywhere.
+        self.north_map: tuple | None = None
         self.dialog_active = False
         self.interaction = None
         self.warps = []
+        self.warp_exit_directions: list[str] = []
+        # Gen 1 arms a warp only when the player walks onto it, so a fake that
+        # was placed on one starts disarmed, exactly like a loaded save state.
+        self.warp_armed = False
         self.in_battle = False
+        self.enemy = None
+        #: Indices into wEventFlags that read as set, for the milestone ladder.
+        self.event_bits: set[int] = set()
         self.pressed: list[str] = []
         self.walls: set[tuple[int, int]] = set()
         # Battle menus, modelled on the real ones: the 2x2 top menu does not wrap,
@@ -90,7 +103,21 @@ class FakeEmulator:
             # A blocked step in Gen 1 is not an error: you simply stay put.
             if target not in self.walls:
                 self.x, self.y = target
+                self._apply_transition()
         self.frame_count += frames
+
+    def _apply_transition(self) -> None:
+        """Doors and map edges, as far as the fake overworld models them."""
+        landing = self.transitions.get((self.map_name, self.x, self.y))
+        if landing is not None:
+            self.map_name, self.map_id, self.x, self.y = landing
+            return
+        if self.y >= 0:
+            return
+        if self.north_map is None:
+            self.y = 0  # the edge of a map with nothing beyond it is a wall
+            return
+        self.map_name, self.map_id, self.y = self.north_map
 
     def _press_in_battle(self, button: str) -> None:
         if self.battle_menu == "top":
@@ -155,8 +182,8 @@ class FakeEmulator:
 
     def get_navigation_snapshot(self, reader) -> LiveNavigationSnapshot:
         return LiveNavigationSnapshot(
-            map_id=0,
-            map_name="PALLET TOWN",
+            map_id=self.map_id,
+            map_name=self.map_name,
             player_position=(self.x, self.y),
             facing=self.facing,
             tileset="OVERWORLD",
@@ -171,6 +198,8 @@ class FakeEmulator:
             signs=[],
             map_dimensions={"width": 20, "height": 18},
             interaction=self.interaction,
+            warp_exit_directions=list(self.warp_exit_directions),
+            warp_exit_armed=self.warp_armed,
         )
 
 
@@ -212,7 +241,14 @@ class FakeReader:
         return []
 
     def read_battle(self) -> dict:
-        return {"in_battle": self.emulator.in_battle, "type": "none", "enemy": None}
+        return {
+            "in_battle": self.emulator.in_battle,
+            "type": "none",
+            "enemy": self.emulator.enemy,
+        }
+
+    def read_bits(self, addr: int, size: int) -> list[bool]:
+        return [index in self.emulator.event_bits for index in range(size * 8)]
 
     def read_battle_moves(self) -> list[dict]:
         return list(self.emulator.battle_moves)
@@ -252,13 +288,14 @@ class FakeReader:
         }
 
     def read_map_info(self) -> dict:
-        return {"map_id": 0, "map_name": "PALLET TOWN"}
+        return {"map_id": self.emulator.map_id, "map_name": self.emulator.map_name}
 
     def read_flags(self) -> dict:
         return {
             "has_pokedex": False,
             "has_oaks_parcel": False,
             "badge_count": 0,
+            "badges": [],
             "pokedex_owned": 0,
             "pokedex_seen": 0,
         }
@@ -752,6 +789,23 @@ def test_action_names_the_warp_destination_and_step_at_a_map_edge(server_app):
     payload = server_app.http.post("/action", json={"actions": ["press_a"]}).json()
 
     assert payload["on_warp"] is True
+    # Placed on the tile rather than walked onto it, so the exit is known but
+    # will not fire until the player steps off and back on.
+    assert payload["warp"]["to"] == "Route 2"
+    assert payload["warp"]["step"] == "up"
+    assert payload["warp"]["armed"] is False
+    assert "Step off" in payload["warp"]["note"]
+
+
+def test_action_reports_an_armed_boundary_warp_without_a_caveat(server_app):
+    emulator = server_app.emulator
+    emulator.x, emulator.y = 5, 0
+    emulator.warps = [{"x": 5, "y": 0, "warp_id": 0, "target_map_id": 13}]
+    emulator.warp_exit_directions = ["up"]
+    emulator.warp_armed = True
+
+    payload = server_app.http.post("/action", json={"actions": ["press_a"]}).json()
+
     assert payload["warp"] == {"to": "Route 2", "step": "up"}
 
 
@@ -763,7 +817,8 @@ def test_action_omits_the_step_for_an_interior_warp(server_app):
     payload = server_app.http.post("/action", json={"actions": ["press_a"]}).json()
 
     assert payload["on_warp"] is True
-    assert payload["warp"] == {"to": "Route 2"}
+    assert "step" not in payload["warp"]
+    assert payload["warp"]["to"] == "Route 2"
 
 
 def test_action_in_battle_reports_the_fight_not_the_overworld(server_app):
@@ -1221,3 +1276,757 @@ def test_menu_fields_are_absent_outside_battle(server_app):
 
     assert "menu" not in payload
     assert "highlighted" not in payload
+
+
+# ---------------------------------------------------------------------------
+# Save names
+#
+# A save name arrives from the network. Appended straight to the saves
+# directory it is not a name at all: `../escaped` used to report success and
+# write outside it.
+# ---------------------------------------------------------------------------
+
+ESCAPING_NAMES = ["../escaped", "../../escaped", "/tmp/absolute", "a/b", "..", ".", "", "..\\evil"]
+
+
+@pytest.mark.parametrize("name", ESCAPING_NAMES)
+def test_the_model_refuses_a_save_name_that_is_not_a_plain_file_name(name):
+    from pydantic import ValidationError
+
+    from pokemon_agent import server
+
+    with pytest.raises(ValidationError):
+        server.SaveRequest(name=name)
+
+
+@pytest.mark.parametrize("name", ["../escaped", "/tmp/absolute", "a/b"])
+def test_save_refuses_to_write_outside_the_saves_directory(server_app, name):
+    before = {p.name for p in server_app.saves_dir.glob("*.state")}
+
+    response = server_app.http.post("/save", json={"name": name})
+
+    assert response.status_code >= 400
+    assert not (server_app.data_dir / "escaped.state").exists()
+    assert not (server_app.data_dir.parent / "escaped.state").exists()
+    assert {p.name for p in server_app.saves_dir.glob("*.state")} == before
+
+
+@pytest.mark.parametrize("name", ["../escaped", "/etc/passwd", "a/b"])
+def test_load_refuses_to_read_outside_the_saves_directory(server_app, name):
+    outside = server_app.data_dir / "escaped.state"
+    outside.parent.mkdir(parents=True, exist_ok=True)
+    outside.write_text("{}", encoding="utf-8")
+
+    response = server_app.http.post("/load", json={"name": name})
+
+    assert response.status_code >= 400
+
+
+def test_a_legal_save_name_still_round_trips(server_app):
+    name = "auto__20250101T000000Z__map_transition"
+    saved = server_app.http.post("/save", json={"name": name})
+
+    assert saved.status_code == 200
+    assert (server_app.saves_dir / f"{name}.state").exists()
+    assert server_app.http.post("/load", json={"name": name}).status_code == 200
+
+
+def test_saves_listing_offers_only_names_load_would_accept(server_app):
+    server_app.http.post("/save", json={"name": "good"})
+    (server_app.saves_dir / "not a name.state").write_text("{}", encoding="utf-8")
+
+    names = [entry["name"] for entry in server_app.http.get("/saves").json()["saves"]]
+
+    assert "good" in names
+    assert "not a name" not in names
+
+
+def test_the_save_path_helper_is_the_only_way_a_path_is_built(tmp_path):
+    """Startup auto-load, save, load and listing all resolve through one helper."""
+    from pokemon_agent.saves import SaveNameError, resolve_save_path
+
+    saves = tmp_path / "saves"
+    saves.mkdir()
+    assert resolve_save_path(saves, "ok").parent == saves.resolve()
+    for name in ESCAPING_NAMES:
+        with pytest.raises(SaveNameError):
+            resolve_save_path(saves, name)
+
+
+# ---------------------------------------------------------------------------
+# Action caps
+#
+# One action used to be able to hold the emulator for hundreds of days.
+# ---------------------------------------------------------------------------
+
+
+def test_the_caps_are_the_numbers_the_cli_mirrors():
+    from pokemon_agent import coordinator
+
+    assert coordinator.MAX_ACTIONS_PER_BATCH == 40
+    assert coordinator.MAX_FRAMES_PER_ACTION == 600
+    assert coordinator.MAX_FRAMES_PER_BATCH == 3600
+
+
+def test_one_action_may_not_run_the_emulator_forever(server_app):
+    response = server_app.http.post("/action", json={"actions": ["wait_1000000000"]})
+
+    assert response.status_code == 400
+    detail = response.json()["detail"]
+    assert "600" in detail and "1000000000" in detail
+
+
+def test_a_held_button_is_capped_too(server_app):
+    response = server_app.http.post("/action", json={"actions": ["hold_up_100000"]})
+
+    assert response.status_code == 400
+    assert "600" in response.json()["detail"]
+
+
+def test_a_batch_may_not_hold_more_actions_than_the_cap(server_app):
+    response = server_app.http.post("/action", json={"actions": ["press_a"] * 41})
+
+    assert response.status_code == 400
+    detail = response.json()["detail"]
+    assert "40" in detail and "41" in detail
+
+
+def test_a_batch_may_not_spend_more_frames_than_the_cap(server_app):
+    # Each of these is legal on its own; together they are a minute of emulation.
+    response = server_app.http.post("/action", json={"actions": ["wait_600"] * 10})
+
+    assert response.status_code == 400
+    detail = response.json()["detail"]
+    assert "3600" in detail and "6000" in detail
+
+
+def test_an_over_cap_batch_presses_nothing_at_all(server_app):
+    before = list(server_app.emulator.pressed)
+
+    server_app.http.post("/action", json={"actions": ["walk_up", "wait_1000000000"]})
+
+    assert server_app.emulator.pressed == before
+
+
+def test_a_batch_at_the_cap_is_allowed(server_app):
+    response = server_app.http.post("/action", json={"actions": ["wait_600"] * 6})
+
+    assert response.status_code == 200
+
+
+def test_an_unknown_action_is_refused_before_the_batch_starts(server_app):
+    before = list(server_app.emulator.pressed)
+
+    response = server_app.http.post("/action", json={"actions": ["walk_up", "teleport"]})
+
+    assert response.status_code == 400
+    assert server_app.emulator.pressed == before
+
+
+# ---------------------------------------------------------------------------
+# Transactions
+#
+# The lock used to serialise calls rather than operations, so a second request
+# could mutate the emulator between the first one's mutation and its read.
+# ---------------------------------------------------------------------------
+
+
+async def test_two_concurrent_loads_each_report_their_own_save(tmp_path, monkeypatch):
+    """A response naming save A must not carry the map and position of save B."""
+    import threading
+
+    from pokemon_agent import server
+
+    saves = tmp_path / "saves"
+    saves.mkdir()
+    for name in ("A", "B"):
+        (saves / f"{name}.state").touch()
+
+    class BlockingEmulator:
+        def __init__(self) -> None:
+            self.current = None
+            self.a_started = threading.Event()
+            self.release_a = threading.Event()
+
+        def load_state(self, path):
+            name = Path(path).stem
+            self.current = name
+            if name == "A":  # hold A inside its transaction and let B queue up
+                self.a_started.set()
+                self.release_a.wait(5)
+
+    emulator = BlockingEmulator()
+    monkeypatch.setattr(server, "_emulator", emulator)
+    monkeypatch.setattr(server, "_reader", object())
+    monkeypatch.setattr(server, "_runtime", None)
+    monkeypatch.setattr(server, "_config", SimpleNamespace(data_dir=str(tmp_path)))
+    monkeypatch.setattr(server, "_emulator_lock", asyncio.Lock())
+
+    def refresh(**kwargs):
+        x = 1 if emulator.current == "A" else 2
+        state = {
+            "map": {"map_name": emulator.current},
+            "player": {"position": {"x": x, "y": 0}},
+            "battle": {},
+        }
+        return {"events": [], "bundle": {"state": state, "navigation": {}, "screen_text": {}}}
+
+    monkeypatch.setattr(server, "_refresh_agent_bundle_sync", refresh)
+
+    task_a = asyncio.create_task(server.load_state(server.SaveRequest(name="A")))
+    await asyncio.to_thread(emulator.a_started.wait, 5)
+    task_b = asyncio.create_task(server.load_state(server.SaveRequest(name="B")))
+    await asyncio.sleep(0.05)
+    emulator.release_a.set()
+    response_a, response_b = await asyncio.gather(task_a, task_b)
+
+    assert (response_a["save"]["name"], response_a["map"], response_a["x"]) == ("A", "A", 1)
+    assert (response_b["save"]["name"], response_b["map"], response_b["x"]) == ("B", "B", 2)
+
+
+class RecordingOps:
+    """The coordinator's plumbing, reduced to an ordered log of what it did."""
+
+    def __init__(self, gate=None) -> None:
+        self.lock = asyncio.Lock()
+        self.log: list[str] = []
+        self.gate = gate
+        self.emulator = SimpleNamespace(load_state=self._load, save_state=lambda path: None)
+        self.reader = object()
+        self.runtime = None
+        self.settles = True
+
+    def _load(self, path) -> None:
+        self.log.append("load")
+
+    def settle(self, **kwargs) -> bool:
+        self.log.append("settle")
+        return self.settles
+
+    def state_dict(self) -> dict:
+        self.log.append("state")
+        return {}
+
+    def reject_unsafe_battle_actions(self, actions) -> None:
+        self.log.append("safety")
+
+    def execute_batch(self, actions) -> dict:
+        self.log.append(f"execute:{actions[0]}")
+        if self.gate is not None and actions[0] == "first":
+            self.gate.wait(5)
+        return {"executed": len(actions), "moved": None, "blocked_after": None}
+
+    def refresh_bundle(self, **kwargs) -> dict:
+        label = (kwargs.get("requested_actions") or ["-"])[0]
+        self.log.append(f"refresh:{label}")
+        return {"events": [], "bundle": {"state": {"who": label}}}
+
+
+async def test_an_action_transaction_never_interleaves_with_another():
+    """The whole batch-then-observe sequence happens before the next one starts."""
+    import threading
+
+    from pokemon_agent.coordinator import EmulatorCoordinator
+
+    gate = threading.Event()
+    ops = RecordingOps(gate=gate)
+    coordinator = EmulatorCoordinator(ops)
+
+    first = asyncio.create_task(
+        coordinator.act_and_observe(["first"], source="action", reason="test")
+    )
+    await asyncio.sleep(0.05)
+    second = asyncio.create_task(
+        coordinator.act_and_observe(["second"], source="action", reason="test")
+    )
+    await asyncio.sleep(0.05)
+    gate.set()
+    await asyncio.gather(first, second)
+
+    assert ops.log.index("refresh:first") < ops.log.index("execute:second")
+    assert ops.log.index("execute:first") < ops.log.index("refresh:first")
+
+
+async def test_a_load_settles_before_it_observes():
+    from pokemon_agent.coordinator import EmulatorCoordinator
+
+    ops = RecordingOps()
+    ops.emulator.settle = ops.settle
+
+    await EmulatorCoordinator(ops).load_settle_and_observe(path="x.state", reason="test")
+
+    assert ops.log[:3] == ["load", "settle", "refresh:-"]
+
+
+async def test_an_unsettled_load_refreshes_nothing():
+    """A transition frame that never comes to rest is not worth publishing."""
+    from pokemon_agent.coordinator import EmulatorCoordinator
+
+    ops = RecordingOps()
+    ops.emulator.settle = ops.settle
+    ops.settles = False
+
+    result = await EmulatorCoordinator(ops).load_settle_and_observe(path="x.state", reason="test")
+
+    assert result["settled"] is False
+    assert "refresh:-" not in ops.log
+
+
+class SettlingEmulator(FakeEmulator):
+    """A fake that grew the settle() the emulator is being given."""
+
+    def __init__(self, settles: bool = True) -> None:
+        super().__init__()
+        self.settles = settles
+        self.settle_calls: list[tuple] = []
+        self.order: list[str] = []
+
+    def load_state(self, path: str) -> None:
+        self.order.append("load")
+        super().load_state(path)
+
+    def settle(self, *, max_frames: int = 600, quiet_frames: int = 30) -> bool:
+        self.order.append("settle")
+        self.settle_calls.append((max_frames, quiet_frames))
+        return self.settles
+
+
+def test_load_settles_the_game_before_reporting_it(tmp_path, monkeypatch):
+    emulator = SettlingEmulator()
+    with running_server(tmp_path, monkeypatch, emulator) as app:
+        app.http.post("/save", json={"name": "here"})
+
+        payload = app.http.post("/load", json={"name": "here"}).json()
+
+    assert emulator.settle_calls == [(600, 30)]
+    assert emulator.order[:2] == ["load", "settle"]
+    assert payload["success"] is True
+    assert "settled" not in payload  # a settled load says nothing about settling
+
+
+def test_an_unsettled_load_publishes_nothing(tmp_path, monkeypatch):
+    """Recording a mid-transition frame corrupts the explored map permanently."""
+    emulator = SettlingEmulator(settles=False)
+    with running_server(tmp_path, monkeypatch, emulator) as app:
+        app.http.post("/save", json={"name": "here"})
+        annotated = app.workspace_dir / "latest_frame_annotated.png"
+        before_frame = annotated.read_bytes()
+        before_saves = {p.name for p in app.saves_dir.glob("*.state")}
+
+        payload = app.http.post("/load", json={"name": "here"}).json()
+
+        assert payload["settled"] is False
+        assert annotated.read_bytes() == before_frame
+        assert {p.name for p in app.saves_dir.glob("*.state")} == before_saves
+
+
+# ---------------------------------------------------------------------------
+# Unsupported games
+# ---------------------------------------------------------------------------
+
+
+def test_a_gba_rom_is_refused_by_name_not_by_import_error():
+    from pokemon_agent import server
+
+    with pytest.raises(server.UnsupportedGameError) as excinfo:
+        server._resolve_game_type("game.gba", "auto")
+
+    assert "FireRed" in str(excinfo.value)
+
+
+def test_starting_on_a_gba_rom_creates_no_emulator(tmp_path, monkeypatch):
+    import pokemon_agent.emulator as emulator_mod
+    from pokemon_agent import server
+
+    def explode(rom_path):
+        raise AssertionError("the emulator must not be created for an unsupported game")
+
+    monkeypatch.setattr(emulator_mod, "create_emulator", explode)
+    rom = tmp_path / "game.gba"
+    rom.write_bytes(b"\x00" * 32)
+    server.configure(
+        server.GameConfig(
+            rom_path=str(rom),
+            data_dir=str(tmp_path / "data"),
+            agent_workspace_dir=str(tmp_path / "workspace"),
+            realtime=False,
+        )
+    )
+
+    with TestClient(server.app) as http:
+        health = http.get("/health").json()
+        action = http.post("/action", json={"actions": ["press_a"]})
+
+    assert health["emulator_ready"] is False
+    assert "FireRed" in health["startup_error"]
+    assert action.status_code == 503
+
+
+# ---------------------------------------------------------------------------
+# GET /route
+# ---------------------------------------------------------------------------
+
+
+def test_route_returns_hops_from_the_current_map(server_app):
+    payload = server_app.http.get("/route", params={"to": "Viridian City"}).json()
+
+    assert payload["from"] == "Pallet Town"
+    assert payload["to"] == "Viridian City"
+    assert payload["distance"] == len(payload["hops"]) == 2
+    assert payload["hops"][0] == {
+        "from": "Pallet Town",
+        "to": "Route 1",
+        "kind": "connection",
+        "at": None,
+        "edge": "north",
+    }
+
+
+def test_route_to_a_warp_names_the_tile_to_step_on(server_app):
+    payload = server_app.http.get("/route", params={"to": "Oak's Lab"}).json()
+
+    hop = payload["hops"][-1]
+    assert hop["kind"] == "warp"
+    assert hop["at"] == [12, 11]
+
+
+def test_route_to_where_you_already_are_is_no_hops_at_all(server_app):
+    payload = server_app.http.get("/route", params={"to": "Pallet Town"}).json()
+
+    assert payload["hops"] == []
+    assert payload["distance"] == 0
+
+
+def test_route_404s_for_a_map_nobody_has_heard_of(server_app):
+    response = server_app.http.get("/route", params={"to": "Kanto Airport"})
+
+    assert response.status_code == 404
+    assert "Kanto Airport" in response.json()["detail"]
+
+
+def test_route_says_why_when_there_is_no_way_through():
+    """An unreachable destination answers with null hops and a reason."""
+    from pokemon_agent.capabilities import route_payload
+    from pokemon_agent.world import MapInfo, World
+
+    world = World(
+        {
+            "Island": MapInfo(name="Island", map_id=1, size=None, hops=()),
+            "Mainland": MapInfo(name="Mainland", map_id=2, size=None, hops=()),
+        }
+    )
+
+    payload = route_payload(world, "Island", "Mainland")
+
+    assert payload["hops"] is None
+    assert "No route" in payload["reason"]
+
+
+# ---------------------------------------------------------------------------
+# POST /goto
+# ---------------------------------------------------------------------------
+
+
+def test_goto_walks_to_a_tile_on_the_current_map(server_app):
+    payload = server_app.http.post("/goto", json={"x": 5, "y": 2}).json()
+
+    assert payload["arrived"] is True
+    assert payload["walked"] == 4
+    assert (payload["x"], payload["y"]) == (5, 2)
+    assert payload["stopped_because"] == "arrived"
+
+
+def test_goto_a_tile_it_is_already_on_walks_nothing(server_app):
+    payload = server_app.http.post("/goto", json={"x": 5, "y": 6}).json()
+
+    assert payload["arrived"] is True
+    assert payload["walked"] == 0
+    assert payload["actions_executed"] == 0
+
+
+def test_goto_stops_and_says_why_when_the_tile_is_walled_off(corridor_app):
+    payload = corridor_app.http.post("/goto", json={"x": 12, "y": 6}).json()
+
+    assert payload["arrived"] is False
+    assert payload["walked"] == 0
+    assert "no walkable path" in payload["stopped_because"]
+
+
+def test_goto_crosses_a_map_edge_toward_a_named_map(tmp_path, monkeypatch):
+    emulator = FakeEmulator()
+    emulator.y = 4  # close enough that the north edge is inside the live window
+    emulator.north_map = ("ROUTE 1", 12, 17)
+    with running_server(tmp_path, monkeypatch, emulator) as app:
+        payload = app.http.post("/goto", json={"target": "Route 1"}).json()
+
+    assert payload["arrived"] is True
+    assert payload["stopped_because"] == "arrived"
+    assert payload["map"] == "ROUTE 1"
+
+
+def test_goto_404s_for_a_map_nobody_has_heard_of(server_app):
+    response = server_app.http.post("/goto", json={"target": "Kanto Airport"})
+
+    assert response.status_code == 404
+
+
+def test_goto_refuses_an_empty_target(server_app):
+    assert server_app.http.post("/goto", json={}).status_code == 400
+    assert server_app.http.post("/goto", json={"x": 3}).status_code == 400
+    assert server_app.http.post("/goto", json={"target": "Route 1", "x": 3}).status_code == 400
+
+
+# ---------------------------------------------------------------------------
+# GET /calc
+# ---------------------------------------------------------------------------
+
+
+PIDGEY = {
+    "species": "Pidgey",
+    "level": 5,
+    "hp": 19,
+    "max_hp": 19,
+    "types": ["Normal", "Flying"],
+    "moves": ["Tackle", "Gust"],
+}
+
+
+def test_calc_is_409_outside_a_battle(server_app):
+    response = server_app.http.get("/calc")
+
+    assert response.status_code == 409
+    assert "battle" in response.json()["detail"]
+
+
+def test_calc_reports_a_damage_range_and_a_kill_count_per_move(server_app):
+    server_app.emulator.in_battle = True
+    server_app.emulator.enemy = PIDGEY
+
+    payload = server_app.http.get("/calc").json()
+
+    by_name = {entry["move"]: entry for entry in payload["moves"]}
+    assert set(by_name) == {"Scratch", "Growl", "Ember"}
+    ember = by_name["Ember"]
+    assert ember["type"] == "Fire"
+    assert ember["power"] == 40
+    assert ember["effectiveness"] == 1.0
+    assert 0 < ember["damage"][0] <= ember["damage"][1]
+    assert ember["turns_to_ko"] >= 1
+    # A status move does no damage and never kills anything.
+    assert by_name["Growl"]["damage"] == [0, 0]
+    assert by_name["Growl"]["turns_to_ko"] is None
+
+
+def test_calc_names_the_enemy_and_the_worst_it_can_do(server_app):
+    server_app.emulator.in_battle = True
+    server_app.emulator.enemy = PIDGEY
+
+    payload = server_app.http.get("/calc").json()
+
+    assert payload["enemy"] == {
+        "species": "Pidgey",
+        "level": 5,
+        "hp": 19,
+        "types": ["Normal", "Flying"],
+    }
+    assert payload["threat"] > 0
+
+
+# ---------------------------------------------------------------------------
+# GET /frontier
+# ---------------------------------------------------------------------------
+
+
+def test_frontier_lists_reachable_ground_never_stood_on(corridor_app):
+    payload = corridor_app.http.get("/frontier").json()
+
+    assert payload["map"] == "PALLET TOWN"
+    assert payload["from"] == [5, 6]
+    assert payload["count"] == len(payload["tiles"])
+    assert [5, 6] not in payload["tiles"]  # you have been here
+    assert [5, 5] in payload["tiles"] and [5, 7] in payload["tiles"]
+    # The corridor is one tile wide, so nothing beside it is reachable.
+    assert all(tile[0] == 5 for tile in payload["tiles"])
+    # Nearest first.
+    first = payload["tiles"][0]
+    assert abs(first[1] - 6) == 1
+
+
+def test_frontier_shrinks_as_the_ground_is_walked(corridor_app):
+    before = corridor_app.http.get("/frontier").json()["count"]
+
+    corridor_app.http.post("/action", json={"actions": ["walk_up", "walk_up"]})
+
+    assert corridor_app.http.get("/frontier").json()["count"] < before
+
+
+# ---------------------------------------------------------------------------
+# POST /sim
+# ---------------------------------------------------------------------------
+
+
+def test_sim_reports_where_a_plan_would_stop(corridor_app):
+    payload = corridor_app.http.post("/sim", json={"actions": ["up:6", "right:3"]}).json()
+
+    assert payload["end"] == [5, 2]  # the corridor runs out at y=2
+    assert payload["steps"] == 4
+    assert payload["blocked_at"] == 4  # index into the *expanded* action list
+    assert payload["blocked_by"] == "wall"
+    assert payload["facing"] == "up"
+    assert payload["warp_at"] is None
+
+
+def test_sim_presses_nothing(corridor_app):
+    before = (corridor_app.emulator.x, corridor_app.emulator.y)
+    pressed = list(corridor_app.emulator.pressed)
+
+    corridor_app.http.post("/sim", json={"actions": ["up:6"]})
+
+    assert (corridor_app.emulator.x, corridor_app.emulator.y) == before
+    assert corridor_app.emulator.pressed == pressed
+
+
+def test_sim_refuses_a_plan_it_cannot_read(server_app):
+    response = server_app.http.post("/sim", json={"actions": ["teleport"]})
+
+    assert response.status_code == 400
+
+
+# ---------------------------------------------------------------------------
+# GET /guide
+# ---------------------------------------------------------------------------
+
+
+def test_guide_serves_the_outline_by_default(server_app):
+    payload = server_app.http.get("/guide").json()
+
+    assert set(payload) == {"outline"}
+    assert "read(guide, slug)" in payload["outline"]
+
+
+def test_guide_serves_one_section_by_reference(server_app):
+    from pokemon_agent import guides
+
+    section = guides.index()[0]
+
+    payload = server_app.http.get("/guide", params={"ref": section.ref}).json()
+
+    assert payload["guide"] == section.guide
+    assert payload["slug"] == section.slug
+    assert payload["title"] == section.title
+    assert payload["body"].strip()
+
+
+def test_reading_a_section_is_recorded_against_the_map_and_the_press_count(server_app):
+    from pokemon_agent import guides
+    from pokemon_agent import server as server_mod
+
+    section = guides.index()[0]
+    server_app.http.post("/action", json={"actions": ["press_a", "press_a"]})
+
+    server_app.http.get("/guide", params={"ref": section.ref})
+
+    reads = server_mod._guide_log.reads()
+    assert reads[-1]["guide"] == section.guide
+    assert reads[-1]["slug"] == section.slug
+    assert reads[-1]["at_map"] == "PALLET TOWN"
+    assert reads[-1]["presses"] == 2
+
+
+def test_guide_404s_for_a_section_that_does_not_exist(server_app):
+    assert server_app.http.get("/guide", params={"ref": "nope/nope"}).status_code == 404
+    assert server_app.http.get("/guide", params={"ref": "nonsense"}).status_code == 404
+
+
+def test_guide_searches_by_keyword(server_app):
+    payload = server_app.http.get("/guide", params={"q": "brock"}).json()
+
+    assert payload["results"]
+    assert set(payload["results"][0]) == {"ref", "title", "summary"}
+
+
+def test_guide_search_records_nothing(server_app):
+    from pokemon_agent import server as server_mod
+
+    before = len(server_mod._guide_log.reads())
+
+    server_app.http.get("/guide", params={"q": "brock"})
+    server_app.http.get("/guide")
+
+    assert len(server_mod._guide_log.reads()) == before
+
+
+# ---------------------------------------------------------------------------
+# GET /progress
+# ---------------------------------------------------------------------------
+
+
+def test_progress_counts_milestones_and_buttons(server_app):
+    from pokemon_agent.milestones import ALL_EVENTS, MILESTONES
+
+    starter = MILESTONES[0]
+    server_app.emulator.event_bits = {ALL_EVENTS[starter.source]}
+    server_app.http.post("/action", json={"actions": ["press_a", "walk_up"]})
+
+    payload = server_app.http.get("/progress").json()
+
+    assert payload["count"] == 1
+    assert payload["total"] == len(MILESTONES)
+    assert payload["furthest"] == starter.id
+    assert payload["furthest_label"] == starter.label
+    assert payload["latest"] == [starter.id]
+    assert payload["presses"] == 2
+
+
+def test_progress_on_a_fresh_game_is_honest_about_zero(server_app):
+    payload = server_app.http.get("/progress").json()
+
+    assert payload == {
+        "count": 0,
+        "total": payload["total"],
+        "furthest": None,
+        "furthest_label": None,
+        "latest": [],
+        "presses": 0,
+    }
+
+
+# ---------------------------------------------------------------------------
+# Dashboard mounting
+#
+# The shell and its assets are registered by the dashboard package now, not
+# open-coded here as well. A live run is watched through these URLs.
+# ---------------------------------------------------------------------------
+
+DASHBOARD_URLS = [
+    "/dashboard",
+    "/dashboard/",
+    "/dashboard/assets/app.js",
+    "/dashboard/assets/style.css",
+    "/dashboard/state",
+    "/dashboard/history",
+]
+
+
+@pytest.mark.parametrize("url", DASHBOARD_URLS)
+def test_every_dashboard_url_still_resolves(server_app, url):
+    assert server_app.http.get(url).status_code == 200
+
+
+def test_the_dashboard_shell_is_never_cached(server_app):
+    """The shell names its assets with a ?v= token, so a cached shell is stale."""
+    response = server_app.http.get("/dashboard")
+
+    assert "no-store" in response.headers["cache-control"]
+    assert response.headers["content-type"].startswith("text/html")
+
+
+def test_the_dashboard_is_mounted_exactly_once(server_app):
+    """Two mounting paths could drift; a restarted lifespan must not add a third."""
+    from pokemon_agent import server as server_mod
+
+    paths = [getattr(route, "path", None) for route in server_mod.app.router.routes]
+
+    assert paths.count("/dashboard") == 1
+    assert paths.count("/dashboard/") == 1
+    assert paths.count("/dashboard/assets") == 1

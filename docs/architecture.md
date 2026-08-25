@@ -88,6 +88,63 @@ loop the model is already running changes what it does. A fact it has to notice
 and remember does not. Anything new should either refuse an action, report a
 consequence, or not exist.
 
+## The capability modules
+
+Six modules the server exposes over HTTP. None of them are reachable from the
+agent directly: `agent_cli.py` is stdlib-only and staged into the workspace as a
+standalone script, so everything it can do is an endpoint.
+
+| Module | Holds |
+|---|---|
+| `milestones.py` | 507 named event flags, 63 of them ordered into a ladder |
+| `bench/` | run registry and the presses-to-milestone scoreboard |
+| `gamedata/` | the whole game as JSON, generated from pokered |
+| `world.py` | routing over the map graph, plan simulation, `frontier()` |
+| `guides/` | three walkthrough routes as a retrievable corpus |
+| `interventions.py` | detectors deciding when to stop the player and think |
+| `slots.py` | borrowing the model's KV slot for a thinking session |
+
+`gamedata/` and `guides/` are generated, not hand-written. `scripts/gen_gamedata.py`
+and `scripts/gen_milestones.py` rebuild them from pokered and are idempotent;
+re-running produces byte-identical files. Regenerate rather than editing the JSON.
+
+## What is measured
+
+The headline metric is **button presses to each milestone**, chosen because
+PokeAgent and Continual Harness both report it, so runs here are comparable to
+published ones. For scale: PokeAgent's best entry reached the first gym in 1,608
+actions, the most efficient in 649, and a human speedrunner takes about 18
+minutes.
+
+Two rules make the number honest:
+
+- **Presses never reset on a save-state reload.** `bench/metrics.py` has no
+  branch on `reloaded` at all. A gym won on the fourth attempt costs what all
+  four attempts cost.
+- **Nothing judges progress except the game's own RAM.** A milestone is a bit in
+  `wEventFlags`, a badge bit, or an item in the bag. No model is asked whether
+  the run is going well.
+
+## Interventions
+
+The player model runs non-thinking so it stays fast. A thinking session can be
+swapped in by saving the player's KV slot to disk, running the thinker in the
+freed slot, and restoring. The box runs `--parallel 1`, so there is exactly one
+slot and this is the only way.
+
+`interventions.py` decides when. Six detectors read receipts and fire on their
+own: a commit gate before something irreversible, sustained low HP, the same
+command failing twice, no milestone in 800 presses, a revisit ratio over 2.5,
+and first arrival on one of eighteen known-hard maps.
+
+The harness fires these. The model is never asked to notice it is stuck and call
+for help, because that is the advisory pattern that has failed every time.
+
+`slots.py` does the borrowing, and the dangerous half is the giving back:
+between the erase and the restore the player's whole context exists only as a
+file. `borrowed_slot` refuses to hand the slot over unless the save is confirmed
+non-empty, and raises `SlotLost` with the filename rather than failing quietly.
+
 ## Coordinates
 
 North is up. `walk_up` decreases `y`. The annotated frame's row numbers are

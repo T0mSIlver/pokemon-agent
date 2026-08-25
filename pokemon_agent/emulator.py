@@ -14,8 +14,14 @@ from typing import Any, Dict, List, Optional
 from pokemon_agent.navigation import (
     MAP_COORDINATE_NOTE,
     MAP_COORDINATE_SYSTEM,
+    MOVE_DIRECTIONS,
+    WARP_CARPET_TILES,
     LiveNavigationSnapshot,
+    facing_edge_of_map,
+    ledge_hop_allows,
+    ledge_landing,
     tile_pair_allows,
+    warp_uses_front_tile_rule,
 )
 
 try:
@@ -30,6 +36,37 @@ INTERACTION_RAY_LOCAL: dict[str, list[tuple[int, int]]] = {
     "left": [(3, 4), (2, 4)],
     "right": [(5, 4), (6, 4)],
 }
+
+#: The player sits at local (4, 4) of the 9x10 window; these are its neighbours.
+NEIGHBOUR_LOCAL: dict[str, tuple[int, int]] = {
+    "up": (4, 3),
+    "down": (4, 5),
+    "left": (3, 4),
+    "right": (5, 4),
+}
+
+# Red/Blue WRAM. Every one of these was confirmed against the ROM by stepping a
+# save state frame by frame, not taken on faith from the decomp.
+ADDR_PLAYER_SPRITE_Y_STEP = 0xC103  # wSpritePlayerStateData1 y delta, per frame
+ADDR_PLAYER_SPRITE_X_STEP = 0xC105  # ... and its x delta
+ADDR_WALK_COUNTER = 0xCFC5  # wWalkCounter: 8 -> 0 across one tile of walking
+ADDR_STATUS_FLAGS_5 = 0xD730  # wStatusFlags5
+ADDR_MOVEMENT_FLAGS = 0xD736  # wMovementFlags
+ADDR_CUR_MAP = 0xD35E  # wCurMap
+ADDR_PLAYER_Y = 0xD361  # wYCoord
+ADDR_PLAYER_X = 0xD362  # wXCoord
+
+#: wStatusFlags5 bit 7 — the engine is feeding the player simulated joypad
+#: states (a ledge hop, a forced walk, a cutscene), so input is not ours yet.
+SCRIPTED_MOVEMENT_BIT = 0x80
+
+#: wMovementFlags bit 6 (mid ledge-hop or fishing) and bit 7 (spin tiles).
+MOVEMENT_BUSY_BITS = 0xC0
+
+#: wMovementFlags bit 2 — the engine only arms a warp once the player has
+#: *walked onto* its tile, so a save state dropped onto one starts disarmed and
+#: the collision warp check is skipped entirely.
+STANDING_ON_WARP_BIT = 0x04
 
 
 def _coord_dict(coord: Optional[tuple[int, int]]) -> Optional[dict[str, int]]:
@@ -252,6 +289,15 @@ class Emulator(ABC):
     def tick(self, frames: int = 1) -> None:
         """Advance the emulation by *frames* frames."""
 
+    def settle(self, *, max_frames: int = 600, quiet_frames: int = 30) -> bool:
+        """Tick until the player stops moving and the game returns control.
+
+        Returns True if it settled within max_frames, False if it gave up.
+        """
+        raise NotImplementedError(
+            f"{self.__class__.__name__} does not know when the game has settled."
+        )
+
     # -- video --------------------------------------------------------------
 
     @abstractmethod
@@ -386,6 +432,56 @@ class PyBoyEmulator(Emulator):
         for _ in range(frames):
             pb.tick()  # type: ignore[union-attr]
             self.frame_count += 1
+
+    def _movement_busy(self) -> bool:
+        return bool(
+            self.read_u8(ADDR_WALK_COUNTER)
+            or self.read_u8(ADDR_PLAYER_SPRITE_Y_STEP)
+            or self.read_u8(ADDR_PLAYER_SPRITE_X_STEP)
+            or self.read_u8(ADDR_MOVEMENT_FLAGS) & MOVEMENT_BUSY_BITS
+            or self.read_u8(ADDR_STATUS_FLAGS_5) & SCRIPTED_MOVEMENT_BIT
+        )
+
+    def _settle_key(self) -> tuple[int, int, int]:
+        return (
+            self.read_u8(ADDR_CUR_MAP),
+            self.read_u8(ADDR_PLAYER_X),
+            self.read_u8(ADDR_PLAYER_Y),
+        )
+
+    def settle(self, *, max_frames: int = 600, quiet_frames: int = 30) -> bool:
+        """Tick until the player stops moving and the game returns control.
+
+        Returns True if it settled within max_frames, False if it gave up.
+        """
+        quiet = 0
+        settled_key = self._settle_key()
+        for _ in range(max_frames):
+            self.tick(1)
+            key = self._settle_key()
+            if key != settled_key or self._movement_busy():
+                # A ledge hop passes through an intermediate tile and a warp
+                # passes through an incoherent map; restarting the window is
+                # what keeps either from being observed as a resting place.
+                settled_key = key
+                quiet = 0
+                continue
+            quiet += 1
+            if quiet >= quiet_frames:
+                return True
+        return False
+
+    def press_and_settle(
+        self,
+        button: str,
+        frames: int = 8,
+        *,
+        max_frames: int = 600,
+        quiet_frames: int = 30,
+    ) -> bool:
+        """Hold *button* for *frames*, then wait for the result to be observable."""
+        self.press(button, frames)
+        return self.settle(max_frames=max_frames, quiet_frames=quiet_frames)
 
     # -- video --------------------------------------------------------------
 
@@ -558,10 +654,30 @@ class PyBoyEmulator(Emulator):
             "talk_over_tiles": set(reader.read_talk_over_tiles()),
             "dialog_active": _read_dialog_active(reader),
             "map_dimensions": map_dimensions,
+            "standing_on_warp": bool(self.read_u8(ADDR_MOVEMENT_FLAGS) & STANDING_ON_WARP_BIT),
             "terrain": self._downsample_collision(pb.game_wrapper.game_area_collision()),  # type: ignore[attr-defined]
             "tilemap": self._matrix_to_rows(pb.game_wrapper._get_screen_background_tilemap()),  # type: ignore[attr-defined]
             "sprites_local": sprites_local,
         }
+
+    def _compute_ledge_hops(
+        self,
+        tilemap: List[List[int]],
+        tileset: str,
+        player_coords: tuple[int, int],
+    ) -> Dict[str, tuple[int, int]]:
+        """Directions that jump a ledge, mapped to where the jump lands.
+
+        Ledges read as blocked in the collision map, so they have to be
+        recovered from the tile pair before the collision result is trusted.
+        """
+        standing_tile = self._tile_id_at_local(tilemap, (4, 4))
+        hops: Dict[str, tuple[int, int]] = {}
+        for direction, local in NEIGHBOUR_LOCAL.items():
+            ledge_tile = self._tile_id_at_local(tilemap, local)
+            if ledge_hop_allows(tileset, direction, standing_tile, ledge_tile):
+                hops[direction] = ledge_landing(player_coords, direction)
+        return hops
 
     def _compute_valid_moves(
         self,
@@ -571,17 +687,18 @@ class PyBoyEmulator(Emulator):
         sprites_local: set[tuple[int, int]],
         player_coords: tuple[int, int],
         warps: List[Dict[str, int]],
+        ledge_hops: Optional[Dict[str, tuple[int, int]]] = None,
     ) -> List[str]:
         moves: List[str] = []
         current_tile = self._tile_id_at_local(tilemap, (4, 4))
-        checks = (
-            ("up", (4, 3)),
-            ("down", (4, 5)),
-            ("left", (3, 4)),
-            ("right", (5, 4)),
-        )
+        if ledge_hops is None:
+            ledge_hops = self._compute_ledge_hops(tilemap, tileset, player_coords)
 
-        for direction, (local_x, local_y) in checks:
+        for direction in MOVE_DIRECTIONS:
+            local_x, local_y = NEIGHBOUR_LOCAL[direction]
+            if direction in ledge_hops:
+                moves.append(direction)
+                continue
             if not terrain[local_y][local_x]:
                 continue
             if (local_x, local_y) in sprites_local:
@@ -591,18 +708,65 @@ class PyBoyEmulator(Emulator):
                 continue
             moves.append(direction)
 
-        warp_coords = {(warp["x"], warp["y"]) for warp in warps}
-        if player_coords in warp_coords:
-            # Standing on a warp tile: any direction may trigger the warp
-            # transition, regardless of the collision tile beyond it.
-            # Without map-specific exit-direction metadata we cannot tell
-            # which press fires the warp, so expose all four directions and
-            # let the emulator handle the press.
-            for direction in ("up", "down", "left", "right"):
-                if direction not in moves:
-                    moves.append(direction)
-
         return moves
+
+    def _compute_warp_exits(
+        self,
+        terrain: List[List[int]],
+        tilemap: List[List[int]],
+        tileset: str,
+        map_id: int,
+        map_dimensions: Optional[Dict[str, int]],
+        player_coords: tuple[int, int],
+        warps: List[Dict[str, int]],
+        armed: bool,
+    ) -> tuple[List[str], bool, Optional[str]]:
+        """Directions that fire the warp under the player, whether it is armed
+        right now, and a note when neither can be answered.
+
+        These are never walkable steps: pokered only reaches its warp check
+        after the move has already collided, so every candidate here is a
+        direction ordinary collision rejects.
+        """
+        warp_coords = {(int(warp["x"]), int(warp["y"])) for warp in warps}
+        if player_coords not in warp_coords:
+            return [], False, None
+
+        front_tile_rule = warp_uses_front_tile_rule(tileset, map_id)
+        exits: List[str] = []
+        for direction in MOVE_DIRECTIONS:
+            local_x, local_y = NEIGHBOUR_LOCAL[direction]
+            if terrain[local_y][local_x]:
+                continue
+            if front_tile_rule:
+                front_tile = self._tile_id_at_local(tilemap, (local_x, local_y))
+                if front_tile in WARP_CARPET_TILES[direction]:
+                    exits.append(direction)
+                continue
+            at_edge = facing_edge_of_map(player_coords, direction, map_dimensions)
+            if at_edge is None:
+                unknown = (
+                    "Standing on a warp whose exit direction is the edge of the map, "
+                    "but the map dimensions could not be read."
+                )
+                return [], False, unknown
+            if at_edge:
+                exits.append(direction)
+
+        if not exits:
+            unmatched = (
+                "Standing on a warp, but no adjacent tile matches the rule that fires "
+                "it. It may fire on stepping onto a neighbouring tile instead."
+            )
+            return [], False, unmatched
+        if not armed:
+            disarmed = (
+                "The exit direction is known, but the warp is not armed: the engine "
+                "only arms it once the player walks onto the tile. Step off and back "
+                "on, then press the exit direction."
+            )
+            return exits, False, disarmed
+        return exits, True, None
 
     def get_valid_moves(self, reader: Any) -> List[str]:
         components = self._movement_components(reader)
@@ -619,6 +783,7 @@ class PyBoyEmulator(Emulator):
         components = self._movement_components(reader)
         map_info = components["map_info"]
         coords = components["coords"]
+        ledge_hops = self._compute_ledge_hops(components["tilemap"], components["tileset"], coords)
         valid_moves = self._compute_valid_moves(
             terrain=components["terrain"],
             tilemap=components["tilemap"],
@@ -626,6 +791,17 @@ class PyBoyEmulator(Emulator):
             sprites_local=components["sprites_local"],
             player_coords=coords,
             warps=components["warps"],
+            ledge_hops=ledge_hops,
+        )
+        warp_exits, warp_armed, warp_exit_note = self._compute_warp_exits(
+            terrain=components["terrain"],
+            tilemap=components["tilemap"],
+            tileset=components["tileset"],
+            map_id=map_info["map_id"],
+            map_dimensions=components["map_dimensions"],
+            player_coords=coords,
+            warps=components["warps"],
+            armed=components["standing_on_warp"],
         )
         snapshot = LiveNavigationSnapshot(
             map_id=map_info["map_id"],
@@ -644,6 +820,10 @@ class PyBoyEmulator(Emulator):
             signs=components["signs"],
             map_dimensions=components["map_dimensions"],
             tile_ids=self._tile_ids_for_window(coords, components["tilemap"]),
+            ledge_hops=ledge_hops,
+            warp_exit_directions=warp_exits,
+            warp_exit_armed=warp_armed,
+            warp_exit_note=warp_exit_note,
         )
         snapshot.interaction = _build_interaction_probe(
             snapshot,

@@ -16,9 +16,14 @@ import math
 import os
 import tempfile
 from pathlib import Path
-from typing import Dict, Iterable, List, Optional, Set, Tuple
+from typing import Dict, FrozenSet, Iterable, List, NamedTuple, Optional, Set, Tuple
 
 from PIL import Image, ImageDraw, ImageFont
+
+try:  # The canonical map table is data, not a hard dependency of the store.
+    from pokemon_agent import gamedata as _gamedata
+except Exception:  # noqa: BLE001 — a missing data file must not break the store
+    _gamedata = None  # type: ignore[assignment]
 
 Coord = Tuple[int, int]
 
@@ -68,8 +73,142 @@ _LABEL_EVERY = 10
 #: Octant boundaries at 22.5 degrees: tan(22.5 deg) = 0.414, so 1 / 0.414.
 
 
+#: Tilesets the game only ever draws single rooms with. The largest such map in
+#: Red is a 20x18 gym, so anything bigger claiming one of these is not that map.
+ROOM_TILESETS = frozenset(
+    {
+        "REDS_HOUSE_1",
+        "REDS_HOUSE_2",
+        "MART",
+        "DOJO",
+        "POKECENTER",
+        "GYM",
+        "HOUSE",
+        "MUSEUM",
+        "LAB",
+        "CLUB",
+    }
+)
+ROOM_MAX_TILES = 20
+
+#: The smallest outdoor map in the game (Pallet Town, Cinnabar Island, Route 7).
+OVERWORLD_MIN_TILES = (20, 18)
+
+
 def _log(message: str) -> None:
     print(f"[explored-map] {message}")
+
+
+class CanonicalMap(NamedTuple):
+    """A map's real geometry, as the pokered decompilation records it."""
+
+    name: str
+    width: int
+    height: int
+    warps: FrozenSet[Coord]
+
+
+_CANONICAL: Optional[Dict[int, CanonicalMap]] = None
+
+
+def canonical_maps() -> Dict[int, CanonicalMap]:
+    """Real map geometry by map id, from ``data/game/world.json``.
+
+    Empty — never an exception — when the data file is missing, so the store
+    degrades to its own self-consistency checks rather than refusing to run.
+    """
+    global _CANONICAL
+    if _CANONICAL is not None:
+        return _CANONICAL
+    table: Dict[int, CanonicalMap] = {}
+    try:
+        world = _gamedata.world() if _gamedata is not None else {}
+        for name, entry in world.items():
+            size = entry.get("size") or []
+            if len(size) != 2:
+                continue
+            table[int(entry["map_id"])] = CanonicalMap(
+                name=str(name),
+                width=int(size[0]),
+                height=int(size[1]),
+                warps=frozenset(
+                    (int(warp["x"]), int(warp["y"]))
+                    for warp in entry.get("warps") or []
+                    if isinstance(warp, dict) and "x" in warp and "y" in warp
+                ),
+            )
+    except Exception as exc:  # noqa: BLE001 — unreadable data is not a crash
+        _log(f"canonical map sizes unavailable: {exc}")
+        table = {}
+    _CANONICAL = table
+    return _CANONICAL
+
+
+def _inside(coord: Coord, width: int, height: int) -> bool:
+    return 0 <= coord[0] < width and 0 <= coord[1] < height
+
+
+def declared_size(snapshot: dict) -> Optional[Coord]:
+    """The map size a snapshot claims, or None if it does not claim one."""
+    dimensions = snapshot.get("map_dimensions")
+    if not isinstance(dimensions, dict):
+        return None
+    try:
+        width = int(dimensions.get("width") or 0)
+        height = int(dimensions.get("height") or 0)
+    except (TypeError, ValueError):
+        return None
+    return (width, height) if width > 0 and height > 0 else None
+
+
+def incoherence(snapshot: dict, map_id: int, known_size: Optional[Coord] = None) -> Optional[str]:
+    """Why this snapshot cannot be describing `map_id`, or None if it can.
+
+    A snapshot read while the game is still loading a map carries the previous
+    map's geometry under the new map's id. It contradicts either itself or the
+    game's own map table, and merging it corrupts the record permanently — so
+    it is rejected outright rather than folded in.
+
+    `known_size` is what the store already believes the map measures, used to
+    place coordinates from a snapshot that declares no dimensions of its own.
+    """
+    declared = declared_size(snapshot)
+    size = declared if declared is not None else known_size
+    dimensions = snapshot.get("map_dimensions")
+    if declared is not None and isinstance(dimensions, dict):
+        width_blocks = dimensions.get("width_blocks")
+        height_blocks = dimensions.get("height_blocks")
+        # A map is laid out in 2x2-tile blocks; the two units cannot disagree.
+        if width_blocks is not None and int(width_blocks) * 2 != declared[0]:
+            return f"{declared[0]} tiles wide but {width_blocks} blocks"
+        if height_blocks is not None and int(height_blocks) * 2 != declared[1]:
+            return f"{declared[1]} tiles high but {height_blocks} blocks"
+
+    canonical = canonical_maps().get(map_id)
+    if declared is not None and canonical is not None:
+        if declared != (canonical.width, canonical.height):
+            return (
+                f"declared {declared[0]}x{declared[1]} but {canonical.name} is "
+                f"{canonical.width}x{canonical.height}"
+            )
+
+    if size is not None:
+        player = _as_coord(snapshot.get("player_position"))
+        if player is not None and not _inside(player, *size):
+            return f"player {player} outside {size[0]}x{size[1]}"
+        for warp in snapshot.get("warps") or []:
+            coord = _as_coord(warp)
+            if coord is not None and not _inside(coord, *size):
+                return f"warp {coord} outside {size[0]}x{size[1]}"
+
+        tileset = str(snapshot.get("tileset") or "")
+        if tileset in ROOM_TILESETS and max(size) > ROOM_MAX_TILES:
+            return f"{size[0]}x{size[1]} is too big for the {tileset} tileset"
+        if tileset == "OVERWORLD" and (
+            size[0] < OVERWORLD_MIN_TILES[0] or size[1] < OVERWORLD_MIN_TILES[1]
+        ):
+            return f"{size[0]}x{size[1]} is too small for the OVERWORLD tileset"
+    return None
 
 
 def _as_coord(value: object) -> Optional[Coord]:
@@ -176,6 +315,26 @@ class _MapRecord:
         self.width = max(self.width, x + 1)
         self.height = max(self.height, y + 1)
 
+    def resize(self, width: int, height: int) -> int:
+        """Adopt a new real size, dropping everything that falls outside it.
+
+        Size is metadata the game knows exactly, not something to accumulate: a
+        tile beyond the new bounds was learned from another map's geometry and
+        cannot be on this one. Returns how many seen tiles that dropped.
+        """
+        self.width = width
+        self.height = height
+        before = len(self.seen)
+        self.seen = {coord for coord in self.seen if _inside(coord, width, height)}
+        self.walkable = {coord for coord in self.walkable if _inside(coord, width, height)}
+        self.visits = {
+            coord: count for coord, count in self.visits.items() if _inside(coord, width, height)
+        }
+        self.warps = {coord for coord in self.warps if _inside(coord, width, height)}
+        if self.player is not None and not _inside(self.player, width, height):
+            self.player = None
+        return before - len(self.seen)
+
     def note(self, coord: Coord, *, passable: bool) -> None:
         # `seen` and `walkable` are both monotone unions: a tile seen passable
         # once stays passable, so a blocker that was only there for one frame
@@ -240,6 +399,11 @@ class ExploredMaps:
         # Bumped only when a snapshot actually taught us something, so callers
         # can skip re-rendering the map image sixty times a second.
         self.revision = 0
+        #: Snapshots dropped as incoherent, and what the last one contradicted.
+        self.rejected = 0
+        self._last_rejection: Optional[Tuple[int, str]] = None
+        #: What loading the store had to repair, by map id. Empty means clean.
+        self.repairs: Dict[int, List[str]] = {}
         self._fingerprint: Optional[tuple] = None
         self._load()
 
@@ -247,19 +411,36 @@ class ExploredMaps:
     # Ingest
     # ------------------------------------------------------------------
 
-    def record(self, snapshot: dict) -> None:
-        """Fold one `LiveNavigationSnapshot.to_dict()` into the stored map."""
+    def record(self, snapshot: dict) -> bool:
+        """Fold one `LiveNavigationSnapshot.to_dict()` into the stored map.
+
+        Returns False for a snapshot that was ignored, either because it names
+        no map or because it contradicts the geometry of the map it names.
+        """
         if not isinstance(snapshot, dict):
-            return
+            return False
         raw_map_id = snapshot.get("map_id")
         if raw_map_id is None:
-            return
+            return False
         try:
             map_id = int(raw_map_id)
         except (TypeError, ValueError):
-            return
+            return False
 
-        record = self._maps.get(map_id)
+        known = self._maps.get(map_id)
+        known_size = (known.width, known.height) if known and known.width else None
+        reason = incoherence(snapshot, map_id, known_size)
+        if reason is not None:
+            self.rejected += 1
+            # A transition can produce the same bad frame many times a second;
+            # say it once per run of identical rejections.
+            if self._last_rejection != (map_id, reason):
+                self._last_rejection = (map_id, reason)
+                _log(f"ignoring incoherent snapshot for map {map_id}: {reason}")
+            return False
+        self._last_rejection = None
+
+        record = known
         if record is None:
             record = _MapRecord(map_id)
             self._maps[map_id] = record
@@ -270,15 +451,15 @@ class ExploredMaps:
         if name:
             record.map_name = str(name)
 
-        dimensions = snapshot.get("map_dimensions")
-        if isinstance(dimensions, dict):
-            width = dimensions.get("width")
-            height = dimensions.get("height")
-            if width and height:
-                # The record covers the WHOLE map, allocated from its real size —
-                # it is not a cache of the windows that happened to be on screen.
-                record.width = max(record.width, int(width))
-                record.height = max(record.height, int(height))
+        size = declared_size(snapshot)
+        if size is not None and (record.width, record.height) != size:
+            # The record covers the WHOLE map, allocated from its real size — it
+            # is not a cache of the windows that happened to be on screen, and
+            # not the largest size ever misread. The latest coherent reading of
+            # the game's own map table wins, phantoms and all.
+            dropped = record.resize(*size)
+            if dropped:
+                _log(f"map {map_id} resized to {size[0]}x{size[1]}, dropping {dropped} tiles")
 
         # A sprite standing on a tile makes that tile read as blocked, so skip
         # those tiles rather than learning a wandering NPC as a wall.
@@ -312,16 +493,27 @@ class ExploredMaps:
                 record.visits[player] = record.visits.get(player, 0) + 1
             record.player = player
 
-        for warp in snapshot.get("warps") or []:
-            coord = _as_coord(warp)
-            if coord is None:
-                continue
-            record.warps.add(coord)
-            record.grow_to(*coord)
+        if "warps" in snapshot:
+            # The game reports a map's whole warp table every frame, so this is
+            # a replacement, not a union: warps unioned in from another map's
+            # table would otherwise stay on the record for good.
+            warps: Set[Coord] = set()
+            for warp in snapshot.get("warps") or []:
+                coord = _as_coord(warp)
+                if coord is None or coord[0] < 0 or coord[1] < 0:
+                    continue
+                if record.width and not _inside(coord, record.width, record.height):
+                    continue
+                warps.add(coord)
+                if not record.width:
+                    record.grow_to(*coord)
+            record.warps = warps
 
         self.dirty = True
         fingerprint = (
             map_id,
+            record.width,
+            record.height,
             len(record.seen),
             len(record.walkable),
             len(record.visits),
@@ -331,6 +523,45 @@ class ExploredMaps:
         if fingerprint != self._fingerprint:
             self._fingerprint = fingerprint
             self.revision += 1
+        return True
+
+    def repair(self) -> Dict[int, List[str]]:
+        """Drop geometry the game's own map table says is impossible.
+
+        A store written before dimensions were replaceable holds maps that
+        inherited another map's size and warps from a single frame read mid
+        transition. Every map the decompilation knows is measured against it;
+        for the rest only self-consistency is checkable.
+        """
+        report: Dict[int, List[str]] = {}
+        for map_id, record in self._maps.items():
+            fixes: List[str] = []
+            canonical = canonical_maps().get(map_id)
+            if canonical is not None:
+                size = (canonical.width, canonical.height)
+                if (record.width, record.height) != size:
+                    was = f"{record.width}x{record.height}"
+                    dropped = record.resize(*size)
+                    fixes.append(f"{was} -> {size[0]}x{size[1]}, dropping {dropped} phantom tiles")
+                phantom = record.warps - canonical.warps
+                if phantom:
+                    record.warps -= phantom
+                    fixes.append(f"dropped {len(phantom)} warps the map header does not have")
+            elif record.width and record.height:
+                outside = {
+                    coord
+                    for coord in record.warps
+                    if not _inside(coord, record.width, record.height)
+                }
+                if outside:
+                    record.warps -= outside
+                    fixes.append(f"dropped {len(outside)} warps outside the map")
+            if fixes:
+                report[map_id] = fixes
+        if report:
+            self.dirty = True
+            self.revision += 1
+        return report
 
     # ------------------------------------------------------------------
     # Queries
@@ -616,6 +847,10 @@ class ExploredMaps:
             return
         self._maps = loaded
         self.current_map_id = current_id
+        self.repairs = self.repair()
+        for map_id, fixes in sorted(self.repairs.items()):
+            name = self._maps[map_id].map_name or f"map {map_id}"
+            _log(f"repaired {name} ({map_id}): {'; '.join(fixes)}")
 
     def save(self) -> None:
         """Write the store atomically. Never raises into the request path."""
