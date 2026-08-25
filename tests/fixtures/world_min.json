@@ -1,0 +1,110 @@
+{
+  "generated_from": "hand-written test fixture (Pallet Town -> Pewter City corridor)",
+  "maps": {
+    "Pallet Town": {
+      "map_id": 0,
+      "size": [10, 9],
+      "connections": {"north": "Route 1", "south": "Route 21"},
+      "warps": [
+        {"x": 5, "y": 5, "to_map": "Red's House 1F", "to_warp": 0}
+      ]
+    },
+    "Red's House 1F": {
+      "map_id": 37,
+      "size": [8, 8],
+      "connections": {},
+      "warps": [
+        {"x": 2, "y": 7, "to_map": "Pallet Town", "to_warp": 0},
+        {"x": 7, "y": 1, "to_map": "Red's House 2F", "to_warp": 0}
+      ]
+    },
+    "Red's House 2F": {
+      "map_id": 38,
+      "size": [8, 8],
+      "connections": {},
+      "warps": [
+        {"x": 7, "y": 1, "to_map": "Red's House 1F", "to_warp": 1}
+      ]
+    },
+    "Route 1": {
+      "map_id": 12,
+      "size": [10, 18],
+      "connections": {"north": "Viridian City", "south": "Pallet Town"},
+      "warps": []
+    },
+    "Viridian City": {
+      "map_id": 1,
+      "size": [20, 18],
+      "connections": {"north": "Route 2", "south": "Route 1"},
+      "warps": [
+        {"x": 23, "y": 25, "to_map": "Viridian Pokecenter", "to_warp": 0}
+      ]
+    },
+    "Viridian Pokecenter": {
+      "map_id": 41,
+      "size": [7, 4],
+      "connections": {},
+      "warps": [
+        {"x": 3, "y": 7, "to_map": "Viridian City", "to_warp": 2}
+      ]
+    },
+    "Route 2": {
+      "map_id": 13,
+      "size": [10, 27],
+      "connections": {"north": "Pewter City", "south": "Viridian City"},
+      "warps": [
+        {"x": 15, "y": 39, "to_map": "Viridian Forest South Gate", "to_warp": 0},
+        {"x": 15, "y": 17, "to_map": "Viridian Forest North Gate", "to_warp": 2}
+      ]
+    },
+    "Viridian Forest South Gate": {
+      "map_id": 50,
+      "size": [5, 4],
+      "connections": {},
+      "warps": [
+        {"x": 4, "y": 7, "to_map": "Route 2", "to_warp": 0},
+        {"x": 4, "y": 0, "to_map": "Viridian Forest", "to_warp": 0}
+      ]
+    },
+    "Viridian Forest": {
+      "map_id": 51,
+      "size": [17, 24],
+      "connections": {},
+      "warps": [
+        {"x": 17, "y": 47, "to_map": "Viridian Forest South Gate", "to_warp": 1},
+        {"x": 1, "y": 0, "to_map": "Viridian Forest North Gate", "to_warp": 0}
+      ]
+    },
+    "Viridian Forest North Gate": {
+      "map_id": 47,
+      "size": [5, 4],
+      "connections": {},
+      "warps": [
+        {"x": 4, "y": 7, "to_map": "Viridian Forest", "to_warp": 1},
+        {"x": 4, "y": 0, "to_map": "Route 2", "to_warp": 1}
+      ]
+    },
+    "Pewter City": {
+      "map_id": 2,
+      "size": [20, 18],
+      "connections": {"south": "Route 2"},
+      "warps": [
+        {"x": 16, "y": 17, "to_map": "Pewter Gym", "to_warp": 0}
+      ]
+    },
+    "Pewter Gym": {
+      "map_id": 54,
+      "size": [5, 7],
+      "connections": {},
+      "warps": [
+        {"x": 4, "y": 13, "to_map": "Pewter City", "to_warp": 3}
+      ]
+    },
+    "Cinnabar Island": {
+      "map_id": 8,
+      "size": [10, 9],
+      "connections": {},
+      "warps": []
+    }
+  }
+}

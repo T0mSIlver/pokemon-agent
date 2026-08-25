@@ -1,0 +1,333 @@
+{
+ "generated_from": "0cd19d3b877b7dc66d12c7050bed9a7f38154d4b",
+ "Viridian Mart": {
+  "items": [
+   "Poke Ball",
+   "Antidote",
+   "Parlyz Heal",
+   "Burn Heal"
+  ],
+  "counters": [
+   {
+    "label": "ViridianMartClerkText",
+    "items": [
+     "Poke Ball",
+     "Antidote",
+     "Parlyz Heal",
+     "Burn Heal"
+    ]
+   }
+  ]
+ },
+ "Pewter Mart": {
+  "items": [
+   "Poke Ball",
+   "Potion",
+   "Escape Rope",
+   "Antidote",
+   "Burn Heal",
+   "Awakening",
+   "Parlyz Heal"
+  ],
+  "counters": [
+   {
+    "label": "PewterMartClerkText",
+    "items": [
+     "Poke Ball",
+     "Potion",
+     "Escape Rope",
+     "Antidote",
+     "Burn Heal",
+     "Awakening",
+     "Parlyz Heal"
+    ]
+   }
+  ]
+ },
+ "Cerulean Mart": {
+  "items": [
+   "Poke Ball",
+   "Potion",
+   "Repel",
+   "Antidote",
+   "Burn Heal",
+   "Awakening",
+   "Parlyz Heal"
+  ],
+  "counters": [
+   {
+    "label": "CeruleanMartClerkText",
+    "items": [
+     "Poke Ball",
+     "Potion",
+     "Repel",
+     "Antidote",
+     "Burn Heal",
+     "Awakening",
+     "Parlyz Heal"
+    ]
+   }
+  ]
+ },
+ "Vermilion Mart": {
+  "items": [
+   "Poke Ball",
+   "Super Potion",
+   "Ice Heal",
+   "Awakening",
+   "Parlyz Heal",
+   "Repel"
+  ],
+  "counters": [
+   {
+    "label": "VermilionMartClerkText",
+    "items": [
+     "Poke Ball",
+     "Super Potion",
+     "Ice Heal",
+     "Awakening",
+     "Parlyz Heal",
+     "Repel"
+    ]
+   }
+  ]
+ },
+ "Lavender Mart": {
+  "items": [
+   "Great Ball",
+   "Super Potion",
+   "Revive",
+   "Escape Rope",
+   "Super Repel",
+   "Antidote",
+   "Burn Heal",
+   "Ice Heal",
+   "Parlyz Heal"
+  ],
+  "counters": [
+   {
+    "label": "LavenderMartClerkText",
+    "items": [
+     "Great Ball",
+     "Super Potion",
+     "Revive",
+     "Escape Rope",
+     "Super Repel",
+     "Antidote",
+     "Burn Heal",
+     "Ice Heal",
+     "Parlyz Heal"
+    ]
+   }
+  ]
+ },
+ "Celadon Dept Store 2F": {
+  "items": [
+   "Great Ball",
+   "Super Potion",
+   "Revive",
+   "Super Repel",
+   "Antidote",
+   "Burn Heal",
+   "Ice Heal",
+   "Awakening",
+   "Parlyz Heal",
+   "TM32",
+   "TM33",
+   "TM02",
+   "TM07",
+   "TM37",
+   "TM01",
+   "TM05",
+   "TM09",
+   "TM17"
+  ],
+  "counters": [
+   {
+    "label": "CeladonMart2FClerk1Text",
+    "items": [
+     "Great Ball",
+     "Super Potion",
+     "Revive",
+     "Super Repel",
+     "Antidote",
+     "Burn Heal",
+     "Ice Heal",
+     "Awakening",
+     "Parlyz Heal"
+    ]
+   },
+   {
+    "label": "CeladonMart2FClerk2Text",
+    "items": [
+     "TM32",
+     "TM33",
+     "TM02",
+     "TM07",
+     "TM37",
+     "TM01",
+     "TM05",
+     "TM09",
+     "TM17"
+    ]
+   }
+  ]
+ },
+ "Celadon Dept Store 4F": {
+  "items": [
+   "Poke Doll",
+   "Fire Stone",
+   "Thunder Stone",
+   "Water Stone",
+   "Leaf Stone"
+  ],
+  "counters": [
+   {
+    "label": "CeladonMart4FClerkText",
+    "items": [
+     "Poke Doll",
+     "Fire Stone",
+     "Thunder Stone",
+     "Water Stone",
+     "Leaf Stone"
+    ]
+   }
+  ]
+ },
+ "Celadon Dept Store 5F": {
+  "items": [
+   "X Accuracy",
+   "Guard Spec.",
+   "Dire Hit",
+   "X Attack",
+   "X Defend",
+   "X Speed",
+   "X Special",
+   "HP Up",
+   "Protein",
+   "Iron",
+   "Carbos",
+   "Calcium"
+  ],
+  "counters": [
+   {
+    "label": "CeladonMart5FClerk1Text",
+    "items": [
+     "X Accuracy",
+     "Guard Spec.",
+     "Dire Hit",
+     "X Attack",
+     "X Defend",
+     "X Speed",
+     "X Special"
+    ]
+   },
+   {
+    "label": "CeladonMart5FClerk2Text",
+    "items": [
+     "HP Up",
+     "Protein",
+     "Iron",
+     "Carbos",
+     "Calcium"
+    ]
+   }
+  ]
+ },
+ "Fuchsia Mart": {
+  "items": [
+   "Ultra Ball",
+   "Great Ball",
+   "Super Potion",
+   "Revive",
+   "Full Heal",
+   "Super Repel"
+  ],
+  "counters": [
+   {
+    "label": "FuchsiaMartClerkText",
+    "items": [
+     "Ultra Ball",
+     "Great Ball",
+     "Super Potion",
+     "Revive",
+     "Full Heal",
+     "Super Repel"
+    ]
+   }
+  ]
+ },
+ "Cinnabar Mart": {
+  "items": [
+   "Ultra Ball",
+   "Great Ball",
+   "Hyper Potion",
+   "Max Repel",
+   "Escape Rope",
+   "Full Heal",
+   "Revive"
+  ],
+  "counters": [
+   {
+    "label": "CinnabarMartClerkText",
+    "items": [
+     "Ultra Ball",
+     "Great Ball",
+     "Hyper Potion",
+     "Max Repel",
+     "Escape Rope",
+     "Full Heal",
+     "Revive"
+    ]
+   }
+  ]
+ },
+ "Saffron Mart": {
+  "items": [
+   "Great Ball",
+   "Hyper Potion",
+   "Max Repel",
+   "Escape Rope",
+   "Full Heal",
+   "Revive"
+  ],
+  "counters": [
+   {
+    "label": "SaffronMartClerkText",
+    "items": [
+     "Great Ball",
+     "Hyper Potion",
+     "Max Repel",
+     "Escape Rope",
+     "Full Heal",
+     "Revive"
+    ]
+   }
+  ]
+ },
+ "Indigo Plateau Lobby": {
+  "items": [
+   "Ultra Ball",
+   "Great Ball",
+   "Full Restore",
+   "Max Potion",
+   "Full Heal",
+   "Revive",
+   "Max Repel"
+  ],
+  "counters": [
+   {
+    "label": "IndigoPlateauLobbyClerkText",
+    "items": [
+     "Ultra Ball",
+     "Great Ball",
+     "Full Restore",
+     "Max Potion",
+     "Full Heal",
+     "Revive",
+     "Max Repel"
+    ]
+   }
+  ]
+ }
+}

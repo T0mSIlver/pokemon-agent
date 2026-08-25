@@ -1,0 +1,3371 @@
+{
+ "generated_from": "0cd19d3b877b7dc66d12c7050bed9a7f38154d4b",
+ "Route 1": {
+  "grass": {
+   "rate": 25,
+   "slots": [
+    {
+     "species": "Pidgey",
+     "level": 3,
+     "chance": 0.1992
+    },
+    {
+     "species": "Rattata",
+     "level": 3,
+     "chance": 0.1992
+    },
+    {
+     "species": "Rattata",
+     "level": 3,
+     "chance": 0.1523
+    },
+    {
+     "species": "Rattata",
+     "level": 2,
+     "chance": 0.0977
+    },
+    {
+     "species": "Pidgey",
+     "level": 2,
+     "chance": 0.0977
+    },
+    {
+     "species": "Pidgey",
+     "level": 3,
+     "chance": 0.0977
+    },
+    {
+     "species": "Pidgey",
+     "level": 3,
+     "chance": 0.0508
+    },
+    {
+     "species": "Rattata",
+     "level": 4,
+     "chance": 0.0508
+    },
+    {
+     "species": "Pidgey",
+     "level": 4,
+     "chance": 0.043
+    },
+    {
+     "species": "Pidgey",
+     "level": 5,
+     "chance": 0.0117
+    }
+   ]
+  },
+  "water": null
+ },
+ "Route 2": {
+  "grass": {
+   "rate": 25,
+   "slots": [
+    {
+     "species": "Rattata",
+     "level": 3,
+     "chance": 0.1992
+    },
+    {
+     "species": "Pidgey",
+     "level": 3,
+     "chance": 0.1992
+    },
+    {
+     "species": "Pidgey",
+     "level": 4,
+     "chance": 0.1523
+    },
+    {
+     "species": "Rattata",
+     "level": 4,
+     "chance": 0.0977
+    },
+    {
+     "species": "Pidgey",
+     "level": 5,
+     "chance": 0.0977
+    },
+    {
+     "species": "Weedle",
+     "level": 3,
+     "chance": 0.0977
+    },
+    {
+     "species": "Rattata",
+     "level": 2,
+     "chance": 0.0508
+    },
+    {
+     "species": "Rattata",
+     "level": 5,
+     "chance": 0.0508
+    },
+    {
+     "species": "Weedle",
+     "level": 4,
+     "chance": 0.043
+    },
+    {
+     "species": "Weedle",
+     "level": 5,
+     "chance": 0.0117
+    }
+   ]
+  },
+  "water": null
+ },
+ "Route 3": {
+  "grass": {
+   "rate": 20,
+   "slots": [
+    {
+     "species": "Pidgey",
+     "level": 6,
+     "chance": 0.1992
+    },
+    {
+     "species": "Spearow",
+     "level": 5,
+     "chance": 0.1992
+    },
+    {
+     "species": "Pidgey",
+     "level": 7,
+     "chance": 0.1523
+    },
+    {
+     "species": "Spearow",
+     "level": 6,
+     "chance": 0.0977
+    },
+    {
+     "species": "Spearow",
+     "level": 7,
+     "chance": 0.0977
+    },
+    {
+     "species": "Pidgey",
+     "level": 8,
+     "chance": 0.0977
+    },
+    {
+     "species": "Spearow",
+     "level": 8,
+     "chance": 0.0508
+    },
+    {
+     "species": "Jigglypuff",
+     "level": 3,
+     "chance": 0.0508
+    },
+    {
+     "species": "Jigglypuff",
+     "level": 5,
+     "chance": 0.043
+    },
+    {
+     "species": "Jigglypuff",
+     "level": 7,
+     "chance": 0.0117
+    }
+   ]
+  },
+  "water": null
+ },
+ "Route 4": {
+  "grass": {
+   "rate": 20,
+   "slots": [
+    {
+     "species": "Rattata",
+     "level": 10,
+     "chance": 0.1992
+    },
+    {
+     "species": "Spearow",
+     "level": 10,
+     "chance": 0.1992
+    },
+    {
+     "species": "Rattata",
+     "level": 8,
+     "chance": 0.1523
+    },
+    {
+     "species": "Ekans",
+     "level": 6,
+     "chance": 0.0977
+    },
+    {
+     "species": "Spearow",
+     "level": 8,
+     "chance": 0.0977
+    },
+    {
+     "species": "Ekans",
+     "level": 10,
+     "chance": 0.0977
+    },
+    {
+     "species": "Rattata",
+     "level": 12,
+     "chance": 0.0508
+    },
+    {
+     "species": "Spearow",
+     "level": 12,
+     "chance": 0.0508
+    },
+    {
+     "species": "Ekans",
+     "level": 8,
+     "chance": 0.043
+    },
+    {
+     "species": "Ekans",
+     "level": 12,
+     "chance": 0.0117
+    }
+   ]
+  },
+  "water": null
+ },
+ "Route 5": {
+  "grass": {
+   "rate": 15,
+   "slots": [
+    {
+     "species": "Oddish",
+     "level": 13,
+     "chance": 0.1992
+    },
+    {
+     "species": "Pidgey",
+     "level": 13,
+     "chance": 0.1992
+    },
+    {
+     "species": "Pidgey",
+     "level": 15,
+     "chance": 0.1523
+    },
+    {
+     "species": "Mankey",
+     "level": 10,
+     "chance": 0.0977
+    },
+    {
+     "species": "Mankey",
+     "level": 12,
+     "chance": 0.0977
+    },
+    {
+     "species": "Oddish",
+     "level": 15,
+     "chance": 0.0977
+    },
+    {
+     "species": "Oddish",
+     "level": 16,
+     "chance": 0.0508
+    },
+    {
+     "species": "Pidgey",
+     "level": 16,
+     "chance": 0.0508
+    },
+    {
+     "species": "Mankey",
+     "level": 14,
+     "chance": 0.043
+    },
+    {
+     "species": "Mankey",
+     "level": 16,
+     "chance": 0.0117
+    }
+   ]
+  },
+  "water": null
+ },
+ "Route 6": {
+  "grass": {
+   "rate": 15,
+   "slots": [
+    {
+     "species": "Oddish",
+     "level": 13,
+     "chance": 0.1992
+    },
+    {
+     "species": "Pidgey",
+     "level": 13,
+     "chance": 0.1992
+    },
+    {
+     "species": "Pidgey",
+     "level": 15,
+     "chance": 0.1523
+    },
+    {
+     "species": "Mankey",
+     "level": 10,
+     "chance": 0.0977
+    },
+    {
+     "species": "Mankey",
+     "level": 12,
+     "chance": 0.0977
+    },
+    {
+     "species": "Oddish",
+     "level": 15,
+     "chance": 0.0977
+    },
+    {
+     "species": "Oddish",
+     "level": 16,
+     "chance": 0.0508
+    },
+    {
+     "species": "Pidgey",
+     "level": 16,
+     "chance": 0.0508
+    },
+    {
+     "species": "Mankey",
+     "level": 14,
+     "chance": 0.043
+    },
+    {
+     "species": "Mankey",
+     "level": 16,
+     "chance": 0.0117
+    }
+   ]
+  },
+  "water": null
+ },
+ "Route 7": {
+  "grass": {
+   "rate": 15,
+   "slots": [
+    {
+     "species": "Pidgey",
+     "level": 19,
+     "chance": 0.1992
+    },
+    {
+     "species": "Oddish",
+     "level": 19,
+     "chance": 0.1992
+    },
+    {
+     "species": "Mankey",
+     "level": 17,
+     "chance": 0.1523
+    },
+    {
+     "species": "Oddish",
+     "level": 22,
+     "chance": 0.0977
+    },
+    {
+     "species": "Pidgey",
+     "level": 22,
+     "chance": 0.0977
+    },
+    {
+     "species": "Mankey",
+     "level": 18,
+     "chance": 0.0977
+    },
+    {
+     "species": "Growlithe",
+     "level": 18,
+     "chance": 0.0508
+    },
+    {
+     "species": "Growlithe",
+     "level": 20,
+     "chance": 0.0508
+    },
+    {
+     "species": "Mankey",
+     "level": 19,
+     "chance": 0.043
+    },
+    {
+     "species": "Mankey",
+     "level": 20,
+     "chance": 0.0117
+    }
+   ]
+  },
+  "water": null
+ },
+ "Route 8": {
+  "grass": {
+   "rate": 15,
+   "slots": [
+    {
+     "species": "Pidgey",
+     "level": 18,
+     "chance": 0.1992
+    },
+    {
+     "species": "Mankey",
+     "level": 18,
+     "chance": 0.1992
+    },
+    {
+     "species": "Ekans",
+     "level": 17,
+     "chance": 0.1523
+    },
+    {
+     "species": "Growlithe",
+     "level": 16,
+     "chance": 0.0977
+    },
+    {
+     "species": "Pidgey",
+     "level": 20,
+     "chance": 0.0977
+    },
+    {
+     "species": "Mankey",
+     "level": 20,
+     "chance": 0.0977
+    },
+    {
+     "species": "Ekans",
+     "level": 19,
+     "chance": 0.0508
+    },
+    {
+     "species": "Growlithe",
+     "level": 17,
+     "chance": 0.0508
+    },
+    {
+     "species": "Growlithe",
+     "level": 15,
+     "chance": 0.043
+    },
+    {
+     "species": "Growlithe",
+     "level": 18,
+     "chance": 0.0117
+    }
+   ]
+  },
+  "water": null
+ },
+ "Route 9": {
+  "grass": {
+   "rate": 15,
+   "slots": [
+    {
+     "species": "Rattata",
+     "level": 16,
+     "chance": 0.1992
+    },
+    {
+     "species": "Spearow",
+     "level": 16,
+     "chance": 0.1992
+    },
+    {
+     "species": "Rattata",
+     "level": 14,
+     "chance": 0.1523
+    },
+    {
+     "species": "Ekans",
+     "level": 11,
+     "chance": 0.0977
+    },
+    {
+     "species": "Spearow",
+     "level": 13,
+     "chance": 0.0977
+    },
+    {
+     "species": "Ekans",
+     "level": 15,
+     "chance": 0.0977
+    },
+    {
+     "species": "Rattata",
+     "level": 17,
+     "chance": 0.0508
+    },
+    {
+     "species": "Spearow",
+     "level": 17,
+     "chance": 0.0508
+    },
+    {
+     "species": "Ekans",
+     "level": 13,
+     "chance": 0.043
+    },
+    {
+     "species": "Ekans",
+     "level": 17,
+     "chance": 0.0117
+    }
+   ]
+  },
+  "water": null
+ },
+ "Route 10": {
+  "grass": {
+   "rate": 15,
+   "slots": [
+    {
+     "species": "Voltorb",
+     "level": 16,
+     "chance": 0.1992
+    },
+    {
+     "species": "Spearow",
+     "level": 16,
+     "chance": 0.1992
+    },
+    {
+     "species": "Voltorb",
+     "level": 14,
+     "chance": 0.1523
+    },
+    {
+     "species": "Ekans",
+     "level": 11,
+     "chance": 0.0977
+    },
+    {
+     "species": "Spearow",
+     "level": 13,
+     "chance": 0.0977
+    },
+    {
+     "species": "Ekans",
+     "level": 15,
+     "chance": 0.0977
+    },
+    {
+     "species": "Voltorb",
+     "level": 17,
+     "chance": 0.0508
+    },
+    {
+     "species": "Spearow",
+     "level": 17,
+     "chance": 0.0508
+    },
+    {
+     "species": "Ekans",
+     "level": 13,
+     "chance": 0.043
+    },
+    {
+     "species": "Ekans",
+     "level": 17,
+     "chance": 0.0117
+    }
+   ]
+  },
+  "water": null
+ },
+ "Route 11": {
+  "grass": {
+   "rate": 15,
+   "slots": [
+    {
+     "species": "Ekans",
+     "level": 14,
+     "chance": 0.1992
+    },
+    {
+     "species": "Spearow",
+     "level": 15,
+     "chance": 0.1992
+    },
+    {
+     "species": "Ekans",
+     "level": 12,
+     "chance": 0.1523
+    },
+    {
+     "species": "Drowzee",
+     "level": 9,
+     "chance": 0.0977
+    },
+    {
+     "species": "Spearow",
+     "level": 13,
+     "chance": 0.0977
+    },
+    {
+     "species": "Drowzee",
+     "level": 13,
+     "chance": 0.0977
+    },
+    {
+     "species": "Ekans",
+     "level": 15,
+     "chance": 0.0508
+    },
+    {
+     "species": "Spearow",
+     "level": 17,
+     "chance": 0.0508
+    },
+    {
+     "species": "Drowzee",
+     "level": 11,
+     "chance": 0.043
+    },
+    {
+     "species": "Drowzee",
+     "level": 15,
+     "chance": 0.0117
+    }
+   ]
+  },
+  "water": null
+ },
+ "Route 12": {
+  "grass": {
+   "rate": 15,
+   "slots": [
+    {
+     "species": "Oddish",
+     "level": 24,
+     "chance": 0.1992
+    },
+    {
+     "species": "Pidgey",
+     "level": 25,
+     "chance": 0.1992
+    },
+    {
+     "species": "Pidgey",
+     "level": 23,
+     "chance": 0.1523
+    },
+    {
+     "species": "Venonat",
+     "level": 24,
+     "chance": 0.0977
+    },
+    {
+     "species": "Oddish",
+     "level": 22,
+     "chance": 0.0977
+    },
+    {
+     "species": "Venonat",
+     "level": 26,
+     "chance": 0.0977
+    },
+    {
+     "species": "Oddish",
+     "level": 26,
+     "chance": 0.0508
+    },
+    {
+     "species": "Pidgey",
+     "level": 27,
+     "chance": 0.0508
+    },
+    {
+     "species": "Gloom",
+     "level": 28,
+     "chance": 0.043
+    },
+    {
+     "species": "Gloom",
+     "level": 30,
+     "chance": 0.0117
+    }
+   ]
+  },
+  "water": null
+ },
+ "Route 13": {
+  "grass": {
+   "rate": 20,
+   "slots": [
+    {
+     "species": "Oddish",
+     "level": 24,
+     "chance": 0.1992
+    },
+    {
+     "species": "Pidgey",
+     "level": 25,
+     "chance": 0.1992
+    },
+    {
+     "species": "Pidgey",
+     "level": 27,
+     "chance": 0.1523
+    },
+    {
+     "species": "Venonat",
+     "level": 24,
+     "chance": 0.0977
+    },
+    {
+     "species": "Oddish",
+     "level": 22,
+     "chance": 0.0977
+    },
+    {
+     "species": "Venonat",
+     "level": 26,
+     "chance": 0.0977
+    },
+    {
+     "species": "Oddish",
+     "level": 26,
+     "chance": 0.0508
+    },
+    {
+     "species": "Ditto",
+     "level": 25,
+     "chance": 0.0508
+    },
+    {
+     "species": "Gloom",
+     "level": 28,
+     "chance": 0.043
+    },
+    {
+     "species": "Gloom",
+     "level": 30,
+     "chance": 0.0117
+    }
+   ]
+  },
+  "water": null
+ },
+ "Route 14": {
+  "grass": {
+   "rate": 15,
+   "slots": [
+    {
+     "species": "Oddish",
+     "level": 24,
+     "chance": 0.1992
+    },
+    {
+     "species": "Pidgey",
+     "level": 26,
+     "chance": 0.1992
+    },
+    {
+     "species": "Ditto",
+     "level": 23,
+     "chance": 0.1523
+    },
+    {
+     "species": "Venonat",
+     "level": 24,
+     "chance": 0.0977
+    },
+    {
+     "species": "Oddish",
+     "level": 22,
+     "chance": 0.0977
+    },
+    {
+     "species": "Venonat",
+     "level": 26,
+     "chance": 0.0977
+    },
+    {
+     "species": "Oddish",
+     "level": 26,
+     "chance": 0.0508
+    },
+    {
+     "species": "Gloom",
+     "level": 30,
+     "chance": 0.0508
+    },
+    {
+     "species": "Pidgeotto",
+     "level": 28,
+     "chance": 0.043
+    },
+    {
+     "species": "Pidgeotto",
+     "level": 30,
+     "chance": 0.0117
+    }
+   ]
+  },
+  "water": null
+ },
+ "Route 15": {
+  "grass": {
+   "rate": 15,
+   "slots": [
+    {
+     "species": "Oddish",
+     "level": 24,
+     "chance": 0.1992
+    },
+    {
+     "species": "Ditto",
+     "level": 26,
+     "chance": 0.1992
+    },
+    {
+     "species": "Pidgey",
+     "level": 23,
+     "chance": 0.1523
+    },
+    {
+     "species": "Venonat",
+     "level": 26,
+     "chance": 0.0977
+    },
+    {
+     "species": "Oddish",
+     "level": 22,
+     "chance": 0.0977
+    },
+    {
+     "species": "Venonat",
+     "level": 28,
+     "chance": 0.0977
+    },
+    {
+     "species": "Oddish",
+     "level": 26,
+     "chance": 0.0508
+    },
+    {
+     "species": "Gloom",
+     "level": 30,
+     "chance": 0.0508
+    },
+    {
+     "species": "Pidgeotto",
+     "level": 28,
+     "chance": 0.043
+    },
+    {
+     "species": "Pidgeotto",
+     "level": 30,
+     "chance": 0.0117
+    }
+   ]
+  },
+  "water": null
+ },
+ "Route 16": {
+  "grass": {
+   "rate": 25,
+   "slots": [
+    {
+     "species": "Spearow",
+     "level": 20,
+     "chance": 0.1992
+    },
+    {
+     "species": "Spearow",
+     "level": 22,
+     "chance": 0.1992
+    },
+    {
+     "species": "Rattata",
+     "level": 18,
+     "chance": 0.1523
+    },
+    {
+     "species": "Doduo",
+     "level": 20,
+     "chance": 0.0977
+    },
+    {
+     "species": "Rattata",
+     "level": 20,
+     "chance": 0.0977
+    },
+    {
+     "species": "Doduo",
+     "level": 18,
+     "chance": 0.0977
+    },
+    {
+     "species": "Doduo",
+     "level": 22,
+     "chance": 0.0508
+    },
+    {
+     "species": "Rattata",
+     "level": 22,
+     "chance": 0.0508
+    },
+    {
+     "species": "Raticate",
+     "level": 23,
+     "chance": 0.043
+    },
+    {
+     "species": "Raticate",
+     "level": 25,
+     "chance": 0.0117
+    }
+   ]
+  },
+  "water": null
+ },
+ "Route 17": {
+  "grass": {
+   "rate": 25,
+   "slots": [
+    {
+     "species": "Spearow",
+     "level": 20,
+     "chance": 0.1992
+    },
+    {
+     "species": "Spearow",
+     "level": 22,
+     "chance": 0.1992
+    },
+    {
+     "species": "Raticate",
+     "level": 25,
+     "chance": 0.1523
+    },
+    {
+     "species": "Doduo",
+     "level": 24,
+     "chance": 0.0977
+    },
+    {
+     "species": "Raticate",
+     "level": 27,
+     "chance": 0.0977
+    },
+    {
+     "species": "Doduo",
+     "level": 26,
+     "chance": 0.0977
+    },
+    {
+     "species": "Doduo",
+     "level": 28,
+     "chance": 0.0508
+    },
+    {
+     "species": "Raticate",
+     "level": 29,
+     "chance": 0.0508
+    },
+    {
+     "species": "Fearow",
+     "level": 25,
+     "chance": 0.043
+    },
+    {
+     "species": "Fearow",
+     "level": 27,
+     "chance": 0.0117
+    }
+   ]
+  },
+  "water": null
+ },
+ "Route 18": {
+  "grass": {
+   "rate": 25,
+   "slots": [
+    {
+     "species": "Spearow",
+     "level": 20,
+     "chance": 0.1992
+    },
+    {
+     "species": "Spearow",
+     "level": 22,
+     "chance": 0.1992
+    },
+    {
+     "species": "Raticate",
+     "level": 25,
+     "chance": 0.1523
+    },
+    {
+     "species": "Doduo",
+     "level": 24,
+     "chance": 0.0977
+    },
+    {
+     "species": "Fearow",
+     "level": 25,
+     "chance": 0.0977
+    },
+    {
+     "species": "Doduo",
+     "level": 26,
+     "chance": 0.0977
+    },
+    {
+     "species": "Doduo",
+     "level": 28,
+     "chance": 0.0508
+    },
+    {
+     "species": "Raticate",
+     "level": 29,
+     "chance": 0.0508
+    },
+    {
+     "species": "Fearow",
+     "level": 27,
+     "chance": 0.043
+    },
+    {
+     "species": "Fearow",
+     "level": 29,
+     "chance": 0.0117
+    }
+   ]
+  },
+  "water": null
+ },
+ "Route 19": {
+  "grass": null,
+  "water": {
+   "rate": 5,
+   "slots": [
+    {
+     "species": "Tentacool",
+     "level": 5,
+     "chance": 0.1992
+    },
+    {
+     "species": "Tentacool",
+     "level": 10,
+     "chance": 0.1992
+    },
+    {
+     "species": "Tentacool",
+     "level": 15,
+     "chance": 0.1523
+    },
+    {
+     "species": "Tentacool",
+     "level": 5,
+     "chance": 0.0977
+    },
+    {
+     "species": "Tentacool",
+     "level": 10,
+     "chance": 0.0977
+    },
+    {
+     "species": "Tentacool",
+     "level": 15,
+     "chance": 0.0977
+    },
+    {
+     "species": "Tentacool",
+     "level": 20,
+     "chance": 0.0508
+    },
+    {
+     "species": "Tentacool",
+     "level": 30,
+     "chance": 0.0508
+    },
+    {
+     "species": "Tentacool",
+     "level": 35,
+     "chance": 0.043
+    },
+    {
+     "species": "Tentacool",
+     "level": 40,
+     "chance": 0.0117
+    }
+   ]
+  }
+ },
+ "Route 20": {
+  "grass": null,
+  "water": {
+   "rate": 5,
+   "slots": [
+    {
+     "species": "Tentacool",
+     "level": 5,
+     "chance": 0.1992
+    },
+    {
+     "species": "Tentacool",
+     "level": 10,
+     "chance": 0.1992
+    },
+    {
+     "species": "Tentacool",
+     "level": 15,
+     "chance": 0.1523
+    },
+    {
+     "species": "Tentacool",
+     "level": 5,
+     "chance": 0.0977
+    },
+    {
+     "species": "Tentacool",
+     "level": 10,
+     "chance": 0.0977
+    },
+    {
+     "species": "Tentacool",
+     "level": 15,
+     "chance": 0.0977
+    },
+    {
+     "species": "Tentacool",
+     "level": 20,
+     "chance": 0.0508
+    },
+    {
+     "species": "Tentacool",
+     "level": 30,
+     "chance": 0.0508
+    },
+    {
+     "species": "Tentacool",
+     "level": 35,
+     "chance": 0.043
+    },
+    {
+     "species": "Tentacool",
+     "level": 40,
+     "chance": 0.0117
+    }
+   ]
+  }
+ },
+ "Route 21": {
+  "grass": {
+   "rate": 25,
+   "slots": [
+    {
+     "species": "Rattata",
+     "level": 21,
+     "chance": 0.1992
+    },
+    {
+     "species": "Pidgey",
+     "level": 23,
+     "chance": 0.1992
+    },
+    {
+     "species": "Raticate",
+     "level": 30,
+     "chance": 0.1523
+    },
+    {
+     "species": "Rattata",
+     "level": 23,
+     "chance": 0.0977
+    },
+    {
+     "species": "Pidgey",
+     "level": 21,
+     "chance": 0.0977
+    },
+    {
+     "species": "Pidgeotto",
+     "level": 30,
+     "chance": 0.0977
+    },
+    {
+     "species": "Pidgeotto",
+     "level": 32,
+     "chance": 0.0508
+    },
+    {
+     "species": "Tangela",
+     "level": 28,
+     "chance": 0.0508
+    },
+    {
+     "species": "Tangela",
+     "level": 30,
+     "chance": 0.043
+    },
+    {
+     "species": "Tangela",
+     "level": 32,
+     "chance": 0.0117
+    }
+   ]
+  },
+  "water": {
+   "rate": 5,
+   "slots": [
+    {
+     "species": "Tentacool",
+     "level": 5,
+     "chance": 0.1992
+    },
+    {
+     "species": "Tentacool",
+     "level": 10,
+     "chance": 0.1992
+    },
+    {
+     "species": "Tentacool",
+     "level": 15,
+     "chance": 0.1523
+    },
+    {
+     "species": "Tentacool",
+     "level": 5,
+     "chance": 0.0977
+    },
+    {
+     "species": "Tentacool",
+     "level": 10,
+     "chance": 0.0977
+    },
+    {
+     "species": "Tentacool",
+     "level": 15,
+     "chance": 0.0977
+    },
+    {
+     "species": "Tentacool",
+     "level": 20,
+     "chance": 0.0508
+    },
+    {
+     "species": "Tentacool",
+     "level": 30,
+     "chance": 0.0508
+    },
+    {
+     "species": "Tentacool",
+     "level": 35,
+     "chance": 0.043
+    },
+    {
+     "species": "Tentacool",
+     "level": 40,
+     "chance": 0.0117
+    }
+   ]
+  }
+ },
+ "Route 22": {
+  "grass": {
+   "rate": 25,
+   "slots": [
+    {
+     "species": "Rattata",
+     "level": 3,
+     "chance": 0.1992
+    },
+    {
+     "species": "Nidoran♂",
+     "level": 3,
+     "chance": 0.1992
+    },
+    {
+     "species": "Rattata",
+     "level": 4,
+     "chance": 0.1523
+    },
+    {
+     "species": "Nidoran♂",
+     "level": 4,
+     "chance": 0.0977
+    },
+    {
+     "species": "Rattata",
+     "level": 2,
+     "chance": 0.0977
+    },
+    {
+     "species": "Nidoran♂",
+     "level": 2,
+     "chance": 0.0977
+    },
+    {
+     "species": "Spearow",
+     "level": 3,
+     "chance": 0.0508
+    },
+    {
+     "species": "Spearow",
+     "level": 5,
+     "chance": 0.0508
+    },
+    {
+     "species": "Nidoran♀",
+     "level": 3,
+     "chance": 0.043
+    },
+    {
+     "species": "Nidoran♀",
+     "level": 4,
+     "chance": 0.0117
+    }
+   ]
+  },
+  "water": null
+ },
+ "Route 23": {
+  "grass": {
+   "rate": 10,
+   "slots": [
+    {
+     "species": "Ekans",
+     "level": 26,
+     "chance": 0.1992
+    },
+    {
+     "species": "Ditto",
+     "level": 33,
+     "chance": 0.1992
+    },
+    {
+     "species": "Spearow",
+     "level": 26,
+     "chance": 0.1523
+    },
+    {
+     "species": "Fearow",
+     "level": 38,
+     "chance": 0.0977
+    },
+    {
+     "species": "Ditto",
+     "level": 38,
+     "chance": 0.0977
+    },
+    {
+     "species": "Fearow",
+     "level": 38,
+     "chance": 0.0977
+    },
+    {
+     "species": "Arbok",
+     "level": 41,
+     "chance": 0.0508
+    },
+    {
+     "species": "Ditto",
+     "level": 43,
+     "chance": 0.0508
+    },
+    {
+     "species": "Fearow",
+     "level": 41,
+     "chance": 0.043
+    },
+    {
+     "species": "Fearow",
+     "level": 43,
+     "chance": 0.0117
+    }
+   ]
+  },
+  "water": null
+ },
+ "Route 24": {
+  "grass": {
+   "rate": 25,
+   "slots": [
+    {
+     "species": "Weedle",
+     "level": 7,
+     "chance": 0.1992
+    },
+    {
+     "species": "Kakuna",
+     "level": 8,
+     "chance": 0.1992
+    },
+    {
+     "species": "Pidgey",
+     "level": 12,
+     "chance": 0.1523
+    },
+    {
+     "species": "Oddish",
+     "level": 12,
+     "chance": 0.0977
+    },
+    {
+     "species": "Oddish",
+     "level": 13,
+     "chance": 0.0977
+    },
+    {
+     "species": "Abra",
+     "level": 10,
+     "chance": 0.0977
+    },
+    {
+     "species": "Oddish",
+     "level": 14,
+     "chance": 0.0508
+    },
+    {
+     "species": "Pidgey",
+     "level": 13,
+     "chance": 0.0508
+    },
+    {
+     "species": "Abra",
+     "level": 8,
+     "chance": 0.043
+    },
+    {
+     "species": "Abra",
+     "level": 12,
+     "chance": 0.0117
+    }
+   ]
+  },
+  "water": null
+ },
+ "Route 25": {
+  "grass": {
+   "rate": 15,
+   "slots": [
+    {
+     "species": "Weedle",
+     "level": 8,
+     "chance": 0.1992
+    },
+    {
+     "species": "Kakuna",
+     "level": 9,
+     "chance": 0.1992
+    },
+    {
+     "species": "Pidgey",
+     "level": 13,
+     "chance": 0.1523
+    },
+    {
+     "species": "Oddish",
+     "level": 12,
+     "chance": 0.0977
+    },
+    {
+     "species": "Oddish",
+     "level": 13,
+     "chance": 0.0977
+    },
+    {
+     "species": "Abra",
+     "level": 12,
+     "chance": 0.0977
+    },
+    {
+     "species": "Oddish",
+     "level": 14,
+     "chance": 0.0508
+    },
+    {
+     "species": "Abra",
+     "level": 10,
+     "chance": 0.0508
+    },
+    {
+     "species": "Metapod",
+     "level": 7,
+     "chance": 0.043
+    },
+    {
+     "species": "Caterpie",
+     "level": 8,
+     "chance": 0.0117
+    }
+   ]
+  },
+  "water": null
+ },
+ "Viridian Forest": {
+  "grass": {
+   "rate": 8,
+   "slots": [
+    {
+     "species": "Weedle",
+     "level": 4,
+     "chance": 0.1992
+    },
+    {
+     "species": "Kakuna",
+     "level": 5,
+     "chance": 0.1992
+    },
+    {
+     "species": "Weedle",
+     "level": 3,
+     "chance": 0.1523
+    },
+    {
+     "species": "Weedle",
+     "level": 5,
+     "chance": 0.0977
+    },
+    {
+     "species": "Kakuna",
+     "level": 4,
+     "chance": 0.0977
+    },
+    {
+     "species": "Kakuna",
+     "level": 6,
+     "chance": 0.0977
+    },
+    {
+     "species": "Metapod",
+     "level": 4,
+     "chance": 0.0508
+    },
+    {
+     "species": "Caterpie",
+     "level": 3,
+     "chance": 0.0508
+    },
+    {
+     "species": "Pikachu",
+     "level": 3,
+     "chance": 0.043
+    },
+    {
+     "species": "Pikachu",
+     "level": 5,
+     "chance": 0.0117
+    }
+   ]
+  },
+  "water": null
+ },
+ "Mt Moon 1F": {
+  "grass": {
+   "rate": 10,
+   "slots": [
+    {
+     "species": "Zubat",
+     "level": 8,
+     "chance": 0.1992
+    },
+    {
+     "species": "Zubat",
+     "level": 7,
+     "chance": 0.1992
+    },
+    {
+     "species": "Zubat",
+     "level": 9,
+     "chance": 0.1523
+    },
+    {
+     "species": "Geodude",
+     "level": 8,
+     "chance": 0.0977
+    },
+    {
+     "species": "Zubat",
+     "level": 6,
+     "chance": 0.0977
+    },
+    {
+     "species": "Zubat",
+     "level": 10,
+     "chance": 0.0977
+    },
+    {
+     "species": "Geodude",
+     "level": 10,
+     "chance": 0.0508
+    },
+    {
+     "species": "Paras",
+     "level": 8,
+     "chance": 0.0508
+    },
+    {
+     "species": "Zubat",
+     "level": 11,
+     "chance": 0.043
+    },
+    {
+     "species": "Clefairy",
+     "level": 8,
+     "chance": 0.0117
+    }
+   ]
+  },
+  "water": null
+ },
+ "Mt Moon B1F": {
+  "grass": {
+   "rate": 10,
+   "slots": [
+    {
+     "species": "Zubat",
+     "level": 8,
+     "chance": 0.1992
+    },
+    {
+     "species": "Zubat",
+     "level": 7,
+     "chance": 0.1992
+    },
+    {
+     "species": "Geodude",
+     "level": 7,
+     "chance": 0.1523
+    },
+    {
+     "species": "Geodude",
+     "level": 8,
+     "chance": 0.0977
+    },
+    {
+     "species": "Zubat",
+     "level": 9,
+     "chance": 0.0977
+    },
+    {
+     "species": "Paras",
+     "level": 10,
+     "chance": 0.0977
+    },
+    {
+     "species": "Zubat",
+     "level": 10,
+     "chance": 0.0508
+    },
+    {
+     "species": "Zubat",
+     "level": 11,
+     "chance": 0.0508
+    },
+    {
+     "species": "Clefairy",
+     "level": 9,
+     "chance": 0.043
+    },
+    {
+     "species": "Geodude",
+     "level": 9,
+     "chance": 0.0117
+    }
+   ]
+  },
+  "water": null
+ },
+ "Mt Moon B2F": {
+  "grass": {
+   "rate": 10,
+   "slots": [
+    {
+     "species": "Zubat",
+     "level": 9,
+     "chance": 0.1992
+    },
+    {
+     "species": "Geodude",
+     "level": 9,
+     "chance": 0.1992
+    },
+    {
+     "species": "Zubat",
+     "level": 10,
+     "chance": 0.1523
+    },
+    {
+     "species": "Geodude",
+     "level": 10,
+     "chance": 0.0977
+    },
+    {
+     "species": "Zubat",
+     "level": 11,
+     "chance": 0.0977
+    },
+    {
+     "species": "Paras",
+     "level": 10,
+     "chance": 0.0977
+    },
+    {
+     "species": "Paras",
+     "level": 12,
+     "chance": 0.0508
+    },
+    {
+     "species": "Clefairy",
+     "level": 10,
+     "chance": 0.0508
+    },
+    {
+     "species": "Zubat",
+     "level": 12,
+     "chance": 0.043
+    },
+    {
+     "species": "Clefairy",
+     "level": 12,
+     "chance": 0.0117
+    }
+   ]
+  },
+  "water": null
+ },
+ "Rock Tunnel 1F": {
+  "grass": {
+   "rate": 15,
+   "slots": [
+    {
+     "species": "Zubat",
+     "level": 16,
+     "chance": 0.1992
+    },
+    {
+     "species": "Zubat",
+     "level": 17,
+     "chance": 0.1992
+    },
+    {
+     "species": "Geodude",
+     "level": 17,
+     "chance": 0.1523
+    },
+    {
+     "species": "Machop",
+     "level": 15,
+     "chance": 0.0977
+    },
+    {
+     "species": "Geodude",
+     "level": 16,
+     "chance": 0.0977
+    },
+    {
+     "species": "Zubat",
+     "level": 18,
+     "chance": 0.0977
+    },
+    {
+     "species": "Zubat",
+     "level": 15,
+     "chance": 0.0508
+    },
+    {
+     "species": "Machop",
+     "level": 17,
+     "chance": 0.0508
+    },
+    {
+     "species": "Onix",
+     "level": 13,
+     "chance": 0.043
+    },
+    {
+     "species": "Onix",
+     "level": 15,
+     "chance": 0.0117
+    }
+   ]
+  },
+  "water": null
+ },
+ "Power Plant": {
+  "grass": {
+   "rate": 10,
+   "slots": [
+    {
+     "species": "Voltorb",
+     "level": 21,
+     "chance": 0.1992
+    },
+    {
+     "species": "Magnemite",
+     "level": 21,
+     "chance": 0.1992
+    },
+    {
+     "species": "Pikachu",
+     "level": 20,
+     "chance": 0.1523
+    },
+    {
+     "species": "Pikachu",
+     "level": 24,
+     "chance": 0.0977
+    },
+    {
+     "species": "Magnemite",
+     "level": 23,
+     "chance": 0.0977
+    },
+    {
+     "species": "Voltorb",
+     "level": 23,
+     "chance": 0.0977
+    },
+    {
+     "species": "Magneton",
+     "level": 32,
+     "chance": 0.0508
+    },
+    {
+     "species": "Magneton",
+     "level": 35,
+     "chance": 0.0508
+    },
+    {
+     "species": "Electabuzz",
+     "level": 33,
+     "chance": 0.043
+    },
+    {
+     "species": "Electabuzz",
+     "level": 36,
+     "chance": 0.0117
+    }
+   ]
+  },
+  "water": null
+ },
+ "Victory Road 1F": {
+  "grass": {
+   "rate": 15,
+   "slots": [
+    {
+     "species": "Machop",
+     "level": 24,
+     "chance": 0.1992
+    },
+    {
+     "species": "Geodude",
+     "level": 26,
+     "chance": 0.1992
+    },
+    {
+     "species": "Zubat",
+     "level": 22,
+     "chance": 0.1523
+    },
+    {
+     "species": "Onix",
+     "level": 36,
+     "chance": 0.0977
+    },
+    {
+     "species": "Onix",
+     "level": 39,
+     "chance": 0.0977
+    },
+    {
+     "species": "Onix",
+     "level": 42,
+     "chance": 0.0977
+    },
+    {
+     "species": "Graveler",
+     "level": 41,
+     "chance": 0.0508
+    },
+    {
+     "species": "Golbat",
+     "level": 41,
+     "chance": 0.0508
+    },
+    {
+     "species": "Machoke",
+     "level": 42,
+     "chance": 0.043
+    },
+    {
+     "species": "Marowak",
+     "level": 43,
+     "chance": 0.0117
+    }
+   ]
+  },
+  "water": null
+ },
+ "Pokemon Tower 1F": {
+  "grass": null,
+  "water": null
+ },
+ "Pokemon Tower 2F": {
+  "grass": null,
+  "water": null
+ },
+ "Pokemon Tower 3F": {
+  "grass": {
+   "rate": 10,
+   "slots": [
+    {
+     "species": "Gastly",
+     "level": 20,
+     "chance": 0.1992
+    },
+    {
+     "species": "Gastly",
+     "level": 21,
+     "chance": 0.1992
+    },
+    {
+     "species": "Gastly",
+     "level": 22,
+     "chance": 0.1523
+    },
+    {
+     "species": "Gastly",
+     "level": 23,
+     "chance": 0.0977
+    },
+    {
+     "species": "Gastly",
+     "level": 19,
+     "chance": 0.0977
+    },
+    {
+     "species": "Gastly",
+     "level": 18,
+     "chance": 0.0977
+    },
+    {
+     "species": "Gastly",
+     "level": 24,
+     "chance": 0.0508
+    },
+    {
+     "species": "Cubone",
+     "level": 20,
+     "chance": 0.0508
+    },
+    {
+     "species": "Cubone",
+     "level": 22,
+     "chance": 0.043
+    },
+    {
+     "species": "Haunter",
+     "level": 25,
+     "chance": 0.0117
+    }
+   ]
+  },
+  "water": null
+ },
+ "Pokemon Tower 4F": {
+  "grass": {
+   "rate": 10,
+   "slots": [
+    {
+     "species": "Gastly",
+     "level": 20,
+     "chance": 0.1992
+    },
+    {
+     "species": "Gastly",
+     "level": 21,
+     "chance": 0.1992
+    },
+    {
+     "species": "Gastly",
+     "level": 22,
+     "chance": 0.1523
+    },
+    {
+     "species": "Gastly",
+     "level": 23,
+     "chance": 0.0977
+    },
+    {
+     "species": "Gastly",
+     "level": 19,
+     "chance": 0.0977
+    },
+    {
+     "species": "Gastly",
+     "level": 18,
+     "chance": 0.0977
+    },
+    {
+     "species": "Haunter",
+     "level": 25,
+     "chance": 0.0508
+    },
+    {
+     "species": "Cubone",
+     "level": 20,
+     "chance": 0.0508
+    },
+    {
+     "species": "Cubone",
+     "level": 22,
+     "chance": 0.043
+    },
+    {
+     "species": "Gastly",
+     "level": 24,
+     "chance": 0.0117
+    }
+   ]
+  },
+  "water": null
+ },
+ "Pokemon Tower 5F": {
+  "grass": {
+   "rate": 10,
+   "slots": [
+    {
+     "species": "Gastly",
+     "level": 20,
+     "chance": 0.1992
+    },
+    {
+     "species": "Gastly",
+     "level": 21,
+     "chance": 0.1992
+    },
+    {
+     "species": "Gastly",
+     "level": 22,
+     "chance": 0.1523
+    },
+    {
+     "species": "Gastly",
+     "level": 23,
+     "chance": 0.0977
+    },
+    {
+     "species": "Gastly",
+     "level": 19,
+     "chance": 0.0977
+    },
+    {
+     "species": "Gastly",
+     "level": 18,
+     "chance": 0.0977
+    },
+    {
+     "species": "Haunter",
+     "level": 25,
+     "chance": 0.0508
+    },
+    {
+     "species": "Cubone",
+     "level": 20,
+     "chance": 0.0508
+    },
+    {
+     "species": "Cubone",
+     "level": 22,
+     "chance": 0.043
+    },
+    {
+     "species": "Gastly",
+     "level": 24,
+     "chance": 0.0117
+    }
+   ]
+  },
+  "water": null
+ },
+ "Pokemon Tower 6F": {
+  "grass": {
+   "rate": 15,
+   "slots": [
+    {
+     "species": "Gastly",
+     "level": 21,
+     "chance": 0.1992
+    },
+    {
+     "species": "Gastly",
+     "level": 22,
+     "chance": 0.1992
+    },
+    {
+     "species": "Gastly",
+     "level": 23,
+     "chance": 0.1523
+    },
+    {
+     "species": "Gastly",
+     "level": 24,
+     "chance": 0.0977
+    },
+    {
+     "species": "Gastly",
+     "level": 20,
+     "chance": 0.0977
+    },
+    {
+     "species": "Gastly",
+     "level": 19,
+     "chance": 0.0977
+    },
+    {
+     "species": "Haunter",
+     "level": 26,
+     "chance": 0.0508
+    },
+    {
+     "species": "Cubone",
+     "level": 22,
+     "chance": 0.0508
+    },
+    {
+     "species": "Cubone",
+     "level": 24,
+     "chance": 0.043
+    },
+    {
+     "species": "Haunter",
+     "level": 28,
+     "chance": 0.0117
+    }
+   ]
+  },
+  "water": null
+ },
+ "Pokemon Tower 7F": {
+  "grass": {
+   "rate": 15,
+   "slots": [
+    {
+     "species": "Gastly",
+     "level": 21,
+     "chance": 0.1992
+    },
+    {
+     "species": "Gastly",
+     "level": 22,
+     "chance": 0.1992
+    },
+    {
+     "species": "Gastly",
+     "level": 23,
+     "chance": 0.1523
+    },
+    {
+     "species": "Gastly",
+     "level": 24,
+     "chance": 0.0977
+    },
+    {
+     "species": "Gastly",
+     "level": 20,
+     "chance": 0.0977
+    },
+    {
+     "species": "Haunter",
+     "level": 28,
+     "chance": 0.0977
+    },
+    {
+     "species": "Cubone",
+     "level": 22,
+     "chance": 0.0508
+    },
+    {
+     "species": "Cubone",
+     "level": 24,
+     "chance": 0.0508
+    },
+    {
+     "species": "Haunter",
+     "level": 28,
+     "chance": 0.043
+    },
+    {
+     "species": "Haunter",
+     "level": 30,
+     "chance": 0.0117
+    }
+   ]
+  },
+  "water": null
+ },
+ "Seafoam Islands B1F": {
+  "grass": {
+   "rate": 10,
+   "slots": [
+    {
+     "species": "Staryu",
+     "level": 30,
+     "chance": 0.1992
+    },
+    {
+     "species": "Horsea",
+     "level": 30,
+     "chance": 0.1992
+    },
+    {
+     "species": "Shellder",
+     "level": 32,
+     "chance": 0.1523
+    },
+    {
+     "species": "Horsea",
+     "level": 32,
+     "chance": 0.0977
+    },
+    {
+     "species": "Slowpoke",
+     "level": 28,
+     "chance": 0.0977
+    },
+    {
+     "species": "Seel",
+     "level": 30,
+     "chance": 0.0977
+    },
+    {
+     "species": "Slowpoke",
+     "level": 30,
+     "chance": 0.0508
+    },
+    {
+     "species": "Seel",
+     "level": 28,
+     "chance": 0.0508
+    },
+    {
+     "species": "Dewgong",
+     "level": 38,
+     "chance": 0.043
+    },
+    {
+     "species": "Seadra",
+     "level": 37,
+     "chance": 0.0117
+    }
+   ]
+  },
+  "water": null
+ },
+ "Seafoam Islands B2F": {
+  "grass": {
+   "rate": 10,
+   "slots": [
+    {
+     "species": "Seel",
+     "level": 30,
+     "chance": 0.1992
+    },
+    {
+     "species": "Slowpoke",
+     "level": 30,
+     "chance": 0.1992
+    },
+    {
+     "species": "Seel",
+     "level": 32,
+     "chance": 0.1523
+    },
+    {
+     "species": "Slowpoke",
+     "level": 32,
+     "chance": 0.0977
+    },
+    {
+     "species": "Horsea",
+     "level": 28,
+     "chance": 0.0977
+    },
+    {
+     "species": "Staryu",
+     "level": 30,
+     "chance": 0.0977
+    },
+    {
+     "species": "Horsea",
+     "level": 30,
+     "chance": 0.0508
+    },
+    {
+     "species": "Shellder",
+     "level": 28,
+     "chance": 0.0508
+    },
+    {
+     "species": "Golbat",
+     "level": 30,
+     "chance": 0.043
+    },
+    {
+     "species": "Slowbro",
+     "level": 37,
+     "chance": 0.0117
+    }
+   ]
+  },
+  "water": null
+ },
+ "Seafoam Islands B3F": {
+  "grass": {
+   "rate": 10,
+   "slots": [
+    {
+     "species": "Slowpoke",
+     "level": 31,
+     "chance": 0.1992
+    },
+    {
+     "species": "Seel",
+     "level": 31,
+     "chance": 0.1992
+    },
+    {
+     "species": "Slowpoke",
+     "level": 33,
+     "chance": 0.1523
+    },
+    {
+     "species": "Seel",
+     "level": 33,
+     "chance": 0.0977
+    },
+    {
+     "species": "Horsea",
+     "level": 29,
+     "chance": 0.0977
+    },
+    {
+     "species": "Shellder",
+     "level": 31,
+     "chance": 0.0977
+    },
+    {
+     "species": "Horsea",
+     "level": 31,
+     "chance": 0.0508
+    },
+    {
+     "species": "Shellder",
+     "level": 29,
+     "chance": 0.0508
+    },
+    {
+     "species": "Seadra",
+     "level": 39,
+     "chance": 0.043
+    },
+    {
+     "species": "Dewgong",
+     "level": 37,
+     "chance": 0.0117
+    }
+   ]
+  },
+  "water": null
+ },
+ "Seafoam Islands B4F": {
+  "grass": {
+   "rate": 10,
+   "slots": [
+    {
+     "species": "Horsea",
+     "level": 31,
+     "chance": 0.1992
+    },
+    {
+     "species": "Shellder",
+     "level": 31,
+     "chance": 0.1992
+    },
+    {
+     "species": "Horsea",
+     "level": 33,
+     "chance": 0.1523
+    },
+    {
+     "species": "Shellder",
+     "level": 33,
+     "chance": 0.0977
+    },
+    {
+     "species": "Slowpoke",
+     "level": 29,
+     "chance": 0.0977
+    },
+    {
+     "species": "Seel",
+     "level": 31,
+     "chance": 0.0977
+    },
+    {
+     "species": "Slowpoke",
+     "level": 31,
+     "chance": 0.0508
+    },
+    {
+     "species": "Seel",
+     "level": 29,
+     "chance": 0.0508
+    },
+    {
+     "species": "Slowbro",
+     "level": 39,
+     "chance": 0.043
+    },
+    {
+     "species": "Golbat",
+     "level": 32,
+     "chance": 0.0117
+    }
+   ]
+  },
+  "water": null
+ },
+ "Pokemon Mansion 1F": {
+  "grass": {
+   "rate": 10,
+   "slots": [
+    {
+     "species": "Koffing",
+     "level": 32,
+     "chance": 0.1992
+    },
+    {
+     "species": "Koffing",
+     "level": 30,
+     "chance": 0.1992
+    },
+    {
+     "species": "Ponyta",
+     "level": 34,
+     "chance": 0.1523
+    },
+    {
+     "species": "Ponyta",
+     "level": 30,
+     "chance": 0.0977
+    },
+    {
+     "species": "Growlithe",
+     "level": 34,
+     "chance": 0.0977
+    },
+    {
+     "species": "Ponyta",
+     "level": 32,
+     "chance": 0.0977
+    },
+    {
+     "species": "Grimer",
+     "level": 30,
+     "chance": 0.0508
+    },
+    {
+     "species": "Ponyta",
+     "level": 28,
+     "chance": 0.0508
+    },
+    {
+     "species": "Weezing",
+     "level": 37,
+     "chance": 0.043
+    },
+    {
+     "species": "Muk",
+     "level": 39,
+     "chance": 0.0117
+    }
+   ]
+  },
+  "water": null
+ },
+ "Seafoam Islands 1F": {
+  "grass": {
+   "rate": 15,
+   "slots": [
+    {
+     "species": "Seel",
+     "level": 30,
+     "chance": 0.1992
+    },
+    {
+     "species": "Slowpoke",
+     "level": 30,
+     "chance": 0.1992
+    },
+    {
+     "species": "Shellder",
+     "level": 30,
+     "chance": 0.1523
+    },
+    {
+     "species": "Horsea",
+     "level": 30,
+     "chance": 0.0977
+    },
+    {
+     "species": "Horsea",
+     "level": 28,
+     "chance": 0.0977
+    },
+    {
+     "species": "Zubat",
+     "level": 21,
+     "chance": 0.0977
+    },
+    {
+     "species": "Golbat",
+     "level": 29,
+     "chance": 0.0508
+    },
+    {
+     "species": "Psyduck",
+     "level": 28,
+     "chance": 0.0508
+    },
+    {
+     "species": "Shellder",
+     "level": 28,
+     "chance": 0.043
+    },
+    {
+     "species": "Golduck",
+     "level": 38,
+     "chance": 0.0117
+    }
+   ]
+  },
+  "water": null
+ },
+ "Victory Road 2F": {
+  "grass": {
+   "rate": 10,
+   "slots": [
+    {
+     "species": "Machop",
+     "level": 22,
+     "chance": 0.1992
+    },
+    {
+     "species": "Geodude",
+     "level": 24,
+     "chance": 0.1992
+    },
+    {
+     "species": "Zubat",
+     "level": 26,
+     "chance": 0.1523
+    },
+    {
+     "species": "Onix",
+     "level": 36,
+     "chance": 0.0977
+    },
+    {
+     "species": "Onix",
+     "level": 39,
+     "chance": 0.0977
+    },
+    {
+     "species": "Onix",
+     "level": 42,
+     "chance": 0.0977
+    },
+    {
+     "species": "Machoke",
+     "level": 41,
+     "chance": 0.0508
+    },
+    {
+     "species": "Golbat",
+     "level": 40,
+     "chance": 0.0508
+    },
+    {
+     "species": "Marowak",
+     "level": 40,
+     "chance": 0.043
+    },
+    {
+     "species": "Graveler",
+     "level": 43,
+     "chance": 0.0117
+    }
+   ]
+  },
+  "water": null
+ },
+ "Diglett's Cave": {
+  "grass": {
+   "rate": 20,
+   "slots": [
+    {
+     "species": "Diglett",
+     "level": 18,
+     "chance": 0.1992
+    },
+    {
+     "species": "Diglett",
+     "level": 19,
+     "chance": 0.1992
+    },
+    {
+     "species": "Diglett",
+     "level": 17,
+     "chance": 0.1523
+    },
+    {
+     "species": "Diglett",
+     "level": 20,
+     "chance": 0.0977
+    },
+    {
+     "species": "Diglett",
+     "level": 16,
+     "chance": 0.0977
+    },
+    {
+     "species": "Diglett",
+     "level": 15,
+     "chance": 0.0977
+    },
+    {
+     "species": "Diglett",
+     "level": 21,
+     "chance": 0.0508
+    },
+    {
+     "species": "Diglett",
+     "level": 22,
+     "chance": 0.0508
+    },
+    {
+     "species": "Dugtrio",
+     "level": 29,
+     "chance": 0.043
+    },
+    {
+     "species": "Dugtrio",
+     "level": 31,
+     "chance": 0.0117
+    }
+   ]
+  },
+  "water": null
+ },
+ "Victory Road 3F": {
+  "grass": {
+   "rate": 15,
+   "slots": [
+    {
+     "species": "Machop",
+     "level": 24,
+     "chance": 0.1992
+    },
+    {
+     "species": "Geodude",
+     "level": 26,
+     "chance": 0.1992
+    },
+    {
+     "species": "Zubat",
+     "level": 22,
+     "chance": 0.1523
+    },
+    {
+     "species": "Onix",
+     "level": 42,
+     "chance": 0.0977
+    },
+    {
+     "species": "Venomoth",
+     "level": 40,
+     "chance": 0.0977
+    },
+    {
+     "species": "Onix",
+     "level": 45,
+     "chance": 0.0977
+    },
+    {
+     "species": "Graveler",
+     "level": 43,
+     "chance": 0.0508
+    },
+    {
+     "species": "Golbat",
+     "level": 41,
+     "chance": 0.0508
+    },
+    {
+     "species": "Machoke",
+     "level": 42,
+     "chance": 0.043
+    },
+    {
+     "species": "Machoke",
+     "level": 45,
+     "chance": 0.0117
+    }
+   ]
+  },
+  "water": null
+ },
+ "Pokemon Mansion 2F": {
+  "grass": {
+   "rate": 10,
+   "slots": [
+    {
+     "species": "Growlithe",
+     "level": 32,
+     "chance": 0.1992
+    },
+    {
+     "species": "Koffing",
+     "level": 34,
+     "chance": 0.1992
+    },
+    {
+     "species": "Koffing",
+     "level": 34,
+     "chance": 0.1523
+    },
+    {
+     "species": "Ponyta",
+     "level": 30,
+     "chance": 0.0977
+    },
+    {
+     "species": "Koffing",
+     "level": 30,
+     "chance": 0.0977
+    },
+    {
+     "species": "Ponyta",
+     "level": 32,
+     "chance": 0.0977
+    },
+    {
+     "species": "Grimer",
+     "level": 30,
+     "chance": 0.0508
+    },
+    {
+     "species": "Ponyta",
+     "level": 28,
+     "chance": 0.0508
+    },
+    {
+     "species": "Weezing",
+     "level": 39,
+     "chance": 0.043
+    },
+    {
+     "species": "Muk",
+     "level": 37,
+     "chance": 0.0117
+    }
+   ]
+  },
+  "water": null
+ },
+ "Pokemon Mansion 3F": {
+  "grass": {
+   "rate": 10,
+   "slots": [
+    {
+     "species": "Koffing",
+     "level": 31,
+     "chance": 0.1992
+    },
+    {
+     "species": "Growlithe",
+     "level": 33,
+     "chance": 0.1992
+    },
+    {
+     "species": "Koffing",
+     "level": 35,
+     "chance": 0.1523
+    },
+    {
+     "species": "Ponyta",
+     "level": 32,
+     "chance": 0.0977
+    },
+    {
+     "species": "Ponyta",
+     "level": 34,
+     "chance": 0.0977
+    },
+    {
+     "species": "Weezing",
+     "level": 40,
+     "chance": 0.0977
+    },
+    {
+     "species": "Grimer",
+     "level": 34,
+     "chance": 0.0508
+    },
+    {
+     "species": "Weezing",
+     "level": 38,
+     "chance": 0.0508
+    },
+    {
+     "species": "Ponyta",
+     "level": 36,
+     "chance": 0.043
+    },
+    {
+     "species": "Muk",
+     "level": 42,
+     "chance": 0.0117
+    }
+   ]
+  },
+  "water": null
+ },
+ "Pokemon Mansion B1F": {
+  "grass": {
+   "rate": 10,
+   "slots": [
+    {
+     "species": "Koffing",
+     "level": 33,
+     "chance": 0.1992
+    },
+    {
+     "species": "Koffing",
+     "level": 31,
+     "chance": 0.1992
+    },
+    {
+     "species": "Growlithe",
+     "level": 35,
+     "chance": 0.1523
+    },
+    {
+     "species": "Ponyta",
+     "level": 32,
+     "chance": 0.0977
+    },
+    {
+     "species": "Koffing",
+     "level": 31,
+     "chance": 0.0977
+    },
+    {
+     "species": "Weezing",
+     "level": 40,
+     "chance": 0.0977
+    },
+    {
+     "species": "Ponyta",
+     "level": 34,
+     "chance": 0.0508
+    },
+    {
+     "species": "Grimer",
+     "level": 35,
+     "chance": 0.0508
+    },
+    {
+     "species": "Weezing",
+     "level": 42,
+     "chance": 0.043
+    },
+    {
+     "species": "Muk",
+     "level": 42,
+     "chance": 0.0117
+    }
+   ]
+  },
+  "water": null
+ },
+ "Safari Zone East": {
+  "grass": {
+   "rate": 30,
+   "slots": [
+    {
+     "species": "Nidoran♂",
+     "level": 24,
+     "chance": 0.1992
+    },
+    {
+     "species": "Doduo",
+     "level": 26,
+     "chance": 0.1992
+    },
+    {
+     "species": "Paras",
+     "level": 22,
+     "chance": 0.1523
+    },
+    {
+     "species": "Exeggcute",
+     "level": 25,
+     "chance": 0.0977
+    },
+    {
+     "species": "Nidorino",
+     "level": 33,
+     "chance": 0.0977
+    },
+    {
+     "species": "Exeggcute",
+     "level": 23,
+     "chance": 0.0977
+    },
+    {
+     "species": "Nidoran♀",
+     "level": 24,
+     "chance": 0.0508
+    },
+    {
+     "species": "Parasect",
+     "level": 25,
+     "chance": 0.0508
+    },
+    {
+     "species": "Kangaskhan",
+     "level": 25,
+     "chance": 0.043
+    },
+    {
+     "species": "Scyther",
+     "level": 28,
+     "chance": 0.0117
+    }
+   ]
+  },
+  "water": null
+ },
+ "Safari Zone North": {
+  "grass": {
+   "rate": 30,
+   "slots": [
+    {
+     "species": "Nidoran♂",
+     "level": 22,
+     "chance": 0.1992
+    },
+    {
+     "species": "Rhyhorn",
+     "level": 26,
+     "chance": 0.1992
+    },
+    {
+     "species": "Paras",
+     "level": 23,
+     "chance": 0.1523
+    },
+    {
+     "species": "Exeggcute",
+     "level": 25,
+     "chance": 0.0977
+    },
+    {
+     "species": "Nidorino",
+     "level": 30,
+     "chance": 0.0977
+    },
+    {
+     "species": "Exeggcute",
+     "level": 27,
+     "chance": 0.0977
+    },
+    {
+     "species": "Nidorina",
+     "level": 30,
+     "chance": 0.0508
+    },
+    {
+     "species": "Venomoth",
+     "level": 32,
+     "chance": 0.0508
+    },
+    {
+     "species": "Chansey",
+     "level": 26,
+     "chance": 0.043
+    },
+    {
+     "species": "Tauros",
+     "level": 28,
+     "chance": 0.0117
+    }
+   ]
+  },
+  "water": null
+ },
+ "Safari Zone West": {
+  "grass": {
+   "rate": 30,
+   "slots": [
+    {
+     "species": "Nidoran♂",
+     "level": 25,
+     "chance": 0.1992
+    },
+    {
+     "species": "Doduo",
+     "level": 26,
+     "chance": 0.1992
+    },
+    {
+     "species": "Venonat",
+     "level": 23,
+     "chance": 0.1523
+    },
+    {
+     "species": "Exeggcute",
+     "level": 24,
+     "chance": 0.0977
+    },
+    {
+     "species": "Nidorino",
+     "level": 33,
+     "chance": 0.0977
+    },
+    {
+     "species": "Exeggcute",
+     "level": 26,
+     "chance": 0.0977
+    },
+    {
+     "species": "Nidoran♀",
+     "level": 25,
+     "chance": 0.0508
+    },
+    {
+     "species": "Venomoth",
+     "level": 31,
+     "chance": 0.0508
+    },
+    {
+     "species": "Tauros",
+     "level": 26,
+     "chance": 0.043
+    },
+    {
+     "species": "Kangaskhan",
+     "level": 28,
+     "chance": 0.0117
+    }
+   ]
+  },
+  "water": null
+ },
+ "Safari Zone Center": {
+  "grass": {
+   "rate": 30,
+   "slots": [
+    {
+     "species": "Nidoran♂",
+     "level": 22,
+     "chance": 0.1992
+    },
+    {
+     "species": "Rhyhorn",
+     "level": 25,
+     "chance": 0.1992
+    },
+    {
+     "species": "Venonat",
+     "level": 22,
+     "chance": 0.1523
+    },
+    {
+     "species": "Exeggcute",
+     "level": 24,
+     "chance": 0.0977
+    },
+    {
+     "species": "Nidorino",
+     "level": 31,
+     "chance": 0.0977
+    },
+    {
+     "species": "Exeggcute",
+     "level": 25,
+     "chance": 0.0977
+    },
+    {
+     "species": "Nidorina",
+     "level": 31,
+     "chance": 0.0508
+    },
+    {
+     "species": "Parasect",
+     "level": 30,
+     "chance": 0.0508
+    },
+    {
+     "species": "Scyther",
+     "level": 23,
+     "chance": 0.043
+    },
+    {
+     "species": "Chansey",
+     "level": 23,
+     "chance": 0.0117
+    }
+   ]
+  },
+  "water": null
+ },
+ "Cerulean Cave 2F": {
+  "grass": {
+   "rate": 15,
+   "slots": [
+    {
+     "species": "Dodrio",
+     "level": 51,
+     "chance": 0.1992
+    },
+    {
+     "species": "Venomoth",
+     "level": 51,
+     "chance": 0.1992
+    },
+    {
+     "species": "Kadabra",
+     "level": 51,
+     "chance": 0.1523
+    },
+    {
+     "species": "Rhydon",
+     "level": 52,
+     "chance": 0.0977
+    },
+    {
+     "species": "Marowak",
+     "level": 52,
+     "chance": 0.0977
+    },
+    {
+     "species": "Electrode",
+     "level": 52,
+     "chance": 0.0977
+    },
+    {
+     "species": "Chansey",
+     "level": 56,
+     "chance": 0.0508
+    },
+    {
+     "species": "Wigglytuff",
+     "level": 54,
+     "chance": 0.0508
+    },
+    {
+     "species": "Ditto",
+     "level": 55,
+     "chance": 0.043
+    },
+    {
+     "species": "Ditto",
+     "level": 60,
+     "chance": 0.0117
+    }
+   ]
+  },
+  "water": null
+ },
+ "Cerulean Cave B1F": {
+  "grass": {
+   "rate": 25,
+   "slots": [
+    {
+     "species": "Rhydon",
+     "level": 55,
+     "chance": 0.1992
+    },
+    {
+     "species": "Marowak",
+     "level": 55,
+     "chance": 0.1992
+    },
+    {
+     "species": "Electrode",
+     "level": 55,
+     "chance": 0.1523
+    },
+    {
+     "species": "Chansey",
+     "level": 64,
+     "chance": 0.0977
+    },
+    {
+     "species": "Parasect",
+     "level": 64,
+     "chance": 0.0977
+    },
+    {
+     "species": "Raichu",
+     "level": 64,
+     "chance": 0.0977
+    },
+    {
+     "species": "Arbok",
+     "level": 57,
+     "chance": 0.0508
+    },
+    {
+     "species": "Ditto",
+     "level": 65,
+     "chance": 0.0508
+    },
+    {
+     "species": "Ditto",
+     "level": 63,
+     "chance": 0.043
+    },
+    {
+     "species": "Ditto",
+     "level": 67,
+     "chance": 0.0117
+    }
+   ]
+  },
+  "water": null
+ },
+ "Cerulean Cave 1F": {
+  "grass": {
+   "rate": 10,
+   "slots": [
+    {
+     "species": "Golbat",
+     "level": 46,
+     "chance": 0.1992
+    },
+    {
+     "species": "Hypno",
+     "level": 46,
+     "chance": 0.1992
+    },
+    {
+     "species": "Magneton",
+     "level": 46,
+     "chance": 0.1523
+    },
+    {
+     "species": "Dodrio",
+     "level": 49,
+     "chance": 0.0977
+    },
+    {
+     "species": "Venomoth",
+     "level": 49,
+     "chance": 0.0977
+    },
+    {
+     "species": "Arbok",
+     "level": 52,
+     "chance": 0.0977
+    },
+    {
+     "species": "Kadabra",
+     "level": 49,
+     "chance": 0.0508
+    },
+    {
+     "species": "Parasect",
+     "level": 52,
+     "chance": 0.0508
+    },
+    {
+     "species": "Raichu",
+     "level": 53,
+     "chance": 0.043
+    },
+    {
+     "species": "Ditto",
+     "level": 53,
+     "chance": 0.0117
+    }
+   ]
+  },
+  "water": null
+ },
+ "Rock Tunnel B1F": {
+  "grass": {
+   "rate": 15,
+   "slots": [
+    {
+     "species": "Zubat",
+     "level": 16,
+     "chance": 0.1992
+    },
+    {
+     "species": "Zubat",
+     "level": 17,
+     "chance": 0.1992
+    },
+    {
+     "species": "Geodude",
+     "level": 17,
+     "chance": 0.1523
+    },
+    {
+     "species": "Machop",
+     "level": 15,
+     "chance": 0.0977
+    },
+    {
+     "species": "Geodude",
+     "level": 16,
+     "chance": 0.0977
+    },
+    {
+     "species": "Zubat",
+     "level": 18,
+     "chance": 0.0977
+    },
+    {
+     "species": "Machop",
+     "level": 17,
+     "chance": 0.0508
+    },
+    {
+     "species": "Onix",
+     "level": 17,
+     "chance": 0.0508
+    },
+    {
+     "species": "Onix",
+     "level": 13,
+     "chance": 0.043
+    },
+    {
+     "species": "Geodude",
+     "level": 18,
+     "chance": 0.0117
+    }
+   ]
+  },
+  "water": null
+ }
+}

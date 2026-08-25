@@ -1,0 +1,2415 @@
+{
+  "source": "https://raw.githubusercontent.com/pret/pokered/master/constants/event_constants.asm",
+  "flag_base_address": 55111,
+  "num_event_bits": 2560,
+  "events": [
+    {
+      "id": "EVENT_FOLLOWED_OAK_INTO_LAB",
+      "bit_index": 0
+    },
+    {
+      "id": "EVENT_HALL_OF_FAME_DEX_RATING",
+      "bit_index": 3
+    },
+    {
+      "id": "EVENT_PALLET_AFTER_GETTING_POKEBALLS",
+      "bit_index": 6
+    },
+    {
+      "id": "EVENT_GOT_TOWN_MAP",
+      "bit_index": 24
+    },
+    {
+      "id": "EVENT_ENTERED_BLUES_HOUSE",
+      "bit_index": 25
+    },
+    {
+      "id": "EVENT_DAISY_WALKING",
+      "bit_index": 26
+    },
+    {
+      "id": "EVENT_FOLLOWED_OAK_INTO_LAB_2",
+      "bit_index": 32
+    },
+    {
+      "id": "EVENT_OAK_ASKED_TO_CHOOSE_MON",
+      "bit_index": 33
+    },
+    {
+      "id": "EVENT_GOT_STARTER",
+      "bit_index": 34
+    },
+    {
+      "id": "EVENT_BATTLED_RIVAL_IN_OAKS_LAB",
+      "bit_index": 35
+    },
+    {
+      "id": "EVENT_GOT_POKEBALLS_FROM_OAK",
+      "bit_index": 36
+    },
+    {
+      "id": "EVENT_GOT_POKEDEX",
+      "bit_index": 37
+    },
+    {
+      "id": "EVENT_PALLET_AFTER_GETTING_POKEBALLS_2",
+      "bit_index": 38
+    },
+    {
+      "id": "EVENT_OAK_APPEARED_IN_PALLET",
+      "bit_index": 39
+    },
+    {
+      "id": "EVENT_VIRIDIAN_GYM_OPEN",
+      "bit_index": 40
+    },
+    {
+      "id": "EVENT_GOT_TM42",
+      "bit_index": 41
+    },
+    {
+      "id": "EVENT_OAK_GOT_PARCEL",
+      "bit_index": 56
+    },
+    {
+      "id": "EVENT_GOT_OAKS_PARCEL",
+      "bit_index": 57
+    },
+    {
+      "id": "EVENT_GOT_TM27",
+      "bit_index": 80
+    },
+    {
+      "id": "EVENT_BEAT_VIRIDIAN_GYM_GIOVANNI",
+      "bit_index": 81
+    },
+    {
+      "id": "EVENT_BEAT_VIRIDIAN_GYM_TRAINER_0",
+      "bit_index": 82
+    },
+    {
+      "id": "EVENT_BEAT_VIRIDIAN_GYM_TRAINER_1",
+      "bit_index": 83
+    },
+    {
+      "id": "EVENT_BEAT_VIRIDIAN_GYM_TRAINER_2",
+      "bit_index": 84
+    },
+    {
+      "id": "EVENT_BEAT_VIRIDIAN_GYM_TRAINER_3",
+      "bit_index": 85
+    },
+    {
+      "id": "EVENT_BEAT_VIRIDIAN_GYM_TRAINER_4",
+      "bit_index": 86
+    },
+    {
+      "id": "EVENT_BEAT_VIRIDIAN_GYM_TRAINER_5",
+      "bit_index": 87
+    },
+    {
+      "id": "EVENT_BEAT_VIRIDIAN_GYM_TRAINER_6",
+      "bit_index": 88
+    },
+    {
+      "id": "EVENT_BEAT_VIRIDIAN_GYM_TRAINER_7",
+      "bit_index": 89
+    },
+    {
+      "id": "EVENT_BOUGHT_MUSEUM_TICKET",
+      "bit_index": 104
+    },
+    {
+      "id": "EVENT_GOT_OLD_AMBER",
+      "bit_index": 105
+    },
+    {
+      "id": "EVENT_BEAT_PEWTER_GYM_TRAINER_0",
+      "bit_index": 114
+    },
+    {
+      "id": "EVENT_GOT_TM34",
+      "bit_index": 118
+    },
+    {
+      "id": "EVENT_BEAT_BROCK",
+      "bit_index": 119
+    },
+    {
+      "id": "EVENT_BEAT_CERULEAN_RIVAL",
+      "bit_index": 152
+    },
+    {
+      "id": "EVENT_BEAT_CERULEAN_ROCKET_THIEF",
+      "bit_index": 167
+    },
+    {
+      "id": "EVENT_BEAT_CERULEAN_GYM_TRAINER_0",
+      "bit_index": 186
+    },
+    {
+      "id": "EVENT_BEAT_CERULEAN_GYM_TRAINER_1",
+      "bit_index": 187
+    },
+    {
+      "id": "EVENT_GOT_TM11",
+      "bit_index": 190
+    },
+    {
+      "id": "EVENT_BEAT_MISTY",
+      "bit_index": 191
+    },
+    {
+      "id": "EVENT_GOT_BICYCLE",
+      "bit_index": 192
+    },
+    {
+      "id": "EVENT_POKEMON_TOWER_RIVAL_ON_LEFT",
+      "bit_index": 238
+    },
+    {
+      "id": "EVENT_BEAT_POKEMON_TOWER_RIVAL",
+      "bit_index": 239
+    },
+    {
+      "id": "EVENT_BEAT_POKEMONTOWER_3_TRAINER_0",
+      "bit_index": 241
+    },
+    {
+      "id": "EVENT_BEAT_POKEMONTOWER_3_TRAINER_1",
+      "bit_index": 242
+    },
+    {
+      "id": "EVENT_BEAT_POKEMONTOWER_3_TRAINER_2",
+      "bit_index": 243
+    },
+    {
+      "id": "EVENT_BEAT_POKEMONTOWER_4_TRAINER_0",
+      "bit_index": 249
+    },
+    {
+      "id": "EVENT_BEAT_POKEMONTOWER_4_TRAINER_1",
+      "bit_index": 250
+    },
+    {
+      "id": "EVENT_BEAT_POKEMONTOWER_4_TRAINER_2",
+      "bit_index": 251
+    },
+    {
+      "id": "EVENT_BEAT_POKEMONTOWER_5_TRAINER_0",
+      "bit_index": 258
+    },
+    {
+      "id": "EVENT_BEAT_POKEMONTOWER_5_TRAINER_1",
+      "bit_index": 259
+    },
+    {
+      "id": "EVENT_BEAT_POKEMONTOWER_5_TRAINER_2",
+      "bit_index": 260
+    },
+    {
+      "id": "EVENT_BEAT_POKEMONTOWER_5_TRAINER_3",
+      "bit_index": 261
+    },
+    {
+      "id": "EVENT_IN_PURIFIED_ZONE",
+      "bit_index": 263
+    },
+    {
+      "id": "EVENT_BEAT_POKEMONTOWER_6_TRAINER_0",
+      "bit_index": 265
+    },
+    {
+      "id": "EVENT_BEAT_POKEMONTOWER_6_TRAINER_1",
+      "bit_index": 266
+    },
+    {
+      "id": "EVENT_BEAT_POKEMONTOWER_6_TRAINER_2",
+      "bit_index": 267
+    },
+    {
+      "id": "EVENT_BEAT_GHOST_MAROWAK",
+      "bit_index": 271
+    },
+    {
+      "id": "EVENT_BEAT_POKEMONTOWER_7_TRAINER_0",
+      "bit_index": 273
+    },
+    {
+      "id": "EVENT_BEAT_POKEMONTOWER_7_TRAINER_1",
+      "bit_index": 274
+    },
+    {
+      "id": "EVENT_BEAT_POKEMONTOWER_7_TRAINER_2",
+      "bit_index": 275
+    },
+    {
+      "id": "EVENT_RESCUED_MR_FUJI_2",
+      "bit_index": 279
+    },
+    {
+      "id": "EVENT_GOT_POKE_FLUTE",
+      "bit_index": 296
+    },
+    {
+      "id": "EVENT_GOT_BIKE_VOUCHER",
+      "bit_index": 337
+    },
+    {
+      "id": "EVENT_SEEL_FAN_BOAST",
+      "bit_index": 342
+    },
+    {
+      "id": "EVENT_PIKACHU_FAN_BOAST",
+      "bit_index": 343
+    },
+    {
+      "id": "EVENT_2ND_LOCK_OPENED",
+      "bit_index": 352
+    },
+    {
+      "id": "EVENT_1ST_LOCK_OPENED",
+      "bit_index": 353
+    },
+    {
+      "id": "EVENT_BEAT_VERMILION_GYM_TRAINER_0",
+      "bit_index": 354
+    },
+    {
+      "id": "EVENT_BEAT_VERMILION_GYM_TRAINER_1",
+      "bit_index": 355
+    },
+    {
+      "id": "EVENT_BEAT_VERMILION_GYM_TRAINER_2",
+      "bit_index": 356
+    },
+    {
+      "id": "EVENT_GOT_TM24",
+      "bit_index": 358
+    },
+    {
+      "id": "EVENT_BEAT_LT_SURGE",
+      "bit_index": 359
+    },
+    {
+      "id": "EVENT_GOT_TM41",
+      "bit_index": 384
+    },
+    {
+      "id": "EVENT_GOT_TM13",
+      "bit_index": 396
+    },
+    {
+      "id": "EVENT_GOT_TM48",
+      "bit_index": 397
+    },
+    {
+      "id": "EVENT_GOT_TM49",
+      "bit_index": 398
+    },
+    {
+      "id": "EVENT_GOT_TM18",
+      "bit_index": 399
+    },
+    {
+      "id": "EVENT_GOT_TM21",
+      "bit_index": 424
+    },
+    {
+      "id": "EVENT_BEAT_ERIKA",
+      "bit_index": 425
+    },
+    {
+      "id": "EVENT_BEAT_CELADON_GYM_TRAINER_0",
+      "bit_index": 426
+    },
+    {
+      "id": "EVENT_BEAT_CELADON_GYM_TRAINER_1",
+      "bit_index": 427
+    },
+    {
+      "id": "EVENT_BEAT_CELADON_GYM_TRAINER_2",
+      "bit_index": 428
+    },
+    {
+      "id": "EVENT_BEAT_CELADON_GYM_TRAINER_3",
+      "bit_index": 429
+    },
+    {
+      "id": "EVENT_BEAT_CELADON_GYM_TRAINER_4",
+      "bit_index": 430
+    },
+    {
+      "id": "EVENT_BEAT_CELADON_GYM_TRAINER_5",
+      "bit_index": 431
+    },
+    {
+      "id": "EVENT_BEAT_CELADON_GYM_TRAINER_6",
+      "bit_index": 432
+    },
+    {
+      "id": "EVENT_1B8",
+      "bit_index": 440
+    },
+    {
+      "id": "EVENT_FOUND_ROCKET_HIDEOUT",
+      "bit_index": 441
+    },
+    {
+      "id": "EVENT_GOT_10_COINS",
+      "bit_index": 442
+    },
+    {
+      "id": "EVENT_GOT_20_COINS",
+      "bit_index": 443
+    },
+    {
+      "id": "EVENT_GOT_20_COINS_2",
+      "bit_index": 444
+    },
+    {
+      "id": "EVENT_1BF",
+      "bit_index": 447
+    },
+    {
+      "id": "EVENT_GOT_COIN_CASE",
+      "bit_index": 480
+    },
+    {
+      "id": "EVENT_GOT_HM04",
+      "bit_index": 568
+    },
+    {
+      "id": "EVENT_GAVE_GOLD_TEETH",
+      "bit_index": 569
+    },
+    {
+      "id": "EVENT_SAFARI_GAME_OVER",
+      "bit_index": 590
+    },
+    {
+      "id": "EVENT_IN_SAFARI_ZONE",
+      "bit_index": 591
+    },
+    {
+      "id": "EVENT_GOT_TM06",
+      "bit_index": 600
+    },
+    {
+      "id": "EVENT_BEAT_KOGA",
+      "bit_index": 601
+    },
+    {
+      "id": "EVENT_BEAT_FUCHSIA_GYM_TRAINER_0",
+      "bit_index": 602
+    },
+    {
+      "id": "EVENT_BEAT_FUCHSIA_GYM_TRAINER_1",
+      "bit_index": 603
+    },
+    {
+      "id": "EVENT_BEAT_FUCHSIA_GYM_TRAINER_2",
+      "bit_index": 604
+    },
+    {
+      "id": "EVENT_BEAT_FUCHSIA_GYM_TRAINER_3",
+      "bit_index": 605
+    },
+    {
+      "id": "EVENT_BEAT_FUCHSIA_GYM_TRAINER_4",
+      "bit_index": 606
+    },
+    {
+      "id": "EVENT_BEAT_FUCHSIA_GYM_TRAINER_5",
+      "bit_index": 607
+    },
+    {
+      "id": "EVENT_MANSION_SWITCH_ON",
+      "bit_index": 632
+    },
+    {
+      "id": "EVENT_BEAT_MANSION_1_TRAINER_0",
+      "bit_index": 649
+    },
+    {
+      "id": "EVENT_GOT_TM38",
+      "bit_index": 664
+    },
+    {
+      "id": "EVENT_BEAT_BLAINE",
+      "bit_index": 665
+    },
+    {
+      "id": "EVENT_BEAT_CINNABAR_GYM_TRAINER_0",
+      "bit_index": 666
+    },
+    {
+      "id": "EVENT_BEAT_CINNABAR_GYM_TRAINER_1",
+      "bit_index": 667
+    },
+    {
+      "id": "EVENT_BEAT_CINNABAR_GYM_TRAINER_2",
+      "bit_index": 668
+    },
+    {
+      "id": "EVENT_BEAT_CINNABAR_GYM_TRAINER_3",
+      "bit_index": 669
+    },
+    {
+      "id": "EVENT_BEAT_CINNABAR_GYM_TRAINER_4",
+      "bit_index": 670
+    },
+    {
+      "id": "EVENT_BEAT_CINNABAR_GYM_TRAINER_5",
+      "bit_index": 671
+    },
+    {
+      "id": "EVENT_BEAT_CINNABAR_GYM_TRAINER_6",
+      "bit_index": 672
+    },
+    {
+      "id": "EVENT_2A7",
+      "bit_index": 679
+    },
+    {
+      "id": "EVENT_CINNABAR_GYM_GATE0_UNLOCKED",
+      "bit_index": 680
+    },
+    {
+      "id": "EVENT_CINNABAR_GYM_GATE1_UNLOCKED",
+      "bit_index": 681
+    },
+    {
+      "id": "EVENT_CINNABAR_GYM_GATE2_UNLOCKED",
+      "bit_index": 682
+    },
+    {
+      "id": "EVENT_CINNABAR_GYM_GATE3_UNLOCKED",
+      "bit_index": 683
+    },
+    {
+      "id": "EVENT_CINNABAR_GYM_GATE4_UNLOCKED",
+      "bit_index": 684
+    },
+    {
+      "id": "EVENT_CINNABAR_GYM_GATE5_UNLOCKED",
+      "bit_index": 685
+    },
+    {
+      "id": "EVENT_CINNABAR_GYM_GATE6_UNLOCKED",
+      "bit_index": 686
+    },
+    {
+      "id": "EVENT_GOT_TM35",
+      "bit_index": 727
+    },
+    {
+      "id": "EVENT_GAVE_FOSSIL_TO_LAB",
+      "bit_index": 736
+    },
+    {
+      "id": "EVENT_LAB_STILL_REVIVING_FOSSIL",
+      "bit_index": 737
+    },
+    {
+      "id": "EVENT_LAB_HANDING_OVER_FOSSIL_MON",
+      "bit_index": 738
+    },
+    {
+      "id": "EVENT_GOT_TM31",
+      "bit_index": 832
+    },
+    {
+      "id": "EVENT_DEFEATED_FIGHTING_DOJO",
+      "bit_index": 848
+    },
+    {
+      "id": "EVENT_BEAT_KARATE_MASTER",
+      "bit_index": 849
+    },
+    {
+      "id": "EVENT_BEAT_FIGHTING_DOJO_TRAINER_0",
+      "bit_index": 850
+    },
+    {
+      "id": "EVENT_BEAT_FIGHTING_DOJO_TRAINER_1",
+      "bit_index": 851
+    },
+    {
+      "id": "EVENT_BEAT_FIGHTING_DOJO_TRAINER_2",
+      "bit_index": 852
+    },
+    {
+      "id": "EVENT_BEAT_FIGHTING_DOJO_TRAINER_3",
+      "bit_index": 853
+    },
+    {
+      "id": "EVENT_GOT_HITMONLEE",
+      "bit_index": 854
+    },
+    {
+      "id": "EVENT_GOT_HITMONCHAN",
+      "bit_index": 855
+    },
+    {
+      "id": "EVENT_GOT_TM46",
+      "bit_index": 864
+    },
+    {
+      "id": "EVENT_BEAT_SABRINA",
+      "bit_index": 865
+    },
+    {
+      "id": "EVENT_BEAT_SAFFRON_GYM_TRAINER_0",
+      "bit_index": 866
+    },
+    {
+      "id": "EVENT_BEAT_SAFFRON_GYM_TRAINER_1",
+      "bit_index": 867
+    },
+    {
+      "id": "EVENT_BEAT_SAFFRON_GYM_TRAINER_2",
+      "bit_index": 868
+    },
+    {
+      "id": "EVENT_BEAT_SAFFRON_GYM_TRAINER_3",
+      "bit_index": 869
+    },
+    {
+      "id": "EVENT_BEAT_SAFFRON_GYM_TRAINER_4",
+      "bit_index": 870
+    },
+    {
+      "id": "EVENT_BEAT_SAFFRON_GYM_TRAINER_5",
+      "bit_index": 871
+    },
+    {
+      "id": "EVENT_BEAT_SAFFRON_GYM_TRAINER_6",
+      "bit_index": 872
+    },
+    {
+      "id": "EVENT_SILPH_CO_RECEPTIONIST_AT_DESK",
+      "bit_index": 919
+    },
+    {
+      "id": "EVENT_GOT_TM29",
+      "bit_index": 944
+    },
+    {
+      "id": "EVENT_GOT_POTION_SAMPLE",
+      "bit_index": 960
+    },
+    {
+      "id": "EVENT_GOT_HM05",
+      "bit_index": 984
+    },
+    {
+      "id": "EVENT_BEAT_ROUTE_3_TRAINER_0",
+      "bit_index": 994
+    },
+    {
+      "id": "EVENT_BEAT_ROUTE_3_TRAINER_1",
+      "bit_index": 995
+    },
+    {
+      "id": "EVENT_BEAT_ROUTE_3_TRAINER_2",
+      "bit_index": 996
+    },
+    {
+      "id": "EVENT_BEAT_ROUTE_3_TRAINER_3",
+      "bit_index": 997
+    },
+    {
+      "id": "EVENT_BEAT_ROUTE_3_TRAINER_4",
+      "bit_index": 998
+    },
+    {
+      "id": "EVENT_BEAT_ROUTE_3_TRAINER_5",
+      "bit_index": 999
+    },
+    {
+      "id": "EVENT_BEAT_ROUTE_3_TRAINER_6",
+      "bit_index": 1000
+    },
+    {
+      "id": "EVENT_BEAT_ROUTE_3_TRAINER_7",
+      "bit_index": 1001
+    },
+    {
+      "id": "EVENT_BEAT_ROUTE_4_TRAINER_0",
+      "bit_index": 1010
+    },
+    {
+      "id": "EVENT_BOUGHT_MAGIKARP",
+      "bit_index": 1023
+    },
+    {
+      "id": "EVENT_BEAT_ROUTE_6_TRAINER_0",
+      "bit_index": 1041
+    },
+    {
+      "id": "EVENT_BEAT_ROUTE_6_TRAINER_1",
+      "bit_index": 1042
+    },
+    {
+      "id": "EVENT_BEAT_ROUTE_6_TRAINER_2",
+      "bit_index": 1043
+    },
+    {
+      "id": "EVENT_BEAT_ROUTE_6_TRAINER_3",
+      "bit_index": 1044
+    },
+    {
+      "id": "EVENT_BEAT_ROUTE_6_TRAINER_4",
+      "bit_index": 1045
+    },
+    {
+      "id": "EVENT_BEAT_ROUTE_6_TRAINER_5",
+      "bit_index": 1046
+    },
+    {
+      "id": "EVENT_BEAT_ROUTE_8_TRAINER_0",
+      "bit_index": 1073
+    },
+    {
+      "id": "EVENT_BEAT_ROUTE_8_TRAINER_1",
+      "bit_index": 1074
+    },
+    {
+      "id": "EVENT_BEAT_ROUTE_8_TRAINER_2",
+      "bit_index": 1075
+    },
+    {
+      "id": "EVENT_BEAT_ROUTE_8_TRAINER_3",
+      "bit_index": 1076
+    },
+    {
+      "id": "EVENT_BEAT_ROUTE_8_TRAINER_4",
+      "bit_index": 1077
+    },
+    {
+      "id": "EVENT_BEAT_ROUTE_8_TRAINER_5",
+      "bit_index": 1078
+    },
+    {
+      "id": "EVENT_BEAT_ROUTE_8_TRAINER_6",
+      "bit_index": 1079
+    },
+    {
+      "id": "EVENT_BEAT_ROUTE_8_TRAINER_7",
+      "bit_index": 1080
+    },
+    {
+      "id": "EVENT_BEAT_ROUTE_8_TRAINER_8",
+      "bit_index": 1081
+    },
+    {
+      "id": "EVENT_BEAT_ROUTE_9_TRAINER_0",
+      "bit_index": 1089
+    },
+    {
+      "id": "EVENT_BEAT_ROUTE_9_TRAINER_1",
+      "bit_index": 1090
+    },
+    {
+      "id": "EVENT_BEAT_ROUTE_9_TRAINER_2",
+      "bit_index": 1091
+    },
+    {
+      "id": "EVENT_BEAT_ROUTE_9_TRAINER_3",
+      "bit_index": 1092
+    },
+    {
+      "id": "EVENT_BEAT_ROUTE_9_TRAINER_4",
+      "bit_index": 1093
+    },
+    {
+      "id": "EVENT_BEAT_ROUTE_9_TRAINER_5",
+      "bit_index": 1094
+    },
+    {
+      "id": "EVENT_BEAT_ROUTE_9_TRAINER_6",
+      "bit_index": 1095
+    },
+    {
+      "id": "EVENT_BEAT_ROUTE_9_TRAINER_7",
+      "bit_index": 1096
+    },
+    {
+      "id": "EVENT_BEAT_ROUTE_9_TRAINER_8",
+      "bit_index": 1097
+    },
+    {
+      "id": "EVENT_BEAT_ROUTE_10_TRAINER_0",
+      "bit_index": 1105
+    },
+    {
+      "id": "EVENT_BEAT_ROUTE_10_TRAINER_1",
+      "bit_index": 1106
+    },
+    {
+      "id": "EVENT_BEAT_ROUTE_10_TRAINER_2",
+      "bit_index": 1107
+    },
+    {
+      "id": "EVENT_BEAT_ROUTE_10_TRAINER_3",
+      "bit_index": 1108
+    },
+    {
+      "id": "EVENT_BEAT_ROUTE_10_TRAINER_4",
+      "bit_index": 1109
+    },
+    {
+      "id": "EVENT_BEAT_ROUTE_10_TRAINER_5",
+      "bit_index": 1110
+    },
+    {
+      "id": "EVENT_BEAT_ROCK_TUNNEL_1_TRAINER_0",
+      "bit_index": 1113
+    },
+    {
+      "id": "EVENT_BEAT_ROCK_TUNNEL_1_TRAINER_1",
+      "bit_index": 1114
+    },
+    {
+      "id": "EVENT_BEAT_ROCK_TUNNEL_1_TRAINER_2",
+      "bit_index": 1115
+    },
+    {
+      "id": "EVENT_BEAT_ROCK_TUNNEL_1_TRAINER_3",
+      "bit_index": 1116
+    },
+    {
+      "id": "EVENT_BEAT_ROCK_TUNNEL_1_TRAINER_4",
+      "bit_index": 1117
+    },
+    {
+      "id": "EVENT_BEAT_ROCK_TUNNEL_1_TRAINER_5",
+      "bit_index": 1118
+    },
+    {
+      "id": "EVENT_BEAT_ROCK_TUNNEL_1_TRAINER_6",
+      "bit_index": 1119
+    },
+    {
+      "id": "EVENT_BEAT_POWER_PLANT_VOLTORB_0",
+      "bit_index": 1121
+    },
+    {
+      "id": "EVENT_BEAT_POWER_PLANT_VOLTORB_1",
+      "bit_index": 1122
+    },
+    {
+      "id": "EVENT_BEAT_POWER_PLANT_VOLTORB_2",
+      "bit_index": 1123
+    },
+    {
+      "id": "EVENT_BEAT_POWER_PLANT_VOLTORB_3",
+      "bit_index": 1124
+    },
+    {
+      "id": "EVENT_BEAT_POWER_PLANT_VOLTORB_4",
+      "bit_index": 1125
+    },
+    {
+      "id": "EVENT_BEAT_POWER_PLANT_VOLTORB_5",
+      "bit_index": 1126
+    },
+    {
+      "id": "EVENT_BEAT_POWER_PLANT_VOLTORB_6",
+      "bit_index": 1127
+    },
+    {
+      "id": "EVENT_BEAT_POWER_PLANT_VOLTORB_7",
+      "bit_index": 1128
+    },
+    {
+      "id": "EVENT_BEAT_ZAPDOS",
+      "bit_index": 1129
+    },
+    {
+      "id": "EVENT_BEAT_ROUTE_11_TRAINER_0",
+      "bit_index": 1137
+    },
+    {
+      "id": "EVENT_BEAT_ROUTE_11_TRAINER_1",
+      "bit_index": 1138
+    },
+    {
+      "id": "EVENT_BEAT_ROUTE_11_TRAINER_2",
+      "bit_index": 1139
+    },
+    {
+      "id": "EVENT_BEAT_ROUTE_11_TRAINER_3",
+      "bit_index": 1140
+    },
+    {
+      "id": "EVENT_BEAT_ROUTE_11_TRAINER_4",
+      "bit_index": 1141
+    },
+    {
+      "id": "EVENT_BEAT_ROUTE_11_TRAINER_5",
+      "bit_index": 1142
+    },
+    {
+      "id": "EVENT_BEAT_ROUTE_11_TRAINER_6",
+      "bit_index": 1143
+    },
+    {
+      "id": "EVENT_BEAT_ROUTE_11_TRAINER_7",
+      "bit_index": 1144
+    },
+    {
+      "id": "EVENT_BEAT_ROUTE_11_TRAINER_8",
+      "bit_index": 1145
+    },
+    {
+      "id": "EVENT_BEAT_ROUTE_11_TRAINER_9",
+      "bit_index": 1146
+    },
+    {
+      "id": "EVENT_GOT_ITEMFINDER",
+      "bit_index": 1151
+    },
+    {
+      "id": "EVENT_GOT_TM39",
+      "bit_index": 1152
+    },
+    {
+      "id": "EVENT_BEAT_ROUTE_12_TRAINER_0",
+      "bit_index": 1154
+    },
+    {
+      "id": "EVENT_BEAT_ROUTE_12_TRAINER_1",
+      "bit_index": 1155
+    },
+    {
+      "id": "EVENT_BEAT_ROUTE_12_TRAINER_2",
+      "bit_index": 1156
+    },
+    {
+      "id": "EVENT_BEAT_ROUTE_12_TRAINER_3",
+      "bit_index": 1157
+    },
+    {
+      "id": "EVENT_BEAT_ROUTE_12_TRAINER_4",
+      "bit_index": 1158
+    },
+    {
+      "id": "EVENT_BEAT_ROUTE_12_TRAINER_5",
+      "bit_index": 1159
+    },
+    {
+      "id": "EVENT_BEAT_ROUTE_12_TRAINER_6",
+      "bit_index": 1160
+    },
+    {
+      "id": "EVENT_FIGHT_ROUTE12_SNORLAX",
+      "bit_index": 1166
+    },
+    {
+      "id": "EVENT_BEAT_ROUTE12_SNORLAX",
+      "bit_index": 1167
+    },
+    {
+      "id": "EVENT_BEAT_ROUTE_13_TRAINER_0",
+      "bit_index": 1169
+    },
+    {
+      "id": "EVENT_BEAT_ROUTE_13_TRAINER_1",
+      "bit_index": 1170
+    },
+    {
+      "id": "EVENT_BEAT_ROUTE_13_TRAINER_2",
+      "bit_index": 1171
+    },
+    {
+      "id": "EVENT_BEAT_ROUTE_13_TRAINER_3",
+      "bit_index": 1172
+    },
+    {
+      "id": "EVENT_BEAT_ROUTE_13_TRAINER_4",
+      "bit_index": 1173
+    },
+    {
+      "id": "EVENT_BEAT_ROUTE_13_TRAINER_5",
+      "bit_index": 1174
+    },
+    {
+      "id": "EVENT_BEAT_ROUTE_13_TRAINER_6",
+      "bit_index": 1175
+    },
+    {
+      "id": "EVENT_BEAT_ROUTE_13_TRAINER_7",
+      "bit_index": 1176
+    },
+    {
+      "id": "EVENT_BEAT_ROUTE_13_TRAINER_8",
+      "bit_index": 1177
+    },
+    {
+      "id": "EVENT_BEAT_ROUTE_13_TRAINER_9",
+      "bit_index": 1178
+    },
+    {
+      "id": "EVENT_BEAT_ROUTE_14_TRAINER_0",
+      "bit_index": 1185
+    },
+    {
+      "id": "EVENT_BEAT_ROUTE_14_TRAINER_1",
+      "bit_index": 1186
+    },
+    {
+      "id": "EVENT_BEAT_ROUTE_14_TRAINER_2",
+      "bit_index": 1187
+    },
+    {
+      "id": "EVENT_BEAT_ROUTE_14_TRAINER_3",
+      "bit_index": 1188
+    },
+    {
+      "id": "EVENT_BEAT_ROUTE_14_TRAINER_4",
+      "bit_index": 1189
+    },
+    {
+      "id": "EVENT_BEAT_ROUTE_14_TRAINER_5",
+      "bit_index": 1190
+    },
+    {
+      "id": "EVENT_BEAT_ROUTE_14_TRAINER_6",
+      "bit_index": 1191
+    },
+    {
+      "id": "EVENT_BEAT_ROUTE_14_TRAINER_7",
+      "bit_index": 1192
+    },
+    {
+      "id": "EVENT_BEAT_ROUTE_14_TRAINER_8",
+      "bit_index": 1193
+    },
+    {
+      "id": "EVENT_BEAT_ROUTE_14_TRAINER_9",
+      "bit_index": 1194
+    },
+    {
+      "id": "EVENT_GOT_EXP_ALL",
+      "bit_index": 1200
+    },
+    {
+      "id": "EVENT_BEAT_ROUTE_15_TRAINER_0",
+      "bit_index": 1201
+    },
+    {
+      "id": "EVENT_BEAT_ROUTE_15_TRAINER_1",
+      "bit_index": 1202
+    },
+    {
+      "id": "EVENT_BEAT_ROUTE_15_TRAINER_2",
+      "bit_index": 1203
+    },
+    {
+      "id": "EVENT_BEAT_ROUTE_15_TRAINER_3",
+      "bit_index": 1204
+    },
+    {
+      "id": "EVENT_BEAT_ROUTE_15_TRAINER_4",
+      "bit_index": 1205
+    },
+    {
+      "id": "EVENT_BEAT_ROUTE_15_TRAINER_5",
+      "bit_index": 1206
+    },
+    {
+      "id": "EVENT_BEAT_ROUTE_15_TRAINER_6",
+      "bit_index": 1207
+    },
+    {
+      "id": "EVENT_BEAT_ROUTE_15_TRAINER_7",
+      "bit_index": 1208
+    },
+    {
+      "id": "EVENT_BEAT_ROUTE_15_TRAINER_8",
+      "bit_index": 1209
+    },
+    {
+      "id": "EVENT_BEAT_ROUTE_15_TRAINER_9",
+      "bit_index": 1210
+    },
+    {
+      "id": "EVENT_BEAT_ROUTE_16_TRAINER_0",
+      "bit_index": 1217
+    },
+    {
+      "id": "EVENT_BEAT_ROUTE_16_TRAINER_1",
+      "bit_index": 1218
+    },
+    {
+      "id": "EVENT_BEAT_ROUTE_16_TRAINER_2",
+      "bit_index": 1219
+    },
+    {
+      "id": "EVENT_BEAT_ROUTE_16_TRAINER_3",
+      "bit_index": 1220
+    },
+    {
+      "id": "EVENT_BEAT_ROUTE_16_TRAINER_4",
+      "bit_index": 1221
+    },
+    {
+      "id": "EVENT_BEAT_ROUTE_16_TRAINER_5",
+      "bit_index": 1222
+    },
+    {
+      "id": "EVENT_FIGHT_ROUTE16_SNORLAX",
+      "bit_index": 1224
+    },
+    {
+      "id": "EVENT_BEAT_ROUTE16_SNORLAX",
+      "bit_index": 1225
+    },
+    {
+      "id": "EVENT_GOT_HM02",
+      "bit_index": 1230
+    },
+    {
+      "id": "EVENT_RESCUED_MR_FUJI",
+      "bit_index": 1231
+    },
+    {
+      "id": "EVENT_BEAT_ROUTE_17_TRAINER_0",
+      "bit_index": 1233
+    },
+    {
+      "id": "EVENT_BEAT_ROUTE_17_TRAINER_1",
+      "bit_index": 1234
+    },
+    {
+      "id": "EVENT_BEAT_ROUTE_17_TRAINER_2",
+      "bit_index": 1235
+    },
+    {
+      "id": "EVENT_BEAT_ROUTE_17_TRAINER_3",
+      "bit_index": 1236
+    },
+    {
+      "id": "EVENT_BEAT_ROUTE_17_TRAINER_4",
+      "bit_index": 1237
+    },
+    {
+      "id": "EVENT_BEAT_ROUTE_17_TRAINER_5",
+      "bit_index": 1238
+    },
+    {
+      "id": "EVENT_BEAT_ROUTE_17_TRAINER_6",
+      "bit_index": 1239
+    },
+    {
+      "id": "EVENT_BEAT_ROUTE_17_TRAINER_7",
+      "bit_index": 1240
+    },
+    {
+      "id": "EVENT_BEAT_ROUTE_17_TRAINER_8",
+      "bit_index": 1241
+    },
+    {
+      "id": "EVENT_BEAT_ROUTE_17_TRAINER_9",
+      "bit_index": 1242
+    },
+    {
+      "id": "EVENT_BEAT_ROUTE_18_TRAINER_0",
+      "bit_index": 1249
+    },
+    {
+      "id": "EVENT_BEAT_ROUTE_18_TRAINER_1",
+      "bit_index": 1250
+    },
+    {
+      "id": "EVENT_BEAT_ROUTE_18_TRAINER_2",
+      "bit_index": 1251
+    },
+    {
+      "id": "EVENT_BEAT_ROUTE_19_TRAINER_0",
+      "bit_index": 1265
+    },
+    {
+      "id": "EVENT_BEAT_ROUTE_19_TRAINER_1",
+      "bit_index": 1266
+    },
+    {
+      "id": "EVENT_BEAT_ROUTE_19_TRAINER_2",
+      "bit_index": 1267
+    },
+    {
+      "id": "EVENT_BEAT_ROUTE_19_TRAINER_3",
+      "bit_index": 1268
+    },
+    {
+      "id": "EVENT_BEAT_ROUTE_19_TRAINER_4",
+      "bit_index": 1269
+    },
+    {
+      "id": "EVENT_BEAT_ROUTE_19_TRAINER_5",
+      "bit_index": 1270
+    },
+    {
+      "id": "EVENT_BEAT_ROUTE_19_TRAINER_6",
+      "bit_index": 1271
+    },
+    {
+      "id": "EVENT_BEAT_ROUTE_19_TRAINER_7",
+      "bit_index": 1272
+    },
+    {
+      "id": "EVENT_BEAT_ROUTE_19_TRAINER_8",
+      "bit_index": 1273
+    },
+    {
+      "id": "EVENT_BEAT_ROUTE_19_TRAINER_9",
+      "bit_index": 1274
+    },
+    {
+      "id": "EVENT_IN_SEAFOAM_ISLANDS",
+      "bit_index": 1280
+    },
+    {
+      "id": "EVENT_BEAT_ROUTE_20_TRAINER_0",
+      "bit_index": 1281
+    },
+    {
+      "id": "EVENT_BEAT_ROUTE_20_TRAINER_1",
+      "bit_index": 1282
+    },
+    {
+      "id": "EVENT_BEAT_ROUTE_20_TRAINER_2",
+      "bit_index": 1283
+    },
+    {
+      "id": "EVENT_BEAT_ROUTE_20_TRAINER_3",
+      "bit_index": 1284
+    },
+    {
+      "id": "EVENT_BEAT_ROUTE_20_TRAINER_4",
+      "bit_index": 1285
+    },
+    {
+      "id": "EVENT_BEAT_ROUTE_20_TRAINER_5",
+      "bit_index": 1286
+    },
+    {
+      "id": "EVENT_BEAT_ROUTE_20_TRAINER_6",
+      "bit_index": 1287
+    },
+    {
+      "id": "EVENT_BEAT_ROUTE_20_TRAINER_7",
+      "bit_index": 1288
+    },
+    {
+      "id": "EVENT_BEAT_ROUTE_20_TRAINER_8",
+      "bit_index": 1289
+    },
+    {
+      "id": "EVENT_BEAT_ROUTE_20_TRAINER_9",
+      "bit_index": 1290
+    },
+    {
+      "id": "EVENT_SEAFOAM1_BOULDER1_DOWN_HOLE",
+      "bit_index": 1294
+    },
+    {
+      "id": "EVENT_SEAFOAM1_BOULDER2_DOWN_HOLE",
+      "bit_index": 1295
+    },
+    {
+      "id": "EVENT_BEAT_ROUTE_21_TRAINER_0",
+      "bit_index": 1297
+    },
+    {
+      "id": "EVENT_BEAT_ROUTE_21_TRAINER_1",
+      "bit_index": 1298
+    },
+    {
+      "id": "EVENT_BEAT_ROUTE_21_TRAINER_2",
+      "bit_index": 1299
+    },
+    {
+      "id": "EVENT_BEAT_ROUTE_21_TRAINER_3",
+      "bit_index": 1300
+    },
+    {
+      "id": "EVENT_BEAT_ROUTE_21_TRAINER_4",
+      "bit_index": 1301
+    },
+    {
+      "id": "EVENT_BEAT_ROUTE_21_TRAINER_5",
+      "bit_index": 1302
+    },
+    {
+      "id": "EVENT_BEAT_ROUTE_21_TRAINER_6",
+      "bit_index": 1303
+    },
+    {
+      "id": "EVENT_BEAT_ROUTE_21_TRAINER_7",
+      "bit_index": 1304
+    },
+    {
+      "id": "EVENT_BEAT_ROUTE_21_TRAINER_8",
+      "bit_index": 1305
+    },
+    {
+      "id": "EVENT_1ST_ROUTE22_RIVAL_BATTLE",
+      "bit_index": 1312
+    },
+    {
+      "id": "EVENT_2ND_ROUTE22_RIVAL_BATTLE",
+      "bit_index": 1313
+    },
+    {
+      "id": "EVENT_BEAT_ROUTE22_RIVAL_1ST_BATTLE",
+      "bit_index": 1317
+    },
+    {
+      "id": "EVENT_BEAT_ROUTE22_RIVAL_2ND_BATTLE",
+      "bit_index": 1318
+    },
+    {
+      "id": "EVENT_ROUTE22_RIVAL_WANTS_BATTLE",
+      "bit_index": 1319
+    },
+    {
+      "id": "EVENT_PASSED_CASCADEBADGE_CHECK",
+      "bit_index": 1328
+    },
+    {
+      "id": "EVENT_PASSED_THUNDERBADGE_CHECK",
+      "bit_index": 1329
+    },
+    {
+      "id": "EVENT_PASSED_RAINBOWBADGE_CHECK",
+      "bit_index": 1330
+    },
+    {
+      "id": "EVENT_PASSED_SOULBADGE_CHECK",
+      "bit_index": 1331
+    },
+    {
+      "id": "EVENT_PASSED_MARSHBADGE_CHECK",
+      "bit_index": 1332
+    },
+    {
+      "id": "EVENT_PASSED_VOLCANOBADGE_CHECK",
+      "bit_index": 1333
+    },
+    {
+      "id": "EVENT_PASSED_EARTHBADGE_CHECK",
+      "bit_index": 1334
+    },
+    {
+      "id": "EVENT_VICTORY_ROAD_2_BOULDER_ON_SWITCH1",
+      "bit_index": 1336
+    },
+    {
+      "id": "EVENT_BEAT_VICTORY_ROAD_2_TRAINER_0",
+      "bit_index": 1337
+    },
+    {
+      "id": "EVENT_BEAT_VICTORY_ROAD_2_TRAINER_1",
+      "bit_index": 1338
+    },
+    {
+      "id": "EVENT_BEAT_VICTORY_ROAD_2_TRAINER_2",
+      "bit_index": 1339
+    },
+    {
+      "id": "EVENT_BEAT_VICTORY_ROAD_2_TRAINER_3",
+      "bit_index": 1340
+    },
+    {
+      "id": "EVENT_BEAT_VICTORY_ROAD_2_TRAINER_4",
+      "bit_index": 1341
+    },
+    {
+      "id": "EVENT_BEAT_MOLTRES",
+      "bit_index": 1342
+    },
+    {
+      "id": "EVENT_VICTORY_ROAD_2_BOULDER_ON_SWITCH2",
+      "bit_index": 1343
+    },
+    {
+      "id": "EVENT_GOT_NUGGET",
+      "bit_index": 1344
+    },
+    {
+      "id": "EVENT_BEAT_ROUTE24_ROCKET",
+      "bit_index": 1345
+    },
+    {
+      "id": "EVENT_BEAT_ROUTE_24_TRAINER_0",
+      "bit_index": 1346
+    },
+    {
+      "id": "EVENT_BEAT_ROUTE_24_TRAINER_1",
+      "bit_index": 1347
+    },
+    {
+      "id": "EVENT_BEAT_ROUTE_24_TRAINER_2",
+      "bit_index": 1348
+    },
+    {
+      "id": "EVENT_BEAT_ROUTE_24_TRAINER_3",
+      "bit_index": 1349
+    },
+    {
+      "id": "EVENT_BEAT_ROUTE_24_TRAINER_4",
+      "bit_index": 1350
+    },
+    {
+      "id": "EVENT_BEAT_ROUTE_24_TRAINER_5",
+      "bit_index": 1351
+    },
+    {
+      "id": "EVENT_NUGGET_REWARD_AVAILABLE",
+      "bit_index": 1353
+    },
+    {
+      "id": "EVENT_MET_BILL",
+      "bit_index": 1360
+    },
+    {
+      "id": "EVENT_BEAT_ROUTE_25_TRAINER_0",
+      "bit_index": 1361
+    },
+    {
+      "id": "EVENT_BEAT_ROUTE_25_TRAINER_1",
+      "bit_index": 1362
+    },
+    {
+      "id": "EVENT_BEAT_ROUTE_25_TRAINER_2",
+      "bit_index": 1363
+    },
+    {
+      "id": "EVENT_BEAT_ROUTE_25_TRAINER_3",
+      "bit_index": 1364
+    },
+    {
+      "id": "EVENT_BEAT_ROUTE_25_TRAINER_4",
+      "bit_index": 1365
+    },
+    {
+      "id": "EVENT_BEAT_ROUTE_25_TRAINER_5",
+      "bit_index": 1366
+    },
+    {
+      "id": "EVENT_BEAT_ROUTE_25_TRAINER_6",
+      "bit_index": 1367
+    },
+    {
+      "id": "EVENT_BEAT_ROUTE_25_TRAINER_7",
+      "bit_index": 1368
+    },
+    {
+      "id": "EVENT_BEAT_ROUTE_25_TRAINER_8",
+      "bit_index": 1369
+    },
+    {
+      "id": "EVENT_USED_CELL_SEPARATOR_ON_BILL",
+      "bit_index": 1371
+    },
+    {
+      "id": "EVENT_GOT_SS_TICKET",
+      "bit_index": 1372
+    },
+    {
+      "id": "EVENT_MET_BILL_2",
+      "bit_index": 1373
+    },
+    {
+      "id": "EVENT_BILL_SAID_USE_CELL_SEPARATOR",
+      "bit_index": 1374
+    },
+    {
+      "id": "EVENT_LEFT_BILLS_HOUSE_AFTER_HELPING",
+      "bit_index": 1375
+    },
+    {
+      "id": "EVENT_BEAT_VIRIDIAN_FOREST_TRAINER_0",
+      "bit_index": 1378
+    },
+    {
+      "id": "EVENT_BEAT_VIRIDIAN_FOREST_TRAINER_1",
+      "bit_index": 1379
+    },
+    {
+      "id": "EVENT_BEAT_VIRIDIAN_FOREST_TRAINER_2",
+      "bit_index": 1380
+    },
+    {
+      "id": "EVENT_BEAT_MT_MOON_1_TRAINER_0",
+      "bit_index": 1393
+    },
+    {
+      "id": "EVENT_BEAT_MT_MOON_1_TRAINER_1",
+      "bit_index": 1394
+    },
+    {
+      "id": "EVENT_BEAT_MT_MOON_1_TRAINER_2",
+      "bit_index": 1395
+    },
+    {
+      "id": "EVENT_BEAT_MT_MOON_1_TRAINER_3",
+      "bit_index": 1396
+    },
+    {
+      "id": "EVENT_BEAT_MT_MOON_1_TRAINER_4",
+      "bit_index": 1397
+    },
+    {
+      "id": "EVENT_BEAT_MT_MOON_1_TRAINER_5",
+      "bit_index": 1398
+    },
+    {
+      "id": "EVENT_BEAT_MT_MOON_1_TRAINER_6",
+      "bit_index": 1399
+    },
+    {
+      "id": "EVENT_BEAT_MT_MOON_EXIT_SUPER_NERD",
+      "bit_index": 1401
+    },
+    {
+      "id": "EVENT_BEAT_MT_MOON_3_TRAINER_0",
+      "bit_index": 1402
+    },
+    {
+      "id": "EVENT_BEAT_MT_MOON_3_TRAINER_1",
+      "bit_index": 1403
+    },
+    {
+      "id": "EVENT_BEAT_MT_MOON_3_TRAINER_2",
+      "bit_index": 1404
+    },
+    {
+      "id": "EVENT_BEAT_MT_MOON_3_TRAINER_3",
+      "bit_index": 1405
+    },
+    {
+      "id": "EVENT_GOT_DOME_FOSSIL",
+      "bit_index": 1406
+    },
+    {
+      "id": "EVENT_GOT_HELIX_FOSSIL",
+      "bit_index": 1407
+    },
+    {
+      "id": "EVENT_BEAT_SS_ANNE_5_TRAINER_0",
+      "bit_index": 1476
+    },
+    {
+      "id": "EVENT_BEAT_SS_ANNE_5_TRAINER_1",
+      "bit_index": 1477
+    },
+    {
+      "id": "EVENT_GOT_HM01",
+      "bit_index": 1504
+    },
+    {
+      "id": "EVENT_RUBBED_CAPTAINS_BACK",
+      "bit_index": 1505
+    },
+    {
+      "id": "EVENT_SS_ANNE_LEFT",
+      "bit_index": 1506
+    },
+    {
+      "id": "EVENT_WALKED_PAST_GUARD_AFTER_SS_ANNE_LEFT",
+      "bit_index": 1507
+    },
+    {
+      "id": "EVENT_STARTED_WALKING_OUT_OF_DOCK",
+      "bit_index": 1508
+    },
+    {
+      "id": "EVENT_WALKED_OUT_OF_DOCK",
+      "bit_index": 1509
+    },
+    {
+      "id": "EVENT_BEAT_SS_ANNE_8_TRAINER_0",
+      "bit_index": 1521
+    },
+    {
+      "id": "EVENT_BEAT_SS_ANNE_8_TRAINER_1",
+      "bit_index": 1522
+    },
+    {
+      "id": "EVENT_BEAT_SS_ANNE_8_TRAINER_2",
+      "bit_index": 1523
+    },
+    {
+      "id": "EVENT_BEAT_SS_ANNE_8_TRAINER_3",
+      "bit_index": 1524
+    },
+    {
+      "id": "EVENT_BEAT_SS_ANNE_9_TRAINER_0",
+      "bit_index": 1537
+    },
+    {
+      "id": "EVENT_BEAT_SS_ANNE_9_TRAINER_1",
+      "bit_index": 1538
+    },
+    {
+      "id": "EVENT_BEAT_SS_ANNE_9_TRAINER_2",
+      "bit_index": 1539
+    },
+    {
+      "id": "EVENT_BEAT_SS_ANNE_9_TRAINER_3",
+      "bit_index": 1540
+    },
+    {
+      "id": "EVENT_BEAT_SS_ANNE_10_TRAINER_0",
+      "bit_index": 1553
+    },
+    {
+      "id": "EVENT_BEAT_SS_ANNE_10_TRAINER_1",
+      "bit_index": 1554
+    },
+    {
+      "id": "EVENT_BEAT_SS_ANNE_10_TRAINER_2",
+      "bit_index": 1555
+    },
+    {
+      "id": "EVENT_BEAT_SS_ANNE_10_TRAINER_3",
+      "bit_index": 1556
+    },
+    {
+      "id": "EVENT_BEAT_SS_ANNE_10_TRAINER_4",
+      "bit_index": 1557
+    },
+    {
+      "id": "EVENT_BEAT_SS_ANNE_10_TRAINER_5",
+      "bit_index": 1558
+    },
+    {
+      "id": "EVENT_VICTORY_ROAD_3_BOULDER_ON_SWITCH1",
+      "bit_index": 1632
+    },
+    {
+      "id": "EVENT_BEAT_VICTORY_ROAD_3_TRAINER_0",
+      "bit_index": 1633
+    },
+    {
+      "id": "EVENT_BEAT_VICTORY_ROAD_3_TRAINER_1",
+      "bit_index": 1634
+    },
+    {
+      "id": "EVENT_BEAT_VICTORY_ROAD_3_TRAINER_2",
+      "bit_index": 1635
+    },
+    {
+      "id": "EVENT_BEAT_VICTORY_ROAD_3_TRAINER_3",
+      "bit_index": 1636
+    },
+    {
+      "id": "EVENT_VICTORY_ROAD_3_BOULDER_ON_SWITCH2",
+      "bit_index": 1638
+    },
+    {
+      "id": "EVENT_BEAT_ROCKET_HIDEOUT_1_TRAINER_0",
+      "bit_index": 1649
+    },
+    {
+      "id": "EVENT_BEAT_ROCKET_HIDEOUT_1_TRAINER_1",
+      "bit_index": 1650
+    },
+    {
+      "id": "EVENT_BEAT_ROCKET_HIDEOUT_1_TRAINER_2",
+      "bit_index": 1651
+    },
+    {
+      "id": "EVENT_BEAT_ROCKET_HIDEOUT_1_TRAINER_3",
+      "bit_index": 1652
+    },
+    {
+      "id": "EVENT_BEAT_ROCKET_HIDEOUT_1_TRAINER_4",
+      "bit_index": 1653
+    },
+    {
+      "id": "EVENT_ENTERED_ROCKET_HIDEOUT",
+      "bit_index": 1655
+    },
+    {
+      "id": "EVENT_67F",
+      "bit_index": 1663
+    },
+    {
+      "id": "EVENT_BEAT_ROCKET_HIDEOUT_2_TRAINER_0",
+      "bit_index": 1665
+    },
+    {
+      "id": "EVENT_BEAT_ROCKET_HIDEOUT_3_TRAINER_0",
+      "bit_index": 1681
+    },
+    {
+      "id": "EVENT_BEAT_ROCKET_HIDEOUT_3_TRAINER_1",
+      "bit_index": 1682
+    },
+    {
+      "id": "EVENT_BEAT_ROCKET_HIDEOUT_4_TRAINER_0",
+      "bit_index": 1698
+    },
+    {
+      "id": "EVENT_BEAT_ROCKET_HIDEOUT_4_TRAINER_1",
+      "bit_index": 1699
+    },
+    {
+      "id": "EVENT_BEAT_ROCKET_HIDEOUT_4_TRAINER_2",
+      "bit_index": 1700
+    },
+    {
+      "id": "EVENT_ROCKET_HIDEOUT_4_DOOR_UNLOCKED",
+      "bit_index": 1701
+    },
+    {
+      "id": "EVENT_ROCKET_DROPPED_LIFT_KEY",
+      "bit_index": 1702
+    },
+    {
+      "id": "EVENT_BEAT_ROCKET_HIDEOUT_GIOVANNI",
+      "bit_index": 1703
+    },
+    {
+      "id": "EVENT_BEAT_SILPH_CO_2F_TRAINER_0",
+      "bit_index": 1778
+    },
+    {
+      "id": "EVENT_BEAT_SILPH_CO_2F_TRAINER_1",
+      "bit_index": 1779
+    },
+    {
+      "id": "EVENT_BEAT_SILPH_CO_2F_TRAINER_2",
+      "bit_index": 1780
+    },
+    {
+      "id": "EVENT_BEAT_SILPH_CO_2F_TRAINER_3",
+      "bit_index": 1781
+    },
+    {
+      "id": "EVENT_SILPH_CO_2_UNLOCKED_DOOR1",
+      "bit_index": 1789
+    },
+    {
+      "id": "EVENT_SILPH_CO_2_UNLOCKED_DOOR2",
+      "bit_index": 1790
+    },
+    {
+      "id": "EVENT_GOT_TM36",
+      "bit_index": 1791
+    },
+    {
+      "id": "EVENT_BEAT_SILPH_CO_3F_TRAINER_0",
+      "bit_index": 1794
+    },
+    {
+      "id": "EVENT_BEAT_SILPH_CO_3F_TRAINER_1",
+      "bit_index": 1795
+    },
+    {
+      "id": "EVENT_SILPH_CO_3_UNLOCKED_DOOR1",
+      "bit_index": 1800
+    },
+    {
+      "id": "EVENT_SILPH_CO_3_UNLOCKED_DOOR2",
+      "bit_index": 1801
+    },
+    {
+      "id": "EVENT_BEAT_SILPH_CO_4F_TRAINER_0",
+      "bit_index": 1810
+    },
+    {
+      "id": "EVENT_BEAT_SILPH_CO_4F_TRAINER_1",
+      "bit_index": 1811
+    },
+    {
+      "id": "EVENT_BEAT_SILPH_CO_4F_TRAINER_2",
+      "bit_index": 1812
+    },
+    {
+      "id": "EVENT_SILPH_CO_4_UNLOCKED_DOOR1",
+      "bit_index": 1816
+    },
+    {
+      "id": "EVENT_SILPH_CO_4_UNLOCKED_DOOR2",
+      "bit_index": 1817
+    },
+    {
+      "id": "EVENT_BEAT_SILPH_CO_5F_TRAINER_0",
+      "bit_index": 1826
+    },
+    {
+      "id": "EVENT_BEAT_SILPH_CO_5F_TRAINER_1",
+      "bit_index": 1827
+    },
+    {
+      "id": "EVENT_BEAT_SILPH_CO_5F_TRAINER_2",
+      "bit_index": 1828
+    },
+    {
+      "id": "EVENT_BEAT_SILPH_CO_5F_TRAINER_3",
+      "bit_index": 1829
+    },
+    {
+      "id": "EVENT_SILPH_CO_5_UNLOCKED_DOOR1",
+      "bit_index": 1832
+    },
+    {
+      "id": "EVENT_SILPH_CO_5_UNLOCKED_DOOR2",
+      "bit_index": 1833
+    },
+    {
+      "id": "EVENT_SILPH_CO_5_UNLOCKED_DOOR3",
+      "bit_index": 1834
+    },
+    {
+      "id": "EVENT_BEAT_SILPH_CO_6F_TRAINER_0",
+      "bit_index": 1846
+    },
+    {
+      "id": "EVENT_BEAT_SILPH_CO_6F_TRAINER_1",
+      "bit_index": 1847
+    },
+    {
+      "id": "EVENT_BEAT_SILPH_CO_6F_TRAINER_2",
+      "bit_index": 1848
+    },
+    {
+      "id": "EVENT_SILPH_CO_6_UNLOCKED_DOOR",
+      "bit_index": 1855
+    },
+    {
+      "id": "EVENT_BEAT_SILPH_CO_RIVAL",
+      "bit_index": 1856
+    },
+    {
+      "id": "EVENT_BEAT_SILPH_CO_7F_TRAINER_0",
+      "bit_index": 1861
+    },
+    {
+      "id": "EVENT_BEAT_SILPH_CO_7F_TRAINER_1",
+      "bit_index": 1862
+    },
+    {
+      "id": "EVENT_BEAT_SILPH_CO_7F_TRAINER_2",
+      "bit_index": 1863
+    },
+    {
+      "id": "EVENT_BEAT_SILPH_CO_7F_TRAINER_3",
+      "bit_index": 1864
+    },
+    {
+      "id": "EVENT_SILPH_CO_7_UNLOCKED_DOOR1",
+      "bit_index": 1868
+    },
+    {
+      "id": "EVENT_SILPH_CO_7_UNLOCKED_DOOR2",
+      "bit_index": 1869
+    },
+    {
+      "id": "EVENT_SILPH_CO_7_UNLOCKED_DOOR3",
+      "bit_index": 1870
+    },
+    {
+      "id": "EVENT_BEAT_SILPH_CO_8F_TRAINER_0",
+      "bit_index": 1874
+    },
+    {
+      "id": "EVENT_BEAT_SILPH_CO_8F_TRAINER_1",
+      "bit_index": 1875
+    },
+    {
+      "id": "EVENT_BEAT_SILPH_CO_8F_TRAINER_2",
+      "bit_index": 1876
+    },
+    {
+      "id": "EVENT_SILPH_CO_8_UNLOCKED_DOOR",
+      "bit_index": 1880
+    },
+    {
+      "id": "EVENT_BEAT_SILPH_CO_9F_TRAINER_0",
+      "bit_index": 1890
+    },
+    {
+      "id": "EVENT_BEAT_SILPH_CO_9F_TRAINER_1",
+      "bit_index": 1891
+    },
+    {
+      "id": "EVENT_BEAT_SILPH_CO_9F_TRAINER_2",
+      "bit_index": 1892
+    },
+    {
+      "id": "EVENT_SILPH_CO_9_UNLOCKED_DOOR1",
+      "bit_index": 1896
+    },
+    {
+      "id": "EVENT_SILPH_CO_9_UNLOCKED_DOOR2",
+      "bit_index": 1897
+    },
+    {
+      "id": "EVENT_SILPH_CO_9_UNLOCKED_DOOR3",
+      "bit_index": 1898
+    },
+    {
+      "id": "EVENT_SILPH_CO_9_UNLOCKED_DOOR4",
+      "bit_index": 1899
+    },
+    {
+      "id": "EVENT_BEAT_SILPH_CO_10F_TRAINER_0",
+      "bit_index": 1905
+    },
+    {
+      "id": "EVENT_BEAT_SILPH_CO_10F_TRAINER_1",
+      "bit_index": 1906
+    },
+    {
+      "id": "EVENT_SILPH_CO_10_UNLOCKED_DOOR",
+      "bit_index": 1912
+    },
+    {
+      "id": "EVENT_BEAT_SILPH_CO_11F_TRAINER_0",
+      "bit_index": 1924
+    },
+    {
+      "id": "EVENT_BEAT_SILPH_CO_11F_TRAINER_1",
+      "bit_index": 1925
+    },
+    {
+      "id": "EVENT_SILPH_CO_11_UNLOCKED_DOOR",
+      "bit_index": 1928
+    },
+    {
+      "id": "EVENT_GOT_MASTER_BALL",
+      "bit_index": 1933
+    },
+    {
+      "id": "EVENT_BEAT_SILPH_CO_GIOVANNI",
+      "bit_index": 1935
+    },
+    {
+      "id": "EVENT_BEAT_MANSION_2_TRAINER_0",
+      "bit_index": 2049
+    },
+    {
+      "id": "EVENT_BEAT_MANSION_3_TRAINER_0",
+      "bit_index": 2065
+    },
+    {
+      "id": "EVENT_BEAT_MANSION_3_TRAINER_1",
+      "bit_index": 2066
+    },
+    {
+      "id": "EVENT_BEAT_MANSION_4_TRAINER_0",
+      "bit_index": 2081
+    },
+    {
+      "id": "EVENT_BEAT_MANSION_4_TRAINER_1",
+      "bit_index": 2082
+    },
+    {
+      "id": "EVENT_GOT_HM03",
+      "bit_index": 2176
+    },
+    {
+      "id": "EVENT_BEAT_MEWTWO",
+      "bit_index": 2241
+    },
+    {
+      "id": "EVENT_BEAT_LORELEIS_ROOM_TRAINER_0",
+      "bit_index": 2273
+    },
+    {
+      "id": "EVENT_AUTOWALKED_INTO_LORELEIS_ROOM",
+      "bit_index": 2278
+    },
+    {
+      "id": "EVENT_BEAT_BRUNOS_ROOM_TRAINER_0",
+      "bit_index": 2281
+    },
+    {
+      "id": "EVENT_AUTOWALKED_INTO_BRUNOS_ROOM",
+      "bit_index": 2286
+    },
+    {
+      "id": "EVENT_BEAT_AGATHAS_ROOM_TRAINER_0",
+      "bit_index": 2289
+    },
+    {
+      "id": "EVENT_AUTOWALKED_INTO_AGATHAS_ROOM",
+      "bit_index": 2294
+    },
+    {
+      "id": "EVENT_BEAT_LANCES_ROOM_TRAINER_0",
+      "bit_index": 2297
+    },
+    {
+      "id": "EVENT_BEAT_LANCE",
+      "bit_index": 2302
+    },
+    {
+      "id": "EVENT_LANCES_ROOM_LOCK_DOOR",
+      "bit_index": 2303
+    },
+    {
+      "id": "EVENT_BEAT_CHAMPION_RIVAL",
+      "bit_index": 2305
+    },
+    {
+      "id": "EVENT_BEAT_VICTORY_ROAD_1_TRAINER_0",
+      "bit_index": 2321
+    },
+    {
+      "id": "EVENT_BEAT_VICTORY_ROAD_1_TRAINER_1",
+      "bit_index": 2322
+    },
+    {
+      "id": "EVENT_VICTORY_ROAD_1_BOULDER_ON_SWITCH",
+      "bit_index": 2327
+    },
+    {
+      "id": "EVENT_BEAT_ROCK_TUNNEL_2_TRAINER_0",
+      "bit_index": 2481
+    },
+    {
+      "id": "EVENT_BEAT_ROCK_TUNNEL_2_TRAINER_1",
+      "bit_index": 2482
+    },
+    {
+      "id": "EVENT_BEAT_ROCK_TUNNEL_2_TRAINER_2",
+      "bit_index": 2483
+    },
+    {
+      "id": "EVENT_BEAT_ROCK_TUNNEL_2_TRAINER_3",
+      "bit_index": 2484
+    },
+    {
+      "id": "EVENT_BEAT_ROCK_TUNNEL_2_TRAINER_4",
+      "bit_index": 2485
+    },
+    {
+      "id": "EVENT_BEAT_ROCK_TUNNEL_2_TRAINER_5",
+      "bit_index": 2486
+    },
+    {
+      "id": "EVENT_BEAT_ROCK_TUNNEL_2_TRAINER_6",
+      "bit_index": 2487
+    },
+    {
+      "id": "EVENT_BEAT_ROCK_TUNNEL_2_TRAINER_7",
+      "bit_index": 2488
+    },
+    {
+      "id": "EVENT_SEAFOAM2_BOULDER1_DOWN_HOLE",
+      "bit_index": 2496
+    },
+    {
+      "id": "EVENT_SEAFOAM2_BOULDER2_DOWN_HOLE",
+      "bit_index": 2497
+    },
+    {
+      "id": "EVENT_SEAFOAM3_BOULDER1_DOWN_HOLE",
+      "bit_index": 2504
+    },
+    {
+      "id": "EVENT_SEAFOAM3_BOULDER2_DOWN_HOLE",
+      "bit_index": 2505
+    },
+    {
+      "id": "EVENT_SEAFOAM4_BOULDER1_DOWN_HOLE",
+      "bit_index": 2512
+    },
+    {
+      "id": "EVENT_SEAFOAM4_BOULDER2_DOWN_HOLE",
+      "bit_index": 2513
+    },
+    {
+      "id": "EVENT_BEAT_ARTICUNO",
+      "bit_index": 2522
+    }
+  ],
+  "ladder": [
+    {
+      "id": "EVENT_GOT_STARTER",
+      "label": "Chose a starter Pokemon",
+      "kind": "event",
+      "source": "EVENT_GOT_STARTER"
+    },
+    {
+      "id": "EVENT_BATTLED_RIVAL_IN_OAKS_LAB",
+      "label": "Fought the rival in Oak's Lab",
+      "kind": "event",
+      "source": "EVENT_BATTLED_RIVAL_IN_OAKS_LAB"
+    },
+    {
+      "id": "EVENT_GOT_OAKS_PARCEL",
+      "label": "Picked up Oak's Parcel in Viridian",
+      "kind": "event",
+      "source": "EVENT_GOT_OAKS_PARCEL"
+    },
+    {
+      "id": "EVENT_OAK_GOT_PARCEL",
+      "label": "Delivered Oak's Parcel",
+      "kind": "event",
+      "source": "EVENT_OAK_GOT_PARCEL"
+    },
+    {
+      "id": "EVENT_GOT_POKEDEX",
+      "label": "Received the Pokedex",
+      "kind": "event",
+      "source": "EVENT_GOT_POKEDEX"
+    },
+    {
+      "id": "EVENT_GOT_TOWN_MAP",
+      "label": "Got the Town Map from Daisy",
+      "kind": "event",
+      "source": "EVENT_GOT_TOWN_MAP"
+    },
+    {
+      "id": "EVENT_BEAT_ROUTE22_RIVAL_1ST_BATTLE",
+      "label": "Beat the rival on Route 22",
+      "kind": "event",
+      "source": "EVENT_BEAT_ROUTE22_RIVAL_1ST_BATTLE"
+    },
+    {
+      "id": "EVENT_BEAT_BROCK",
+      "label": "Defeated Brock",
+      "kind": "event",
+      "source": "EVENT_BEAT_BROCK"
+    },
+    {
+      "id": "BADGE_BOULDER",
+      "label": "Boulder Badge",
+      "kind": "badge",
+      "source": "badge_bit:0"
+    },
+    {
+      "id": "EVENT_BEAT_MT_MOON_EXIT_SUPER_NERD",
+      "label": "Beat the Super Nerd guarding the Mt. Moon fossils",
+      "kind": "event",
+      "source": "EVENT_BEAT_MT_MOON_EXIT_SUPER_NERD"
+    },
+    {
+      "id": "EVENT_GOT_DOME_FOSSIL",
+      "label": "Took the Dome Fossil",
+      "kind": "event",
+      "source": "EVENT_GOT_DOME_FOSSIL"
+    },
+    {
+      "id": "EVENT_GOT_HELIX_FOSSIL",
+      "label": "Took the Helix Fossil",
+      "kind": "event",
+      "source": "EVENT_GOT_HELIX_FOSSIL"
+    },
+    {
+      "id": "EVENT_BEAT_CERULEAN_RIVAL",
+      "label": "Beat the rival in Cerulean City",
+      "kind": "event",
+      "source": "EVENT_BEAT_CERULEAN_RIVAL"
+    },
+    {
+      "id": "EVENT_BEAT_MISTY",
+      "label": "Defeated Misty",
+      "kind": "event",
+      "source": "EVENT_BEAT_MISTY"
+    },
+    {
+      "id": "BADGE_CASCADE",
+      "label": "Cascade Badge",
+      "kind": "badge",
+      "source": "badge_bit:1"
+    },
+    {
+      "id": "EVENT_MET_BILL",
+      "label": "Met Bill on Route 25",
+      "kind": "event",
+      "source": "EVENT_MET_BILL"
+    },
+    {
+      "id": "EVENT_GOT_SS_TICKET",
+      "label": "Got the S.S. Ticket",
+      "kind": "event",
+      "source": "EVENT_GOT_SS_TICKET"
+    },
+    {
+      "id": "EVENT_RUBBED_CAPTAINS_BACK",
+      "label": "Cured the S.S. Anne captain",
+      "kind": "event",
+      "source": "EVENT_RUBBED_CAPTAINS_BACK"
+    },
+    {
+      "id": "EVENT_GOT_HM01",
+      "label": "Got HM01 Cut",
+      "kind": "event",
+      "source": "EVENT_GOT_HM01"
+    },
+    {
+      "id": "EVENT_SS_ANNE_LEFT",
+      "label": "The S.S. Anne set sail",
+      "kind": "event",
+      "source": "EVENT_SS_ANNE_LEFT"
+    },
+    {
+      "id": "EVENT_BEAT_LT_SURGE",
+      "label": "Defeated Lt. Surge",
+      "kind": "event",
+      "source": "EVENT_BEAT_LT_SURGE"
+    },
+    {
+      "id": "BADGE_THUNDER",
+      "label": "Thunder Badge",
+      "kind": "badge",
+      "source": "badge_bit:2"
+    },
+    {
+      "id": "EVENT_GOT_OLD_AMBER",
+      "label": "Got the Old Amber in the Pewter Museum",
+      "kind": "event",
+      "source": "EVENT_GOT_OLD_AMBER"
+    },
+    {
+      "id": "EVENT_GOT_BIKE_VOUCHER",
+      "label": "Got the Bike Voucher",
+      "kind": "event",
+      "source": "EVENT_GOT_BIKE_VOUCHER"
+    },
+    {
+      "id": "EVENT_GOT_BICYCLE",
+      "label": "Got the Bicycle",
+      "kind": "event",
+      "source": "EVENT_GOT_BICYCLE"
+    },
+    {
+      "id": "EVENT_GOT_HM05",
+      "label": "Got HM05 Flash",
+      "kind": "event",
+      "source": "EVENT_GOT_HM05"
+    },
+    {
+      "id": "EVENT_FOUND_ROCKET_HIDEOUT",
+      "label": "Found the Rocket Hideout under the Game Corner",
+      "kind": "event",
+      "source": "EVENT_FOUND_ROCKET_HIDEOUT"
+    },
+    {
+      "id": "ITEM_LIFT_KEY",
+      "label": "Have the Lift Key",
+      "kind": "item",
+      "source": "item_id:74"
+    },
+    {
+      "id": "EVENT_BEAT_ROCKET_HIDEOUT_GIOVANNI",
+      "label": "Defeated Giovanni in the Rocket Hideout",
+      "kind": "event",
+      "source": "EVENT_BEAT_ROCKET_HIDEOUT_GIOVANNI"
+    },
+    {
+      "id": "ITEM_SILPH_SCOPE",
+      "label": "Have the Silph Scope",
+      "kind": "item",
+      "source": "item_id:72"
+    },
+    {
+      "id": "EVENT_BEAT_ERIKA",
+      "label": "Defeated Erika",
+      "kind": "event",
+      "source": "EVENT_BEAT_ERIKA"
+    },
+    {
+      "id": "BADGE_RAINBOW",
+      "label": "Rainbow Badge",
+      "kind": "badge",
+      "source": "badge_bit:3"
+    },
+    {
+      "id": "EVENT_BEAT_POKEMON_TOWER_RIVAL",
+      "label": "Beat the rival in Pokemon Tower",
+      "kind": "event",
+      "source": "EVENT_BEAT_POKEMON_TOWER_RIVAL"
+    },
+    {
+      "id": "EVENT_BEAT_GHOST_MAROWAK",
+      "label": "Laid the Marowak ghost to rest",
+      "kind": "event",
+      "source": "EVENT_BEAT_GHOST_MAROWAK"
+    },
+    {
+      "id": "EVENT_RESCUED_MR_FUJI",
+      "label": "Rescued Mr. Fuji",
+      "kind": "event",
+      "source": "EVENT_RESCUED_MR_FUJI"
+    },
+    {
+      "id": "EVENT_GOT_POKE_FLUTE",
+      "label": "Got the Poke Flute",
+      "kind": "event",
+      "source": "EVENT_GOT_POKE_FLUTE"
+    },
+    {
+      "id": "EVENT_BEAT_ROUTE12_SNORLAX",
+      "label": "Cleared the Snorlax on Route 12",
+      "kind": "event",
+      "source": "EVENT_BEAT_ROUTE12_SNORLAX"
+    },
+    {
+      "id": "EVENT_GOT_HM02",
+      "label": "Got HM02 Fly",
+      "kind": "event",
+      "source": "EVENT_GOT_HM02"
+    },
+    {
+      "id": "EVENT_GOT_HM03",
+      "label": "Got HM03 Surf in the Safari Zone",
+      "kind": "event",
+      "source": "EVENT_GOT_HM03"
+    },
+    {
+      "id": "EVENT_GAVE_GOLD_TEETH",
+      "label": "Returned the Gold Teeth to the Warden",
+      "kind": "event",
+      "source": "EVENT_GAVE_GOLD_TEETH"
+    },
+    {
+      "id": "EVENT_GOT_HM04",
+      "label": "Got HM04 Strength",
+      "kind": "event",
+      "source": "EVENT_GOT_HM04"
+    },
+    {
+      "id": "EVENT_BEAT_KOGA",
+      "label": "Defeated Koga",
+      "kind": "event",
+      "source": "EVENT_BEAT_KOGA"
+    },
+    {
+      "id": "BADGE_SOUL",
+      "label": "Soul Badge",
+      "kind": "badge",
+      "source": "badge_bit:4"
+    },
+    {
+      "id": "ITEM_CARD_KEY",
+      "label": "Have the Card Key",
+      "kind": "item",
+      "source": "item_id:48"
+    },
+    {
+      "id": "EVENT_BEAT_SILPH_CO_RIVAL",
+      "label": "Beat the rival in Silph Co.",
+      "kind": "event",
+      "source": "EVENT_BEAT_SILPH_CO_RIVAL"
+    },
+    {
+      "id": "EVENT_BEAT_SILPH_CO_GIOVANNI",
+      "label": "Defeated Giovanni in Silph Co.",
+      "kind": "event",
+      "source": "EVENT_BEAT_SILPH_CO_GIOVANNI"
+    },
+    {
+      "id": "EVENT_GOT_MASTER_BALL",
+      "label": "Got the Master Ball",
+      "kind": "event",
+      "source": "EVENT_GOT_MASTER_BALL"
+    },
+    {
+      "id": "EVENT_BEAT_SABRINA",
+      "label": "Defeated Sabrina",
+      "kind": "event",
+      "source": "EVENT_BEAT_SABRINA"
+    },
+    {
+      "id": "BADGE_MARSH",
+      "label": "Marsh Badge",
+      "kind": "badge",
+      "source": "badge_bit:5"
+    },
+    {
+      "id": "ITEM_SECRET_KEY",
+      "label": "Have the Secret Key",
+      "kind": "item",
+      "source": "item_id:43"
+    },
+    {
+      "id": "EVENT_BEAT_BLAINE",
+      "label": "Defeated Blaine",
+      "kind": "event",
+      "source": "EVENT_BEAT_BLAINE"
+    },
+    {
+      "id": "BADGE_VOLCANO",
+      "label": "Volcano Badge",
+      "kind": "badge",
+      "source": "badge_bit:6"
+    },
+    {
+      "id": "EVENT_BEAT_VIRIDIAN_GYM_GIOVANNI",
+      "label": "Defeated Giovanni in the Viridian Gym",
+      "kind": "event",
+      "source": "EVENT_BEAT_VIRIDIAN_GYM_GIOVANNI"
+    },
+    {
+      "id": "BADGE_EARTH",
+      "label": "Earth Badge",
+      "kind": "badge",
+      "source": "badge_bit:7"
+    },
+    {
+      "id": "EVENT_BEAT_ROUTE22_RIVAL_2ND_BATTLE",
+      "label": "Beat the rival on Route 22 again",
+      "kind": "event",
+      "source": "EVENT_BEAT_ROUTE22_RIVAL_2ND_BATTLE"
+    },
+    {
+      "id": "EVENT_VICTORY_ROAD_2_BOULDER_ON_SWITCH2",
+      "label": "Opened the Victory Road 2F barrier",
+      "kind": "event",
+      "source": "EVENT_VICTORY_ROAD_2_BOULDER_ON_SWITCH2"
+    },
+    {
+      "id": "EVENT_AUTOWALKED_INTO_LORELEIS_ROOM",
+      "label": "Cleared Victory Road and reached the Elite Four",
+      "kind": "event",
+      "source": "EVENT_AUTOWALKED_INTO_LORELEIS_ROOM"
+    },
+    {
+      "id": "EVENT_BEAT_LORELEIS_ROOM_TRAINER_0",
+      "label": "Defeated Lorelei",
+      "kind": "event",
+      "source": "EVENT_BEAT_LORELEIS_ROOM_TRAINER_0"
+    },
+    {
+      "id": "EVENT_BEAT_BRUNOS_ROOM_TRAINER_0",
+      "label": "Defeated Bruno",
+      "kind": "event",
+      "source": "EVENT_BEAT_BRUNOS_ROOM_TRAINER_0"
+    },
+    {
+      "id": "EVENT_BEAT_AGATHAS_ROOM_TRAINER_0",
+      "label": "Defeated Agatha",
+      "kind": "event",
+      "source": "EVENT_BEAT_AGATHAS_ROOM_TRAINER_0"
+    },
+    {
+      "id": "EVENT_BEAT_LANCE",
+      "label": "Defeated Lance",
+      "kind": "event",
+      "source": "EVENT_BEAT_LANCE"
+    },
+    {
+      "id": "EVENT_BEAT_CHAMPION_RIVAL",
+      "label": "Defeated the Champion",
+      "kind": "event",
+      "source": "EVENT_BEAT_CHAMPION_RIVAL"
+    },
+    {
+      "id": "EVENT_HALL_OF_FAME_DEX_RATING",
+      "label": "Entered the Hall of Fame",
+      "kind": "event",
+      "source": "EVENT_HALL_OF_FAME_DEX_RATING"
+    }
+  ]
+}

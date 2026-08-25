@@ -1,0 +1,6069 @@
+{
+ "generated_from": "0cd19d3b877b7dc66d12c7050bed9a7f38154d4b",
+ "Agatha's Room": [
+  {
+   "trainer_class": "Agatha",
+   "index": 1,
+   "x": 5,
+   "y": 2,
+   "team": [
+    {
+     "species": "Gengar",
+     "level": 56
+    },
+    {
+     "species": "Golbat",
+     "level": 56
+    },
+    {
+     "species": "Haunter",
+     "level": 55
+    },
+    {
+     "species": "Arbok",
+     "level": 58
+    },
+    {
+     "species": "Gengar",
+     "level": 60
+    }
+   ]
+  }
+ ],
+ "Bruno's Room": [
+  {
+   "trainer_class": "Bruno",
+   "index": 1,
+   "x": 5,
+   "y": 2,
+   "team": [
+    {
+     "species": "Onix",
+     "level": 53
+    },
+    {
+     "species": "Hitmonchan",
+     "level": 55
+    },
+    {
+     "species": "Hitmonlee",
+     "level": 55
+    },
+    {
+     "species": "Onix",
+     "level": 56
+    },
+    {
+     "species": "Machamp",
+     "level": 58
+    }
+   ]
+  }
+ ],
+ "Celadon Gym": [
+  {
+   "trainer_class": "Erika",
+   "index": 1,
+   "x": 4,
+   "y": 3,
+   "team": [
+    {
+     "species": "Victreebel",
+     "level": 29
+    },
+    {
+     "species": "Tangela",
+     "level": 24
+    },
+    {
+     "species": "Vileplume",
+     "level": 29
+    }
+   ]
+  },
+  {
+   "trainer_class": "Lass",
+   "index": 17,
+   "x": 2,
+   "y": 11,
+   "team": [
+    {
+     "species": "Bellsprout",
+     "level": 23
+    },
+    {
+     "species": "Weepinbell",
+     "level": 23
+    }
+   ]
+  },
+  {
+   "trainer_class": "Beauty",
+   "index": 1,
+   "x": 7,
+   "y": 10,
+   "team": [
+    {
+     "species": "Oddish",
+     "level": 21
+    },
+    {
+     "species": "Bellsprout",
+     "level": 21
+    },
+    {
+     "species": "Oddish",
+     "level": 21
+    },
+    {
+     "species": "Bellsprout",
+     "level": 21
+    }
+   ]
+  },
+  {
+   "trainer_class": "Jr.Trainer♀",
+   "index": 11,
+   "x": 9,
+   "y": 5,
+   "team": [
+    {
+     "species": "Bulbasaur",
+     "level": 24
+    },
+    {
+     "species": "Ivysaur",
+     "level": 24
+    }
+   ]
+  },
+  {
+   "trainer_class": "Beauty",
+   "index": 2,
+   "x": 1,
+   "y": 5,
+   "team": [
+    {
+     "species": "Bellsprout",
+     "level": 24
+    },
+    {
+     "species": "Bellsprout",
+     "level": 24
+    }
+   ]
+  },
+  {
+   "trainer_class": "Lass",
+   "index": 18,
+   "x": 6,
+   "y": 3,
+   "team": [
+    {
+     "species": "Oddish",
+     "level": 23
+    },
+    {
+     "species": "Gloom",
+     "level": 23
+    }
+   ]
+  },
+  {
+   "trainer_class": "Beauty",
+   "index": 3,
+   "x": 3,
+   "y": 3,
+   "team": [
+    {
+     "species": "Exeggcute",
+     "level": 26
+    }
+   ]
+  },
+  {
+   "trainer_class": "Cooltrainer♀",
+   "index": 1,
+   "x": 5,
+   "y": 3,
+   "team": [
+    {
+     "species": "Weepinbell",
+     "level": 24
+    },
+    {
+     "species": "Gloom",
+     "level": 24
+    },
+    {
+     "species": "Ivysaur",
+     "level": 24
+    }
+   ]
+  }
+ ],
+ "Cerulean City": [
+  {
+   "trainer_class": "Rocket",
+   "index": 5,
+   "x": 30,
+   "y": 8,
+   "team": [
+    {
+     "species": "Machop",
+     "level": 17
+    },
+    {
+     "species": "Drowzee",
+     "level": 17
+    }
+   ]
+  }
+ ],
+ "Cerulean Gym": [
+  {
+   "trainer_class": "Misty",
+   "index": 1,
+   "x": 4,
+   "y": 2,
+   "team": [
+    {
+     "species": "Staryu",
+     "level": 18
+    },
+    {
+     "species": "Starmie",
+     "level": 21
+    }
+   ]
+  },
+  {
+   "trainer_class": "Jr.Trainer♀",
+   "index": 1,
+   "x": 2,
+   "y": 3,
+   "team": [
+    {
+     "species": "Goldeen",
+     "level": 19
+    }
+   ]
+  },
+  {
+   "trainer_class": "Swimmer",
+   "index": 1,
+   "x": 8,
+   "y": 7,
+   "team": [
+    {
+     "species": "Horsea",
+     "level": 16
+    },
+    {
+     "species": "Shellder",
+     "level": 16
+    }
+   ]
+  }
+ ],
+ "Cinnabar Gym": [
+  {
+   "trainer_class": "Blaine",
+   "index": 1,
+   "x": 3,
+   "y": 3,
+   "team": [
+    {
+     "species": "Growlithe",
+     "level": 42
+    },
+    {
+     "species": "Ponyta",
+     "level": 40
+    },
+    {
+     "species": "Rapidash",
+     "level": 42
+    },
+    {
+     "species": "Arcanine",
+     "level": 47
+    }
+   ]
+  },
+  {
+   "trainer_class": "Super Nerd",
+   "index": 9,
+   "x": 17,
+   "y": 2,
+   "team": [
+    {
+     "species": "Vulpix",
+     "level": 36
+    },
+    {
+     "species": "Vulpix",
+     "level": 36
+    },
+    {
+     "species": "Ninetales",
+     "level": 36
+    }
+   ]
+  },
+  {
+   "trainer_class": "Burglar",
+   "index": 4,
+   "x": 17,
+   "y": 8,
+   "team": [
+    {
+     "species": "Growlithe",
+     "level": 36
+    },
+    {
+     "species": "Vulpix",
+     "level": 36
+    },
+    {
+     "species": "Ninetales",
+     "level": 36
+    }
+   ]
+  },
+  {
+   "trainer_class": "Super Nerd",
+   "index": 10,
+   "x": 11,
+   "y": 4,
+   "team": [
+    {
+     "species": "Ponyta",
+     "level": 34
+    },
+    {
+     "species": "Charmander",
+     "level": 34
+    },
+    {
+     "species": "Vulpix",
+     "level": 34
+    },
+    {
+     "species": "Growlithe",
+     "level": 34
+    }
+   ]
+  },
+  {
+   "trainer_class": "Burglar",
+   "index": 5,
+   "x": 11,
+   "y": 8,
+   "team": [
+    {
+     "species": "Ponyta",
+     "level": 41
+    }
+   ]
+  },
+  {
+   "trainer_class": "Super Nerd",
+   "index": 11,
+   "x": 11,
+   "y": 14,
+   "team": [
+    {
+     "species": "Rapidash",
+     "level": 41
+    }
+   ]
+  },
+  {
+   "trainer_class": "Burglar",
+   "index": 6,
+   "x": 3,
+   "y": 14,
+   "team": [
+    {
+     "species": "Vulpix",
+     "level": 37
+    },
+    {
+     "species": "Growlithe",
+     "level": 37
+    }
+   ]
+  },
+  {
+   "trainer_class": "Super Nerd",
+   "index": 12,
+   "x": 3,
+   "y": 8,
+   "team": [
+    {
+     "species": "Growlithe",
+     "level": 37
+    },
+    {
+     "species": "Vulpix",
+     "level": 37
+    }
+   ]
+  }
+ ],
+ "Fighting Dojo": [
+  {
+   "trainer_class": "Blackbelt",
+   "index": 1,
+   "x": 5,
+   "y": 3,
+   "team": [
+    {
+     "species": "Hitmonlee",
+     "level": 37
+    },
+    {
+     "species": "Hitmonchan",
+     "level": 37
+    }
+   ]
+  },
+  {
+   "trainer_class": "Blackbelt",
+   "index": 2,
+   "x": 3,
+   "y": 4,
+   "team": [
+    {
+     "species": "Mankey",
+     "level": 31
+    },
+    {
+     "species": "Mankey",
+     "level": 31
+    },
+    {
+     "species": "Primeape",
+     "level": 31
+    }
+   ]
+  },
+  {
+   "trainer_class": "Blackbelt",
+   "index": 3,
+   "x": 3,
+   "y": 6,
+   "team": [
+    {
+     "species": "Machop",
+     "level": 32
+    },
+    {
+     "species": "Machoke",
+     "level": 32
+    }
+   ]
+  },
+  {
+   "trainer_class": "Blackbelt",
+   "index": 4,
+   "x": 5,
+   "y": 5,
+   "team": [
+    {
+     "species": "Primeape",
+     "level": 36
+    }
+   ]
+  },
+  {
+   "trainer_class": "Blackbelt",
+   "index": 5,
+   "x": 5,
+   "y": 7,
+   "team": [
+    {
+     "species": "Machop",
+     "level": 31
+    },
+    {
+     "species": "Mankey",
+     "level": 31
+    },
+    {
+     "species": "Primeape",
+     "level": 31
+    }
+   ]
+  }
+ ],
+ "Fuchsia Gym": [
+  {
+   "trainer_class": "Koga",
+   "index": 1,
+   "x": 4,
+   "y": 10,
+   "team": [
+    {
+     "species": "Koffing",
+     "level": 37
+    },
+    {
+     "species": "Muk",
+     "level": 39
+    },
+    {
+     "species": "Koffing",
+     "level": 37
+    },
+    {
+     "species": "Weezing",
+     "level": 43
+    }
+   ]
+  },
+  {
+   "trainer_class": "Juggler",
+   "index": 7,
+   "x": 8,
+   "y": 13,
+   "team": [
+    {
+     "species": "Hypno",
+     "level": 38
+    }
+   ]
+  },
+  {
+   "trainer_class": "Juggler",
+   "index": 3,
+   "x": 7,
+   "y": 8,
+   "team": [
+    {
+     "species": "Drowzee",
+     "level": 31
+    },
+    {
+     "species": "Drowzee",
+     "level": 31
+    },
+    {
+     "species": "Kadabra",
+     "level": 31
+    },
+    {
+     "species": "Drowzee",
+     "level": 31
+    }
+   ]
+  },
+  {
+   "trainer_class": "Juggler",
+   "index": 8,
+   "x": 1,
+   "y": 12,
+   "team": [
+    {
+     "species": "Drowzee",
+     "level": 34
+    },
+    {
+     "species": "Kadabra",
+     "level": 34
+    }
+   ]
+  },
+  {
+   "trainer_class": "Tamer",
+   "index": 1,
+   "x": 3,
+   "y": 5,
+   "team": [
+    {
+     "species": "Sandslash",
+     "level": 34
+    },
+    {
+     "species": "Arbok",
+     "level": 34
+    }
+   ]
+  },
+  {
+   "trainer_class": "Tamer",
+   "index": 2,
+   "x": 8,
+   "y": 2,
+   "team": [
+    {
+     "species": "Arbok",
+     "level": 33
+    },
+    {
+     "species": "Sandslash",
+     "level": 33
+    },
+    {
+     "species": "Arbok",
+     "level": 33
+    }
+   ]
+  },
+  {
+   "trainer_class": "Juggler",
+   "index": 4,
+   "x": 2,
+   "y": 7,
+   "team": [
+    {
+     "species": "Drowzee",
+     "level": 34
+    },
+    {
+     "species": "Hypno",
+     "level": 34
+    }
+   ]
+  }
+ ],
+ "Game Corner": [
+  {
+   "trainer_class": "Rocket",
+   "index": 7,
+   "x": 9,
+   "y": 5,
+   "team": [
+    {
+     "species": "Raticate",
+     "level": 20
+    },
+    {
+     "species": "Zubat",
+     "level": 20
+    }
+   ]
+  }
+ ],
+ "Lance's Room": [
+  {
+   "trainer_class": "Lance",
+   "index": 1,
+   "x": 6,
+   "y": 1,
+   "team": [
+    {
+     "species": "Gyarados",
+     "level": 58
+    },
+    {
+     "species": "Dragonair",
+     "level": 56
+    },
+    {
+     "species": "Dragonair",
+     "level": 56
+    },
+    {
+     "species": "Aerodactyl",
+     "level": 60
+    },
+    {
+     "species": "Dragonite",
+     "level": 62
+    }
+   ]
+  }
+ ],
+ "Lorelei's Room": [
+  {
+   "trainer_class": "Lorelei",
+   "index": 1,
+   "x": 5,
+   "y": 2,
+   "team": [
+    {
+     "species": "Dewgong",
+     "level": 54
+    },
+    {
+     "species": "Cloyster",
+     "level": 53
+    },
+    {
+     "species": "Slowbro",
+     "level": 54
+    },
+    {
+     "species": "Jynx",
+     "level": 56
+    },
+    {
+     "species": "Lapras",
+     "level": 56
+    }
+   ]
+  }
+ ],
+ "Mt Moon 1F": [
+  {
+   "trainer_class": "Hiker",
+   "index": 1,
+   "x": 5,
+   "y": 6,
+   "team": [
+    {
+     "species": "Geodude",
+     "level": 10
+    },
+    {
+     "species": "Geodude",
+     "level": 10
+    },
+    {
+     "species": "Onix",
+     "level": 10
+    }
+   ]
+  },
+  {
+   "trainer_class": "Youngster",
+   "index": 3,
+   "x": 12,
+   "y": 16,
+   "team": [
+    {
+     "species": "Rattata",
+     "level": 10
+    },
+    {
+     "species": "Rattata",
+     "level": 10
+    },
+    {
+     "species": "Zubat",
+     "level": 10
+    }
+   ]
+  },
+  {
+   "trainer_class": "Lass",
+   "index": 5,
+   "x": 30,
+   "y": 4,
+   "team": [
+    {
+     "species": "Oddish",
+     "level": 11
+    },
+    {
+     "species": "Bellsprout",
+     "level": 11
+    }
+   ]
+  },
+  {
+   "trainer_class": "Super Nerd",
+   "index": 1,
+   "x": 24,
+   "y": 31,
+   "team": [
+    {
+     "species": "Magnemite",
+     "level": 11
+    },
+    {
+     "species": "Voltorb",
+     "level": 11
+    }
+   ]
+  },
+  {
+   "trainer_class": "Lass",
+   "index": 6,
+   "x": 16,
+   "y": 23,
+   "team": [
+    {
+     "species": "Clefairy",
+     "level": 14
+    }
+   ]
+  },
+  {
+   "trainer_class": "Bug Catcher",
+   "index": 7,
+   "x": 7,
+   "y": 22,
+   "team": [
+    {
+     "species": "Weedle",
+     "level": 11
+    },
+    {
+     "species": "Kakuna",
+     "level": 11
+    }
+   ]
+  },
+  {
+   "trainer_class": "Bug Catcher",
+   "index": 8,
+   "x": 30,
+   "y": 27,
+   "team": [
+    {
+     "species": "Caterpie",
+     "level": 10
+    },
+    {
+     "species": "Metapod",
+     "level": 10
+    },
+    {
+     "species": "Caterpie",
+     "level": 10
+    }
+   ]
+  }
+ ],
+ "Mt Moon B2F": [
+  {
+   "trainer_class": "Super Nerd",
+   "index": 2,
+   "x": 12,
+   "y": 8,
+   "team": [
+    {
+     "species": "Grimer",
+     "level": 12
+    },
+    {
+     "species": "Voltorb",
+     "level": 12
+    },
+    {
+     "species": "Koffing",
+     "level": 12
+    }
+   ]
+  },
+  {
+   "trainer_class": "Rocket",
+   "index": 1,
+   "x": 11,
+   "y": 16,
+   "team": [
+    {
+     "species": "Rattata",
+     "level": 13
+    },
+    {
+     "species": "Zubat",
+     "level": 13
+    }
+   ]
+  },
+  {
+   "trainer_class": "Rocket",
+   "index": 2,
+   "x": 15,
+   "y": 22,
+   "team": [
+    {
+     "species": "Sandshrew",
+     "level": 11
+    },
+    {
+     "species": "Rattata",
+     "level": 11
+    },
+    {
+     "species": "Zubat",
+     "level": 11
+    }
+   ]
+  },
+  {
+   "trainer_class": "Rocket",
+   "index": 3,
+   "x": 29,
+   "y": 11,
+   "team": [
+    {
+     "species": "Zubat",
+     "level": 12
+    },
+    {
+     "species": "Ekans",
+     "level": 12
+    }
+   ]
+  },
+  {
+   "trainer_class": "Rocket",
+   "index": 4,
+   "x": 29,
+   "y": 17,
+   "team": [
+    {
+     "species": "Raticate",
+     "level": 16
+    }
+   ]
+  }
+ ],
+ "Oak's Lab": [
+  {
+   "trainer_class": "Rival1",
+   "index": 1,
+   "x": 4,
+   "y": 3,
+   "team": [
+    {
+     "species": "Squirtle",
+     "level": 5
+    }
+   ]
+  }
+ ],
+ "Pewter Gym": [
+  {
+   "trainer_class": "Brock",
+   "index": 1,
+   "x": 4,
+   "y": 1,
+   "team": [
+    {
+     "species": "Geodude",
+     "level": 12
+    },
+    {
+     "species": "Onix",
+     "level": 14
+    }
+   ]
+  },
+  {
+   "trainer_class": "Jr.Trainer♂",
+   "index": 1,
+   "x": 3,
+   "y": 6,
+   "team": [
+    {
+     "species": "Diglett",
+     "level": 11
+    },
+    {
+     "species": "Sandshrew",
+     "level": 11
+    }
+   ]
+  }
+ ],
+ "Pokemon Mansion 1F": [
+  {
+   "trainer_class": "Scientist",
+   "index": 4,
+   "x": 17,
+   "y": 17,
+   "team": [
+    {
+     "species": "Electrode",
+     "level": 29
+    },
+    {
+     "species": "Weezing",
+     "level": 29
+    }
+   ]
+  }
+ ],
+ "Pokemon Mansion 2F": [
+  {
+   "trainer_class": "Burglar",
+   "index": 7,
+   "x": 3,
+   "y": 17,
+   "team": [
+    {
+     "species": "Charmander",
+     "level": 34
+    },
+    {
+     "species": "Charmeleon",
+     "level": 34
+    }
+   ]
+  }
+ ],
+ "Pokemon Mansion 3F": [
+  {
+   "trainer_class": "Burglar",
+   "index": 8,
+   "x": 5,
+   "y": 11,
+   "team": [
+    {
+     "species": "Ninetales",
+     "level": 38
+    }
+   ]
+  },
+  {
+   "trainer_class": "Scientist",
+   "index": 12,
+   "x": 20,
+   "y": 11,
+   "team": [
+    {
+     "species": "Magnemite",
+     "level": 33
+    },
+    {
+     "species": "Magneton",
+     "level": 33
+    },
+    {
+     "species": "Voltorb",
+     "level": 33
+    }
+   ]
+  }
+ ],
+ "Pokemon Mansion B1F": [
+  {
+   "trainer_class": "Burglar",
+   "index": 9,
+   "x": 16,
+   "y": 23,
+   "team": [
+    {
+     "species": "Growlithe",
+     "level": 34
+    },
+    {
+     "species": "Ponyta",
+     "level": 34
+    }
+   ]
+  },
+  {
+   "trainer_class": "Scientist",
+   "index": 13,
+   "x": 27,
+   "y": 11,
+   "team": [
+    {
+     "species": "Magnemite",
+     "level": 34
+    },
+    {
+     "species": "Electrode",
+     "level": 34
+    }
+   ]
+  }
+ ],
+ "Pokemon Tower 3F": [
+  {
+   "trainer_class": "Channeler",
+   "index": 5,
+   "x": 12,
+   "y": 3,
+   "team": [
+    {
+     "species": "Gastly",
+     "level": 23
+    }
+   ]
+  },
+  {
+   "trainer_class": "Channeler",
+   "index": 6,
+   "x": 9,
+   "y": 8,
+   "team": [
+    {
+     "species": "Gastly",
+     "level": 24
+    }
+   ]
+  },
+  {
+   "trainer_class": "Channeler",
+   "index": 8,
+   "x": 10,
+   "y": 13,
+   "team": [
+    {
+     "species": "Gastly",
+     "level": 22
+    }
+   ]
+  }
+ ],
+ "Pokemon Tower 4F": [
+  {
+   "trainer_class": "Channeler",
+   "index": 9,
+   "x": 5,
+   "y": 10,
+   "team": [
+    {
+     "species": "Gastly",
+     "level": 24
+    }
+   ]
+  },
+  {
+   "trainer_class": "Channeler",
+   "index": 10,
+   "x": 15,
+   "y": 7,
+   "team": [
+    {
+     "species": "Gastly",
+     "level": 23
+    },
+    {
+     "species": "Gastly",
+     "level": 23
+    }
+   ]
+  },
+  {
+   "trainer_class": "Channeler",
+   "index": 12,
+   "x": 14,
+   "y": 12,
+   "team": [
+    {
+     "species": "Gastly",
+     "level": 22
+    }
+   ]
+  }
+ ],
+ "Pokemon Tower 5F": [
+  {
+   "trainer_class": "Channeler",
+   "index": 14,
+   "x": 17,
+   "y": 7,
+   "team": [
+    {
+     "species": "Haunter",
+     "level": 23
+    }
+   ]
+  },
+  {
+   "trainer_class": "Channeler",
+   "index": 16,
+   "x": 14,
+   "y": 3,
+   "team": [
+    {
+     "species": "Gastly",
+     "level": 22
+    }
+   ]
+  },
+  {
+   "trainer_class": "Channeler",
+   "index": 17,
+   "x": 6,
+   "y": 10,
+   "team": [
+    {
+     "species": "Gastly",
+     "level": 24
+    }
+   ]
+  },
+  {
+   "trainer_class": "Channeler",
+   "index": 18,
+   "x": 9,
+   "y": 16,
+   "team": [
+    {
+     "species": "Haunter",
+     "level": 22
+    }
+   ]
+  }
+ ],
+ "Pokemon Tower 6F": [
+  {
+   "trainer_class": "Channeler",
+   "index": 19,
+   "x": 12,
+   "y": 10,
+   "team": [
+    {
+     "species": "Gastly",
+     "level": 22
+    },
+    {
+     "species": "Gastly",
+     "level": 22
+    },
+    {
+     "species": "Gastly",
+     "level": 22
+    }
+   ]
+  },
+  {
+   "trainer_class": "Channeler",
+   "index": 20,
+   "x": 9,
+   "y": 5,
+   "team": [
+    {
+     "species": "Gastly",
+     "level": 24
+    }
+   ]
+  },
+  {
+   "trainer_class": "Channeler",
+   "index": 21,
+   "x": 16,
+   "y": 5,
+   "team": [
+    {
+     "species": "Gastly",
+     "level": 24
+    }
+   ]
+  }
+ ],
+ "Pokemon Tower 7F": [
+  {
+   "trainer_class": "Rocket",
+   "index": 19,
+   "x": 9,
+   "y": 11,
+   "team": [
+    {
+     "species": "Zubat",
+     "level": 25
+    },
+    {
+     "species": "Zubat",
+     "level": 25
+    },
+    {
+     "species": "Golbat",
+     "level": 25
+    }
+   ]
+  },
+  {
+   "trainer_class": "Rocket",
+   "index": 20,
+   "x": 12,
+   "y": 9,
+   "team": [
+    {
+     "species": "Koffing",
+     "level": 26
+    },
+    {
+     "species": "Drowzee",
+     "level": 26
+    }
+   ]
+  },
+  {
+   "trainer_class": "Rocket",
+   "index": 21,
+   "x": 9,
+   "y": 7,
+   "team": [
+    {
+     "species": "Zubat",
+     "level": 23
+    },
+    {
+     "species": "Rattata",
+     "level": 23
+    },
+    {
+     "species": "Raticate",
+     "level": 23
+    },
+    {
+     "species": "Zubat",
+     "level": 23
+    }
+   ]
+  }
+ ],
+ "Rock Tunnel 1F": [
+  {
+   "trainer_class": "Hiker",
+   "index": 12,
+   "x": 7,
+   "y": 5,
+   "team": [
+    {
+     "species": "Geodude",
+     "level": 19
+    },
+    {
+     "species": "Machop",
+     "level": 19
+    },
+    {
+     "species": "Geodude",
+     "level": 19
+    },
+    {
+     "species": "Geodude",
+     "level": 19
+    }
+   ]
+  },
+  {
+   "trainer_class": "Hiker",
+   "index": 13,
+   "x": 5,
+   "y": 16,
+   "team": [
+    {
+     "species": "Onix",
+     "level": 20
+    },
+    {
+     "species": "Onix",
+     "level": 20
+    },
+    {
+     "species": "Geodude",
+     "level": 20
+    }
+   ]
+  },
+  {
+   "trainer_class": "Hiker",
+   "index": 14,
+   "x": 17,
+   "y": 15,
+   "team": [
+    {
+     "species": "Geodude",
+     "level": 21
+    },
+    {
+     "species": "Graveler",
+     "level": 21
+    }
+   ]
+  },
+  {
+   "trainer_class": "Pokémaniac",
+   "index": 7,
+   "x": 23,
+   "y": 8,
+   "team": [
+    {
+     "species": "Cubone",
+     "level": 23
+    },
+    {
+     "species": "Slowpoke",
+     "level": 23
+    }
+   ]
+  },
+  {
+   "trainer_class": "Jr.Trainer♀",
+   "index": 17,
+   "x": 37,
+   "y": 21,
+   "team": [
+    {
+     "species": "Bellsprout",
+     "level": 22
+    },
+    {
+     "species": "Clefairy",
+     "level": 22
+    }
+   ]
+  },
+  {
+   "trainer_class": "Jr.Trainer♀",
+   "index": 18,
+   "x": 22,
+   "y": 24,
+   "team": [
+    {
+     "species": "Meowth",
+     "level": 20
+    },
+    {
+     "species": "Oddish",
+     "level": 20
+    },
+    {
+     "species": "Pidgey",
+     "level": 20
+    }
+   ]
+  },
+  {
+   "trainer_class": "Jr.Trainer♀",
+   "index": 19,
+   "x": 32,
+   "y": 24,
+   "team": [
+    {
+     "species": "Pidgey",
+     "level": 19
+    },
+    {
+     "species": "Rattata",
+     "level": 19
+    },
+    {
+     "species": "Rattata",
+     "level": 19
+    },
+    {
+     "species": "Bellsprout",
+     "level": 19
+    }
+   ]
+  }
+ ],
+ "Rock Tunnel B1F": [
+  {
+   "trainer_class": "Jr.Trainer♀",
+   "index": 9,
+   "x": 11,
+   "y": 13,
+   "team": [
+    {
+     "species": "Jigglypuff",
+     "level": 21
+    },
+    {
+     "species": "Pidgey",
+     "level": 21
+    },
+    {
+     "species": "Meowth",
+     "level": 21
+    }
+   ]
+  },
+  {
+   "trainer_class": "Hiker",
+   "index": 9,
+   "x": 6,
+   "y": 10,
+   "team": [
+    {
+     "species": "Geodude",
+     "level": 21
+    },
+    {
+     "species": "Geodude",
+     "level": 21
+    },
+    {
+     "species": "Graveler",
+     "level": 21
+    }
+   ]
+  },
+  {
+   "trainer_class": "Pokémaniac",
+   "index": 3,
+   "x": 3,
+   "y": 5,
+   "team": [
+    {
+     "species": "Slowpoke",
+     "level": 20
+    },
+    {
+     "species": "Slowpoke",
+     "level": 20
+    },
+    {
+     "species": "Slowpoke",
+     "level": 20
+    }
+   ]
+  },
+  {
+   "trainer_class": "Pokémaniac",
+   "index": 4,
+   "x": 20,
+   "y": 21,
+   "team": [
+    {
+     "species": "Charmander",
+     "level": 22
+    },
+    {
+     "species": "Cubone",
+     "level": 22
+    }
+   ]
+  },
+  {
+   "trainer_class": "Hiker",
+   "index": 10,
+   "x": 30,
+   "y": 10,
+   "team": [
+    {
+     "species": "Geodude",
+     "level": 25
+    }
+   ]
+  },
+  {
+   "trainer_class": "Jr.Trainer♀",
+   "index": 10,
+   "x": 14,
+   "y": 28,
+   "team": [
+    {
+     "species": "Oddish",
+     "level": 22
+    },
+    {
+     "species": "Bulbasaur",
+     "level": 22
+    }
+   ]
+  },
+  {
+   "trainer_class": "Hiker",
+   "index": 11,
+   "x": 33,
+   "y": 5,
+   "team": [
+    {
+     "species": "Machop",
+     "level": 20
+    },
+    {
+     "species": "Onix",
+     "level": 20
+    }
+   ]
+  },
+  {
+   "trainer_class": "Pokémaniac",
+   "index": 5,
+   "x": 26,
+   "y": 30,
+   "team": [
+    {
+     "species": "Slowpoke",
+     "level": 25
+    }
+   ]
+  }
+ ],
+ "Rocket Hideout B1F": [
+  {
+   "trainer_class": "Rocket",
+   "index": 8,
+   "x": 26,
+   "y": 8,
+   "team": [
+    {
+     "species": "Drowzee",
+     "level": 21
+    },
+    {
+     "species": "Machop",
+     "level": 21
+    }
+   ]
+  },
+  {
+   "trainer_class": "Rocket",
+   "index": 9,
+   "x": 12,
+   "y": 6,
+   "team": [
+    {
+     "species": "Raticate",
+     "level": 21
+    },
+    {
+     "species": "Raticate",
+     "level": 21
+    }
+   ]
+  },
+  {
+   "trainer_class": "Rocket",
+   "index": 10,
+   "x": 18,
+   "y": 17,
+   "team": [
+    {
+     "species": "Grimer",
+     "level": 20
+    },
+    {
+     "species": "Koffing",
+     "level": 20
+    },
+    {
+     "species": "Koffing",
+     "level": 20
+    }
+   ]
+  },
+  {
+   "trainer_class": "Rocket",
+   "index": 11,
+   "x": 15,
+   "y": 25,
+   "team": [
+    {
+     "species": "Rattata",
+     "level": 19
+    },
+    {
+     "species": "Raticate",
+     "level": 19
+    },
+    {
+     "species": "Raticate",
+     "level": 19
+    },
+    {
+     "species": "Rattata",
+     "level": 19
+    }
+   ]
+  },
+  {
+   "trainer_class": "Rocket",
+   "index": 12,
+   "x": 28,
+   "y": 18,
+   "team": [
+    {
+     "species": "Grimer",
+     "level": 22
+    },
+    {
+     "species": "Koffing",
+     "level": 22
+    }
+   ]
+  }
+ ],
+ "Rocket Hideout B2F": [
+  {
+   "trainer_class": "Rocket",
+   "index": 13,
+   "x": 20,
+   "y": 12,
+   "team": [
+    {
+     "species": "Zubat",
+     "level": 17
+    },
+    {
+     "species": "Koffing",
+     "level": 17
+    },
+    {
+     "species": "Grimer",
+     "level": 17
+    },
+    {
+     "species": "Zubat",
+     "level": 17
+    },
+    {
+     "species": "Raticate",
+     "level": 17
+    }
+   ]
+  }
+ ],
+ "Rocket Hideout B3F": [
+  {
+   "trainer_class": "Rocket",
+   "index": 14,
+   "x": 10,
+   "y": 22,
+   "team": [
+    {
+     "species": "Rattata",
+     "level": 20
+    },
+    {
+     "species": "Raticate",
+     "level": 20
+    },
+    {
+     "species": "Drowzee",
+     "level": 20
+    }
+   ]
+  },
+  {
+   "trainer_class": "Rocket",
+   "index": 15,
+   "x": 26,
+   "y": 12,
+   "team": [
+    {
+     "species": "Machop",
+     "level": 21
+    },
+    {
+     "species": "Machop",
+     "level": 21
+    }
+   ]
+  }
+ ],
+ "Rocket Hideout B4F": [
+  {
+   "trainer_class": "Giovanni",
+   "index": 1,
+   "x": 25,
+   "y": 3,
+   "team": [
+    {
+     "species": "Onix",
+     "level": 25
+    },
+    {
+     "species": "Rhyhorn",
+     "level": 24
+    },
+    {
+     "species": "Kangaskhan",
+     "level": 29
+    }
+   ]
+  },
+  {
+   "trainer_class": "Rocket",
+   "index": 16,
+   "x": 23,
+   "y": 12,
+   "team": [
+    {
+     "species": "Sandshrew",
+     "level": 23
+    },
+    {
+     "species": "Ekans",
+     "level": 23
+    },
+    {
+     "species": "Sandslash",
+     "level": 23
+    }
+   ]
+  },
+  {
+   "trainer_class": "Rocket",
+   "index": 17,
+   "x": 26,
+   "y": 12,
+   "team": [
+    {
+     "species": "Ekans",
+     "level": 23
+    },
+    {
+     "species": "Sandshrew",
+     "level": 23
+    },
+    {
+     "species": "Arbok",
+     "level": 23
+    }
+   ]
+  },
+  {
+   "trainer_class": "Rocket",
+   "index": 18,
+   "x": 11,
+   "y": 2,
+   "team": [
+    {
+     "species": "Koffing",
+     "level": 21
+    },
+    {
+     "species": "Zubat",
+     "level": 21
+    }
+   ]
+  }
+ ],
+ "Route 10": [
+  {
+   "trainer_class": "Pokémaniac",
+   "index": 1,
+   "x": 10,
+   "y": 44,
+   "team": [
+    {
+     "species": "Rhyhorn",
+     "level": 30
+    },
+    {
+     "species": "Lickitung",
+     "level": 30
+    }
+   ]
+  },
+  {
+   "trainer_class": "Hiker",
+   "index": 7,
+   "x": 3,
+   "y": 57,
+   "team": [
+    {
+     "species": "Geodude",
+     "level": 21
+    },
+    {
+     "species": "Onix",
+     "level": 21
+    }
+   ]
+  },
+  {
+   "trainer_class": "Pokémaniac",
+   "index": 2,
+   "x": 14,
+   "y": 64,
+   "team": [
+    {
+     "species": "Cubone",
+     "level": 20
+    },
+    {
+     "species": "Slowpoke",
+     "level": 20
+    }
+   ]
+  },
+  {
+   "trainer_class": "Jr.Trainer♀",
+   "index": 7,
+   "x": 7,
+   "y": 25,
+   "team": [
+    {
+     "species": "Pikachu",
+     "level": 20
+    },
+    {
+     "species": "Clefairy",
+     "level": 20
+    }
+   ]
+  },
+  {
+   "trainer_class": "Hiker",
+   "index": 8,
+   "x": 3,
+   "y": 61,
+   "team": [
+    {
+     "species": "Onix",
+     "level": 19
+    },
+    {
+     "species": "Graveler",
+     "level": 19
+    }
+   ]
+  },
+  {
+   "trainer_class": "Jr.Trainer♀",
+   "index": 8,
+   "x": 7,
+   "y": 54,
+   "team": [
+    {
+     "species": "Pidgey",
+     "level": 21
+    },
+    {
+     "species": "Pidgeotto",
+     "level": 21
+    }
+   ]
+  }
+ ],
+ "Route 11": [
+  {
+   "trainer_class": "Gambler",
+   "index": 1,
+   "x": 10,
+   "y": 14,
+   "team": [
+    {
+     "species": "Poliwag",
+     "level": 18
+    },
+    {
+     "species": "Horsea",
+     "level": 18
+    }
+   ]
+  },
+  {
+   "trainer_class": "Gambler",
+   "index": 2,
+   "x": 26,
+   "y": 9,
+   "team": [
+    {
+     "species": "Bellsprout",
+     "level": 18
+    },
+    {
+     "species": "Oddish",
+     "level": 18
+    }
+   ]
+  },
+  {
+   "trainer_class": "Youngster",
+   "index": 9,
+   "x": 13,
+   "y": 5,
+   "team": [
+    {
+     "species": "Ekans",
+     "level": 21
+    }
+   ]
+  },
+  {
+   "trainer_class": "Engineer",
+   "index": 2,
+   "x": 36,
+   "y": 11,
+   "team": [
+    {
+     "species": "Magnemite",
+     "level": 21
+    }
+   ]
+  },
+  {
+   "trainer_class": "Youngster",
+   "index": 10,
+   "x": 22,
+   "y": 4,
+   "team": [
+    {
+     "species": "Sandshrew",
+     "level": 19
+    },
+    {
+     "species": "Zubat",
+     "level": 19
+    }
+   ]
+  },
+  {
+   "trainer_class": "Gambler",
+   "index": 3,
+   "x": 45,
+   "y": 7,
+   "team": [
+    {
+     "species": "Voltorb",
+     "level": 18
+    },
+    {
+     "species": "Magnemite",
+     "level": 18
+    }
+   ]
+  },
+  {
+   "trainer_class": "Gambler",
+   "index": 4,
+   "x": 33,
+   "y": 3,
+   "team": [
+    {
+     "species": "Growlithe",
+     "level": 18
+    },
+    {
+     "species": "Vulpix",
+     "level": 18
+    }
+   ]
+  },
+  {
+   "trainer_class": "Youngster",
+   "index": 11,
+   "x": 43,
+   "y": 5,
+   "team": [
+    {
+     "species": "Rattata",
+     "level": 17
+    },
+    {
+     "species": "Rattata",
+     "level": 17
+    },
+    {
+     "species": "Raticate",
+     "level": 17
+    }
+   ]
+  },
+  {
+   "trainer_class": "Engineer",
+   "index": 3,
+   "x": 45,
+   "y": 16,
+   "team": [
+    {
+     "species": "Magnemite",
+     "level": 18
+    },
+    {
+     "species": "Magnemite",
+     "level": 18
+    },
+    {
+     "species": "Magneton",
+     "level": 18
+    }
+   ]
+  },
+  {
+   "trainer_class": "Youngster",
+   "index": 12,
+   "x": 22,
+   "y": 12,
+   "team": [
+    {
+     "species": "Nidoran♂",
+     "level": 18
+    },
+    {
+     "species": "Nidorino",
+     "level": 18
+    }
+   ]
+  }
+ ],
+ "Route 12": [
+  {
+   "trainer_class": "Fisherman",
+   "index": 3,
+   "x": 14,
+   "y": 31,
+   "team": [
+    {
+     "species": "Goldeen",
+     "level": 22
+    },
+    {
+     "species": "Poliwag",
+     "level": 22
+    },
+    {
+     "species": "Goldeen",
+     "level": 22
+    }
+   ]
+  },
+  {
+   "trainer_class": "Fisherman",
+   "index": 4,
+   "x": 5,
+   "y": 39,
+   "team": [
+    {
+     "species": "Tentacool",
+     "level": 24
+    },
+    {
+     "species": "Goldeen",
+     "level": 24
+    }
+   ]
+  },
+  {
+   "trainer_class": "Jr.Trainer♂",
+   "index": 9,
+   "x": 11,
+   "y": 92,
+   "team": [
+    {
+     "species": "Nidoran♂",
+     "level": 29
+    },
+    {
+     "species": "Nidorino",
+     "level": 29
+    }
+   ]
+  },
+  {
+   "trainer_class": "Rocker",
+   "index": 2,
+   "x": 14,
+   "y": 76,
+   "team": [
+    {
+     "species": "Voltorb",
+     "level": 29
+    },
+    {
+     "species": "Electrode",
+     "level": 29
+    }
+   ]
+  },
+  {
+   "trainer_class": "Fisherman",
+   "index": 5,
+   "x": 12,
+   "y": 40,
+   "team": [
+    {
+     "species": "Goldeen",
+     "level": 27
+    }
+   ]
+  },
+  {
+   "trainer_class": "Fisherman",
+   "index": 6,
+   "x": 9,
+   "y": 52,
+   "team": [
+    {
+     "species": "Poliwag",
+     "level": 21
+    },
+    {
+     "species": "Shellder",
+     "level": 21
+    },
+    {
+     "species": "Goldeen",
+     "level": 21
+    },
+    {
+     "species": "Horsea",
+     "level": 21
+    }
+   ]
+  },
+  {
+   "trainer_class": "Fisherman",
+   "index": 11,
+   "x": 6,
+   "y": 87,
+   "team": [
+    {
+     "species": "Magikarp",
+     "level": 24
+    },
+    {
+     "species": "Magikarp",
+     "level": 24
+    }
+   ]
+  }
+ ],
+ "Route 13": [
+  {
+   "trainer_class": "Bird Keeper",
+   "index": 1,
+   "x": 49,
+   "y": 10,
+   "team": [
+    {
+     "species": "Pidgey",
+     "level": 29
+    },
+    {
+     "species": "Pidgeotto",
+     "level": 29
+    }
+   ]
+  },
+  {
+   "trainer_class": "Jr.Trainer♀",
+   "index": 12,
+   "x": 48,
+   "y": 10,
+   "team": [
+    {
+     "species": "Pidgey",
+     "level": 24
+    },
+    {
+     "species": "Meowth",
+     "level": 24
+    },
+    {
+     "species": "Rattata",
+     "level": 24
+    },
+    {
+     "species": "Pikachu",
+     "level": 24
+    },
+    {
+     "species": "Meowth",
+     "level": 24
+    }
+   ]
+  },
+  {
+   "trainer_class": "Jr.Trainer♀",
+   "index": 13,
+   "x": 27,
+   "y": 9,
+   "team": [
+    {
+     "species": "Poliwag",
+     "level": 30
+    },
+    {
+     "species": "Poliwag",
+     "level": 30
+    }
+   ]
+  },
+  {
+   "trainer_class": "Jr.Trainer♀",
+   "index": 14,
+   "x": 23,
+   "y": 10,
+   "team": [
+    {
+     "species": "Pidgey",
+     "level": 27
+    },
+    {
+     "species": "Meowth",
+     "level": 27
+    },
+    {
+     "species": "Pidgey",
+     "level": 27
+    },
+    {
+     "species": "Pidgeotto",
+     "level": 27
+    }
+   ]
+  },
+  {
+   "trainer_class": "Jr.Trainer♀",
+   "index": 15,
+   "x": 50,
+   "y": 5,
+   "team": [
+    {
+     "species": "Goldeen",
+     "level": 28
+    },
+    {
+     "species": "Poliwag",
+     "level": 28
+    },
+    {
+     "species": "Horsea",
+     "level": 28
+    }
+   ]
+  },
+  {
+   "trainer_class": "Bird Keeper",
+   "index": 2,
+   "x": 12,
+   "y": 4,
+   "team": [
+    {
+     "species": "Spearow",
+     "level": 25
+    },
+    {
+     "species": "Pidgey",
+     "level": 25
+    },
+    {
+     "species": "Pidgey",
+     "level": 25
+    },
+    {
+     "species": "Spearow",
+     "level": 25
+    },
+    {
+     "species": "Spearow",
+     "level": 25
+    }
+   ]
+  },
+  {
+   "trainer_class": "Beauty",
+   "index": 4,
+   "x": 33,
+   "y": 6,
+   "team": [
+    {
+     "species": "Rattata",
+     "level": 27
+    },
+    {
+     "species": "Pikachu",
+     "level": 27
+    },
+    {
+     "species": "Rattata",
+     "level": 27
+    }
+   ]
+  },
+  {
+   "trainer_class": "Beauty",
+   "index": 5,
+   "x": 32,
+   "y": 6,
+   "team": [
+    {
+     "species": "Clefairy",
+     "level": 29
+    },
+    {
+     "species": "Meowth",
+     "level": 29
+    }
+   ]
+  },
+  {
+   "trainer_class": "Biker",
+   "index": 1,
+   "x": 10,
+   "y": 7,
+   "team": [
+    {
+     "species": "Koffing",
+     "level": 28
+    },
+    {
+     "species": "Koffing",
+     "level": 28
+    },
+    {
+     "species": "Koffing",
+     "level": 28
+    }
+   ]
+  },
+  {
+   "trainer_class": "Bird Keeper",
+   "index": 3,
+   "x": 7,
+   "y": 13,
+   "team": [
+    {
+     "species": "Pidgey",
+     "level": 26
+    },
+    {
+     "species": "Pidgeotto",
+     "level": 26
+    },
+    {
+     "species": "Spearow",
+     "level": 26
+    },
+    {
+     "species": "Fearow",
+     "level": 26
+    }
+   ]
+  }
+ ],
+ "Route 14": [
+  {
+   "trainer_class": "Bird Keeper",
+   "index": 14,
+   "x": 4,
+   "y": 4,
+   "team": [
+    {
+     "species": "Pidgey",
+     "level": 28
+    },
+    {
+     "species": "Doduo",
+     "level": 28
+    },
+    {
+     "species": "Pidgeotto",
+     "level": 28
+    }
+   ]
+  },
+  {
+   "trainer_class": "Bird Keeper",
+   "index": 15,
+   "x": 15,
+   "y": 6,
+   "team": [
+    {
+     "species": "Pidgey",
+     "level": 26
+    },
+    {
+     "species": "Spearow",
+     "level": 26
+    },
+    {
+     "species": "Pidgey",
+     "level": 26
+    },
+    {
+     "species": "Fearow",
+     "level": 26
+    }
+   ]
+  },
+  {
+   "trainer_class": "Bird Keeper",
+   "index": 16,
+   "x": 12,
+   "y": 11,
+   "team": [
+    {
+     "species": "Pidgeotto",
+     "level": 29
+    },
+    {
+     "species": "Fearow",
+     "level": 29
+    }
+   ]
+  },
+  {
+   "trainer_class": "Bird Keeper",
+   "index": 17,
+   "x": 14,
+   "y": 15,
+   "team": [
+    {
+     "species": "Spearow",
+     "level": 28
+    },
+    {
+     "species": "Doduo",
+     "level": 28
+    },
+    {
+     "species": "Fearow",
+     "level": 28
+    }
+   ]
+  },
+  {
+   "trainer_class": "Bird Keeper",
+   "index": 4,
+   "x": 15,
+   "y": 31,
+   "team": [
+    {
+     "species": "Farfetch'd",
+     "level": 33
+    }
+   ]
+  },
+  {
+   "trainer_class": "Bird Keeper",
+   "index": 5,
+   "x": 6,
+   "y": 49,
+   "team": [
+    {
+     "species": "Spearow",
+     "level": 29
+    },
+    {
+     "species": "Fearow",
+     "level": 29
+    }
+   ]
+  },
+  {
+   "trainer_class": "Biker",
+   "index": 13,
+   "x": 5,
+   "y": 39,
+   "team": [
+    {
+     "species": "Koffing",
+     "level": 26
+    },
+    {
+     "species": "Koffing",
+     "level": 26
+    },
+    {
+     "species": "Grimer",
+     "level": 26
+    },
+    {
+     "species": "Koffing",
+     "level": 26
+    }
+   ]
+  },
+  {
+   "trainer_class": "Biker",
+   "index": 14,
+   "x": 4,
+   "y": 30,
+   "team": [
+    {
+     "species": "Grimer",
+     "level": 28
+    },
+    {
+     "species": "Grimer",
+     "level": 28
+    },
+    {
+     "species": "Koffing",
+     "level": 28
+    }
+   ]
+  },
+  {
+   "trainer_class": "Biker",
+   "index": 15,
+   "x": 15,
+   "y": 30,
+   "team": [
+    {
+     "species": "Koffing",
+     "level": 29
+    },
+    {
+     "species": "Muk",
+     "level": 29
+    }
+   ]
+  },
+  {
+   "trainer_class": "Biker",
+   "index": 2,
+   "x": 4,
+   "y": 31,
+   "team": [
+    {
+     "species": "Koffing",
+     "level": 29
+    },
+    {
+     "species": "Grimer",
+     "level": 29
+    }
+   ]
+  }
+ ],
+ "Route 15": [
+  {
+   "trainer_class": "Jr.Trainer♀",
+   "index": 20,
+   "x": 41,
+   "y": 11,
+   "team": [
+    {
+     "species": "Gloom",
+     "level": 28
+    },
+    {
+     "species": "Oddish",
+     "level": 28
+    },
+    {
+     "species": "Oddish",
+     "level": 28
+    }
+   ]
+  },
+  {
+   "trainer_class": "Jr.Trainer♀",
+   "index": 21,
+   "x": 53,
+   "y": 10,
+   "team": [
+    {
+     "species": "Pikachu",
+     "level": 29
+    },
+    {
+     "species": "Raichu",
+     "level": 29
+    }
+   ]
+  },
+  {
+   "trainer_class": "Bird Keeper",
+   "index": 6,
+   "x": 31,
+   "y": 13,
+   "team": [
+    {
+     "species": "Pidgeotto",
+     "level": 26
+    },
+    {
+     "species": "Farfetch'd",
+     "level": 26
+    },
+    {
+     "species": "Doduo",
+     "level": 26
+    },
+    {
+     "species": "Pidgey",
+     "level": 26
+    }
+   ]
+  },
+  {
+   "trainer_class": "Bird Keeper",
+   "index": 7,
+   "x": 35,
+   "y": 13,
+   "team": [
+    {
+     "species": "Dodrio",
+     "level": 28
+    },
+    {
+     "species": "Doduo",
+     "level": 28
+    },
+    {
+     "species": "Doduo",
+     "level": 28
+    }
+   ]
+  },
+  {
+   "trainer_class": "Beauty",
+   "index": 9,
+   "x": 53,
+   "y": 11,
+   "team": [
+    {
+     "species": "Pidgeotto",
+     "level": 29
+    },
+    {
+     "species": "Wigglytuff",
+     "level": 29
+    }
+   ]
+  },
+  {
+   "trainer_class": "Beauty",
+   "index": 10,
+   "x": 41,
+   "y": 10,
+   "team": [
+    {
+     "species": "Bulbasaur",
+     "level": 29
+    },
+    {
+     "species": "Ivysaur",
+     "level": 29
+    }
+   ]
+  },
+  {
+   "trainer_class": "Biker",
+   "index": 3,
+   "x": 48,
+   "y": 10,
+   "team": [
+    {
+     "species": "Koffing",
+     "level": 25
+    },
+    {
+     "species": "Koffing",
+     "level": 25
+    },
+    {
+     "species": "Weezing",
+     "level": 25
+    },
+    {
+     "species": "Koffing",
+     "level": 25
+    },
+    {
+     "species": "Grimer",
+     "level": 25
+    }
+   ]
+  },
+  {
+   "trainer_class": "Biker",
+   "index": 4,
+   "x": 46,
+   "y": 10,
+   "team": [
+    {
+     "species": "Koffing",
+     "level": 28
+    },
+    {
+     "species": "Grimer",
+     "level": 28
+    },
+    {
+     "species": "Weezing",
+     "level": 28
+    }
+   ]
+  },
+  {
+   "trainer_class": "Jr.Trainer♀",
+   "index": 22,
+   "x": 37,
+   "y": 5,
+   "team": [
+    {
+     "species": "Clefairy",
+     "level": 33
+    }
+   ]
+  },
+  {
+   "trainer_class": "Jr.Trainer♀",
+   "index": 23,
+   "x": 18,
+   "y": 13,
+   "team": [
+    {
+     "species": "Bellsprout",
+     "level": 29
+    },
+    {
+     "species": "Oddish",
+     "level": 29
+    },
+    {
+     "species": "Tangela",
+     "level": 29
+    }
+   ]
+  }
+ ],
+ "Route 16": [
+  {
+   "trainer_class": "Biker",
+   "index": 5,
+   "x": 17,
+   "y": 12,
+   "team": [
+    {
+     "species": "Grimer",
+     "level": 29
+    },
+    {
+     "species": "Koffing",
+     "level": 29
+    }
+   ]
+  },
+  {
+   "trainer_class": "Cue Ball",
+   "index": 1,
+   "x": 14,
+   "y": 13,
+   "team": [
+    {
+     "species": "Machop",
+     "level": 28
+    },
+    {
+     "species": "Mankey",
+     "level": 28
+    },
+    {
+     "species": "Machop",
+     "level": 28
+    }
+   ]
+  },
+  {
+   "trainer_class": "Cue Ball",
+   "index": 2,
+   "x": 11,
+   "y": 12,
+   "team": [
+    {
+     "species": "Mankey",
+     "level": 29
+    },
+    {
+     "species": "Machop",
+     "level": 29
+    }
+   ]
+  },
+  {
+   "trainer_class": "Biker",
+   "index": 6,
+   "x": 9,
+   "y": 11,
+   "team": [
+    {
+     "species": "Weezing",
+     "level": 33
+    }
+   ]
+  },
+  {
+   "trainer_class": "Cue Ball",
+   "index": 3,
+   "x": 6,
+   "y": 10,
+   "team": [
+    {
+     "species": "Machop",
+     "level": 33
+    }
+   ]
+  },
+  {
+   "trainer_class": "Biker",
+   "index": 7,
+   "x": 3,
+   "y": 12,
+   "team": [
+    {
+     "species": "Grimer",
+     "level": 26
+    },
+    {
+     "species": "Grimer",
+     "level": 26
+    },
+    {
+     "species": "Grimer",
+     "level": 26
+    },
+    {
+     "species": "Grimer",
+     "level": 26
+    }
+   ]
+  }
+ ],
+ "Route 17": [
+  {
+   "trainer_class": "Cue Ball",
+   "index": 4,
+   "x": 12,
+   "y": 19,
+   "team": [
+    {
+     "species": "Mankey",
+     "level": 29
+    },
+    {
+     "species": "Primeape",
+     "level": 29
+    }
+   ]
+  },
+  {
+   "trainer_class": "Cue Ball",
+   "index": 5,
+   "x": 11,
+   "y": 16,
+   "team": [
+    {
+     "species": "Machop",
+     "level": 29
+    },
+    {
+     "species": "Machoke",
+     "level": 29
+    }
+   ]
+  },
+  {
+   "trainer_class": "Biker",
+   "index": 8,
+   "x": 4,
+   "y": 18,
+   "team": [
+    {
+     "species": "Weezing",
+     "level": 28
+    },
+    {
+     "species": "Koffing",
+     "level": 28
+    },
+    {
+     "species": "Weezing",
+     "level": 28
+    }
+   ]
+  },
+  {
+   "trainer_class": "Biker",
+   "index": 9,
+   "x": 7,
+   "y": 32,
+   "team": [
+    {
+     "species": "Muk",
+     "level": 33
+    }
+   ]
+  },
+  {
+   "trainer_class": "Biker",
+   "index": 10,
+   "x": 14,
+   "y": 34,
+   "team": [
+    {
+     "species": "Voltorb",
+     "level": 29
+    },
+    {
+     "species": "Voltorb",
+     "level": 29
+    }
+   ]
+  },
+  {
+   "trainer_class": "Cue Ball",
+   "index": 6,
+   "x": 17,
+   "y": 58,
+   "team": [
+    {
+     "species": "Machoke",
+     "level": 33
+    }
+   ]
+  },
+  {
+   "trainer_class": "Cue Ball",
+   "index": 7,
+   "x": 2,
+   "y": 68,
+   "team": [
+    {
+     "species": "Mankey",
+     "level": 26
+    },
+    {
+     "species": "Mankey",
+     "level": 26
+    },
+    {
+     "species": "Machoke",
+     "level": 26
+    },
+    {
+     "species": "Machop",
+     "level": 26
+    }
+   ]
+  },
+  {
+   "trainer_class": "Cue Ball",
+   "index": 8,
+   "x": 14,
+   "y": 98,
+   "team": [
+    {
+     "species": "Primeape",
+     "level": 29
+    },
+    {
+     "species": "Machoke",
+     "level": 29
+    }
+   ]
+  },
+  {
+   "trainer_class": "Biker",
+   "index": 11,
+   "x": 5,
+   "y": 98,
+   "team": [
+    {
+     "species": "Weezing",
+     "level": 29
+    },
+    {
+     "species": "Muk",
+     "level": 29
+    }
+   ]
+  },
+  {
+   "trainer_class": "Biker",
+   "index": 12,
+   "x": 10,
+   "y": 118,
+   "team": [
+    {
+     "species": "Koffing",
+     "level": 25
+    },
+    {
+     "species": "Weezing",
+     "level": 25
+    },
+    {
+     "species": "Koffing",
+     "level": 25
+    },
+    {
+     "species": "Koffing",
+     "level": 25
+    },
+    {
+     "species": "Weezing",
+     "level": 25
+    }
+   ]
+  }
+ ],
+ "Route 18": [
+  {
+   "trainer_class": "Bird Keeper",
+   "index": 8,
+   "x": 36,
+   "y": 11,
+   "team": [
+    {
+     "species": "Spearow",
+     "level": 29
+    },
+    {
+     "species": "Fearow",
+     "level": 29
+    }
+   ]
+  },
+  {
+   "trainer_class": "Bird Keeper",
+   "index": 9,
+   "x": 40,
+   "y": 15,
+   "team": [
+    {
+     "species": "Dodrio",
+     "level": 34
+    }
+   ]
+  },
+  {
+   "trainer_class": "Bird Keeper",
+   "index": 10,
+   "x": 42,
+   "y": 13,
+   "team": [
+    {
+     "species": "Spearow",
+     "level": 26
+    },
+    {
+     "species": "Spearow",
+     "level": 26
+    },
+    {
+     "species": "Fearow",
+     "level": 26
+    },
+    {
+     "species": "Spearow",
+     "level": 26
+    }
+   ]
+  }
+ ],
+ "Route 19": [
+  {
+   "trainer_class": "Swimmer",
+   "index": 2,
+   "x": 8,
+   "y": 7,
+   "team": [
+    {
+     "species": "Tentacool",
+     "level": 30
+    },
+    {
+     "species": "Shellder",
+     "level": 30
+    }
+   ]
+  },
+  {
+   "trainer_class": "Swimmer",
+   "index": 3,
+   "x": 13,
+   "y": 7,
+   "team": [
+    {
+     "species": "Goldeen",
+     "level": 29
+    },
+    {
+     "species": "Horsea",
+     "level": 29
+    },
+    {
+     "species": "Staryu",
+     "level": 29
+    }
+   ]
+  },
+  {
+   "trainer_class": "Swimmer",
+   "index": 4,
+   "x": 13,
+   "y": 25,
+   "team": [
+    {
+     "species": "Poliwag",
+     "level": 30
+    },
+    {
+     "species": "Poliwhirl",
+     "level": 30
+    }
+   ]
+  },
+  {
+   "trainer_class": "Swimmer",
+   "index": 5,
+   "x": 4,
+   "y": 27,
+   "team": [
+    {
+     "species": "Horsea",
+     "level": 27
+    },
+    {
+     "species": "Tentacool",
+     "level": 27
+    },
+    {
+     "species": "Tentacool",
+     "level": 27
+    },
+    {
+     "species": "Goldeen",
+     "level": 27
+    }
+   ]
+  },
+  {
+   "trainer_class": "Swimmer",
+   "index": 6,
+   "x": 16,
+   "y": 31,
+   "team": [
+    {
+     "species": "Goldeen",
+     "level": 29
+    },
+    {
+     "species": "Shellder",
+     "level": 29
+    },
+    {
+     "species": "Seaking",
+     "level": 29
+    }
+   ]
+  },
+  {
+   "trainer_class": "Swimmer",
+   "index": 7,
+   "x": 9,
+   "y": 11,
+   "team": [
+    {
+     "species": "Horsea",
+     "level": 30
+    },
+    {
+     "species": "Horsea",
+     "level": 30
+    }
+   ]
+  },
+  {
+   "trainer_class": "Beauty",
+   "index": 12,
+   "x": 8,
+   "y": 43,
+   "team": [
+    {
+     "species": "Poliwag",
+     "level": 27
+    },
+    {
+     "species": "Goldeen",
+     "level": 27
+    },
+    {
+     "species": "Seaking",
+     "level": 27
+    },
+    {
+     "species": "Goldeen",
+     "level": 27
+    },
+    {
+     "species": "Poliwag",
+     "level": 27
+    }
+   ]
+  },
+  {
+   "trainer_class": "Beauty",
+   "index": 13,
+   "x": 11,
+   "y": 43,
+   "team": [
+    {
+     "species": "Goldeen",
+     "level": 30
+    },
+    {
+     "species": "Seaking",
+     "level": 30
+    }
+   ]
+  },
+  {
+   "trainer_class": "Swimmer",
+   "index": 8,
+   "x": 9,
+   "y": 42,
+   "team": [
+    {
+     "species": "Tentacool",
+     "level": 27
+    },
+    {
+     "species": "Tentacool",
+     "level": 27
+    },
+    {
+     "species": "Staryu",
+     "level": 27
+    },
+    {
+     "species": "Horsea",
+     "level": 27
+    },
+    {
+     "species": "Tentacruel",
+     "level": 27
+    }
+   ]
+  },
+  {
+   "trainer_class": "Beauty",
+   "index": 14,
+   "x": 10,
+   "y": 44,
+   "team": [
+    {
+     "species": "Staryu",
+     "level": 29
+    },
+    {
+     "species": "Staryu",
+     "level": 29
+    },
+    {
+     "species": "Staryu",
+     "level": 29
+    }
+   ]
+  }
+ ],
+ "Route 20": [
+  {
+   "trainer_class": "Swimmer",
+   "index": 9,
+   "x": 87,
+   "y": 8,
+   "team": [
+    {
+     "species": "Shellder",
+     "level": 31
+    },
+    {
+     "species": "Cloyster",
+     "level": 31
+    }
+   ]
+  },
+  {
+   "trainer_class": "Beauty",
+   "index": 15,
+   "x": 68,
+   "y": 11,
+   "team": [
+    {
+     "species": "Seadra",
+     "level": 30
+    },
+    {
+     "species": "Horsea",
+     "level": 30
+    },
+    {
+     "species": "Seadra",
+     "level": 30
+    }
+   ]
+  },
+  {
+   "trainer_class": "Beauty",
+   "index": 6,
+   "x": 45,
+   "y": 10,
+   "team": [
+    {
+     "species": "Seaking",
+     "level": 35
+    }
+   ]
+  },
+  {
+   "trainer_class": "Jr.Trainer♀",
+   "index": 24,
+   "x": 55,
+   "y": 14,
+   "team": [
+    {
+     "species": "Tentacool",
+     "level": 30
+    },
+    {
+     "species": "Horsea",
+     "level": 30
+    },
+    {
+     "species": "Seel",
+     "level": 30
+    }
+   ]
+  },
+  {
+   "trainer_class": "Swimmer",
+   "index": 10,
+   "x": 38,
+   "y": 13,
+   "team": [
+    {
+     "species": "Staryu",
+     "level": 35
+    }
+   ]
+  },
+  {
+   "trainer_class": "Swimmer",
+   "index": 11,
+   "x": 87,
+   "y": 13,
+   "team": [
+    {
+     "species": "Horsea",
+     "level": 28
+    },
+    {
+     "species": "Horsea",
+     "level": 28
+    },
+    {
+     "species": "Seadra",
+     "level": 28
+    },
+    {
+     "species": "Horsea",
+     "level": 28
+    }
+   ]
+  },
+  {
+   "trainer_class": "Bird Keeper",
+   "index": 11,
+   "x": 34,
+   "y": 9,
+   "team": [
+    {
+     "species": "Fearow",
+     "level": 30
+    },
+    {
+     "species": "Fearow",
+     "level": 30
+    },
+    {
+     "species": "Pidgeotto",
+     "level": 30
+    }
+   ]
+  },
+  {
+   "trainer_class": "Beauty",
+   "index": 7,
+   "x": 25,
+   "y": 7,
+   "team": [
+    {
+     "species": "Shellder",
+     "level": 30
+    },
+    {
+     "species": "Shellder",
+     "level": 30
+    },
+    {
+     "species": "Cloyster",
+     "level": 30
+    }
+   ]
+  },
+  {
+   "trainer_class": "Jr.Trainer♀",
+   "index": 16,
+   "x": 24,
+   "y": 12,
+   "team": [
+    {
+     "species": "Goldeen",
+     "level": 31
+    },
+    {
+     "species": "Seaking",
+     "level": 31
+    }
+   ]
+  },
+  {
+   "trainer_class": "Beauty",
+   "index": 8,
+   "x": 15,
+   "y": 8,
+   "team": [
+    {
+     "species": "Poliwag",
+     "level": 31
+    },
+    {
+     "species": "Seaking",
+     "level": 31
+    }
+   ]
+  }
+ ],
+ "Route 21": [
+  {
+   "trainer_class": "Fisherman",
+   "index": 7,
+   "x": 4,
+   "y": 24,
+   "team": [
+    {
+     "species": "Seaking",
+     "level": 28
+    },
+    {
+     "species": "Goldeen",
+     "level": 28
+    },
+    {
+     "species": "Seaking",
+     "level": 28
+    },
+    {
+     "species": "Seaking",
+     "level": 28
+    }
+   ]
+  },
+  {
+   "trainer_class": "Fisherman",
+   "index": 9,
+   "x": 6,
+   "y": 25,
+   "team": [
+    {
+     "species": "Magikarp",
+     "level": 27
+    },
+    {
+     "species": "Magikarp",
+     "level": 27
+    },
+    {
+     "species": "Magikarp",
+     "level": 27
+    },
+    {
+     "species": "Magikarp",
+     "level": 27
+    },
+    {
+     "species": "Magikarp",
+     "level": 27
+    },
+    {
+     "species": "Magikarp",
+     "level": 27
+    }
+   ]
+  },
+  {
+   "trainer_class": "Swimmer",
+   "index": 12,
+   "x": 10,
+   "y": 31,
+   "team": [
+    {
+     "species": "Seadra",
+     "level": 33
+    },
+    {
+     "species": "Tentacruel",
+     "level": 33
+    }
+   ]
+  },
+  {
+   "trainer_class": "Cue Ball",
+   "index": 9,
+   "x": 12,
+   "y": 30,
+   "team": [
+    {
+     "species": "Tentacool",
+     "level": 31
+    },
+    {
+     "species": "Tentacool",
+     "level": 31
+    },
+    {
+     "species": "Tentacruel",
+     "level": 31
+    }
+   ]
+  },
+  {
+   "trainer_class": "Swimmer",
+   "index": 13,
+   "x": 16,
+   "y": 63,
+   "team": [
+    {
+     "species": "Starmie",
+     "level": 37
+    }
+   ]
+  },
+  {
+   "trainer_class": "Swimmer",
+   "index": 14,
+   "x": 5,
+   "y": 71,
+   "team": [
+    {
+     "species": "Staryu",
+     "level": 33
+    },
+    {
+     "species": "Wartortle",
+     "level": 33
+    }
+   ]
+  },
+  {
+   "trainer_class": "Swimmer",
+   "index": 15,
+   "x": 15,
+   "y": 71,
+   "team": [
+    {
+     "species": "Poliwhirl",
+     "level": 32
+    },
+    {
+     "species": "Tentacool",
+     "level": 32
+    },
+    {
+     "species": "Seadra",
+     "level": 32
+    }
+   ]
+  },
+  {
+   "trainer_class": "Fisherman",
+   "index": 8,
+   "x": 14,
+   "y": 56,
+   "team": [
+    {
+     "species": "Shellder",
+     "level": 31
+    },
+    {
+     "species": "Cloyster",
+     "level": 31
+    }
+   ]
+  },
+  {
+   "trainer_class": "Fisherman",
+   "index": 10,
+   "x": 17,
+   "y": 57,
+   "team": [
+    {
+     "species": "Seaking",
+     "level": 33
+    },
+    {
+     "species": "Goldeen",
+     "level": 33
+    }
+   ]
+  }
+ ],
+ "Route 24": [
+  {
+   "trainer_class": "Rocket",
+   "index": 6,
+   "x": 11,
+   "y": 15,
+   "team": [
+    {
+     "species": "Ekans",
+     "level": 15
+    },
+    {
+     "species": "Zubat",
+     "level": 15
+    }
+   ]
+  },
+  {
+   "trainer_class": "Jr.Trainer♂",
+   "index": 2,
+   "x": 5,
+   "y": 20,
+   "team": [
+    {
+     "species": "Rattata",
+     "level": 14
+    },
+    {
+     "species": "Ekans",
+     "level": 14
+    }
+   ]
+  },
+  {
+   "trainer_class": "Jr.Trainer♂",
+   "index": 3,
+   "x": 11,
+   "y": 19,
+   "team": [
+    {
+     "species": "Mankey",
+     "level": 18
+    }
+   ]
+  },
+  {
+   "trainer_class": "Lass",
+   "index": 7,
+   "x": 10,
+   "y": 22,
+   "team": [
+    {
+     "species": "Pidgey",
+     "level": 16
+    },
+    {
+     "species": "Nidoran♀",
+     "level": 16
+    }
+   ]
+  },
+  {
+   "trainer_class": "Youngster",
+   "index": 4,
+   "x": 11,
+   "y": 25,
+   "team": [
+    {
+     "species": "Rattata",
+     "level": 14
+    },
+    {
+     "species": "Ekans",
+     "level": 14
+    },
+    {
+     "species": "Zubat",
+     "level": 14
+    }
+   ]
+  },
+  {
+   "trainer_class": "Lass",
+   "index": 8,
+   "x": 10,
+   "y": 28,
+   "team": [
+    {
+     "species": "Pidgey",
+     "level": 14
+    },
+    {
+     "species": "Nidoran♀",
+     "level": 14
+    }
+   ]
+  },
+  {
+   "trainer_class": "Bug Catcher",
+   "index": 9,
+   "x": 11,
+   "y": 31,
+   "team": [
+    {
+     "species": "Caterpie",
+     "level": 14
+    },
+    {
+     "species": "Weedle",
+     "level": 14
+    }
+   ]
+  }
+ ],
+ "Route 25": [
+  {
+   "trainer_class": "Youngster",
+   "index": 5,
+   "x": 14,
+   "y": 2,
+   "team": [
+    {
+     "species": "Rattata",
+     "level": 15
+    },
+    {
+     "species": "Spearow",
+     "level": 15
+    }
+   ]
+  },
+  {
+   "trainer_class": "Youngster",
+   "index": 6,
+   "x": 18,
+   "y": 5,
+   "team": [
+    {
+     "species": "Slowpoke",
+     "level": 17
+    }
+   ]
+  },
+  {
+   "trainer_class": "Jr.Trainer♂",
+   "index": 2,
+   "x": 24,
+   "y": 4,
+   "team": [
+    {
+     "species": "Rattata",
+     "level": 14
+    },
+    {
+     "species": "Ekans",
+     "level": 14
+    }
+   ]
+  },
+  {
+   "trainer_class": "Lass",
+   "index": 9,
+   "x": 18,
+   "y": 8,
+   "team": [
+    {
+     "species": "Nidoran♂",
+     "level": 15
+    },
+    {
+     "species": "Nidoran♀",
+     "level": 15
+    }
+   ]
+  },
+  {
+   "trainer_class": "Youngster",
+   "index": 7,
+   "x": 32,
+   "y": 3,
+   "team": [
+    {
+     "species": "Ekans",
+     "level": 14
+    },
+    {
+     "species": "Sandshrew",
+     "level": 14
+    }
+   ]
+  },
+  {
+   "trainer_class": "Lass",
+   "index": 10,
+   "x": 37,
+   "y": 4,
+   "team": [
+    {
+     "species": "Oddish",
+     "level": 13
+    },
+    {
+     "species": "Pidgey",
+     "level": 13
+    },
+    {
+     "species": "Oddish",
+     "level": 13
+    }
+   ]
+  },
+  {
+   "trainer_class": "Hiker",
+   "index": 2,
+   "x": 8,
+   "y": 4,
+   "team": [
+    {
+     "species": "Machop",
+     "level": 15
+    },
+    {
+     "species": "Geodude",
+     "level": 15
+    }
+   ]
+  },
+  {
+   "trainer_class": "Hiker",
+   "index": 3,
+   "x": 23,
+   "y": 9,
+   "team": [
+    {
+     "species": "Geodude",
+     "level": 13
+    },
+    {
+     "species": "Geodude",
+     "level": 13
+    },
+    {
+     "species": "Machop",
+     "level": 13
+    },
+    {
+     "species": "Geodude",
+     "level": 13
+    }
+   ]
+  },
+  {
+   "trainer_class": "Hiker",
+   "index": 4,
+   "x": 13,
+   "y": 7,
+   "team": [
+    {
+     "species": "Onix",
+     "level": 17
+    }
+   ]
+  }
+ ],
+ "Route 3": [
+  {
+   "trainer_class": "Bug Catcher",
+   "index": 4,
+   "x": 10,
+   "y": 6,
+   "team": [
+    {
+     "species": "Caterpie",
+     "level": 10
+    },
+    {
+     "species": "Weedle",
+     "level": 10
+    },
+    {
+     "species": "Caterpie",
+     "level": 10
+    }
+   ]
+  },
+  {
+   "trainer_class": "Youngster",
+   "index": 1,
+   "x": 14,
+   "y": 4,
+   "team": [
+    {
+     "species": "Rattata",
+     "level": 11
+    },
+    {
+     "species": "Ekans",
+     "level": 11
+    }
+   ]
+  },
+  {
+   "trainer_class": "Lass",
+   "index": 1,
+   "x": 16,
+   "y": 9,
+   "team": [
+    {
+     "species": "Pidgey",
+     "level": 9
+    },
+    {
+     "species": "Pidgey",
+     "level": 9
+    }
+   ]
+  },
+  {
+   "trainer_class": "Bug Catcher",
+   "index": 5,
+   "x": 19,
+   "y": 5,
+   "team": [
+    {
+     "species": "Weedle",
+     "level": 9
+    },
+    {
+     "species": "Kakuna",
+     "level": 9
+    },
+    {
+     "species": "Caterpie",
+     "level": 9
+    },
+    {
+     "species": "Metapod",
+     "level": 9
+    }
+   ]
+  },
+  {
+   "trainer_class": "Lass",
+   "index": 2,
+   "x": 23,
+   "y": 4,
+   "team": [
+    {
+     "species": "Rattata",
+     "level": 10
+    },
+    {
+     "species": "Nidoran♂",
+     "level": 10
+    }
+   ]
+  },
+  {
+   "trainer_class": "Youngster",
+   "index": 2,
+   "x": 22,
+   "y": 9,
+   "team": [
+    {
+     "species": "Spearow",
+     "level": 14
+    }
+   ]
+  },
+  {
+   "trainer_class": "Bug Catcher",
+   "index": 6,
+   "x": 24,
+   "y": 6,
+   "team": [
+    {
+     "species": "Caterpie",
+     "level": 11
+    },
+    {
+     "species": "Metapod",
+     "level": 11
+    }
+   ]
+  },
+  {
+   "trainer_class": "Lass",
+   "index": 3,
+   "x": 33,
+   "y": 10,
+   "team": [
+    {
+     "species": "Jigglypuff",
+     "level": 14
+    }
+   ]
+  }
+ ],
+ "Route 4": [
+  {
+   "trainer_class": "Lass",
+   "index": 4,
+   "x": 63,
+   "y": 3,
+   "team": [
+    {
+     "species": "Paras",
+     "level": 31
+    },
+    {
+     "species": "Paras",
+     "level": 31
+    },
+    {
+     "species": "Parasect",
+     "level": 31
+    }
+   ]
+  }
+ ],
+ "Route 6": [
+  {
+   "trainer_class": "Jr.Trainer♂",
+   "index": 4,
+   "x": 10,
+   "y": 21,
+   "team": [
+    {
+     "species": "Squirtle",
+     "level": 20
+    }
+   ]
+  },
+  {
+   "trainer_class": "Jr.Trainer♀",
+   "index": 2,
+   "x": 11,
+   "y": 21,
+   "team": [
+    {
+     "species": "Rattata",
+     "level": 16
+    },
+    {
+     "species": "Pikachu",
+     "level": 16
+    }
+   ]
+  },
+  {
+   "trainer_class": "Bug Catcher",
+   "index": 10,
+   "x": 0,
+   "y": 15,
+   "team": [
+    {
+     "species": "Weedle",
+     "level": 16
+    },
+    {
+     "species": "Caterpie",
+     "level": 16
+    },
+    {
+     "species": "Weedle",
+     "level": 16
+    }
+   ]
+  },
+  {
+   "trainer_class": "Jr.Trainer♂",
+   "index": 5,
+   "x": 11,
+   "y": 31,
+   "team": [
+    {
+     "species": "Spearow",
+     "level": 16
+    },
+    {
+     "species": "Raticate",
+     "level": 16
+    }
+   ]
+  },
+  {
+   "trainer_class": "Jr.Trainer♀",
+   "index": 3,
+   "x": 11,
+   "y": 30,
+   "team": [
+    {
+     "species": "Pidgey",
+     "level": 16
+    },
+    {
+     "species": "Pidgey",
+     "level": 16
+    },
+    {
+     "species": "Pidgey",
+     "level": 16
+    }
+   ]
+  },
+  {
+   "trainer_class": "Bug Catcher",
+   "index": 11,
+   "x": 19,
+   "y": 26,
+   "team": [
+    {
+     "species": "Butterfree",
+     "level": 20
+    }
+   ]
+  }
+ ],
+ "Route 8": [
+  {
+   "trainer_class": "Super Nerd",
+   "index": 3,
+   "x": 8,
+   "y": 5,
+   "team": [
+    {
+     "species": "Voltorb",
+     "level": 20
+    },
+    {
+     "species": "Koffing",
+     "level": 20
+    },
+    {
+     "species": "Voltorb",
+     "level": 20
+    },
+    {
+     "species": "Magnemite",
+     "level": 20
+    }
+   ]
+  },
+  {
+   "trainer_class": "Gambler",
+   "index": 5,
+   "x": 13,
+   "y": 9,
+   "team": [
+    {
+     "species": "Poliwag",
+     "level": 22
+    },
+    {
+     "species": "Poliwag",
+     "level": 22
+    },
+    {
+     "species": "Poliwhirl",
+     "level": 22
+    }
+   ]
+  },
+  {
+   "trainer_class": "Super Nerd",
+   "index": 4,
+   "x": 42,
+   "y": 6,
+   "team": [
+    {
+     "species": "Grimer",
+     "level": 22
+    },
+    {
+     "species": "Muk",
+     "level": 22
+    },
+    {
+     "species": "Grimer",
+     "level": 22
+    }
+   ]
+  },
+  {
+   "trainer_class": "Lass",
+   "index": 13,
+   "x": 26,
+   "y": 3,
+   "team": [
+    {
+     "species": "Nidoran♀",
+     "level": 23
+    },
+    {
+     "species": "Nidorina",
+     "level": 23
+    }
+   ]
+  },
+  {
+   "trainer_class": "Super Nerd",
+   "index": 5,
+   "x": 26,
+   "y": 4,
+   "team": [
+    {
+     "species": "Koffing",
+     "level": 26
+    }
+   ]
+  },
+  {
+   "trainer_class": "Lass",
+   "index": 14,
+   "x": 26,
+   "y": 5,
+   "team": [
+    {
+     "species": "Meowth",
+     "level": 24
+    },
+    {
+     "species": "Meowth",
+     "level": 24
+    },
+    {
+     "species": "Meowth",
+     "level": 24
+    }
+   ]
+  },
+  {
+   "trainer_class": "Lass",
+   "index": 15,
+   "x": 26,
+   "y": 6,
+   "team": [
+    {
+     "species": "Pidgey",
+     "level": 19
+    },
+    {
+     "species": "Rattata",
+     "level": 19
+    },
+    {
+     "species": "Nidoran♂",
+     "level": 19
+    },
+    {
+     "species": "Meowth",
+     "level": 19
+    },
+    {
+     "species": "Pikachu",
+     "level": 19
+    }
+   ]
+  },
+  {
+   "trainer_class": "Gambler",
+   "index": 7,
+   "x": 46,
+   "y": 13,
+   "team": [
+    {
+     "species": "Growlithe",
+     "level": 24
+    },
+    {
+     "species": "Vulpix",
+     "level": 24
+    }
+   ]
+  },
+  {
+   "trainer_class": "Lass",
+   "index": 16,
+   "x": 51,
+   "y": 12,
+   "team": [
+    {
+     "species": "Clefairy",
+     "level": 22
+    },
+    {
+     "species": "Clefairy",
+     "level": 22
+    }
+   ]
+  }
+ ],
+ "Route 9": [
+  {
+   "trainer_class": "Jr.Trainer♀",
+   "index": 5,
+   "x": 13,
+   "y": 10,
+   "team": [
+    {
+     "species": "Oddish",
+     "level": 18
+    },
+    {
+     "species": "Bellsprout",
+     "level": 18
+    },
+    {
+     "species": "Oddish",
+     "level": 18
+    },
+    {
+     "species": "Bellsprout",
+     "level": 18
+    }
+   ]
+  },
+  {
+   "trainer_class": "Jr.Trainer♂",
+   "index": 7,
+   "x": 24,
+   "y": 7,
+   "team": [
+    {
+     "species": "Growlithe",
+     "level": 21
+    },
+    {
+     "species": "Charmander",
+     "level": 21
+    }
+   ]
+  },
+  {
+   "trainer_class": "Jr.Trainer♂",
+   "index": 8,
+   "x": 31,
+   "y": 7,
+   "team": [
+    {
+     "species": "Rattata",
+     "level": 19
+    },
+    {
+     "species": "Diglett",
+     "level": 19
+    },
+    {
+     "species": "Ekans",
+     "level": 19
+    },
+    {
+     "species": "Sandshrew",
+     "level": 19
+    }
+   ]
+  },
+  {
+   "trainer_class": "Jr.Trainer♀",
+   "index": 6,
+   "x": 48,
+   "y": 8,
+   "team": [
+    {
+     "species": "Meowth",
+     "level": 23
+    }
+   ]
+  },
+  {
+   "trainer_class": "Hiker",
+   "index": 11,
+   "x": 16,
+   "y": 15,
+   "team": [
+    {
+     "species": "Machop",
+     "level": 20
+    },
+    {
+     "species": "Onix",
+     "level": 20
+    }
+   ]
+  },
+  {
+   "trainer_class": "Hiker",
+   "index": 6,
+   "x": 43,
+   "y": 3,
+   "team": [
+    {
+     "species": "Geodude",
+     "level": 20
+    },
+    {
+     "species": "Machop",
+     "level": 20
+    },
+    {
+     "species": "Geodude",
+     "level": 20
+    }
+   ]
+  },
+  {
+   "trainer_class": "Bug Catcher",
+   "index": 13,
+   "x": 22,
+   "y": 2,
+   "team": [
+    {
+     "species": "Beedrill",
+     "level": 19
+    },
+    {
+     "species": "Beedrill",
+     "level": 19
+    }
+   ]
+  },
+  {
+   "trainer_class": "Hiker",
+   "index": 5,
+   "x": 45,
+   "y": 15,
+   "team": [
+    {
+     "species": "Geodude",
+     "level": 21
+    },
+    {
+     "species": "Onix",
+     "level": 21
+    }
+   ]
+  },
+  {
+   "trainer_class": "Bug Catcher",
+   "index": 14,
+   "x": 40,
+   "y": 8,
+   "team": [
+    {
+     "species": "Caterpie",
+     "level": 20
+    },
+    {
+     "species": "Weedle",
+     "level": 20
+    },
+    {
+     "species": "Venonat",
+     "level": 20
+    }
+   ]
+  }
+ ],
+ "S.S. Anne 1F Rooms": [
+  {
+   "trainer_class": "Gentleman",
+   "index": 1,
+   "x": 2,
+   "y": 3,
+   "team": [
+    {
+     "species": "Growlithe",
+     "level": 18
+    },
+    {
+     "species": "Growlithe",
+     "level": 18
+    }
+   ]
+  },
+  {
+   "trainer_class": "Gentleman",
+   "index": 2,
+   "x": 11,
+   "y": 4,
+   "team": [
+    {
+     "species": "Nidoran♂",
+     "level": 19
+    },
+    {
+     "species": "Nidoran♀",
+     "level": 19
+    }
+   ]
+  },
+  {
+   "trainer_class": "Youngster",
+   "index": 8,
+   "x": 11,
+   "y": 14,
+   "team": [
+    {
+     "species": "Nidoran♂",
+     "level": 21
+    }
+   ]
+  },
+  {
+   "trainer_class": "Lass",
+   "index": 11,
+   "x": 13,
+   "y": 11,
+   "team": [
+    {
+     "species": "Pidgey",
+     "level": 18
+    },
+    {
+     "species": "Nidoran♀",
+     "level": 18
+    }
+   ]
+  }
+ ],
+ "S.S. Anne 2F": [
+  {
+   "trainer_class": "Rival1",
+   "index": 1,
+   "x": 36,
+   "y": 4,
+   "team": [
+    {
+     "species": "Squirtle",
+     "level": 5
+    }
+   ]
+  }
+ ],
+ "S.S. Anne 2F Rooms": [
+  {
+   "trainer_class": "Gentleman",
+   "index": 3,
+   "x": 10,
+   "y": 2,
+   "team": [
+    {
+     "species": "Pikachu",
+     "level": 23
+    }
+   ]
+  },
+  {
+   "trainer_class": "Fisherman",
+   "index": 1,
+   "x": 13,
+   "y": 4,
+   "team": [
+    {
+     "species": "Goldeen",
+     "level": 17
+    },
+    {
+     "species": "Tentacool",
+     "level": 17
+    },
+    {
+     "species": "Goldeen",
+     "level": 17
+    }
+   ]
+  },
+  {
+   "trainer_class": "Gentleman",
+   "index": 5,
+   "x": 0,
+   "y": 14,
+   "team": [
+    {
+     "species": "Growlithe",
+     "level": 17
+    },
+    {
+     "species": "Ponyta",
+     "level": 17
+    }
+   ]
+  },
+  {
+   "trainer_class": "Lass",
+   "index": 12,
+   "x": 2,
+   "y": 11,
+   "team": [
+    {
+     "species": "Rattata",
+     "level": 18
+    },
+    {
+     "species": "Pikachu",
+     "level": 18
+    }
+   ]
+  }
+ ],
+ "S.S. Anne B1F Rooms": [
+  {
+   "trainer_class": "Sailor",
+   "index": 3,
+   "x": 0,
+   "y": 13,
+   "team": [
+    {
+     "species": "Shellder",
+     "level": 21
+    }
+   ]
+  },
+  {
+   "trainer_class": "Sailor",
+   "index": 4,
+   "x": 2,
+   "y": 11,
+   "team": [
+    {
+     "species": "Horsea",
+     "level": 17
+    },
+    {
+     "species": "Shellder",
+     "level": 17
+    },
+    {
+     "species": "Tentacool",
+     "level": 17
+    }
+   ]
+  },
+  {
+   "trainer_class": "Sailor",
+   "index": 5,
+   "x": 12,
+   "y": 3,
+   "team": [
+    {
+     "species": "Tentacool",
+     "level": 18
+    },
+    {
+     "species": "Staryu",
+     "level": 18
+    }
+   ]
+  },
+  {
+   "trainer_class": "Sailor",
+   "index": 6,
+   "x": 22,
+   "y": 2,
+   "team": [
+    {
+     "species": "Horsea",
+     "level": 17
+    },
+    {
+     "species": "Horsea",
+     "level": 17
+    },
+    {
+     "species": "Horsea",
+     "level": 17
+    }
+   ]
+  },
+  {
+   "trainer_class": "Sailor",
+   "index": 7,
+   "x": 0,
+   "y": 2,
+   "team": [
+    {
+     "species": "Machop",
+     "level": 20
+    }
+   ]
+  },
+  {
+   "trainer_class": "Fisherman",
+   "index": 2,
+   "x": 0,
+   "y": 4,
+   "team": [
+    {
+     "species": "Tentacool",
+     "level": 17
+    },
+    {
+     "species": "Staryu",
+     "level": 17
+    },
+    {
+     "species": "Shellder",
+     "level": 17
+    }
+   ]
+  }
+ ],
+ "S.S. Anne Bow": [
+  {
+   "trainer_class": "Sailor",
+   "index": 1,
+   "x": 4,
+   "y": 4,
+   "team": [
+    {
+     "species": "Machop",
+     "level": 18
+    },
+    {
+     "species": "Shellder",
+     "level": 18
+    }
+   ]
+  },
+  {
+   "trainer_class": "Sailor",
+   "index": 2,
+   "x": 10,
+   "y": 8,
+   "team": [
+    {
+     "species": "Machop",
+     "level": 17
+    },
+    {
+     "species": "Tentacool",
+     "level": 17
+    }
+   ]
+  }
+ ],
+ "Saffron Gym": [
+  {
+   "trainer_class": "Sabrina",
+   "index": 1,
+   "x": 9,
+   "y": 8,
+   "team": [
+    {
+     "species": "Kadabra",
+     "level": 38
+    },
+    {
+     "species": "Mr. Mime",
+     "level": 37
+    },
+    {
+     "species": "Venomoth",
+     "level": 38
+    },
+    {
+     "species": "Alakazam",
+     "level": 43
+    }
+   ]
+  },
+  {
+   "trainer_class": "Channeler",
+   "index": 22,
+   "x": 10,
+   "y": 1,
+   "team": [
+    {
+     "species": "Gastly",
+     "level": 34
+    },
+    {
+     "species": "Haunter",
+     "level": 34
+    }
+   ]
+  },
+  {
+   "trainer_class": "Psychic",
+   "index": 1,
+   "x": 17,
+   "y": 1,
+   "team": [
+    {
+     "species": "Kadabra",
+     "level": 31
+    },
+    {
+     "species": "Slowpoke",
+     "level": 31
+    },
+    {
+     "species": "Mr. Mime",
+     "level": 31
+    },
+    {
+     "species": "Kadabra",
+     "level": 31
+    }
+   ]
+  },
+  {
+   "trainer_class": "Channeler",
+   "index": 23,
+   "x": 3,
+   "y": 7,
+   "team": [
+    {
+     "species": "Haunter",
+     "level": 38
+    }
+   ]
+  },
+  {
+   "trainer_class": "Psychic",
+   "index": 2,
+   "x": 17,
+   "y": 7,
+   "team": [
+    {
+     "species": "Mr. Mime",
+     "level": 34
+    },
+    {
+     "species": "Kadabra",
+     "level": 34
+    }
+   ]
+  },
+  {
+   "trainer_class": "Channeler",
+   "index": 24,
+   "x": 3,
+   "y": 13,
+   "team": [
+    {
+     "species": "Gastly",
+     "level": 33
+    },
+    {
+     "species": "Gastly",
+     "level": 33
+    },
+    {
+     "species": "Haunter",
+     "level": 33
+    }
+   ]
+  },
+  {
+   "trainer_class": "Psychic",
+   "index": 3,
+   "x": 17,
+   "y": 13,
+   "team": [
+    {
+     "species": "Slowpoke",
+     "level": 33
+    },
+    {
+     "species": "Slowpoke",
+     "level": 33
+    },
+    {
+     "species": "Slowbro",
+     "level": 33
+    }
+   ]
+  },
+  {
+   "trainer_class": "Psychic",
+   "index": 4,
+   "x": 3,
+   "y": 1,
+   "team": [
+    {
+     "species": "Slowbro",
+     "level": 38
+    }
+   ]
+  }
+ ],
+ "Silph Co 10F": [
+  {
+   "trainer_class": "Rocket",
+   "index": 39,
+   "x": 1,
+   "y": 9,
+   "team": [
+    {
+     "species": "Machoke",
+     "level": 33
+    }
+   ]
+  },
+  {
+   "trainer_class": "Scientist",
+   "index": 11,
+   "x": 10,
+   "y": 2,
+   "team": [
+    {
+     "species": "Magnemite",
+     "level": 29
+    },
+    {
+     "species": "Koffing",
+     "level": 29
+    }
+   ]
+  }
+ ],
+ "Silph Co 11F": [
+  {
+   "trainer_class": "Giovanni",
+   "index": 2,
+   "x": 6,
+   "y": 9,
+   "team": [
+    {
+     "species": "Nidorino",
+     "level": 37
+    },
+    {
+     "species": "Kangaskhan",
+     "level": 35
+    },
+    {
+     "species": "Rhyhorn",
+     "level": 37
+    },
+    {
+     "species": "Nidoqueen",
+     "level": 41
+    }
+   ]
+  },
+  {
+   "trainer_class": "Rocket",
+   "index": 41,
+   "x": 3,
+   "y": 16,
+   "team": [
+    {
+     "species": "Cubone",
+     "level": 32
+    },
+    {
+     "species": "Drowzee",
+     "level": 32
+    },
+    {
+     "species": "Marowak",
+     "level": 32
+    }
+   ]
+  },
+  {
+   "trainer_class": "Rocket",
+   "index": 40,
+   "x": 15,
+   "y": 9,
+   "team": [
+    {
+     "species": "Rattata",
+     "level": 25
+    },
+    {
+     "species": "Rattata",
+     "level": 25
+    },
+    {
+     "species": "Zubat",
+     "level": 25
+    },
+    {
+     "species": "Rattata",
+     "level": 25
+    },
+    {
+     "species": "Ekans",
+     "level": 25
+    }
+   ]
+  }
+ ],
+ "Silph Co 2F": [
+  {
+   "trainer_class": "Scientist",
+   "index": 2,
+   "x": 5,
+   "y": 12,
+   "team": [
+    {
+     "species": "Grimer",
+     "level": 26
+    },
+    {
+     "species": "Weezing",
+     "level": 26
+    },
+    {
+     "species": "Koffing",
+     "level": 26
+    },
+    {
+     "species": "Weezing",
+     "level": 26
+    }
+   ]
+  },
+  {
+   "trainer_class": "Scientist",
+   "index": 3,
+   "x": 24,
+   "y": 13,
+   "team": [
+    {
+     "species": "Magnemite",
+     "level": 28
+    },
+    {
+     "species": "Voltorb",
+     "level": 28
+    },
+    {
+     "species": "Magneton",
+     "level": 28
+    }
+   ]
+  },
+  {
+   "trainer_class": "Rocket",
+   "index": 23,
+   "x": 16,
+   "y": 11,
+   "team": [
+    {
+     "species": "Cubone",
+     "level": 29
+    },
+    {
+     "species": "Zubat",
+     "level": 29
+    }
+   ]
+  },
+  {
+   "trainer_class": "Rocket",
+   "index": 24,
+   "x": 24,
+   "y": 7,
+   "team": [
+    {
+     "species": "Golbat",
+     "level": 25
+    },
+    {
+     "species": "Zubat",
+     "level": 25
+    },
+    {
+     "species": "Zubat",
+     "level": 25
+    },
+    {
+     "species": "Raticate",
+     "level": 25
+    },
+    {
+     "species": "Zubat",
+     "level": 25
+    }
+   ]
+  }
+ ],
+ "Silph Co 3F": [
+  {
+   "trainer_class": "Rocket",
+   "index": 25,
+   "x": 20,
+   "y": 7,
+   "team": [
+    {
+     "species": "Raticate",
+     "level": 28
+    },
+    {
+     "species": "Hypno",
+     "level": 28
+    },
+    {
+     "species": "Raticate",
+     "level": 28
+    }
+   ]
+  },
+  {
+   "trainer_class": "Scientist",
+   "index": 4,
+   "x": 7,
+   "y": 9,
+   "team": [
+    {
+     "species": "Electrode",
+     "level": 29
+    },
+    {
+     "species": "Weezing",
+     "level": 29
+    }
+   ]
+  }
+ ],
+ "Silph Co 4F": [
+  {
+   "trainer_class": "Rocket",
+   "index": 26,
+   "x": 9,
+   "y": 14,
+   "team": [
+    {
+     "species": "Machop",
+     "level": 29
+    },
+    {
+     "species": "Drowzee",
+     "level": 29
+    }
+   ]
+  },
+  {
+   "trainer_class": "Scientist",
+   "index": 5,
+   "x": 14,
+   "y": 6,
+   "team": [
+    {
+     "species": "Electrode",
+     "level": 33
+    }
+   ]
+  },
+  {
+   "trainer_class": "Rocket",
+   "index": 27,
+   "x": 26,
+   "y": 10,
+   "team": [
+    {
+     "species": "Ekans",
+     "level": 28
+    },
+    {
+     "species": "Zubat",
+     "level": 28
+    },
+    {
+     "species": "Cubone",
+     "level": 28
+    }
+   ]
+  }
+ ],
+ "Silph Co 5F": [
+  {
+   "trainer_class": "Rocket",
+   "index": 28,
+   "x": 8,
+   "y": 16,
+   "team": [
+    {
+     "species": "Arbok",
+     "level": 33
+    }
+   ]
+  },
+  {
+   "trainer_class": "Scientist",
+   "index": 6,
+   "x": 8,
+   "y": 3,
+   "team": [
+    {
+     "species": "Magneton",
+     "level": 26
+    },
+    {
+     "species": "Koffing",
+     "level": 26
+    },
+    {
+     "species": "Weezing",
+     "level": 26
+    },
+    {
+     "species": "Magnemite",
+     "level": 26
+    }
+   ]
+  },
+  {
+   "trainer_class": "Juggler",
+   "index": 1,
+   "x": 18,
+   "y": 10,
+   "team": [
+    {
+     "species": "Kadabra",
+     "level": 29
+    },
+    {
+     "species": "Mr. Mime",
+     "level": 29
+    }
+   ]
+  },
+  {
+   "trainer_class": "Rocket",
+   "index": 29,
+   "x": 28,
+   "y": 4,
+   "team": [
+    {
+     "species": "Hypno",
+     "level": 33
+    }
+   ]
+  }
+ ],
+ "Silph Co 6F": [
+  {
+   "trainer_class": "Rocket",
+   "index": 30,
+   "x": 17,
+   "y": 3,
+   "team": [
+    {
+     "species": "Machop",
+     "level": 29
+    },
+    {
+     "species": "Machoke",
+     "level": 29
+    }
+   ]
+  },
+  {
+   "trainer_class": "Scientist",
+   "index": 7,
+   "x": 7,
+   "y": 8,
+   "team": [
+    {
+     "species": "Voltorb",
+     "level": 25
+    },
+    {
+     "species": "Koffing",
+     "level": 25
+    },
+    {
+     "species": "Magneton",
+     "level": 25
+    },
+    {
+     "species": "Magnemite",
+     "level": 25
+    },
+    {
+     "species": "Koffing",
+     "level": 25
+    }
+   ]
+  },
+  {
+   "trainer_class": "Rocket",
+   "index": 31,
+   "x": 14,
+   "y": 15,
+   "team": [
+    {
+     "species": "Zubat",
+     "level": 28
+    },
+    {
+     "species": "Zubat",
+     "level": 28
+    },
+    {
+     "species": "Golbat",
+     "level": 28
+    }
+   ]
+  }
+ ],
+ "Silph Co 7F": [
+  {
+   "trainer_class": "Rocket",
+   "index": 32,
+   "x": 13,
+   "y": 1,
+   "team": [
+    {
+     "species": "Raticate",
+     "level": 26
+    },
+    {
+     "species": "Arbok",
+     "level": 26
+    },
+    {
+     "species": "Koffing",
+     "level": 26
+    },
+    {
+     "species": "Golbat",
+     "level": 26
+    }
+   ]
+  },
+  {
+   "trainer_class": "Scientist",
+   "index": 8,
+   "x": 2,
+   "y": 13,
+   "team": [
+    {
+     "species": "Electrode",
+     "level": 29
+    },
+    {
+     "species": "Muk",
+     "level": 29
+    }
+   ]
+  },
+  {
+   "trainer_class": "Rocket",
+   "index": 33,
+   "x": 20,
+   "y": 2,
+   "team": [
+    {
+     "species": "Cubone",
+     "level": 29
+    },
+    {
+     "species": "Cubone",
+     "level": 29
+    }
+   ]
+  },
+  {
+   "trainer_class": "Rocket",
+   "index": 34,
+   "x": 19,
+   "y": 14,
+   "team": [
+    {
+     "species": "Sandshrew",
+     "level": 29
+    },
+    {
+     "species": "Sandslash",
+     "level": 29
+    }
+   ]
+  }
+ ],
+ "Silph Co 8F": [
+  {
+   "trainer_class": "Rocket",
+   "index": 35,
+   "x": 19,
+   "y": 2,
+   "team": [
+    {
+     "species": "Raticate",
+     "level": 26
+    },
+    {
+     "species": "Zubat",
+     "level": 26
+    },
+    {
+     "species": "Golbat",
+     "level": 26
+    },
+    {
+     "species": "Rattata",
+     "level": 26
+    }
+   ]
+  },
+  {
+   "trainer_class": "Scientist",
+   "index": 9,
+   "x": 10,
+   "y": 2,
+   "team": [
+    {
+     "species": "Grimer",
+     "level": 29
+    },
+    {
+     "species": "Electrode",
+     "level": 29
+    }
+   ]
+  },
+  {
+   "trainer_class": "Rocket",
+   "index": 36,
+   "x": 12,
+   "y": 15,
+   "team": [
+    {
+     "species": "Weezing",
+     "level": 28
+    },
+    {
+     "species": "Golbat",
+     "level": 28
+    },
+    {
+     "species": "Koffing",
+     "level": 28
+    }
+   ]
+  }
+ ],
+ "Silph Co 9F": [
+  {
+   "trainer_class": "Rocket",
+   "index": 37,
+   "x": 2,
+   "y": 4,
+   "team": [
+    {
+     "species": "Drowzee",
+     "level": 28
+    },
+    {
+     "species": "Grimer",
+     "level": 28
+    },
+    {
+     "species": "Machop",
+     "level": 28
+    }
+   ]
+  },
+  {
+   "trainer_class": "Scientist",
+   "index": 10,
+   "x": 21,
+   "y": 13,
+   "team": [
+    {
+     "species": "Voltorb",
+     "level": 28
+    },
+    {
+     "species": "Koffing",
+     "level": 28
+    },
+    {
+     "species": "Magneton",
+     "level": 28
+    }
+   ]
+  },
+  {
+   "trainer_class": "Rocket",
+   "index": 38,
+   "x": 13,
+   "y": 16,
+   "team": [
+    {
+     "species": "Golbat",
+     "level": 28
+    },
+    {
+     "species": "Drowzee",
+     "level": 28
+    },
+    {
+     "species": "Hypno",
+     "level": 28
+    }
+   ]
+  }
+ ],
+ "Vermilion Gym": [
+  {
+   "trainer_class": "Lt.Surge",
+   "index": 1,
+   "x": 5,
+   "y": 1,
+   "team": [
+    {
+     "species": "Voltorb",
+     "level": 21
+    },
+    {
+     "species": "Pikachu",
+     "level": 18
+    },
+    {
+     "species": "Raichu",
+     "level": 24
+    }
+   ]
+  },
+  {
+   "trainer_class": "Gentleman",
+   "index": 3,
+   "x": 9,
+   "y": 6,
+   "team": [
+    {
+     "species": "Pikachu",
+     "level": 23
+    }
+   ]
+  },
+  {
+   "trainer_class": "Rocker",
+   "index": 1,
+   "x": 3,
+   "y": 8,
+   "team": [
+    {
+     "species": "Voltorb",
+     "level": 20
+    },
+    {
+     "species": "Magnemite",
+     "level": 20
+    },
+    {
+     "species": "Voltorb",
+     "level": 20
+    }
+   ]
+  },
+  {
+   "trainer_class": "Sailor",
+   "index": 8,
+   "x": 0,
+   "y": 10,
+   "team": [
+    {
+     "species": "Pikachu",
+     "level": 21
+    },
+    {
+     "species": "Pikachu",
+     "level": 21
+    }
+   ]
+  }
+ ],
+ "Victory Road 1F": [
+  {
+   "trainer_class": "Cooltrainer♀",
+   "index": 5,
+   "x": 7,
+   "y": 5,
+   "team": [
+    {
+     "species": "Persian",
+     "level": 44
+    },
+    {
+     "species": "Ninetales",
+     "level": 44
+    }
+   ]
+  },
+  {
+   "trainer_class": "Cooltrainer♂",
+   "index": 5,
+   "x": 3,
+   "y": 2,
+   "team": [
+    {
+     "species": "Ivysaur",
+     "level": 42
+    },
+    {
+     "species": "Wartortle",
+     "level": 42
+    },
+    {
+     "species": "Charmeleon",
+     "level": 42
+    },
+    {
+     "species": "Charizard",
+     "level": 42
+    }
+   ]
+  }
+ ],
+ "Victory Road 2F": [
+  {
+   "trainer_class": "Blackbelt",
+   "index": 9,
+   "x": 12,
+   "y": 9,
+   "team": [
+    {
+     "species": "Machoke",
+     "level": 43
+    },
+    {
+     "species": "Machop",
+     "level": 43
+    },
+    {
+     "species": "Machoke",
+     "level": 43
+    }
+   ]
+  },
+  {
+   "trainer_class": "Juggler",
+   "index": 2,
+   "x": 21,
+   "y": 13,
+   "team": [
+    {
+     "species": "Drowzee",
+     "level": 41
+    },
+    {
+     "species": "Hypno",
+     "level": 41
+    },
+    {
+     "species": "Kadabra",
+     "level": 41
+    },
+    {
+     "species": "Kadabra",
+     "level": 41
+    }
+   ]
+  },
+  {
+   "trainer_class": "Tamer",
+   "index": 5,
+   "x": 19,
+   "y": 8,
+   "team": [
+    {
+     "species": "Persian",
+     "level": 44
+    },
+    {
+     "species": "Golduck",
+     "level": 44
+    }
+   ]
+  },
+  {
+   "trainer_class": "Pokémaniac",
+   "index": 6,
+   "x": 4,
+   "y": 2,
+   "team": [
+    {
+     "species": "Charmeleon",
+     "level": 40
+    },
+    {
+     "species": "Lapras",
+     "level": 40
+    },
+    {
+     "species": "Lickitung",
+     "level": 40
+    }
+   ]
+  },
+  {
+   "trainer_class": "Juggler",
+   "index": 5,
+   "x": 26,
+   "y": 3,
+   "team": [
+    {
+     "species": "Mr. Mime",
+     "level": 48
+    }
+   ]
+  }
+ ],
+ "Victory Road 3F": [
+  {
+   "trainer_class": "Cooltrainer♂",
+   "index": 2,
+   "x": 28,
+   "y": 5,
+   "team": [
+    {
+     "species": "Exeggutor",
+     "level": 43
+    },
+    {
+     "species": "Cloyster",
+     "level": 43
+    },
+    {
+     "species": "Arcanine",
+     "level": 43
+    }
+   ]
+  },
+  {
+   "trainer_class": "Cooltrainer♀",
+   "index": 2,
+   "x": 7,
+   "y": 13,
+   "team": [
+    {
+     "species": "Bellsprout",
+     "level": 43
+    },
+    {
+     "species": "Weepinbell",
+     "level": 43
+    },
+    {
+     "species": "Victreebel",
+     "level": 43
+    }
+   ]
+  },
+  {
+   "trainer_class": "Cooltrainer♂",
+   "index": 3,
+   "x": 6,
+   "y": 14,
+   "team": [
+    {
+     "species": "Kingler",
+     "level": 43
+    },
+    {
+     "species": "Tentacruel",
+     "level": 43
+    },
+    {
+     "species": "Blastoise",
+     "level": 43
+    }
+   ]
+  },
+  {
+   "trainer_class": "Cooltrainer♀",
+   "index": 3,
+   "x": 13,
+   "y": 3,
+   "team": [
+    {
+     "species": "Parasect",
+     "level": 43
+    },
+    {
+     "species": "Dewgong",
+     "level": 43
+    },
+    {
+     "species": "Chansey",
+     "level": 43
+    }
+   ]
+  }
+ ],
+ "Viridian Forest": [
+  {
+   "trainer_class": "Bug Catcher",
+   "index": 1,
+   "x": 30,
+   "y": 33,
+   "team": [
+    {
+     "species": "Weedle",
+     "level": 6
+    },
+    {
+     "species": "Caterpie",
+     "level": 6
+    }
+   ]
+  },
+  {
+   "trainer_class": "Bug Catcher",
+   "index": 2,
+   "x": 30,
+   "y": 19,
+   "team": [
+    {
+     "species": "Weedle",
+     "level": 7
+    },
+    {
+     "species": "Kakuna",
+     "level": 7
+    },
+    {
+     "species": "Weedle",
+     "level": 7
+    }
+   ]
+  },
+  {
+   "trainer_class": "Bug Catcher",
+   "index": 3,
+   "x": 2,
+   "y": 18,
+   "team": [
+    {
+     "species": "Weedle",
+     "level": 9
+    }
+   ]
+  }
+ ],
+ "Viridian Gym": [
+  {
+   "trainer_class": "Giovanni",
+   "index": 3,
+   "x": 2,
+   "y": 1,
+   "team": [
+    {
+     "species": "Rhyhorn",
+     "level": 45
+    },
+    {
+     "species": "Dugtrio",
+     "level": 42
+    },
+    {
+     "species": "Nidoqueen",
+     "level": 44
+    },
+    {
+     "species": "Nidoking",
+     "level": 45
+    },
+    {
+     "species": "Rhydon",
+     "level": 50
+    }
+   ]
+  },
+  {
+   "trainer_class": "Cooltrainer♂",
+   "index": 9,
+   "x": 12,
+   "y": 7,
+   "team": [
+    {
+     "species": "Sandslash",
+     "level": 39
+    },
+    {
+     "species": "Dugtrio",
+     "level": 39
+    }
+   ]
+  },
+  {
+   "trainer_class": "Blackbelt",
+   "index": 6,
+   "x": 11,
+   "y": 11,
+   "team": [
+    {
+     "species": "Machop",
+     "level": 40
+    },
+    {
+     "species": "Machoke",
+     "level": 40
+    }
+   ]
+  },
+  {
+   "trainer_class": "Tamer",
+   "index": 3,
+   "x": 10,
+   "y": 7,
+   "team": [
+    {
+     "species": "Rhyhorn",
+     "level": 43
+    }
+   ]
+  },
+  {
+   "trainer_class": "Blackbelt",
+   "index": 7,
+   "x": 3,
+   "y": 7,
+   "team": [
+    {
+     "species": "Machoke",
+     "level": 43
+    }
+   ]
+  },
+  {
+   "trainer_class": "Cooltrainer♂",
+   "index": 10,
+   "x": 13,
+   "y": 5,
+   "team": [
+    {
+     "species": "Rhyhorn",
+     "level": 43
+    }
+   ]
+  },
+  {
+   "trainer_class": "Blackbelt",
+   "index": 8,
+   "x": 10,
+   "y": 1,
+   "team": [
+    {
+     "species": "Machoke",
+     "level": 38
+    },
+    {
+     "species": "Machop",
+     "level": 38
+    },
+    {
+     "species": "Machoke",
+     "level": 38
+    }
+   ]
+  },
+  {
+   "trainer_class": "Tamer",
+   "index": 4,
+   "x": 2,
+   "y": 16,
+   "team": [
+    {
+     "species": "Arbok",
+     "level": 39
+    },
+    {
+     "species": "Tauros",
+     "level": 39
+    }
+   ]
+  },
+  {
+   "trainer_class": "Cooltrainer♂",
+   "index": 1,
+   "x": 6,
+   "y": 5,
+   "team": [
+    {
+     "species": "Nidorino",
+     "level": 39
+    },
+    {
+     "species": "Nidoking",
+     "level": 39
+    }
+   ]
+  }
+ ]
+}

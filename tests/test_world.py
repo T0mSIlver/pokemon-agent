@@ -1,0 +1,386 @@
+"""Cross-map routing and the plan simulator.
+
+Everything graph-shaped runs against `tests/fixtures/world_min.json`, a
+hand-written Pallet -> Pewter corridor, so these tests pass whether or not the
+generated `pokemon_agent/data/game/world.json` exists yet.
+"""
+
+from __future__ import annotations
+
+import json
+from pathlib import Path
+
+import pytest
+
+from pokemon_agent.agent_cli import ActionError
+from pokemon_agent.navigation import LiveNavigationSnapshot
+from pokemon_agent.world import DEFAULT_WORLD_PATH, World, frontier, path_within, simulate
+
+FIXTURE = Path(__file__).parent / "fixtures" / "world_min.json"
+
+
+@pytest.fixture
+def world() -> World:
+    return World.load(FIXTURE)
+
+
+# ---------------------------------------------------------------------------
+# Collision grids used by the simulator tests
+# ---------------------------------------------------------------------------
+
+#: rows[y][x], truthy is passable — `LiveNavigationSnapshot.terrain`'s shape.
+ROOM = [
+    [1, 1, 1, 1, 1, 1],
+    [1, 0, 0, 0, 1, 1],
+    [1, 1, 1, 0, 1, 1],
+    [1, 0, 1, 1, 1, 1],
+    [1, 1, 1, 1, 1, 1],
+]
+
+OPEN_3X3 = [
+    [1, 1, 1],
+    [1, 1, 1],
+    [1, 1, 1],
+]
+
+
+# ---------------------------------------------------------------------------
+# World graph
+# ---------------------------------------------------------------------------
+
+
+def test_fixture_names_are_real_map_names():
+    from pokemon_agent.memory.red import MAP_NAMES
+
+    known = set(MAP_NAMES.values())
+    payload = json.loads(FIXTURE.read_text(encoding="utf-8"))
+    for name, entry in payload["maps"].items():
+        assert name in known, name
+        for warp in entry["warps"]:
+            assert warp["to_map"] in known, warp
+
+
+def test_map_names_are_sorted_and_complete(world: World):
+    names = world.map_names()
+    assert names == tuple(sorted(names))
+    assert "Pallet Town" in names
+    assert "Viridian Forest" in names
+    # Route 21 is only ever a connection target in the fixture, so it is a
+    # place you can route to but not a map with a record of its own.
+    assert "Route 21" not in names
+
+
+def test_route_pallet_to_pewter_walks_the_corridor_in_order(world: World):
+    hops = world.route("Pallet Town", "Pewter City")
+    assert hops is not None
+    assert [hop.to_map for hop in hops] == [
+        "Route 1",
+        "Viridian City",
+        "Route 2",
+        "Pewter City",
+    ]
+    assert all(hop.kind == "connection" for hop in hops)
+    assert all(hop.edge == "north" for hop in hops)
+    assert all(hop.at is None for hop in hops)
+    # Each hop starts where the previous one landed.
+    assert hops[0].from_map == "Pallet Town"
+    for earlier, later in zip(hops, hops[1:]):
+        assert earlier.to_map == later.from_map
+    assert world.distance("Pallet Town", "Pewter City") == 4
+
+
+def test_route_to_self_is_empty_not_none(world: World):
+    assert world.route("Pallet Town", "Pallet Town") == ()
+    assert world.distance("Pallet Town", "Pallet Town") == 0
+
+
+def test_unreachable_pairs_return_none(world: World):
+    # Cinnabar Island is in the fixture with no connections and no warps.
+    assert world.route("Pallet Town", "Cinnabar Island") is None
+    assert world.distance("Pallet Town", "Cinnabar Island") is None
+    assert world.route("Pallet Town", "Saffron City") is None
+    assert world.route("Nowhere At All", "Pallet Town") is None
+
+
+def test_route_into_a_building_and_back_out(world: World):
+    inward = world.route("Pallet Town", "Red's House 2F")
+    assert inward is not None
+    assert [hop.kind for hop in inward] == ["warp", "warp"]
+    assert inward[0].to_map == "Red's House 1F"
+    assert inward[0].at == (5, 5)
+    assert inward[0].edge is None
+    assert inward[1].to_map == "Red's House 2F"
+    assert inward[1].at == (7, 1)
+
+    outward = world.route("Red's House 2F", "Pallet Town")
+    assert outward is not None
+    assert [hop.to_map for hop in outward] == ["Red's House 1F", "Pallet Town"]
+    assert outward[-1].at == (2, 7)
+
+
+def test_connections_are_two_way_where_the_data_says_so(world: World):
+    north = world.neighbours("Pallet Town")
+    assert any(hop.to_map == "Route 1" and hop.edge == "north" for hop in north)
+    south = world.neighbours("Route 1")
+    assert any(hop.to_map == "Pallet Town" and hop.edge == "south" for hop in south)
+    assert world.distance("Pewter City", "Pallet Town") == 4
+
+
+def test_neighbours_keep_hops_to_maps_with_no_record(world: World):
+    hops = world.neighbours("Pallet Town")
+    assert any(hop.to_map == "Route 21" for hop in hops)
+    assert world.neighbours("Route 21") == ()
+    assert world.distance("Pallet Town", "Route 21") == 1
+
+
+def test_forest_route_prefers_the_road_over_the_gates(world: World):
+    # Route 2 connects straight to Pewter City, so the forest gates must not
+    # win: the shortest route is the road, not the shortcut through the trees.
+    hops = world.route("Viridian City", "Pewter City")
+    assert hops is not None
+    assert len(hops) == 2
+    forest = world.route("Route 2", "Viridian Forest")
+    assert forest is not None
+    assert [hop.to_map for hop in forest] in (
+        ["Viridian Forest South Gate", "Viridian Forest"],
+        ["Viridian Forest North Gate", "Viridian Forest"],
+    )
+
+
+def test_missing_world_file_loads_empty_and_routes_none(tmp_path: Path):
+    world = World.load(tmp_path / "does_not_exist.json")
+    assert world.map_names() == ()
+    assert world.neighbours("Pallet Town") == ()
+    assert world.route("Pallet Town", "Pewter City") is None
+    assert world.distance("Pallet Town", "Pewter City") is None
+
+
+def test_unreadable_world_file_loads_empty(tmp_path: Path):
+    broken = tmp_path / "world.json"
+    broken.write_text("{not json at all", encoding="utf-8")
+    assert World.load(broken).map_names() == ()
+
+    wrong_shape = tmp_path / "wrong.json"
+    wrong_shape.write_text(json.dumps({"maps": []}), encoding="utf-8")
+    assert World.load(wrong_shape).map_names() == ()
+
+
+def test_default_load_works_with_or_without_the_generated_file():
+    world = World.load()
+    if DEFAULT_WORLD_PATH.exists():
+        assert "Pallet Town" in world.map_names()
+    else:
+        assert world.map_names() == ()
+
+
+# ---------------------------------------------------------------------------
+# simulate
+# ---------------------------------------------------------------------------
+
+
+def test_north_is_up_walk_up_decreases_y():
+    result = simulate(["walk_up"], OPEN_3X3, (1, 1), "down")
+    assert result.end_pos == (1, 0)
+    assert result.end_facing == "up"
+    assert result.blocked_at is None
+
+    assert simulate(["down"], OPEN_3X3, (1, 1), "up").end_pos == (1, 2)
+    assert simulate(["left"], OPEN_3X3, (1, 1), "up").end_pos == (0, 1)
+    assert simulate(["right"], OPEN_3X3, (1, 1), "up").end_pos == (2, 1)
+
+
+def test_clean_plan_reports_no_block_and_the_right_end_position():
+    result = simulate(["up:2", "right"], ROOM, (0, 4), "down")
+    assert result.blocked_at is None
+    assert result.blocked_by is None
+    assert result.warp_at is None
+    assert result.end_pos == (1, 2)
+    assert result.end_facing == "right"
+    assert result.steps_taken == 3
+    assert result.trace == ((0, 4), (0, 3), (0, 2), (1, 2))
+    assert result.ok
+
+
+def test_button_presses_cost_a_step_but_move_nothing():
+    result = simulate(["a", "up", "b"], ROOM, (0, 4), "down")
+    assert result.end_pos == (0, 3)
+    assert result.steps_taken == 3
+    assert result.blocked_at is None
+
+
+def test_plan_into_a_wall_reports_the_exact_index():
+    result = simulate(["right", "right", "right"], ROOM, (0, 2), "up")
+    assert result.blocked_at == 2
+    assert result.blocked_by == "wall"
+    assert result.end_pos == (2, 2)
+    # Pressing into a wall turns the player, exactly as the game does.
+    assert result.end_facing == "right"
+    assert result.steps_taken == 2
+    assert result.trace == ((0, 2), (1, 2), (2, 2))
+
+
+def test_blocked_index_counts_expanded_repeats():
+    result = simulate(["right:4"], ROOM, (0, 2), "up")
+    assert result.blocked_at == 2
+    assert result.blocked_by == "wall"
+
+
+def test_walking_off_the_grid_is_an_edge_block():
+    result = simulate(["left"], ROOM, (0, 0), "down")
+    assert result.blocked_at == 0
+    assert result.blocked_by == "edge"
+    assert result.end_pos == (0, 0)
+    assert result.trace == ((0, 0),)
+
+
+def test_sprites_block_as_npcs_from_a_live_snapshot():
+    snapshot = LiveNavigationSnapshot(
+        map_id=1,
+        map_name="Viridian City",
+        player_position=(12, 12),
+        facing="down",
+        tileset="OVERWORLD",
+        window_top_left=(10, 10),
+        terrain=[[1, 1, 1], [1, 1, 1], [1, 1, 1]],
+        sprite_positions=[(12, 11)],
+    )
+    blocked = simulate(["up"], snapshot, (12, 12), "down")
+    assert blocked.blocked_at == 0
+    assert blocked.blocked_by == "npc"
+    # The window offset is honoured: the same plan sideways walks fine.
+    assert simulate(["left"], snapshot, (12, 12), "down").end_pos == (11, 12)
+
+
+def test_explored_map_grid_shape_is_accepted():
+    collision = {
+        "width": 3,
+        "height": 3,
+        "walkable": {(0, 0), (1, 0), (2, 0), (0, 1), (0, 2)},
+        "sprites": [{"x": 2, "y": 0}],
+    }
+    assert simulate(["right"], collision, (0, 0), "down").end_pos == (1, 0)
+    assert simulate(["right:2"], collision, (0, 0), "down").blocked_by == "npc"
+    assert simulate(["down:2", "right"], collision, (0, 0), "down").blocked_at == 2
+
+
+def test_stepping_onto_a_warp_tile_reports_warp_at():
+    result = simulate(["up:3"], ROOM, (0, 4), "down", warps=[(0, 2)])
+    assert result.warp_at == 1
+    assert result.blocked_at is None
+    assert result.end_pos == (0, 2)
+    assert result.steps_taken == 2
+    # Simulation stops on the warp: past it the player is on another map.
+    assert result.trace == ((0, 4), (0, 3), (0, 2))
+
+
+def test_empty_plan_is_a_no_op_and_bad_tokens_raise():
+    result = simulate([], ROOM, (2, 2), "left")
+    assert result.end_pos == (2, 2)
+    assert result.end_facing == "left"
+    assert result.steps_taken == 0
+    assert result.trace == ((2, 2),)
+    with pytest.raises(ActionError):
+        simulate(["moonwalk"], ROOM, (2, 2), "left")
+
+
+# ---------------------------------------------------------------------------
+# path_within
+# ---------------------------------------------------------------------------
+
+
+DETOUR = [
+    [1, 1, 1, 1, 1],
+    [1, 0, 0, 0, 1],
+    [1, 1, 1, 1, 1],
+]
+
+
+def test_path_within_goes_around_an_obstacle():
+    actions = path_within(DETOUR, (1, 0), (1, 2))
+    assert actions is not None
+    assert len(actions) == 4  # straight down is walled; around the left end
+    assert all(action.startswith("walk_") for action in actions)
+    walked = simulate(list(actions), DETOUR, (1, 0), "down")
+    assert walked.blocked_at is None
+    assert walked.end_pos == (1, 2)
+
+
+def test_path_within_is_empty_when_already_there():
+    assert path_within(DETOUR, (0, 0), (0, 0)) == ()
+
+
+def test_path_within_returns_none_when_walled_off():
+    split = [
+        [1, 0, 1],
+        [1, 0, 1],
+        [1, 0, 1],
+    ]
+    assert path_within(split, (0, 0), (2, 0)) is None
+    # A blocked or off-grid target is None, never a path that ends in a wall.
+    assert path_within(split, (0, 0), (1, 1)) is None
+    assert path_within(split, (0, 0), (9, 9)) is None
+
+
+def test_path_within_leaves_a_tile_the_grid_calls_blocked():
+    # The player can stand on a doorway the collision grid reads as solid;
+    # pathing must still walk them off it.
+    doorway = [
+        [1, 1],
+        [0, 1],
+    ]
+    assert path_within(doorway, (0, 1), (1, 1)) == ("walk_right",)
+
+
+# ---------------------------------------------------------------------------
+# frontier
+# ---------------------------------------------------------------------------
+
+
+MAZE = [
+    [1, 1, 1, 0, 1],
+    [1, 0, 1, 0, 1],
+    [1, 1, 1, 0, 1],
+]
+
+
+def test_frontier_is_nearest_first_and_excludes_seen():
+    seen = {(0, 0), (1, 0), (0, 1), (0, 2)}
+    tiles = frontier(MAZE, seen, (0, 0))
+    assert set(tiles) == {(2, 0), (2, 1), (1, 2), (2, 2)}
+    assert tiles[0] == (2, 0)  # two steps away, the closest unseen tile
+    assert tiles[-1] == (2, 2)  # four steps away, the furthest
+    assert not set(tiles) & seen
+    # The x=4 column is walkable but sealed off by the x=3 wall.
+    assert not any(x == 4 for x, _ in tiles)
+
+
+def test_frontier_orders_by_walking_distance_not_straight_line():
+    tiles = frontier(MAZE, set(), (0, 0))
+    steps = {tile: index for index, tile in enumerate(tiles)}
+    # (1, 1) is a wall, so (1, 2) is a four-step walk while (2, 0) is two.
+    assert steps[(2, 0)] < steps[(1, 2)]
+    assert tiles[0] == (0, 0)
+
+
+def test_frontier_is_empty_when_everything_is_seen():
+    everything = {(x, y) for y in range(3) for x in range(5)}
+    assert frontier(MAZE, everything, (0, 0)) == ()
+
+
+def test_frontier_from_a_live_snapshot_window():
+    snapshot = LiveNavigationSnapshot(
+        map_id=51,
+        map_name="Viridian Forest",
+        player_position=(11, 11),
+        facing="down",
+        tileset="FOREST",
+        window_top_left=(10, 10),
+        terrain=[[1, 1, 1], [1, 1, 1], [1, 1, 1]],
+        sprite_positions=[(12, 12)],
+    )
+    tiles = frontier(snapshot, {(11, 11), (11, 10)}, (11, 11))
+    assert (11, 11) not in tiles
+    assert (11, 10) not in tiles
+    assert (12, 12) not in tiles  # an NPC is standing there
+    assert tiles[0] in {(10, 11), (12, 11), (11, 12)}
+    assert len(tiles) == 6

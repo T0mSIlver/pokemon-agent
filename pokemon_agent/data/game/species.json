@@ -1,0 +1,11057 @@
+{
+ "generated_from": "0cd19d3b877b7dc66d12c7050bed9a7f38154d4b",
+ "Abra": {
+  "dex": 63,
+  "types": [
+   "Psychic"
+  ],
+  "base": {
+   "hp": 25,
+   "atk": 20,
+   "def": 15,
+   "spd": 90,
+   "spc": 105
+  },
+  "catch_rate": 200,
+  "base_exp": 73,
+  "growth": "medium_slow",
+  "learnset": [
+   {
+    "level": 1,
+    "move": "Teleport"
+   }
+  ],
+  "tm_hm": [
+   "HM05",
+   "TM01",
+   "TM05",
+   "TM06",
+   "TM08",
+   "TM09",
+   "TM10",
+   "TM17",
+   "TM18",
+   "TM19",
+   "TM20",
+   "TM29",
+   "TM30",
+   "TM31",
+   "TM32",
+   "TM33",
+   "TM34",
+   "TM35",
+   "TM40",
+   "TM44",
+   "TM45",
+   "TM46",
+   "TM49",
+   "TM50"
+  ],
+  "evolutions": [
+   {
+    "to": "Kadabra",
+    "method": "level",
+    "param": 16
+   }
+  ]
+ },
+ "Aerodactyl": {
+  "dex": 142,
+  "types": [
+   "Rock",
+   "Flying"
+  ],
+  "base": {
+   "hp": 80,
+   "atk": 105,
+   "def": 65,
+   "spd": 130,
+   "spc": 60
+  },
+  "catch_rate": 45,
+  "base_exp": 202,
+  "growth": "slow",
+  "learnset": [
+   {
+    "level": 1,
+    "move": "Wing Attack"
+   },
+   {
+    "level": 1,
+    "move": "Agility"
+   },
+   {
+    "level": 33,
+    "move": "Supersonic"
+   },
+   {
+    "level": 38,
+    "move": "Bite"
+   },
+   {
+    "level": 45,
+    "move": "Take Down"
+   },
+   {
+    "level": 54,
+    "move": "Hyper Beam"
+   }
+  ],
+  "tm_hm": [
+   "HM02",
+   "TM02",
+   "TM04",
+   "TM06",
+   "TM09",
+   "TM10",
+   "TM15",
+   "TM20",
+   "TM23",
+   "TM31",
+   "TM32",
+   "TM33",
+   "TM34",
+   "TM38",
+   "TM39",
+   "TM43",
+   "TM44",
+   "TM50"
+  ],
+  "evolutions": []
+ },
+ "Alakazam": {
+  "dex": 65,
+  "types": [
+   "Psychic"
+  ],
+  "base": {
+   "hp": 55,
+   "atk": 50,
+   "def": 45,
+   "spd": 120,
+   "spc": 135
+  },
+  "catch_rate": 50,
+  "base_exp": 186,
+  "growth": "medium_slow",
+  "learnset": [
+   {
+    "level": 1,
+    "move": "Teleport"
+   },
+   {
+    "level": 1,
+    "move": "Confusion"
+   },
+   {
+    "level": 1,
+    "move": "Disable"
+   },
+   {
+    "level": 16,
+    "move": "Confusion"
+   },
+   {
+    "level": 20,
+    "move": "Disable"
+   },
+   {
+    "level": 27,
+    "move": "Psybeam"
+   },
+   {
+    "level": 31,
+    "move": "Recover"
+   },
+   {
+    "level": 38,
+    "move": "Psychic"
+   },
+   {
+    "level": 42,
+    "move": "Reflect"
+   }
+  ],
+  "tm_hm": [
+   "HM05",
+   "TM01",
+   "TM05",
+   "TM06",
+   "TM08",
+   "TM09",
+   "TM10",
+   "TM15",
+   "TM17",
+   "TM18",
+   "TM19",
+   "TM20",
+   "TM28",
+   "TM29",
+   "TM30",
+   "TM31",
+   "TM32",
+   "TM33",
+   "TM34",
+   "TM35",
+   "TM40",
+   "TM44",
+   "TM45",
+   "TM46",
+   "TM49",
+   "TM50"
+  ],
+  "evolutions": []
+ },
+ "Arbok": {
+  "dex": 24,
+  "types": [
+   "Poison"
+  ],
+  "base": {
+   "hp": 60,
+   "atk": 85,
+   "def": 69,
+   "spd": 80,
+   "spc": 65
+  },
+  "catch_rate": 90,
+  "base_exp": 147,
+  "growth": "medium_fast",
+  "learnset": [
+   {
+    "level": 1,
+    "move": "Wrap"
+   },
+   {
+    "level": 1,
+    "move": "Leer"
+   },
+   {
+    "level": 1,
+    "move": "Poison Sting"
+   },
+   {
+    "level": 10,
+    "move": "Poison Sting"
+   },
+   {
+    "level": 17,
+    "move": "Bite"
+   },
+   {
+    "level": 27,
+    "move": "Glare"
+   },
+   {
+    "level": 36,
+    "move": "Screech"
+   },
+   {
+    "level": 47,
+    "move": "Acid"
+   }
+  ],
+  "tm_hm": [
+   "HM04",
+   "TM06",
+   "TM08",
+   "TM09",
+   "TM10",
+   "TM15",
+   "TM20",
+   "TM21",
+   "TM26",
+   "TM27",
+   "TM28",
+   "TM31",
+   "TM32",
+   "TM34",
+   "TM40",
+   "TM44",
+   "TM48",
+   "TM50"
+  ],
+  "evolutions": []
+ },
+ "Arcanine": {
+  "dex": 59,
+  "types": [
+   "Fire"
+  ],
+  "base": {
+   "hp": 90,
+   "atk": 110,
+   "def": 80,
+   "spd": 95,
+   "spc": 80
+  },
+  "catch_rate": 75,
+  "base_exp": 213,
+  "growth": "slow",
+  "learnset": [
+   {
+    "level": 1,
+    "move": "Roar"
+   },
+   {
+    "level": 1,
+    "move": "Ember"
+   },
+   {
+    "level": 1,
+    "move": "Leer"
+   },
+   {
+    "level": 1,
+    "move": "Take Down"
+   }
+  ],
+  "tm_hm": [
+   "TM06",
+   "TM08",
+   "TM09",
+   "TM10",
+   "TM15",
+   "TM20",
+   "TM23",
+   "TM28",
+   "TM30",
+   "TM31",
+   "TM32",
+   "TM33",
+   "TM34",
+   "TM38",
+   "TM39",
+   "TM40",
+   "TM44",
+   "TM50"
+  ],
+  "evolutions": []
+ },
+ "Articuno": {
+  "dex": 144,
+  "types": [
+   "Ice",
+   "Flying"
+  ],
+  "base": {
+   "hp": 90,
+   "atk": 85,
+   "def": 100,
+   "spd": 85,
+   "spc": 125
+  },
+  "catch_rate": 3,
+  "base_exp": 215,
+  "growth": "slow",
+  "learnset": [
+   {
+    "level": 1,
+    "move": "Peck"
+   },
+   {
+    "level": 1,
+    "move": "Ice Beam"
+   },
+   {
+    "level": 51,
+    "move": "Blizzard"
+   },
+   {
+    "level": 55,
+    "move": "Agility"
+   },
+   {
+    "level": 60,
+    "move": "Mist"
+   }
+  ],
+  "tm_hm": [
+   "HM02",
+   "TM02",
+   "TM04",
+   "TM06",
+   "TM09",
+   "TM10",
+   "TM11",
+   "TM12",
+   "TM13",
+   "TM14",
+   "TM15",
+   "TM20",
+   "TM31",
+   "TM32",
+   "TM33",
+   "TM34",
+   "TM39",
+   "TM43",
+   "TM44",
+   "TM50"
+  ],
+  "evolutions": []
+ },
+ "Beedrill": {
+  "dex": 15,
+  "types": [
+   "Bug",
+   "Poison"
+  ],
+  "base": {
+   "hp": 65,
+   "atk": 80,
+   "def": 40,
+   "spd": 75,
+   "spc": 45
+  },
+  "catch_rate": 45,
+  "base_exp": 159,
+  "growth": "medium_fast",
+  "learnset": [
+   {
+    "level": 1,
+    "move": "Fury Attack"
+   },
+   {
+    "level": 12,
+    "move": "Fury Attack"
+   },
+   {
+    "level": 16,
+    "move": "Focus Energy"
+   },
+   {
+    "level": 20,
+    "move": "Twineedle"
+   },
+   {
+    "level": 25,
+    "move": "Rage"
+   },
+   {
+    "level": 30,
+    "move": "Pin Missile"
+   },
+   {
+    "level": 35,
+    "move": "Agility"
+   }
+  ],
+  "tm_hm": [
+   "HM01",
+   "TM03",
+   "TM06",
+   "TM09",
+   "TM10",
+   "TM15",
+   "TM20",
+   "TM21",
+   "TM31",
+   "TM32",
+   "TM33",
+   "TM34",
+   "TM39",
+   "TM40",
+   "TM44",
+   "TM50"
+  ],
+  "evolutions": []
+ },
+ "Bellsprout": {
+  "dex": 69,
+  "types": [
+   "Grass",
+   "Poison"
+  ],
+  "base": {
+   "hp": 50,
+   "atk": 75,
+   "def": 35,
+   "spd": 40,
+   "spc": 70
+  },
+  "catch_rate": 255,
+  "base_exp": 84,
+  "growth": "medium_slow",
+  "learnset": [
+   {
+    "level": 1,
+    "move": "Vine Whip"
+   },
+   {
+    "level": 1,
+    "move": "Growth"
+   },
+   {
+    "level": 13,
+    "move": "Wrap"
+   },
+   {
+    "level": 15,
+    "move": "Poison Powder"
+   },
+   {
+    "level": 18,
+    "move": "Sleep Powder"
+   },
+   {
+    "level": 21,
+    "move": "Stun Spore"
+   },
+   {
+    "level": 26,
+    "move": "Acid"
+   },
+   {
+    "level": 33,
+    "move": "Razor Leaf"
+   },
+   {
+    "level": 42,
+    "move": "Slam"
+   }
+  ],
+  "tm_hm": [
+   "HM01",
+   "TM03",
+   "TM06",
+   "TM09",
+   "TM10",
+   "TM20",
+   "TM21",
+   "TM22",
+   "TM31",
+   "TM32",
+   "TM33",
+   "TM34",
+   "TM44",
+   "TM50"
+  ],
+  "evolutions": [
+   {
+    "to": "Weepinbell",
+    "method": "level",
+    "param": 21
+   }
+  ]
+ },
+ "Blastoise": {
+  "dex": 9,
+  "types": [
+   "Water"
+  ],
+  "base": {
+   "hp": 79,
+   "atk": 83,
+   "def": 100,
+   "spd": 78,
+   "spc": 85
+  },
+  "catch_rate": 45,
+  "base_exp": 210,
+  "growth": "medium_slow",
+  "learnset": [
+   {
+    "level": 1,
+    "move": "Tackle"
+   },
+   {
+    "level": 1,
+    "move": "Tail Whip"
+   },
+   {
+    "level": 1,
+    "move": "Bubble"
+   },
+   {
+    "level": 1,
+    "move": "Water Gun"
+   },
+   {
+    "level": 8,
+    "move": "Bubble"
+   },
+   {
+    "level": 15,
+    "move": "Water Gun"
+   },
+   {
+    "level": 24,
+    "move": "Bite"
+   },
+   {
+    "level": 31,
+    "move": "Withdraw"
+   },
+   {
+    "level": 42,
+    "move": "Skull Bash"
+   },
+   {
+    "level": 52,
+    "move": "Hydro Pump"
+   }
+  ],
+  "tm_hm": [
+   "HM03",
+   "HM04",
+   "TM01",
+   "TM05",
+   "TM06",
+   "TM08",
+   "TM09",
+   "TM10",
+   "TM11",
+   "TM12",
+   "TM13",
+   "TM14",
+   "TM15",
+   "TM17",
+   "TM18",
+   "TM19",
+   "TM20",
+   "TM26",
+   "TM27",
+   "TM28",
+   "TM31",
+   "TM32",
+   "TM33",
+   "TM34",
+   "TM40",
+   "TM44",
+   "TM50"
+  ],
+  "evolutions": []
+ },
+ "Bulbasaur": {
+  "dex": 1,
+  "types": [
+   "Grass",
+   "Poison"
+  ],
+  "base": {
+   "hp": 45,
+   "atk": 49,
+   "def": 49,
+   "spd": 45,
+   "spc": 65
+  },
+  "catch_rate": 45,
+  "base_exp": 64,
+  "growth": "medium_slow",
+  "learnset": [
+   {
+    "level": 1,
+    "move": "Tackle"
+   },
+   {
+    "level": 1,
+    "move": "Growl"
+   },
+   {
+    "level": 7,
+    "move": "Leech Seed"
+   },
+   {
+    "level": 13,
+    "move": "Vine Whip"
+   },
+   {
+    "level": 20,
+    "move": "Poison Powder"
+   },
+   {
+    "level": 27,
+    "move": "Razor Leaf"
+   },
+   {
+    "level": 34,
+    "move": "Growth"
+   },
+   {
+    "level": 41,
+    "move": "Sleep Powder"
+   },
+   {
+    "level": 48,
+    "move": "Solar Beam"
+   }
+  ],
+  "tm_hm": [
+   "HM01",
+   "TM03",
+   "TM06",
+   "TM08",
+   "TM09",
+   "TM10",
+   "TM20",
+   "TM21",
+   "TM22",
+   "TM31",
+   "TM32",
+   "TM33",
+   "TM34",
+   "TM44",
+   "TM50"
+  ],
+  "evolutions": [
+   {
+    "to": "Ivysaur",
+    "method": "level",
+    "param": 16
+   }
+  ]
+ },
+ "Butterfree": {
+  "dex": 12,
+  "types": [
+   "Bug",
+   "Flying"
+  ],
+  "base": {
+   "hp": 60,
+   "atk": 45,
+   "def": 50,
+   "spd": 70,
+   "spc": 80
+  },
+  "catch_rate": 45,
+  "base_exp": 160,
+  "growth": "medium_fast",
+  "learnset": [
+   {
+    "level": 1,
+    "move": "Confusion"
+   },
+   {
+    "level": 12,
+    "move": "Confusion"
+   },
+   {
+    "level": 15,
+    "move": "Poison Powder"
+   },
+   {
+    "level": 16,
+    "move": "Stun Spore"
+   },
+   {
+    "level": 17,
+    "move": "Sleep Powder"
+   },
+   {
+    "level": 21,
+    "move": "Supersonic"
+   },
+   {
+    "level": 26,
+    "move": "Whirlwind"
+   },
+   {
+    "level": 32,
+    "move": "Psybeam"
+   }
+  ],
+  "tm_hm": [
+   "TM02",
+   "TM04",
+   "TM06",
+   "TM09",
+   "TM10",
+   "TM15",
+   "TM20",
+   "TM21",
+   "TM22",
+   "TM29",
+   "TM30",
+   "TM31",
+   "TM32",
+   "TM33",
+   "TM34",
+   "TM39",
+   "TM44",
+   "TM46",
+   "TM50"
+  ],
+  "evolutions": []
+ },
+ "Caterpie": {
+  "dex": 10,
+  "types": [
+   "Bug"
+  ],
+  "base": {
+   "hp": 45,
+   "atk": 30,
+   "def": 35,
+   "spd": 45,
+   "spc": 20
+  },
+  "catch_rate": 255,
+  "base_exp": 53,
+  "growth": "medium_fast",
+  "learnset": [
+   {
+    "level": 1,
+    "move": "Tackle"
+   },
+   {
+    "level": 1,
+    "move": "String Shot"
+   }
+  ],
+  "tm_hm": [],
+  "evolutions": [
+   {
+    "to": "Metapod",
+    "method": "level",
+    "param": 7
+   }
+  ]
+ },
+ "Chansey": {
+  "dex": 113,
+  "types": [
+   "Normal"
+  ],
+  "base": {
+   "hp": 250,
+   "atk": 5,
+   "def": 5,
+   "spd": 50,
+   "spc": 105
+  },
+  "catch_rate": 30,
+  "base_exp": 255,
+  "growth": "fast",
+  "learnset": [
+   {
+    "level": 1,
+    "move": "Pound"
+   },
+   {
+    "level": 1,
+    "move": "Double Slap"
+   },
+   {
+    "level": 24,
+    "move": "Sing"
+   },
+   {
+    "level": 30,
+    "move": "Growl"
+   },
+   {
+    "level": 38,
+    "move": "Minimize"
+   },
+   {
+    "level": 44,
+    "move": "Defense Curl"
+   },
+   {
+    "level": 48,
+    "move": "Light Screen"
+   },
+   {
+    "level": 54,
+    "move": "Double-Edge"
+   }
+  ],
+  "tm_hm": [
+   "HM04",
+   "HM05",
+   "TM01",
+   "TM05",
+   "TM06",
+   "TM08",
+   "TM09",
+   "TM10",
+   "TM11",
+   "TM12",
+   "TM13",
+   "TM14",
+   "TM15",
+   "TM17",
+   "TM18",
+   "TM19",
+   "TM20",
+   "TM22",
+   "TM24",
+   "TM25",
+   "TM29",
+   "TM30",
+   "TM31",
+   "TM32",
+   "TM33",
+   "TM34",
+   "TM35",
+   "TM37",
+   "TM38",
+   "TM40",
+   "TM41",
+   "TM44",
+   "TM45",
+   "TM46",
+   "TM49",
+   "TM50"
+  ],
+  "evolutions": []
+ },
+ "Charizard": {
+  "dex": 6,
+  "types": [
+   "Fire",
+   "Flying"
+  ],
+  "base": {
+   "hp": 78,
+   "atk": 84,
+   "def": 78,
+   "spd": 100,
+   "spc": 85
+  },
+  "catch_rate": 45,
+  "base_exp": 209,
+  "growth": "medium_slow",
+  "learnset": [
+   {
+    "level": 1,
+    "move": "Scratch"
+   },
+   {
+    "level": 1,
+    "move": "Growl"
+   },
+   {
+    "level": 1,
+    "move": "Ember"
+   },
+   {
+    "level": 1,
+    "move": "Leer"
+   },
+   {
+    "level": 9,
+    "move": "Ember"
+   },
+   {
+    "level": 15,
+    "move": "Leer"
+   },
+   {
+    "level": 24,
+    "move": "Rage"
+   },
+   {
+    "level": 36,
+    "move": "Slash"
+   },
+   {
+    "level": 46,
+    "move": "Flamethrower"
+   },
+   {
+    "level": 55,
+    "move": "Fire Spin"
+   }
+  ],
+  "tm_hm": [
+   "HM01",
+   "HM04",
+   "TM01",
+   "TM03",
+   "TM05",
+   "TM06",
+   "TM08",
+   "TM09",
+   "TM10",
+   "TM15",
+   "TM17",
+   "TM18",
+   "TM19",
+   "TM20",
+   "TM23",
+   "TM26",
+   "TM27",
+   "TM28",
+   "TM31",
+   "TM32",
+   "TM33",
+   "TM34",
+   "TM38",
+   "TM39",
+   "TM40",
+   "TM44",
+   "TM50"
+  ],
+  "evolutions": []
+ },
+ "Charmander": {
+  "dex": 4,
+  "types": [
+   "Fire"
+  ],
+  "base": {
+   "hp": 39,
+   "atk": 52,
+   "def": 43,
+   "spd": 65,
+   "spc": 50
+  },
+  "catch_rate": 45,
+  "base_exp": 65,
+  "growth": "medium_slow",
+  "learnset": [
+   {
+    "level": 1,
+    "move": "Scratch"
+   },
+   {
+    "level": 1,
+    "move": "Growl"
+   },
+   {
+    "level": 9,
+    "move": "Ember"
+   },
+   {
+    "level": 15,
+    "move": "Leer"
+   },
+   {
+    "level": 22,
+    "move": "Rage"
+   },
+   {
+    "level": 30,
+    "move": "Slash"
+   },
+   {
+    "level": 38,
+    "move": "Flamethrower"
+   },
+   {
+    "level": 46,
+    "move": "Fire Spin"
+   }
+  ],
+  "tm_hm": [
+   "HM01",
+   "HM04",
+   "TM01",
+   "TM03",
+   "TM05",
+   "TM06",
+   "TM08",
+   "TM09",
+   "TM10",
+   "TM17",
+   "TM18",
+   "TM19",
+   "TM20",
+   "TM23",
+   "TM28",
+   "TM31",
+   "TM32",
+   "TM33",
+   "TM34",
+   "TM38",
+   "TM39",
+   "TM40",
+   "TM44",
+   "TM50"
+  ],
+  "evolutions": [
+   {
+    "to": "Charmeleon",
+    "method": "level",
+    "param": 16
+   }
+  ]
+ },
+ "Charmeleon": {
+  "dex": 5,
+  "types": [
+   "Fire"
+  ],
+  "base": {
+   "hp": 58,
+   "atk": 64,
+   "def": 58,
+   "spd": 80,
+   "spc": 65
+  },
+  "catch_rate": 45,
+  "base_exp": 142,
+  "growth": "medium_slow",
+  "learnset": [
+   {
+    "level": 1,
+    "move": "Scratch"
+   },
+   {
+    "level": 1,
+    "move": "Growl"
+   },
+   {
+    "level": 1,
+    "move": "Ember"
+   },
+   {
+    "level": 9,
+    "move": "Ember"
+   },
+   {
+    "level": 15,
+    "move": "Leer"
+   },
+   {
+    "level": 24,
+    "move": "Rage"
+   },
+   {
+    "level": 33,
+    "move": "Slash"
+   },
+   {
+    "level": 42,
+    "move": "Flamethrower"
+   },
+   {
+    "level": 56,
+    "move": "Fire Spin"
+   }
+  ],
+  "tm_hm": [
+   "HM01",
+   "HM04",
+   "TM01",
+   "TM03",
+   "TM05",
+   "TM06",
+   "TM08",
+   "TM09",
+   "TM10",
+   "TM17",
+   "TM18",
+   "TM19",
+   "TM20",
+   "TM23",
+   "TM28",
+   "TM31",
+   "TM32",
+   "TM33",
+   "TM34",
+   "TM38",
+   "TM39",
+   "TM40",
+   "TM44",
+   "TM50"
+  ],
+  "evolutions": [
+   {
+    "to": "Charizard",
+    "method": "level",
+    "param": 36
+   }
+  ]
+ },
+ "Clefable": {
+  "dex": 36,
+  "types": [
+   "Normal"
+  ],
+  "base": {
+   "hp": 95,
+   "atk": 70,
+   "def": 73,
+   "spd": 60,
+   "spc": 85
+  },
+  "catch_rate": 25,
+  "base_exp": 129,
+  "growth": "fast",
+  "learnset": [
+   {
+    "level": 1,
+    "move": "Sing"
+   },
+   {
+    "level": 1,
+    "move": "Double Slap"
+   },
+   {
+    "level": 1,
+    "move": "Minimize"
+   },
+   {
+    "level": 1,
+    "move": "Metronome"
+   }
+  ],
+  "tm_hm": [
+   "HM04",
+   "HM05",
+   "TM01",
+   "TM05",
+   "TM06",
+   "TM08",
+   "TM09",
+   "TM10",
+   "TM11",
+   "TM12",
+   "TM13",
+   "TM14",
+   "TM15",
+   "TM17",
+   "TM18",
+   "TM19",
+   "TM20",
+   "TM22",
+   "TM24",
+   "TM25",
+   "TM29",
+   "TM30",
+   "TM31",
+   "TM32",
+   "TM33",
+   "TM34",
+   "TM35",
+   "TM38",
+   "TM40",
+   "TM44",
+   "TM45",
+   "TM46",
+   "TM49",
+   "TM50"
+  ],
+  "evolutions": []
+ },
+ "Clefairy": {
+  "dex": 35,
+  "types": [
+   "Normal"
+  ],
+  "base": {
+   "hp": 70,
+   "atk": 45,
+   "def": 48,
+   "spd": 35,
+   "spc": 60
+  },
+  "catch_rate": 150,
+  "base_exp": 68,
+  "growth": "fast",
+  "learnset": [
+   {
+    "level": 1,
+    "move": "Pound"
+   },
+   {
+    "level": 1,
+    "move": "Growl"
+   },
+   {
+    "level": 13,
+    "move": "Sing"
+   },
+   {
+    "level": 18,
+    "move": "Double Slap"
+   },
+   {
+    "level": 24,
+    "move": "Minimize"
+   },
+   {
+    "level": 31,
+    "move": "Metronome"
+   },
+   {
+    "level": 39,
+    "move": "Defense Curl"
+   },
+   {
+    "level": 48,
+    "move": "Light Screen"
+   }
+  ],
+  "tm_hm": [
+   "HM04",
+   "HM05",
+   "TM01",
+   "TM05",
+   "TM06",
+   "TM08",
+   "TM09",
+   "TM10",
+   "TM11",
+   "TM12",
+   "TM13",
+   "TM14",
+   "TM17",
+   "TM18",
+   "TM19",
+   "TM20",
+   "TM22",
+   "TM24",
+   "TM25",
+   "TM29",
+   "TM30",
+   "TM31",
+   "TM32",
+   "TM33",
+   "TM34",
+   "TM35",
+   "TM38",
+   "TM40",
+   "TM44",
+   "TM45",
+   "TM46",
+   "TM49",
+   "TM50"
+  ],
+  "evolutions": [
+   {
+    "to": "Clefable",
+    "method": "item",
+    "param": "Moon Stone"
+   }
+  ]
+ },
+ "Cloyster": {
+  "dex": 91,
+  "types": [
+   "Water",
+   "Ice"
+  ],
+  "base": {
+   "hp": 50,
+   "atk": 95,
+   "def": 180,
+   "spd": 70,
+   "spc": 85
+  },
+  "catch_rate": 60,
+  "base_exp": 203,
+  "growth": "slow",
+  "learnset": [
+   {
+    "level": 1,
+    "move": "Withdraw"
+   },
+   {
+    "level": 1,
+    "move": "Supersonic"
+   },
+   {
+    "level": 1,
+    "move": "Clamp"
+   },
+   {
+    "level": 1,
+    "move": "Aurora Beam"
+   },
+   {
+    "level": 50,
+    "move": "Spike Cannon"
+   }
+  ],
+  "tm_hm": [
+   "HM03",
+   "TM06",
+   "TM09",
+   "TM10",
+   "TM11",
+   "TM12",
+   "TM13",
+   "TM14",
+   "TM15",
+   "TM20",
+   "TM30",
+   "TM31",
+   "TM32",
+   "TM33",
+   "TM34",
+   "TM36",
+   "TM39",
+   "TM44",
+   "TM47",
+   "TM49",
+   "TM50"
+  ],
+  "evolutions": []
+ },
+ "Cubone": {
+  "dex": 104,
+  "types": [
+   "Ground"
+  ],
+  "base": {
+   "hp": 50,
+   "atk": 50,
+   "def": 95,
+   "spd": 35,
+   "spc": 40
+  },
+  "catch_rate": 190,
+  "base_exp": 87,
+  "growth": "medium_fast",
+  "learnset": [
+   {
+    "level": 1,
+    "move": "Bone Club"
+   },
+   {
+    "level": 1,
+    "move": "Growl"
+   },
+   {
+    "level": 25,
+    "move": "Leer"
+   },
+   {
+    "level": 31,
+    "move": "Focus Energy"
+   },
+   {
+    "level": 38,
+    "move": "Thrash"
+   },
+   {
+    "level": 43,
+    "move": "Bonemerang"
+   },
+   {
+    "level": 46,
+    "move": "Rage"
+   }
+  ],
+  "tm_hm": [
+   "HM04",
+   "TM01",
+   "TM05",
+   "TM06",
+   "TM08",
+   "TM09",
+   "TM10",
+   "TM11",
+   "TM12",
+   "TM13",
+   "TM14",
+   "TM17",
+   "TM18",
+   "TM19",
+   "TM20",
+   "TM26",
+   "TM27",
+   "TM28",
+   "TM31",
+   "TM32",
+   "TM34",
+   "TM38",
+   "TM40",
+   "TM44",
+   "TM50"
+  ],
+  "evolutions": [
+   {
+    "to": "Marowak",
+    "method": "level",
+    "param": 28
+   }
+  ]
+ },
+ "Dewgong": {
+  "dex": 87,
+  "types": [
+   "Water",
+   "Ice"
+  ],
+  "base": {
+   "hp": 90,
+   "atk": 70,
+   "def": 80,
+   "spd": 70,
+   "spc": 95
+  },
+  "catch_rate": 75,
+  "base_exp": 176,
+  "growth": "medium_fast",
+  "learnset": [
+   {
+    "level": 1,
+    "move": "Headbutt"
+   },
+   {
+    "level": 1,
+    "move": "Growl"
+   },
+   {
+    "level": 1,
+    "move": "Aurora Beam"
+   },
+   {
+    "level": 30,
+    "move": "Growl"
+   },
+   {
+    "level": 35,
+    "move": "Aurora Beam"
+   },
+   {
+    "level": 44,
+    "move": "Rest"
+   },
+   {
+    "level": 50,
+    "move": "Take Down"
+   },
+   {
+    "level": 56,
+    "move": "Ice Beam"
+   }
+  ],
+  "tm_hm": [
+   "HM03",
+   "HM04",
+   "TM06",
+   "TM07",
+   "TM08",
+   "TM09",
+   "TM10",
+   "TM11",
+   "TM12",
+   "TM13",
+   "TM14",
+   "TM15",
+   "TM16",
+   "TM20",
+   "TM31",
+   "TM32",
+   "TM34",
+   "TM40",
+   "TM44",
+   "TM50"
+  ],
+  "evolutions": []
+ },
+ "Diglett": {
+  "dex": 50,
+  "types": [
+   "Ground"
+  ],
+  "base": {
+   "hp": 10,
+   "atk": 55,
+   "def": 25,
+   "spd": 95,
+   "spc": 45
+  },
+  "catch_rate": 255,
+  "base_exp": 81,
+  "growth": "medium_fast",
+  "learnset": [
+   {
+    "level": 1,
+    "move": "Scratch"
+   },
+   {
+    "level": 15,
+    "move": "Growl"
+   },
+   {
+    "level": 19,
+    "move": "Dig"
+   },
+   {
+    "level": 24,
+    "move": "Sand Attack"
+   },
+   {
+    "level": 31,
+    "move": "Slash"
+   },
+   {
+    "level": 40,
+    "move": "Earthquake"
+   }
+  ],
+  "tm_hm": [
+   "TM06",
+   "TM08",
+   "TM09",
+   "TM10",
+   "TM20",
+   "TM26",
+   "TM27",
+   "TM28",
+   "TM31",
+   "TM32",
+   "TM34",
+   "TM44",
+   "TM48",
+   "TM50"
+  ],
+  "evolutions": [
+   {
+    "to": "Dugtrio",
+    "method": "level",
+    "param": 26
+   }
+  ]
+ },
+ "Ditto": {
+  "dex": 132,
+  "types": [
+   "Normal"
+  ],
+  "base": {
+   "hp": 48,
+   "atk": 48,
+   "def": 48,
+   "spd": 48,
+   "spc": 48
+  },
+  "catch_rate": 35,
+  "base_exp": 61,
+  "growth": "medium_fast",
+  "learnset": [
+   {
+    "level": 1,
+    "move": "Transform"
+   }
+  ],
+  "tm_hm": [],
+  "evolutions": []
+ },
+ "Dodrio": {
+  "dex": 85,
+  "types": [
+   "Normal",
+   "Flying"
+  ],
+  "base": {
+   "hp": 60,
+   "atk": 110,
+   "def": 70,
+   "spd": 100,
+   "spc": 60
+  },
+  "catch_rate": 45,
+  "base_exp": 158,
+  "growth": "medium_fast",
+  "learnset": [
+   {
+    "level": 1,
+    "move": "Peck"
+   },
+   {
+    "level": 1,
+    "move": "Growl"
+   },
+   {
+    "level": 1,
+    "move": "Fury Attack"
+   },
+   {
+    "level": 20,
+    "move": "Growl"
+   },
+   {
+    "level": 24,
+    "move": "Fury Attack"
+   },
+   {
+    "level": 30,
+    "move": "Drill Peck"
+   },
+   {
+    "level": 39,
+    "move": "Rage"
+   },
+   {
+    "level": 45,
+    "move": "Tri Attack"
+   },
+   {
+    "level": 51,
+    "move": "Agility"
+   }
+  ],
+  "tm_hm": [
+   "HM02",
+   "TM04",
+   "TM06",
+   "TM08",
+   "TM09",
+   "TM10",
+   "TM15",
+   "TM20",
+   "TM31",
+   "TM32",
+   "TM33",
+   "TM34",
+   "TM40",
+   "TM43",
+   "TM44",
+   "TM49",
+   "TM50"
+  ],
+  "evolutions": []
+ },
+ "Doduo": {
+  "dex": 84,
+  "types": [
+   "Normal",
+   "Flying"
+  ],
+  "base": {
+   "hp": 35,
+   "atk": 85,
+   "def": 45,
+   "spd": 75,
+   "spc": 35
+  },
+  "catch_rate": 190,
+  "base_exp": 96,
+  "growth": "medium_fast",
+  "learnset": [
+   {
+    "level": 1,
+    "move": "Peck"
+   },
+   {
+    "level": 20,
+    "move": "Growl"
+   },
+   {
+    "level": 24,
+    "move": "Fury Attack"
+   },
+   {
+    "level": 30,
+    "move": "Drill Peck"
+   },
+   {
+    "level": 36,
+    "move": "Rage"
+   },
+   {
+    "level": 40,
+    "move": "Tri Attack"
+   },
+   {
+    "level": 44,
+    "move": "Agility"
+   }
+  ],
+  "tm_hm": [
+   "HM02",
+   "TM04",
+   "TM06",
+   "TM08",
+   "TM09",
+   "TM10",
+   "TM20",
+   "TM31",
+   "TM32",
+   "TM33",
+   "TM34",
+   "TM40",
+   "TM43",
+   "TM44",
+   "TM49",
+   "TM50"
+  ],
+  "evolutions": [
+   {
+    "to": "Dodrio",
+    "method": "level",
+    "param": 31
+   }
+  ]
+ },
+ "Dragonair": {
+  "dex": 148,
+  "types": [
+   "Dragon"
+  ],
+  "base": {
+   "hp": 61,
+   "atk": 84,
+   "def": 65,
+   "spd": 70,
+   "spc": 70
+  },
+  "catch_rate": 45,
+  "base_exp": 144,
+  "growth": "slow",
+  "learnset": [
+   {
+    "level": 1,
+    "move": "Wrap"
+   },
+   {
+    "level": 1,
+    "move": "Leer"
+   },
+   {
+    "level": 1,
+    "move": "Thunder Wave"
+   },
+   {
+    "level": 10,
+    "move": "Thunder Wave"
+   },
+   {
+    "level": 20,
+    "move": "Agility"
+   },
+   {
+    "level": 35,
+    "move": "Slam"
+   },
+   {
+    "level": 45,
+    "move": "Dragon Rage"
+   },
+   {
+    "level": 55,
+    "move": "Hyper Beam"
+   }
+  ],
+  "tm_hm": [
+   "HM03",
+   "TM06",
+   "TM07",
+   "TM08",
+   "TM09",
+   "TM10",
+   "TM11",
+   "TM12",
+   "TM13",
+   "TM14",
+   "TM20",
+   "TM23",
+   "TM24",
+   "TM25",
+   "TM31",
+   "TM32",
+   "TM33",
+   "TM34",
+   "TM38",
+   "TM39",
+   "TM40",
+   "TM44",
+   "TM45",
+   "TM50"
+  ],
+  "evolutions": [
+   {
+    "to": "Dragonite",
+    "method": "level",
+    "param": 55
+   }
+  ]
+ },
+ "Dragonite": {
+  "dex": 149,
+  "types": [
+   "Dragon",
+   "Flying"
+  ],
+  "base": {
+   "hp": 91,
+   "atk": 134,
+   "def": 95,
+   "spd": 80,
+   "spc": 100
+  },
+  "catch_rate": 45,
+  "base_exp": 218,
+  "growth": "slow",
+  "learnset": [
+   {
+    "level": 1,
+    "move": "Wrap"
+   },
+   {
+    "level": 1,
+    "move": "Leer"
+   },
+   {
+    "level": 1,
+    "move": "Thunder Wave"
+   },
+   {
+    "level": 1,
+    "move": "Agility"
+   },
+   {
+    "level": 10,
+    "move": "Thunder Wave"
+   },
+   {
+    "level": 20,
+    "move": "Agility"
+   },
+   {
+    "level": 35,
+    "move": "Slam"
+   },
+   {
+    "level": 45,
+    "move": "Dragon Rage"
+   },
+   {
+    "level": 60,
+    "move": "Hyper Beam"
+   }
+  ],
+  "tm_hm": [
+   "HM03",
+   "HM04",
+   "TM02",
+   "TM06",
+   "TM07",
+   "TM08",
+   "TM09",
+   "TM10",
+   "TM11",
+   "TM12",
+   "TM13",
+   "TM14",
+   "TM15",
+   "TM20",
+   "TM23",
+   "TM24",
+   "TM25",
+   "TM31",
+   "TM32",
+   "TM33",
+   "TM34",
+   "TM38",
+   "TM39",
+   "TM40",
+   "TM44",
+   "TM45",
+   "TM50"
+  ],
+  "evolutions": []
+ },
+ "Dratini": {
+  "dex": 147,
+  "types": [
+   "Dragon"
+  ],
+  "base": {
+   "hp": 41,
+   "atk": 64,
+   "def": 45,
+   "spd": 50,
+   "spc": 50
+  },
+  "catch_rate": 45,
+  "base_exp": 67,
+  "growth": "slow",
+  "learnset": [
+   {
+    "level": 1,
+    "move": "Wrap"
+   },
+   {
+    "level": 1,
+    "move": "Leer"
+   },
+   {
+    "level": 10,
+    "move": "Thunder Wave"
+   },
+   {
+    "level": 20,
+    "move": "Agility"
+   },
+   {
+    "level": 30,
+    "move": "Slam"
+   },
+   {
+    "level": 40,
+    "move": "Dragon Rage"
+   },
+   {
+    "level": 50,
+    "move": "Hyper Beam"
+   }
+  ],
+  "tm_hm": [
+   "HM03",
+   "TM06",
+   "TM08",
+   "TM09",
+   "TM10",
+   "TM11",
+   "TM12",
+   "TM13",
+   "TM14",
+   "TM20",
+   "TM23",
+   "TM24",
+   "TM25",
+   "TM31",
+   "TM32",
+   "TM33",
+   "TM34",
+   "TM38",
+   "TM39",
+   "TM40",
+   "TM44",
+   "TM45",
+   "TM50"
+  ],
+  "evolutions": [
+   {
+    "to": "Dragonair",
+    "method": "level",
+    "param": 30
+   }
+  ]
+ },
+ "Drowzee": {
+  "dex": 96,
+  "types": [
+   "Psychic"
+  ],
+  "base": {
+   "hp": 60,
+   "atk": 48,
+   "def": 45,
+   "spd": 42,
+   "spc": 90
+  },
+  "catch_rate": 190,
+  "base_exp": 102,
+  "growth": "medium_fast",
+  "learnset": [
+   {
+    "level": 1,
+    "move": "Pound"
+   },
+   {
+    "level": 1,
+    "move": "Hypnosis"
+   },
+   {
+    "level": 12,
+    "move": "Disable"
+   },
+   {
+    "level": 17,
+    "move": "Confusion"
+   },
+   {
+    "level": 24,
+    "move": "Headbutt"
+   },
+   {
+    "level": 29,
+    "move": "Poison Gas"
+   },
+   {
+    "level": 32,
+    "move": "Psychic"
+   },
+   {
+    "level": 37,
+    "move": "Meditate"
+   }
+  ],
+  "tm_hm": [
+   "HM05",
+   "TM01",
+   "TM05",
+   "TM06",
+   "TM08",
+   "TM09",
+   "TM10",
+   "TM17",
+   "TM18",
+   "TM19",
+   "TM20",
+   "TM29",
+   "TM30",
+   "TM31",
+   "TM32",
+   "TM33",
+   "TM34",
+   "TM35",
+   "TM40",
+   "TM42",
+   "TM44",
+   "TM45",
+   "TM46",
+   "TM49",
+   "TM50"
+  ],
+  "evolutions": [
+   {
+    "to": "Hypno",
+    "method": "level",
+    "param": 26
+   }
+  ]
+ },
+ "Dugtrio": {
+  "dex": 51,
+  "types": [
+   "Ground"
+  ],
+  "base": {
+   "hp": 35,
+   "atk": 80,
+   "def": 50,
+   "spd": 120,
+   "spc": 70
+  },
+  "catch_rate": 50,
+  "base_exp": 153,
+  "growth": "medium_fast",
+  "learnset": [
+   {
+    "level": 1,
+    "move": "Scratch"
+   },
+   {
+    "level": 1,
+    "move": "Growl"
+   },
+   {
+    "level": 1,
+    "move": "Dig"
+   },
+   {
+    "level": 15,
+    "move": "Growl"
+   },
+   {
+    "level": 19,
+    "move": "Dig"
+   },
+   {
+    "level": 24,
+    "move": "Sand Attack"
+   },
+   {
+    "level": 35,
+    "move": "Slash"
+   },
+   {
+    "level": 47,
+    "move": "Earthquake"
+   }
+  ],
+  "tm_hm": [
+   "TM06",
+   "TM08",
+   "TM09",
+   "TM10",
+   "TM15",
+   "TM20",
+   "TM26",
+   "TM27",
+   "TM28",
+   "TM31",
+   "TM32",
+   "TM34",
+   "TM44",
+   "TM48",
+   "TM50"
+  ],
+  "evolutions": []
+ },
+ "Eevee": {
+  "dex": 133,
+  "types": [
+   "Normal"
+  ],
+  "base": {
+   "hp": 55,
+   "atk": 55,
+   "def": 50,
+   "spd": 55,
+   "spc": 65
+  },
+  "catch_rate": 45,
+  "base_exp": 92,
+  "growth": "medium_fast",
+  "learnset": [
+   {
+    "level": 1,
+    "move": "Tackle"
+   },
+   {
+    "level": 1,
+    "move": "Sand Attack"
+   },
+   {
+    "level": 27,
+    "move": "Quick Attack"
+   },
+   {
+    "level": 31,
+    "move": "Tail Whip"
+   },
+   {
+    "level": 37,
+    "move": "Bite"
+   },
+   {
+    "level": 45,
+    "move": "Take Down"
+   }
+  ],
+  "tm_hm": [
+   "TM06",
+   "TM08",
+   "TM09",
+   "TM10",
+   "TM20",
+   "TM31",
+   "TM32",
+   "TM33",
+   "TM34",
+   "TM39",
+   "TM40",
+   "TM44",
+   "TM50"
+  ],
+  "evolutions": [
+   {
+    "to": "Flareon",
+    "method": "item",
+    "param": "Fire Stone"
+   },
+   {
+    "to": "Jolteon",
+    "method": "item",
+    "param": "Thunder Stone"
+   },
+   {
+    "to": "Vaporeon",
+    "method": "item",
+    "param": "Water Stone"
+   }
+  ]
+ },
+ "Ekans": {
+  "dex": 23,
+  "types": [
+   "Poison"
+  ],
+  "base": {
+   "hp": 35,
+   "atk": 60,
+   "def": 44,
+   "spd": 55,
+   "spc": 40
+  },
+  "catch_rate": 255,
+  "base_exp": 62,
+  "growth": "medium_fast",
+  "learnset": [
+   {
+    "level": 1,
+    "move": "Wrap"
+   },
+   {
+    "level": 1,
+    "move": "Leer"
+   },
+   {
+    "level": 10,
+    "move": "Poison Sting"
+   },
+   {
+    "level": 17,
+    "move": "Bite"
+   },
+   {
+    "level": 24,
+    "move": "Glare"
+   },
+   {
+    "level": 31,
+    "move": "Screech"
+   },
+   {
+    "level": 38,
+    "move": "Acid"
+   }
+  ],
+  "tm_hm": [
+   "HM04",
+   "TM06",
+   "TM08",
+   "TM09",
+   "TM10",
+   "TM20",
+   "TM21",
+   "TM26",
+   "TM27",
+   "TM28",
+   "TM31",
+   "TM32",
+   "TM34",
+   "TM40",
+   "TM44",
+   "TM48",
+   "TM50"
+  ],
+  "evolutions": [
+   {
+    "to": "Arbok",
+    "method": "level",
+    "param": 22
+   }
+  ]
+ },
+ "Electabuzz": {
+  "dex": 125,
+  "types": [
+   "Electric"
+  ],
+  "base": {
+   "hp": 65,
+   "atk": 83,
+   "def": 57,
+   "spd": 105,
+   "spc": 85
+  },
+  "catch_rate": 45,
+  "base_exp": 156,
+  "growth": "medium_fast",
+  "learnset": [
+   {
+    "level": 1,
+    "move": "Quick Attack"
+   },
+   {
+    "level": 1,
+    "move": "Leer"
+   },
+   {
+    "level": 34,
+    "move": "Thunder Shock"
+   },
+   {
+    "level": 37,
+    "move": "Screech"
+   },
+   {
+    "level": 42,
+    "move": "Thunder Punch"
+   },
+   {
+    "level": 49,
+    "move": "Light Screen"
+   },
+   {
+    "level": 54,
+    "move": "Thunder"
+   }
+  ],
+  "tm_hm": [
+   "HM04",
+   "HM05",
+   "TM01",
+   "TM05",
+   "TM06",
+   "TM08",
+   "TM09",
+   "TM10",
+   "TM15",
+   "TM17",
+   "TM18",
+   "TM19",
+   "TM20",
+   "TM24",
+   "TM25",
+   "TM29",
+   "TM30",
+   "TM31",
+   "TM32",
+   "TM33",
+   "TM34",
+   "TM35",
+   "TM39",
+   "TM40",
+   "TM44",
+   "TM45",
+   "TM46",
+   "TM50"
+  ],
+  "evolutions": []
+ },
+ "Electrode": {
+  "dex": 101,
+  "types": [
+   "Electric"
+  ],
+  "base": {
+   "hp": 60,
+   "atk": 50,
+   "def": 70,
+   "spd": 140,
+   "spc": 80
+  },
+  "catch_rate": 60,
+  "base_exp": 150,
+  "growth": "medium_fast",
+  "learnset": [
+   {
+    "level": 1,
+    "move": "Tackle"
+   },
+   {
+    "level": 1,
+    "move": "Screech"
+   },
+   {
+    "level": 1,
+    "move": "Sonic Boom"
+   },
+   {
+    "level": 17,
+    "move": "Sonic Boom"
+   },
+   {
+    "level": 22,
+    "move": "Self-Destruct"
+   },
+   {
+    "level": 29,
+    "move": "Light Screen"
+   },
+   {
+    "level": 40,
+    "move": "Swift"
+   },
+   {
+    "level": 50,
+    "move": "Explosion"
+   }
+  ],
+  "tm_hm": [
+   "HM05",
+   "TM06",
+   "TM09",
+   "TM15",
+   "TM20",
+   "TM24",
+   "TM25",
+   "TM30",
+   "TM31",
+   "TM32",
+   "TM33",
+   "TM34",
+   "TM36",
+   "TM39",
+   "TM40",
+   "TM44",
+   "TM45",
+   "TM47",
+   "TM50"
+  ],
+  "evolutions": []
+ },
+ "Exeggcute": {
+  "dex": 102,
+  "types": [
+   "Grass",
+   "Psychic"
+  ],
+  "base": {
+   "hp": 60,
+   "atk": 40,
+   "def": 80,
+   "spd": 40,
+   "spc": 60
+  },
+  "catch_rate": 90,
+  "base_exp": 98,
+  "growth": "slow",
+  "learnset": [
+   {
+    "level": 1,
+    "move": "Barrage"
+   },
+   {
+    "level": 1,
+    "move": "Hypnosis"
+   },
+   {
+    "level": 25,
+    "move": "Reflect"
+   },
+   {
+    "level": 28,
+    "move": "Leech Seed"
+   },
+   {
+    "level": 32,
+    "move": "Stun Spore"
+   },
+   {
+    "level": 37,
+    "move": "Poison Powder"
+   },
+   {
+    "level": 42,
+    "move": "Solar Beam"
+   },
+   {
+    "level": 48,
+    "move": "Sleep Powder"
+   }
+  ],
+  "tm_hm": [
+   "TM06",
+   "TM09",
+   "TM10",
+   "TM20",
+   "TM29",
+   "TM30",
+   "TM31",
+   "TM32",
+   "TM33",
+   "TM34",
+   "TM36",
+   "TM37",
+   "TM44",
+   "TM46",
+   "TM47",
+   "TM50"
+  ],
+  "evolutions": [
+   {
+    "to": "Exeggutor",
+    "method": "item",
+    "param": "Leaf Stone"
+   }
+  ]
+ },
+ "Exeggutor": {
+  "dex": 103,
+  "types": [
+   "Grass",
+   "Psychic"
+  ],
+  "base": {
+   "hp": 95,
+   "atk": 95,
+   "def": 85,
+   "spd": 55,
+   "spc": 125
+  },
+  "catch_rate": 45,
+  "base_exp": 212,
+  "growth": "slow",
+  "learnset": [
+   {
+    "level": 1,
+    "move": "Barrage"
+   },
+   {
+    "level": 1,
+    "move": "Hypnosis"
+   },
+   {
+    "level": 28,
+    "move": "Stomp"
+   }
+  ],
+  "tm_hm": [
+   "HM04",
+   "TM06",
+   "TM09",
+   "TM10",
+   "TM15",
+   "TM20",
+   "TM21",
+   "TM22",
+   "TM29",
+   "TM30",
+   "TM31",
+   "TM32",
+   "TM33",
+   "TM34",
+   "TM36",
+   "TM37",
+   "TM44",
+   "TM46",
+   "TM47",
+   "TM50"
+  ],
+  "evolutions": []
+ },
+ "Farfetch'd": {
+  "dex": 83,
+  "types": [
+   "Normal",
+   "Flying"
+  ],
+  "base": {
+   "hp": 52,
+   "atk": 65,
+   "def": 55,
+   "spd": 60,
+   "spc": 58
+  },
+  "catch_rate": 45,
+  "base_exp": 94,
+  "growth": "medium_fast",
+  "learnset": [
+   {
+    "level": 1,
+    "move": "Peck"
+   },
+   {
+    "level": 1,
+    "move": "Sand Attack"
+   },
+   {
+    "level": 7,
+    "move": "Leer"
+   },
+   {
+    "level": 15,
+    "move": "Fury Attack"
+   },
+   {
+    "level": 23,
+    "move": "Swords Dance"
+   },
+   {
+    "level": 31,
+    "move": "Agility"
+   },
+   {
+    "level": 39,
+    "move": "Slash"
+   }
+  ],
+  "tm_hm": [
+   "HM01",
+   "HM02",
+   "TM02",
+   "TM03",
+   "TM04",
+   "TM06",
+   "TM08",
+   "TM09",
+   "TM10",
+   "TM20",
+   "TM31",
+   "TM32",
+   "TM33",
+   "TM34",
+   "TM39",
+   "TM40",
+   "TM44",
+   "TM50"
+  ],
+  "evolutions": []
+ },
+ "Fearow": {
+  "dex": 22,
+  "types": [
+   "Normal",
+   "Flying"
+  ],
+  "base": {
+   "hp": 65,
+   "atk": 90,
+   "def": 65,
+   "spd": 100,
+   "spc": 61
+  },
+  "catch_rate": 90,
+  "base_exp": 162,
+  "growth": "medium_fast",
+  "learnset": [
+   {
+    "level": 1,
+    "move": "Peck"
+   },
+   {
+    "level": 1,
+    "move": "Growl"
+   },
+   {
+    "level": 1,
+    "move": "Leer"
+   },
+   {
+    "level": 9,
+    "move": "Leer"
+   },
+   {
+    "level": 15,
+    "move": "Fury Attack"
+   },
+   {
+    "level": 25,
+    "move": "Mirror Move"
+   },
+   {
+    "level": 34,
+    "move": "Drill Peck"
+   },
+   {
+    "level": 43,
+    "move": "Agility"
+   }
+  ],
+  "tm_hm": [
+   "HM02",
+   "TM02",
+   "TM04",
+   "TM06",
+   "TM09",
+   "TM10",
+   "TM15",
+   "TM20",
+   "TM31",
+   "TM32",
+   "TM34",
+   "TM39",
+   "TM43",
+   "TM44",
+   "TM50"
+  ],
+  "evolutions": []
+ },
+ "Flareon": {
+  "dex": 136,
+  "types": [
+   "Fire"
+  ],
+  "base": {
+   "hp": 65,
+   "atk": 130,
+   "def": 60,
+   "spd": 65,
+   "spc": 110
+  },
+  "catch_rate": 45,
+  "base_exp": 198,
+  "growth": "medium_fast",
+  "learnset": [
+   {
+    "level": 1,
+    "move": "Tackle"
+   },
+   {
+    "level": 1,
+    "move": "Sand Attack"
+   },
+   {
+    "level": 1,
+    "move": "Quick Attack"
+   },
+   {
+    "level": 1,
+    "move": "Ember"
+   },
+   {
+    "level": 27,
+    "move": "Quick Attack"
+   },
+   {
+    "level": 31,
+    "move": "Ember"
+   },
+   {
+    "level": 37,
+    "move": "Tail Whip"
+   },
+   {
+    "level": 40,
+    "move": "Bite"
+   },
+   {
+    "level": 42,
+    "move": "Leer"
+   },
+   {
+    "level": 44,
+    "move": "Fire Spin"
+   },
+   {
+    "level": 48,
+    "move": "Rage"
+   },
+   {
+    "level": 54,
+    "move": "Flamethrower"
+   }
+  ],
+  "tm_hm": [
+   "TM06",
+   "TM08",
+   "TM09",
+   "TM10",
+   "TM15",
+   "TM20",
+   "TM31",
+   "TM32",
+   "TM33",
+   "TM34",
+   "TM38",
+   "TM39",
+   "TM40",
+   "TM44",
+   "TM50"
+  ],
+  "evolutions": []
+ },
+ "Gastly": {
+  "dex": 92,
+  "types": [
+   "Ghost",
+   "Poison"
+  ],
+  "base": {
+   "hp": 30,
+   "atk": 35,
+   "def": 30,
+   "spd": 80,
+   "spc": 100
+  },
+  "catch_rate": 190,
+  "base_exp": 95,
+  "growth": "medium_slow",
+  "learnset": [
+   {
+    "level": 1,
+    "move": "Lick"
+   },
+   {
+    "level": 1,
+    "move": "Confuse Ray"
+   },
+   {
+    "level": 1,
+    "move": "Night Shade"
+   },
+   {
+    "level": 27,
+    "move": "Hypnosis"
+   },
+   {
+    "level": 35,
+    "move": "Dream Eater"
+   }
+  ],
+  "tm_hm": [
+   "TM06",
+   "TM20",
+   "TM21",
+   "TM24",
+   "TM25",
+   "TM29",
+   "TM31",
+   "TM32",
+   "TM34",
+   "TM36",
+   "TM42",
+   "TM44",
+   "TM46",
+   "TM47",
+   "TM50"
+  ],
+  "evolutions": [
+   {
+    "to": "Haunter",
+    "method": "level",
+    "param": 25
+   }
+  ]
+ },
+ "Gengar": {
+  "dex": 94,
+  "types": [
+   "Ghost",
+   "Poison"
+  ],
+  "base": {
+   "hp": 60,
+   "atk": 65,
+   "def": 60,
+   "spd": 110,
+   "spc": 130
+  },
+  "catch_rate": 45,
+  "base_exp": 190,
+  "growth": "medium_slow",
+  "learnset": [
+   {
+    "level": 1,
+    "move": "Lick"
+   },
+   {
+    "level": 1,
+    "move": "Confuse Ray"
+   },
+   {
+    "level": 1,
+    "move": "Night Shade"
+   },
+   {
+    "level": 29,
+    "move": "Hypnosis"
+   },
+   {
+    "level": 38,
+    "move": "Dream Eater"
+   }
+  ],
+  "tm_hm": [
+   "HM04",
+   "TM01",
+   "TM05",
+   "TM06",
+   "TM08",
+   "TM09",
+   "TM10",
+   "TM15",
+   "TM17",
+   "TM18",
+   "TM19",
+   "TM20",
+   "TM21",
+   "TM24",
+   "TM25",
+   "TM29",
+   "TM31",
+   "TM32",
+   "TM34",
+   "TM35",
+   "TM36",
+   "TM40",
+   "TM42",
+   "TM44",
+   "TM46",
+   "TM47",
+   "TM50"
+  ],
+  "evolutions": []
+ },
+ "Geodude": {
+  "dex": 74,
+  "types": [
+   "Rock",
+   "Ground"
+  ],
+  "base": {
+   "hp": 40,
+   "atk": 80,
+   "def": 100,
+   "spd": 20,
+   "spc": 30
+  },
+  "catch_rate": 255,
+  "base_exp": 86,
+  "growth": "medium_slow",
+  "learnset": [
+   {
+    "level": 1,
+    "move": "Tackle"
+   },
+   {
+    "level": 11,
+    "move": "Defense Curl"
+   },
+   {
+    "level": 16,
+    "move": "Rock Throw"
+   },
+   {
+    "level": 21,
+    "move": "Self-Destruct"
+   },
+   {
+    "level": 26,
+    "move": "Harden"
+   },
+   {
+    "level": 31,
+    "move": "Earthquake"
+   },
+   {
+    "level": 36,
+    "move": "Explosion"
+   }
+  ],
+  "tm_hm": [
+   "HM04",
+   "TM01",
+   "TM06",
+   "TM08",
+   "TM09",
+   "TM10",
+   "TM17",
+   "TM18",
+   "TM19",
+   "TM20",
+   "TM26",
+   "TM27",
+   "TM28",
+   "TM31",
+   "TM32",
+   "TM34",
+   "TM35",
+   "TM36",
+   "TM38",
+   "TM44",
+   "TM47",
+   "TM48",
+   "TM50"
+  ],
+  "evolutions": [
+   {
+    "to": "Graveler",
+    "method": "level",
+    "param": 25
+   }
+  ]
+ },
+ "Gloom": {
+  "dex": 44,
+  "types": [
+   "Grass",
+   "Poison"
+  ],
+  "base": {
+   "hp": 60,
+   "atk": 65,
+   "def": 70,
+   "spd": 40,
+   "spc": 85
+  },
+  "catch_rate": 120,
+  "base_exp": 132,
+  "growth": "medium_slow",
+  "learnset": [
+   {
+    "level": 1,
+    "move": "Absorb"
+   },
+   {
+    "level": 1,
+    "move": "Poison Powder"
+   },
+   {
+    "level": 1,
+    "move": "Stun Spore"
+   },
+   {
+    "level": 15,
+    "move": "Poison Powder"
+   },
+   {
+    "level": 17,
+    "move": "Stun Spore"
+   },
+   {
+    "level": 19,
+    "move": "Sleep Powder"
+   },
+   {
+    "level": 28,
+    "move": "Acid"
+   },
+   {
+    "level": 38,
+    "move": "Petal Dance"
+   },
+   {
+    "level": 52,
+    "move": "Solar Beam"
+   }
+  ],
+  "tm_hm": [
+   "HM01",
+   "TM03",
+   "TM06",
+   "TM09",
+   "TM10",
+   "TM20",
+   "TM21",
+   "TM22",
+   "TM31",
+   "TM32",
+   "TM33",
+   "TM34",
+   "TM44",
+   "TM50"
+  ],
+  "evolutions": [
+   {
+    "to": "Vileplume",
+    "method": "item",
+    "param": "Leaf Stone"
+   }
+  ]
+ },
+ "Golbat": {
+  "dex": 42,
+  "types": [
+   "Poison",
+   "Flying"
+  ],
+  "base": {
+   "hp": 75,
+   "atk": 80,
+   "def": 70,
+   "spd": 90,
+   "spc": 75
+  },
+  "catch_rate": 90,
+  "base_exp": 171,
+  "growth": "medium_fast",
+  "learnset": [
+   {
+    "level": 1,
+    "move": "Leech Life"
+   },
+   {
+    "level": 1,
+    "move": "Screech"
+   },
+   {
+    "level": 1,
+    "move": "Bite"
+   },
+   {
+    "level": 10,
+    "move": "Supersonic"
+   },
+   {
+    "level": 15,
+    "move": "Bite"
+   },
+   {
+    "level": 21,
+    "move": "Confuse Ray"
+   },
+   {
+    "level": 32,
+    "move": "Wing Attack"
+   },
+   {
+    "level": 43,
+    "move": "Haze"
+   }
+  ],
+  "tm_hm": [
+   "TM02",
+   "TM04",
+   "TM06",
+   "TM09",
+   "TM10",
+   "TM15",
+   "TM20",
+   "TM21",
+   "TM31",
+   "TM32",
+   "TM34",
+   "TM39",
+   "TM44",
+   "TM50"
+  ],
+  "evolutions": []
+ },
+ "Goldeen": {
+  "dex": 118,
+  "types": [
+   "Water"
+  ],
+  "base": {
+   "hp": 45,
+   "atk": 67,
+   "def": 60,
+   "spd": 63,
+   "spc": 50
+  },
+  "catch_rate": 225,
+  "base_exp": 111,
+  "growth": "medium_fast",
+  "learnset": [
+   {
+    "level": 1,
+    "move": "Peck"
+   },
+   {
+    "level": 1,
+    "move": "Tail Whip"
+   },
+   {
+    "level": 19,
+    "move": "Supersonic"
+   },
+   {
+    "level": 24,
+    "move": "Horn Attack"
+   },
+   {
+    "level": 30,
+    "move": "Fury Attack"
+   },
+   {
+    "level": 37,
+    "move": "Waterfall"
+   },
+   {
+    "level": 45,
+    "move": "Horn Drill"
+   },
+   {
+    "level": 54,
+    "move": "Agility"
+   }
+  ],
+  "tm_hm": [
+   "HM03",
+   "TM06",
+   "TM07",
+   "TM09",
+   "TM10",
+   "TM11",
+   "TM12",
+   "TM13",
+   "TM14",
+   "TM20",
+   "TM31",
+   "TM32",
+   "TM34",
+   "TM39",
+   "TM40",
+   "TM44",
+   "TM50"
+  ],
+  "evolutions": [
+   {
+    "to": "Seaking",
+    "method": "level",
+    "param": 33
+   }
+  ]
+ },
+ "Golduck": {
+  "dex": 55,
+  "types": [
+   "Water"
+  ],
+  "base": {
+   "hp": 80,
+   "atk": 82,
+   "def": 78,
+   "spd": 85,
+   "spc": 80
+  },
+  "catch_rate": 75,
+  "base_exp": 174,
+  "growth": "medium_fast",
+  "learnset": [
+   {
+    "level": 1,
+    "move": "Scratch"
+   },
+   {
+    "level": 1,
+    "move": "Tail Whip"
+   },
+   {
+    "level": 1,
+    "move": "Disable"
+   },
+   {
+    "level": 28,
+    "move": "Tail Whip"
+   },
+   {
+    "level": 31,
+    "move": "Disable"
+   },
+   {
+    "level": 39,
+    "move": "Confusion"
+   },
+   {
+    "level": 48,
+    "move": "Fury Swipes"
+   },
+   {
+    "level": 59,
+    "move": "Hydro Pump"
+   }
+  ],
+  "tm_hm": [
+   "HM03",
+   "HM04",
+   "TM01",
+   "TM05",
+   "TM06",
+   "TM08",
+   "TM09",
+   "TM10",
+   "TM11",
+   "TM12",
+   "TM13",
+   "TM14",
+   "TM15",
+   "TM16",
+   "TM17",
+   "TM18",
+   "TM19",
+   "TM20",
+   "TM28",
+   "TM31",
+   "TM32",
+   "TM34",
+   "TM39",
+   "TM40",
+   "TM44",
+   "TM50"
+  ],
+  "evolutions": []
+ },
+ "Golem": {
+  "dex": 76,
+  "types": [
+   "Rock",
+   "Ground"
+  ],
+  "base": {
+   "hp": 80,
+   "atk": 110,
+   "def": 130,
+   "spd": 45,
+   "spc": 55
+  },
+  "catch_rate": 45,
+  "base_exp": 177,
+  "growth": "medium_slow",
+  "learnset": [
+   {
+    "level": 1,
+    "move": "Tackle"
+   },
+   {
+    "level": 1,
+    "move": "Defense Curl"
+   },
+   {
+    "level": 11,
+    "move": "Defense Curl"
+   },
+   {
+    "level": 16,
+    "move": "Rock Throw"
+   },
+   {
+    "level": 21,
+    "move": "Self-Destruct"
+   },
+   {
+    "level": 29,
+    "move": "Harden"
+   },
+   {
+    "level": 36,
+    "move": "Earthquake"
+   },
+   {
+    "level": 43,
+    "move": "Explosion"
+   }
+  ],
+  "tm_hm": [
+   "HM04",
+   "TM01",
+   "TM05",
+   "TM06",
+   "TM08",
+   "TM09",
+   "TM10",
+   "TM15",
+   "TM17",
+   "TM18",
+   "TM19",
+   "TM20",
+   "TM26",
+   "TM27",
+   "TM28",
+   "TM31",
+   "TM32",
+   "TM34",
+   "TM35",
+   "TM36",
+   "TM38",
+   "TM44",
+   "TM47",
+   "TM48",
+   "TM50"
+  ],
+  "evolutions": []
+ },
+ "Graveler": {
+  "dex": 75,
+  "types": [
+   "Rock",
+   "Ground"
+  ],
+  "base": {
+   "hp": 55,
+   "atk": 95,
+   "def": 115,
+   "spd": 35,
+   "spc": 45
+  },
+  "catch_rate": 120,
+  "base_exp": 134,
+  "growth": "medium_slow",
+  "learnset": [
+   {
+    "level": 1,
+    "move": "Tackle"
+   },
+   {
+    "level": 1,
+    "move": "Defense Curl"
+   },
+   {
+    "level": 11,
+    "move": "Defense Curl"
+   },
+   {
+    "level": 16,
+    "move": "Rock Throw"
+   },
+   {
+    "level": 21,
+    "move": "Self-Destruct"
+   },
+   {
+    "level": 29,
+    "move": "Harden"
+   },
+   {
+    "level": 36,
+    "move": "Earthquake"
+   },
+   {
+    "level": 43,
+    "move": "Explosion"
+   }
+  ],
+  "tm_hm": [
+   "HM04",
+   "TM01",
+   "TM06",
+   "TM08",
+   "TM09",
+   "TM10",
+   "TM17",
+   "TM18",
+   "TM19",
+   "TM20",
+   "TM26",
+   "TM27",
+   "TM28",
+   "TM31",
+   "TM32",
+   "TM34",
+   "TM35",
+   "TM36",
+   "TM38",
+   "TM44",
+   "TM47",
+   "TM48",
+   "TM50"
+  ],
+  "evolutions": [
+   {
+    "to": "Golem",
+    "method": "trade",
+    "param": 1
+   }
+  ]
+ },
+ "Grimer": {
+  "dex": 88,
+  "types": [
+   "Poison"
+  ],
+  "base": {
+   "hp": 80,
+   "atk": 80,
+   "def": 50,
+   "spd": 25,
+   "spc": 40
+  },
+  "catch_rate": 190,
+  "base_exp": 90,
+  "growth": "medium_fast",
+  "learnset": [
+   {
+    "level": 1,
+    "move": "Pound"
+   },
+   {
+    "level": 1,
+    "move": "Disable"
+   },
+   {
+    "level": 30,
+    "move": "Poison Gas"
+   },
+   {
+    "level": 33,
+    "move": "Minimize"
+   },
+   {
+    "level": 37,
+    "move": "Sludge"
+   },
+   {
+    "level": 42,
+    "move": "Harden"
+   },
+   {
+    "level": 48,
+    "move": "Screech"
+   },
+   {
+    "level": 55,
+    "move": "Acid Armor"
+   }
+  ],
+  "tm_hm": [
+   "TM06",
+   "TM08",
+   "TM20",
+   "TM21",
+   "TM24",
+   "TM25",
+   "TM31",
+   "TM32",
+   "TM34",
+   "TM36",
+   "TM38",
+   "TM44",
+   "TM47",
+   "TM50"
+  ],
+  "evolutions": [
+   {
+    "to": "Muk",
+    "method": "level",
+    "param": 38
+   }
+  ]
+ },
+ "Growlithe": {
+  "dex": 58,
+  "types": [
+   "Fire"
+  ],
+  "base": {
+   "hp": 55,
+   "atk": 70,
+   "def": 45,
+   "spd": 60,
+   "spc": 50
+  },
+  "catch_rate": 190,
+  "base_exp": 91,
+  "growth": "slow",
+  "learnset": [
+   {
+    "level": 1,
+    "move": "Bite"
+   },
+   {
+    "level": 1,
+    "move": "Roar"
+   },
+   {
+    "level": 18,
+    "move": "Ember"
+   },
+   {
+    "level": 23,
+    "move": "Leer"
+   },
+   {
+    "level": 30,
+    "move": "Take Down"
+   },
+   {
+    "level": 39,
+    "move": "Agility"
+   },
+   {
+    "level": 50,
+    "move": "Flamethrower"
+   }
+  ],
+  "tm_hm": [
+   "TM06",
+   "TM08",
+   "TM09",
+   "TM10",
+   "TM20",
+   "TM23",
+   "TM28",
+   "TM31",
+   "TM32",
+   "TM33",
+   "TM34",
+   "TM38",
+   "TM39",
+   "TM40",
+   "TM44",
+   "TM50"
+  ],
+  "evolutions": [
+   {
+    "to": "Arcanine",
+    "method": "item",
+    "param": "Fire Stone"
+   }
+  ]
+ },
+ "Gyarados": {
+  "dex": 130,
+  "types": [
+   "Water",
+   "Flying"
+  ],
+  "base": {
+   "hp": 95,
+   "atk": 125,
+   "def": 79,
+   "spd": 81,
+   "spc": 100
+  },
+  "catch_rate": 45,
+  "base_exp": 214,
+  "growth": "slow",
+  "learnset": [
+   {
+    "level": 1,
+    "move": "Bite"
+   },
+   {
+    "level": 1,
+    "move": "Dragon Rage"
+   },
+   {
+    "level": 1,
+    "move": "Leer"
+   },
+   {
+    "level": 1,
+    "move": "Hydro Pump"
+   },
+   {
+    "level": 20,
+    "move": "Bite"
+   },
+   {
+    "level": 25,
+    "move": "Dragon Rage"
+   },
+   {
+    "level": 32,
+    "move": "Leer"
+   },
+   {
+    "level": 41,
+    "move": "Hydro Pump"
+   },
+   {
+    "level": 52,
+    "move": "Hyper Beam"
+   }
+  ],
+  "tm_hm": [
+   "HM03",
+   "HM04",
+   "TM06",
+   "TM08",
+   "TM09",
+   "TM10",
+   "TM11",
+   "TM12",
+   "TM13",
+   "TM14",
+   "TM15",
+   "TM20",
+   "TM23",
+   "TM24",
+   "TM25",
+   "TM31",
+   "TM32",
+   "TM33",
+   "TM34",
+   "TM38",
+   "TM40",
+   "TM44",
+   "TM50"
+  ],
+  "evolutions": []
+ },
+ "Haunter": {
+  "dex": 93,
+  "types": [
+   "Ghost",
+   "Poison"
+  ],
+  "base": {
+   "hp": 45,
+   "atk": 50,
+   "def": 45,
+   "spd": 95,
+   "spc": 115
+  },
+  "catch_rate": 90,
+  "base_exp": 126,
+  "growth": "medium_slow",
+  "learnset": [
+   {
+    "level": 1,
+    "move": "Lick"
+   },
+   {
+    "level": 1,
+    "move": "Confuse Ray"
+   },
+   {
+    "level": 1,
+    "move": "Night Shade"
+   },
+   {
+    "level": 29,
+    "move": "Hypnosis"
+   },
+   {
+    "level": 38,
+    "move": "Dream Eater"
+   }
+  ],
+  "tm_hm": [
+   "TM06",
+   "TM20",
+   "TM21",
+   "TM24",
+   "TM25",
+   "TM29",
+   "TM31",
+   "TM32",
+   "TM34",
+   "TM36",
+   "TM42",
+   "TM44",
+   "TM46",
+   "TM47",
+   "TM50"
+  ],
+  "evolutions": [
+   {
+    "to": "Gengar",
+    "method": "trade",
+    "param": 1
+   }
+  ]
+ },
+ "Hitmonchan": {
+  "dex": 107,
+  "types": [
+   "Fighting"
+  ],
+  "base": {
+   "hp": 50,
+   "atk": 105,
+   "def": 79,
+   "spd": 76,
+   "spc": 35
+  },
+  "catch_rate": 45,
+  "base_exp": 140,
+  "growth": "medium_fast",
+  "learnset": [
+   {
+    "level": 1,
+    "move": "Comet Punch"
+   },
+   {
+    "level": 1,
+    "move": "Agility"
+   },
+   {
+    "level": 33,
+    "move": "Fire Punch"
+   },
+   {
+    "level": 38,
+    "move": "Ice Punch"
+   },
+   {
+    "level": 43,
+    "move": "Thunder Punch"
+   },
+   {
+    "level": 48,
+    "move": "Mega Punch"
+   },
+   {
+    "level": 53,
+    "move": "Counter"
+   }
+  ],
+  "tm_hm": [
+   "HM04",
+   "TM01",
+   "TM05",
+   "TM06",
+   "TM08",
+   "TM09",
+   "TM10",
+   "TM17",
+   "TM18",
+   "TM19",
+   "TM20",
+   "TM31",
+   "TM32",
+   "TM34",
+   "TM35",
+   "TM39",
+   "TM40",
+   "TM44",
+   "TM50"
+  ],
+  "evolutions": []
+ },
+ "Hitmonlee": {
+  "dex": 106,
+  "types": [
+   "Fighting"
+  ],
+  "base": {
+   "hp": 50,
+   "atk": 120,
+   "def": 53,
+   "spd": 87,
+   "spc": 35
+  },
+  "catch_rate": 45,
+  "base_exp": 139,
+  "growth": "medium_fast",
+  "learnset": [
+   {
+    "level": 1,
+    "move": "Double Kick"
+   },
+   {
+    "level": 1,
+    "move": "Meditate"
+   },
+   {
+    "level": 33,
+    "move": "Rolling Kick"
+   },
+   {
+    "level": 38,
+    "move": "Jump Kick"
+   },
+   {
+    "level": 43,
+    "move": "Focus Energy"
+   },
+   {
+    "level": 48,
+    "move": "High Jump Kick"
+   },
+   {
+    "level": 53,
+    "move": "Mega Kick"
+   }
+  ],
+  "tm_hm": [
+   "HM04",
+   "TM01",
+   "TM05",
+   "TM06",
+   "TM08",
+   "TM09",
+   "TM10",
+   "TM17",
+   "TM18",
+   "TM19",
+   "TM20",
+   "TM31",
+   "TM32",
+   "TM34",
+   "TM35",
+   "TM39",
+   "TM40",
+   "TM44",
+   "TM50"
+  ],
+  "evolutions": []
+ },
+ "Horsea": {
+  "dex": 116,
+  "types": [
+   "Water"
+  ],
+  "base": {
+   "hp": 30,
+   "atk": 40,
+   "def": 70,
+   "spd": 60,
+   "spc": 70
+  },
+  "catch_rate": 225,
+  "base_exp": 83,
+  "growth": "medium_fast",
+  "learnset": [
+   {
+    "level": 1,
+    "move": "Bubble"
+   },
+   {
+    "level": 19,
+    "move": "Smokescreen"
+   },
+   {
+    "level": 24,
+    "move": "Leer"
+   },
+   {
+    "level": 30,
+    "move": "Water Gun"
+   },
+   {
+    "level": 37,
+    "move": "Agility"
+   },
+   {
+    "level": 45,
+    "move": "Hydro Pump"
+   }
+  ],
+  "tm_hm": [
+   "HM03",
+   "TM06",
+   "TM09",
+   "TM10",
+   "TM11",
+   "TM12",
+   "TM13",
+   "TM14",
+   "TM20",
+   "TM31",
+   "TM32",
+   "TM34",
+   "TM39",
+   "TM40",
+   "TM44",
+   "TM50"
+  ],
+  "evolutions": [
+   {
+    "to": "Seadra",
+    "method": "level",
+    "param": 32
+   }
+  ]
+ },
+ "Hypno": {
+  "dex": 97,
+  "types": [
+   "Psychic"
+  ],
+  "base": {
+   "hp": 85,
+   "atk": 73,
+   "def": 70,
+   "spd": 67,
+   "spc": 115
+  },
+  "catch_rate": 75,
+  "base_exp": 165,
+  "growth": "medium_fast",
+  "learnset": [
+   {
+    "level": 1,
+    "move": "Pound"
+   },
+   {
+    "level": 1,
+    "move": "Hypnosis"
+   },
+   {
+    "level": 1,
+    "move": "Disable"
+   },
+   {
+    "level": 1,
+    "move": "Confusion"
+   },
+   {
+    "level": 12,
+    "move": "Disable"
+   },
+   {
+    "level": 17,
+    "move": "Confusion"
+   },
+   {
+    "level": 24,
+    "move": "Headbutt"
+   },
+   {
+    "level": 33,
+    "move": "Poison Gas"
+   },
+   {
+    "level": 37,
+    "move": "Psychic"
+   },
+   {
+    "level": 43,
+    "move": "Meditate"
+   }
+  ],
+  "tm_hm": [
+   "HM05",
+   "TM01",
+   "TM05",
+   "TM06",
+   "TM08",
+   "TM09",
+   "TM10",
+   "TM15",
+   "TM17",
+   "TM18",
+   "TM19",
+   "TM20",
+   "TM29",
+   "TM30",
+   "TM31",
+   "TM32",
+   "TM33",
+   "TM34",
+   "TM35",
+   "TM40",
+   "TM42",
+   "TM44",
+   "TM45",
+   "TM46",
+   "TM49",
+   "TM50"
+  ],
+  "evolutions": []
+ },
+ "Ivysaur": {
+  "dex": 2,
+  "types": [
+   "Grass",
+   "Poison"
+  ],
+  "base": {
+   "hp": 60,
+   "atk": 62,
+   "def": 63,
+   "spd": 60,
+   "spc": 80
+  },
+  "catch_rate": 45,
+  "base_exp": 141,
+  "growth": "medium_slow",
+  "learnset": [
+   {
+    "level": 1,
+    "move": "Tackle"
+   },
+   {
+    "level": 1,
+    "move": "Growl"
+   },
+   {
+    "level": 1,
+    "move": "Leech Seed"
+   },
+   {
+    "level": 7,
+    "move": "Leech Seed"
+   },
+   {
+    "level": 13,
+    "move": "Vine Whip"
+   },
+   {
+    "level": 22,
+    "move": "Poison Powder"
+   },
+   {
+    "level": 30,
+    "move": "Razor Leaf"
+   },
+   {
+    "level": 38,
+    "move": "Growth"
+   },
+   {
+    "level": 46,
+    "move": "Sleep Powder"
+   },
+   {
+    "level": 54,
+    "move": "Solar Beam"
+   }
+  ],
+  "tm_hm": [
+   "HM01",
+   "TM03",
+   "TM06",
+   "TM08",
+   "TM09",
+   "TM10",
+   "TM20",
+   "TM21",
+   "TM22",
+   "TM31",
+   "TM32",
+   "TM33",
+   "TM34",
+   "TM44",
+   "TM50"
+  ],
+  "evolutions": [
+   {
+    "to": "Venusaur",
+    "method": "level",
+    "param": 32
+   }
+  ]
+ },
+ "Jigglypuff": {
+  "dex": 39,
+  "types": [
+   "Normal"
+  ],
+  "base": {
+   "hp": 115,
+   "atk": 45,
+   "def": 20,
+   "spd": 20,
+   "spc": 25
+  },
+  "catch_rate": 170,
+  "base_exp": 76,
+  "growth": "fast",
+  "learnset": [
+   {
+    "level": 1,
+    "move": "Sing"
+   },
+   {
+    "level": 9,
+    "move": "Pound"
+   },
+   {
+    "level": 14,
+    "move": "Disable"
+   },
+   {
+    "level": 19,
+    "move": "Defense Curl"
+   },
+   {
+    "level": 24,
+    "move": "Double Slap"
+   },
+   {
+    "level": 29,
+    "move": "Rest"
+   },
+   {
+    "level": 34,
+    "move": "Body Slam"
+   },
+   {
+    "level": 39,
+    "move": "Double-Edge"
+   }
+  ],
+  "tm_hm": [
+   "HM04",
+   "HM05",
+   "TM01",
+   "TM05",
+   "TM06",
+   "TM08",
+   "TM09",
+   "TM10",
+   "TM11",
+   "TM12",
+   "TM13",
+   "TM14",
+   "TM17",
+   "TM18",
+   "TM19",
+   "TM20",
+   "TM22",
+   "TM24",
+   "TM25",
+   "TM29",
+   "TM30",
+   "TM31",
+   "TM32",
+   "TM33",
+   "TM34",
+   "TM38",
+   "TM40",
+   "TM44",
+   "TM45",
+   "TM46",
+   "TM49",
+   "TM50"
+  ],
+  "evolutions": [
+   {
+    "to": "Wigglytuff",
+    "method": "item",
+    "param": "Moon Stone"
+   }
+  ]
+ },
+ "Jolteon": {
+  "dex": 135,
+  "types": [
+   "Electric"
+  ],
+  "base": {
+   "hp": 65,
+   "atk": 65,
+   "def": 60,
+   "spd": 130,
+   "spc": 110
+  },
+  "catch_rate": 45,
+  "base_exp": 197,
+  "growth": "medium_fast",
+  "learnset": [
+   {
+    "level": 1,
+    "move": "Tackle"
+   },
+   {
+    "level": 1,
+    "move": "Sand Attack"
+   },
+   {
+    "level": 1,
+    "move": "Quick Attack"
+   },
+   {
+    "level": 1,
+    "move": "Thunder Shock"
+   },
+   {
+    "level": 27,
+    "move": "Quick Attack"
+   },
+   {
+    "level": 31,
+    "move": "Thunder Shock"
+   },
+   {
+    "level": 37,
+    "move": "Tail Whip"
+   },
+   {
+    "level": 40,
+    "move": "Thunder Wave"
+   },
+   {
+    "level": 42,
+    "move": "Double Kick"
+   },
+   {
+    "level": 44,
+    "move": "Agility"
+   },
+   {
+    "level": 48,
+    "move": "Pin Missile"
+   },
+   {
+    "level": 54,
+    "move": "Thunder"
+   }
+  ],
+  "tm_hm": [
+   "HM05",
+   "TM06",
+   "TM08",
+   "TM09",
+   "TM10",
+   "TM15",
+   "TM20",
+   "TM24",
+   "TM25",
+   "TM31",
+   "TM32",
+   "TM33",
+   "TM34",
+   "TM39",
+   "TM40",
+   "TM44",
+   "TM45",
+   "TM50"
+  ],
+  "evolutions": []
+ },
+ "Jynx": {
+  "dex": 124,
+  "types": [
+   "Ice",
+   "Psychic"
+  ],
+  "base": {
+   "hp": 65,
+   "atk": 50,
+   "def": 35,
+   "spd": 95,
+   "spc": 95
+  },
+  "catch_rate": 45,
+  "base_exp": 137,
+  "growth": "medium_fast",
+  "learnset": [
+   {
+    "level": 1,
+    "move": "Pound"
+   },
+   {
+    "level": 1,
+    "move": "Lovely Kiss"
+   },
+   {
+    "level": 18,
+    "move": "Lick"
+   },
+   {
+    "level": 23,
+    "move": "Double Slap"
+   },
+   {
+    "level": 31,
+    "move": "Ice Punch"
+   },
+   {
+    "level": 39,
+    "move": "Body Slam"
+   },
+   {
+    "level": 47,
+    "move": "Thrash"
+   },
+   {
+    "level": 58,
+    "move": "Blizzard"
+   }
+  ],
+  "tm_hm": [
+   "TM01",
+   "TM05",
+   "TM06",
+   "TM08",
+   "TM09",
+   "TM10",
+   "TM11",
+   "TM12",
+   "TM13",
+   "TM14",
+   "TM15",
+   "TM17",
+   "TM18",
+   "TM19",
+   "TM20",
+   "TM29",
+   "TM30",
+   "TM31",
+   "TM32",
+   "TM33",
+   "TM34",
+   "TM35",
+   "TM40",
+   "TM44",
+   "TM46",
+   "TM50"
+  ],
+  "evolutions": []
+ },
+ "Kabuto": {
+  "dex": 140,
+  "types": [
+   "Rock",
+   "Water"
+  ],
+  "base": {
+   "hp": 30,
+   "atk": 80,
+   "def": 90,
+   "spd": 55,
+   "spc": 45
+  },
+  "catch_rate": 45,
+  "base_exp": 119,
+  "growth": "medium_fast",
+  "learnset": [
+   {
+    "level": 1,
+    "move": "Scratch"
+   },
+   {
+    "level": 1,
+    "move": "Harden"
+   },
+   {
+    "level": 34,
+    "move": "Absorb"
+   },
+   {
+    "level": 39,
+    "move": "Slash"
+   },
+   {
+    "level": 44,
+    "move": "Leer"
+   },
+   {
+    "level": 49,
+    "move": "Hydro Pump"
+   }
+  ],
+  "tm_hm": [
+   "HM03",
+   "TM06",
+   "TM08",
+   "TM09",
+   "TM10",
+   "TM11",
+   "TM12",
+   "TM13",
+   "TM14",
+   "TM20",
+   "TM31",
+   "TM32",
+   "TM33",
+   "TM34",
+   "TM44",
+   "TM50"
+  ],
+  "evolutions": [
+   {
+    "to": "Kabutops",
+    "method": "level",
+    "param": 40
+   }
+  ]
+ },
+ "Kabutops": {
+  "dex": 141,
+  "types": [
+   "Rock",
+   "Water"
+  ],
+  "base": {
+   "hp": 60,
+   "atk": 115,
+   "def": 105,
+   "spd": 80,
+   "spc": 70
+  },
+  "catch_rate": 45,
+  "base_exp": 201,
+  "growth": "medium_fast",
+  "learnset": [
+   {
+    "level": 1,
+    "move": "Scratch"
+   },
+   {
+    "level": 1,
+    "move": "Harden"
+   },
+   {
+    "level": 1,
+    "move": "Absorb"
+   },
+   {
+    "level": 34,
+    "move": "Absorb"
+   },
+   {
+    "level": 39,
+    "move": "Slash"
+   },
+   {
+    "level": 46,
+    "move": "Leer"
+   },
+   {
+    "level": 53,
+    "move": "Hydro Pump"
+   }
+  ],
+  "tm_hm": [
+   "HM03",
+   "TM02",
+   "TM03",
+   "TM05",
+   "TM06",
+   "TM08",
+   "TM09",
+   "TM10",
+   "TM11",
+   "TM12",
+   "TM13",
+   "TM14",
+   "TM15",
+   "TM17",
+   "TM19",
+   "TM20",
+   "TM31",
+   "TM32",
+   "TM33",
+   "TM34",
+   "TM40",
+   "TM44",
+   "TM50"
+  ],
+  "evolutions": []
+ },
+ "Kadabra": {
+  "dex": 64,
+  "types": [
+   "Psychic"
+  ],
+  "base": {
+   "hp": 40,
+   "atk": 35,
+   "def": 30,
+   "spd": 105,
+   "spc": 120
+  },
+  "catch_rate": 100,
+  "base_exp": 145,
+  "growth": "medium_slow",
+  "learnset": [
+   {
+    "level": 1,
+    "move": "Teleport"
+   },
+   {
+    "level": 1,
+    "move": "Confusion"
+   },
+   {
+    "level": 1,
+    "move": "Disable"
+   },
+   {
+    "level": 16,
+    "move": "Confusion"
+   },
+   {
+    "level": 20,
+    "move": "Disable"
+   },
+   {
+    "level": 27,
+    "move": "Psybeam"
+   },
+   {
+    "level": 31,
+    "move": "Recover"
+   },
+   {
+    "level": 38,
+    "move": "Psychic"
+   },
+   {
+    "level": 42,
+    "move": "Reflect"
+   }
+  ],
+  "tm_hm": [
+   "HM05",
+   "TM01",
+   "TM05",
+   "TM06",
+   "TM08",
+   "TM09",
+   "TM10",
+   "TM17",
+   "TM18",
+   "TM19",
+   "TM20",
+   "TM28",
+   "TM29",
+   "TM30",
+   "TM31",
+   "TM32",
+   "TM33",
+   "TM34",
+   "TM35",
+   "TM40",
+   "TM44",
+   "TM45",
+   "TM46",
+   "TM49",
+   "TM50"
+  ],
+  "evolutions": [
+   {
+    "to": "Alakazam",
+    "method": "trade",
+    "param": 1
+   }
+  ]
+ },
+ "Kakuna": {
+  "dex": 14,
+  "types": [
+   "Bug",
+   "Poison"
+  ],
+  "base": {
+   "hp": 45,
+   "atk": 25,
+   "def": 50,
+   "spd": 35,
+   "spc": 25
+  },
+  "catch_rate": 120,
+  "base_exp": 71,
+  "growth": "medium_fast",
+  "learnset": [
+   {
+    "level": 1,
+    "move": "Harden"
+   }
+  ],
+  "tm_hm": [],
+  "evolutions": [
+   {
+    "to": "Beedrill",
+    "method": "level",
+    "param": 10
+   }
+  ]
+ },
+ "Kangaskhan": {
+  "dex": 115,
+  "types": [
+   "Normal"
+  ],
+  "base": {
+   "hp": 105,
+   "atk": 95,
+   "def": 80,
+   "spd": 90,
+   "spc": 40
+  },
+  "catch_rate": 45,
+  "base_exp": 175,
+  "growth": "medium_fast",
+  "learnset": [
+   {
+    "level": 1,
+    "move": "Comet Punch"
+   },
+   {
+    "level": 1,
+    "move": "Rage"
+   },
+   {
+    "level": 26,
+    "move": "Bite"
+   },
+   {
+    "level": 31,
+    "move": "Tail Whip"
+   },
+   {
+    "level": 36,
+    "move": "Mega Punch"
+   },
+   {
+    "level": 41,
+    "move": "Leer"
+   },
+   {
+    "level": 46,
+    "move": "Dizzy Punch"
+   }
+  ],
+  "tm_hm": [
+   "HM03",
+   "HM04",
+   "TM01",
+   "TM05",
+   "TM06",
+   "TM08",
+   "TM09",
+   "TM10",
+   "TM11",
+   "TM12",
+   "TM13",
+   "TM14",
+   "TM15",
+   "TM17",
+   "TM18",
+   "TM19",
+   "TM20",
+   "TM24",
+   "TM25",
+   "TM26",
+   "TM27",
+   "TM31",
+   "TM32",
+   "TM34",
+   "TM38",
+   "TM40",
+   "TM44",
+   "TM48",
+   "TM50"
+  ],
+  "evolutions": []
+ },
+ "Kingler": {
+  "dex": 99,
+  "types": [
+   "Water"
+  ],
+  "base": {
+   "hp": 55,
+   "atk": 130,
+   "def": 115,
+   "spd": 75,
+   "spc": 50
+  },
+  "catch_rate": 60,
+  "base_exp": 206,
+  "growth": "medium_fast",
+  "learnset": [
+   {
+    "level": 1,
+    "move": "Bubble"
+   },
+   {
+    "level": 1,
+    "move": "Leer"
+   },
+   {
+    "level": 1,
+    "move": "Vice Grip"
+   },
+   {
+    "level": 20,
+    "move": "Vice Grip"
+   },
+   {
+    "level": 25,
+    "move": "Guillotine"
+   },
+   {
+    "level": 34,
+    "move": "Stomp"
+   },
+   {
+    "level": 42,
+    "move": "Crabhammer"
+   },
+   {
+    "level": 49,
+    "move": "Harden"
+   }
+  ],
+  "tm_hm": [
+   "HM01",
+   "HM03",
+   "HM04",
+   "TM03",
+   "TM06",
+   "TM08",
+   "TM09",
+   "TM10",
+   "TM11",
+   "TM12",
+   "TM13",
+   "TM14",
+   "TM15",
+   "TM20",
+   "TM31",
+   "TM32",
+   "TM34",
+   "TM44",
+   "TM50"
+  ],
+  "evolutions": []
+ },
+ "Koffing": {
+  "dex": 109,
+  "types": [
+   "Poison"
+  ],
+  "base": {
+   "hp": 40,
+   "atk": 65,
+   "def": 95,
+   "spd": 35,
+   "spc": 60
+  },
+  "catch_rate": 190,
+  "base_exp": 114,
+  "growth": "medium_fast",
+  "learnset": [
+   {
+    "level": 1,
+    "move": "Tackle"
+   },
+   {
+    "level": 1,
+    "move": "Smog"
+   },
+   {
+    "level": 32,
+    "move": "Sludge"
+   },
+   {
+    "level": 37,
+    "move": "Smokescreen"
+   },
+   {
+    "level": 40,
+    "move": "Self-Destruct"
+   },
+   {
+    "level": 45,
+    "move": "Haze"
+   },
+   {
+    "level": 48,
+    "move": "Explosion"
+   }
+  ],
+  "tm_hm": [
+   "TM06",
+   "TM20",
+   "TM24",
+   "TM25",
+   "TM31",
+   "TM32",
+   "TM34",
+   "TM36",
+   "TM38",
+   "TM44",
+   "TM47",
+   "TM50"
+  ],
+  "evolutions": [
+   {
+    "to": "Weezing",
+    "method": "level",
+    "param": 35
+   }
+  ]
+ },
+ "Krabby": {
+  "dex": 98,
+  "types": [
+   "Water"
+  ],
+  "base": {
+   "hp": 30,
+   "atk": 105,
+   "def": 90,
+   "spd": 50,
+   "spc": 25
+  },
+  "catch_rate": 225,
+  "base_exp": 115,
+  "growth": "medium_fast",
+  "learnset": [
+   {
+    "level": 1,
+    "move": "Bubble"
+   },
+   {
+    "level": 1,
+    "move": "Leer"
+   },
+   {
+    "level": 20,
+    "move": "Vice Grip"
+   },
+   {
+    "level": 25,
+    "move": "Guillotine"
+   },
+   {
+    "level": 30,
+    "move": "Stomp"
+   },
+   {
+    "level": 35,
+    "move": "Crabhammer"
+   },
+   {
+    "level": 40,
+    "move": "Harden"
+   }
+  ],
+  "tm_hm": [
+   "HM01",
+   "HM03",
+   "HM04",
+   "TM03",
+   "TM06",
+   "TM08",
+   "TM09",
+   "TM10",
+   "TM11",
+   "TM12",
+   "TM13",
+   "TM14",
+   "TM20",
+   "TM31",
+   "TM32",
+   "TM34",
+   "TM44",
+   "TM50"
+  ],
+  "evolutions": [
+   {
+    "to": "Kingler",
+    "method": "level",
+    "param": 28
+   }
+  ]
+ },
+ "Lapras": {
+  "dex": 131,
+  "types": [
+   "Water",
+   "Ice"
+  ],
+  "base": {
+   "hp": 130,
+   "atk": 85,
+   "def": 80,
+   "spd": 60,
+   "spc": 95
+  },
+  "catch_rate": 45,
+  "base_exp": 219,
+  "growth": "slow",
+  "learnset": [
+   {
+    "level": 1,
+    "move": "Water Gun"
+   },
+   {
+    "level": 1,
+    "move": "Growl"
+   },
+   {
+    "level": 16,
+    "move": "Sing"
+   },
+   {
+    "level": 20,
+    "move": "Mist"
+   },
+   {
+    "level": 25,
+    "move": "Body Slam"
+   },
+   {
+    "level": 31,
+    "move": "Confuse Ray"
+   },
+   {
+    "level": 38,
+    "move": "Ice Beam"
+   },
+   {
+    "level": 46,
+    "move": "Hydro Pump"
+   }
+  ],
+  "tm_hm": [
+   "HM03",
+   "HM04",
+   "TM06",
+   "TM07",
+   "TM08",
+   "TM09",
+   "TM10",
+   "TM11",
+   "TM12",
+   "TM13",
+   "TM14",
+   "TM15",
+   "TM20",
+   "TM22",
+   "TM23",
+   "TM24",
+   "TM25",
+   "TM29",
+   "TM31",
+   "TM32",
+   "TM33",
+   "TM34",
+   "TM40",
+   "TM44",
+   "TM46",
+   "TM50"
+  ],
+  "evolutions": []
+ },
+ "Lickitung": {
+  "dex": 108,
+  "types": [
+   "Normal"
+  ],
+  "base": {
+   "hp": 90,
+   "atk": 55,
+   "def": 75,
+   "spd": 30,
+   "spc": 60
+  },
+  "catch_rate": 45,
+  "base_exp": 127,
+  "growth": "medium_fast",
+  "learnset": [
+   {
+    "level": 1,
+    "move": "Wrap"
+   },
+   {
+    "level": 1,
+    "move": "Supersonic"
+   },
+   {
+    "level": 7,
+    "move": "Stomp"
+   },
+   {
+    "level": 15,
+    "move": "Disable"
+   },
+   {
+    "level": 23,
+    "move": "Defense Curl"
+   },
+   {
+    "level": 31,
+    "move": "Slam"
+   },
+   {
+    "level": 39,
+    "move": "Screech"
+   }
+  ],
+  "tm_hm": [
+   "HM01",
+   "HM03",
+   "HM04",
+   "TM01",
+   "TM03",
+   "TM05",
+   "TM06",
+   "TM08",
+   "TM09",
+   "TM10",
+   "TM11",
+   "TM12",
+   "TM13",
+   "TM14",
+   "TM15",
+   "TM17",
+   "TM18",
+   "TM19",
+   "TM20",
+   "TM24",
+   "TM25",
+   "TM26",
+   "TM27",
+   "TM31",
+   "TM32",
+   "TM34",
+   "TM38",
+   "TM40",
+   "TM44",
+   "TM50"
+  ],
+  "evolutions": []
+ },
+ "Machamp": {
+  "dex": 68,
+  "types": [
+   "Fighting"
+  ],
+  "base": {
+   "hp": 90,
+   "atk": 130,
+   "def": 80,
+   "spd": 55,
+   "spc": 65
+  },
+  "catch_rate": 45,
+  "base_exp": 193,
+  "growth": "medium_slow",
+  "learnset": [
+   {
+    "level": 1,
+    "move": "Karate Chop"
+   },
+   {
+    "level": 1,
+    "move": "Low Kick"
+   },
+   {
+    "level": 1,
+    "move": "Leer"
+   },
+   {
+    "level": 20,
+    "move": "Low Kick"
+   },
+   {
+    "level": 25,
+    "move": "Leer"
+   },
+   {
+    "level": 36,
+    "move": "Focus Energy"
+   },
+   {
+    "level": 44,
+    "move": "Seismic Toss"
+   },
+   {
+    "level": 52,
+    "move": "Submission"
+   }
+  ],
+  "tm_hm": [
+   "HM04",
+   "TM01",
+   "TM05",
+   "TM06",
+   "TM08",
+   "TM09",
+   "TM10",
+   "TM15",
+   "TM17",
+   "TM18",
+   "TM19",
+   "TM20",
+   "TM26",
+   "TM27",
+   "TM28",
+   "TM31",
+   "TM32",
+   "TM34",
+   "TM35",
+   "TM38",
+   "TM40",
+   "TM44",
+   "TM48",
+   "TM50"
+  ],
+  "evolutions": []
+ },
+ "Machoke": {
+  "dex": 67,
+  "types": [
+   "Fighting"
+  ],
+  "base": {
+   "hp": 80,
+   "atk": 100,
+   "def": 70,
+   "spd": 45,
+   "spc": 50
+  },
+  "catch_rate": 90,
+  "base_exp": 146,
+  "growth": "medium_slow",
+  "learnset": [
+   {
+    "level": 1,
+    "move": "Karate Chop"
+   },
+   {
+    "level": 1,
+    "move": "Low Kick"
+   },
+   {
+    "level": 1,
+    "move": "Leer"
+   },
+   {
+    "level": 20,
+    "move": "Low Kick"
+   },
+   {
+    "level": 25,
+    "move": "Leer"
+   },
+   {
+    "level": 36,
+    "move": "Focus Energy"
+   },
+   {
+    "level": 44,
+    "move": "Seismic Toss"
+   },
+   {
+    "level": 52,
+    "move": "Submission"
+   }
+  ],
+  "tm_hm": [
+   "HM04",
+   "TM01",
+   "TM05",
+   "TM06",
+   "TM08",
+   "TM09",
+   "TM10",
+   "TM17",
+   "TM18",
+   "TM19",
+   "TM20",
+   "TM26",
+   "TM27",
+   "TM28",
+   "TM31",
+   "TM32",
+   "TM34",
+   "TM35",
+   "TM38",
+   "TM40",
+   "TM44",
+   "TM48",
+   "TM50"
+  ],
+  "evolutions": [
+   {
+    "to": "Machamp",
+    "method": "trade",
+    "param": 1
+   }
+  ]
+ },
+ "Machop": {
+  "dex": 66,
+  "types": [
+   "Fighting"
+  ],
+  "base": {
+   "hp": 70,
+   "atk": 80,
+   "def": 50,
+   "spd": 35,
+   "spc": 35
+  },
+  "catch_rate": 180,
+  "base_exp": 88,
+  "growth": "medium_slow",
+  "learnset": [
+   {
+    "level": 1,
+    "move": "Karate Chop"
+   },
+   {
+    "level": 20,
+    "move": "Low Kick"
+   },
+   {
+    "level": 25,
+    "move": "Leer"
+   },
+   {
+    "level": 32,
+    "move": "Focus Energy"
+   },
+   {
+    "level": 39,
+    "move": "Seismic Toss"
+   },
+   {
+    "level": 46,
+    "move": "Submission"
+   }
+  ],
+  "tm_hm": [
+   "HM04",
+   "TM01",
+   "TM05",
+   "TM06",
+   "TM08",
+   "TM09",
+   "TM10",
+   "TM17",
+   "TM18",
+   "TM19",
+   "TM20",
+   "TM26",
+   "TM27",
+   "TM28",
+   "TM31",
+   "TM32",
+   "TM34",
+   "TM35",
+   "TM38",
+   "TM40",
+   "TM44",
+   "TM48",
+   "TM50"
+  ],
+  "evolutions": [
+   {
+    "to": "Machoke",
+    "method": "level",
+    "param": 28
+   }
+  ]
+ },
+ "Magikarp": {
+  "dex": 129,
+  "types": [
+   "Water"
+  ],
+  "base": {
+   "hp": 20,
+   "atk": 10,
+   "def": 55,
+   "spd": 80,
+   "spc": 20
+  },
+  "catch_rate": 255,
+  "base_exp": 20,
+  "growth": "slow",
+  "learnset": [
+   {
+    "level": 1,
+    "move": "Splash"
+   },
+   {
+    "level": 15,
+    "move": "Tackle"
+   }
+  ],
+  "tm_hm": [],
+  "evolutions": [
+   {
+    "to": "Gyarados",
+    "method": "level",
+    "param": 20
+   }
+  ]
+ },
+ "Magmar": {
+  "dex": 126,
+  "types": [
+   "Fire"
+  ],
+  "base": {
+   "hp": 65,
+   "atk": 95,
+   "def": 57,
+   "spd": 93,
+   "spc": 85
+  },
+  "catch_rate": 45,
+  "base_exp": 167,
+  "growth": "medium_fast",
+  "learnset": [
+   {
+    "level": 1,
+    "move": "Ember"
+   },
+   {
+    "level": 36,
+    "move": "Leer"
+   },
+   {
+    "level": 39,
+    "move": "Confuse Ray"
+   },
+   {
+    "level": 43,
+    "move": "Fire Punch"
+   },
+   {
+    "level": 48,
+    "move": "Smokescreen"
+   },
+   {
+    "level": 52,
+    "move": "Smog"
+   },
+   {
+    "level": 55,
+    "move": "Flamethrower"
+   }
+  ],
+  "tm_hm": [
+   "HM04",
+   "TM01",
+   "TM05",
+   "TM06",
+   "TM08",
+   "TM09",
+   "TM10",
+   "TM15",
+   "TM17",
+   "TM18",
+   "TM19",
+   "TM20",
+   "TM29",
+   "TM30",
+   "TM31",
+   "TM32",
+   "TM34",
+   "TM35",
+   "TM38",
+   "TM40",
+   "TM44",
+   "TM46",
+   "TM50"
+  ],
+  "evolutions": []
+ },
+ "Magnemite": {
+  "dex": 81,
+  "types": [
+   "Electric"
+  ],
+  "base": {
+   "hp": 25,
+   "atk": 35,
+   "def": 70,
+   "spd": 45,
+   "spc": 95
+  },
+  "catch_rate": 190,
+  "base_exp": 89,
+  "growth": "medium_fast",
+  "learnset": [
+   {
+    "level": 1,
+    "move": "Tackle"
+   },
+   {
+    "level": 21,
+    "move": "Sonic Boom"
+   },
+   {
+    "level": 25,
+    "move": "Thunder Shock"
+   },
+   {
+    "level": 29,
+    "move": "Supersonic"
+   },
+   {
+    "level": 35,
+    "move": "Thunder Wave"
+   },
+   {
+    "level": 41,
+    "move": "Swift"
+   },
+   {
+    "level": 47,
+    "move": "Screech"
+   }
+  ],
+  "tm_hm": [
+   "HM05",
+   "TM06",
+   "TM09",
+   "TM10",
+   "TM20",
+   "TM24",
+   "TM25",
+   "TM30",
+   "TM31",
+   "TM32",
+   "TM33",
+   "TM34",
+   "TM39",
+   "TM44",
+   "TM45",
+   "TM50"
+  ],
+  "evolutions": [
+   {
+    "to": "Magneton",
+    "method": "level",
+    "param": 30
+   }
+  ]
+ },
+ "Magneton": {
+  "dex": 82,
+  "types": [
+   "Electric"
+  ],
+  "base": {
+   "hp": 50,
+   "atk": 60,
+   "def": 95,
+   "spd": 70,
+   "spc": 120
+  },
+  "catch_rate": 60,
+  "base_exp": 161,
+  "growth": "medium_fast",
+  "learnset": [
+   {
+    "level": 1,
+    "move": "Tackle"
+   },
+   {
+    "level": 1,
+    "move": "Sonic Boom"
+   },
+   {
+    "level": 1,
+    "move": "Thunder Shock"
+   },
+   {
+    "level": 21,
+    "move": "Sonic Boom"
+   },
+   {
+    "level": 25,
+    "move": "Thunder Shock"
+   },
+   {
+    "level": 29,
+    "move": "Supersonic"
+   },
+   {
+    "level": 38,
+    "move": "Thunder Wave"
+   },
+   {
+    "level": 46,
+    "move": "Swift"
+   },
+   {
+    "level": 54,
+    "move": "Screech"
+   }
+  ],
+  "tm_hm": [
+   "HM05",
+   "TM06",
+   "TM09",
+   "TM10",
+   "TM15",
+   "TM20",
+   "TM24",
+   "TM25",
+   "TM30",
+   "TM31",
+   "TM32",
+   "TM33",
+   "TM34",
+   "TM39",
+   "TM44",
+   "TM45",
+   "TM50"
+  ],
+  "evolutions": []
+ },
+ "Mankey": {
+  "dex": 56,
+  "types": [
+   "Fighting"
+  ],
+  "base": {
+   "hp": 40,
+   "atk": 80,
+   "def": 35,
+   "spd": 70,
+   "spc": 35
+  },
+  "catch_rate": 190,
+  "base_exp": 74,
+  "growth": "medium_fast",
+  "learnset": [
+   {
+    "level": 1,
+    "move": "Scratch"
+   },
+   {
+    "level": 1,
+    "move": "Leer"
+   },
+   {
+    "level": 15,
+    "move": "Karate Chop"
+   },
+   {
+    "level": 21,
+    "move": "Fury Swipes"
+   },
+   {
+    "level": 27,
+    "move": "Focus Energy"
+   },
+   {
+    "level": 33,
+    "move": "Seismic Toss"
+   },
+   {
+    "level": 39,
+    "move": "Thrash"
+   }
+  ],
+  "tm_hm": [
+   "HM04",
+   "TM01",
+   "TM05",
+   "TM06",
+   "TM08",
+   "TM09",
+   "TM10",
+   "TM16",
+   "TM17",
+   "TM18",
+   "TM19",
+   "TM20",
+   "TM24",
+   "TM25",
+   "TM28",
+   "TM31",
+   "TM32",
+   "TM34",
+   "TM35",
+   "TM39",
+   "TM40",
+   "TM44",
+   "TM48",
+   "TM50"
+  ],
+  "evolutions": [
+   {
+    "to": "Primeape",
+    "method": "level",
+    "param": 28
+   }
+  ]
+ },
+ "Marowak": {
+  "dex": 105,
+  "types": [
+   "Ground"
+  ],
+  "base": {
+   "hp": 60,
+   "atk": 80,
+   "def": 110,
+   "spd": 45,
+   "spc": 50
+  },
+  "catch_rate": 75,
+  "base_exp": 124,
+  "growth": "medium_fast",
+  "learnset": [
+   {
+    "level": 1,
+    "move": "Bone Club"
+   },
+   {
+    "level": 1,
+    "move": "Growl"
+   },
+   {
+    "level": 1,
+    "move": "Leer"
+   },
+   {
+    "level": 1,
+    "move": "Focus Energy"
+   },
+   {
+    "level": 25,
+    "move": "Leer"
+   },
+   {
+    "level": 33,
+    "move": "Focus Energy"
+   },
+   {
+    "level": 41,
+    "move": "Thrash"
+   },
+   {
+    "level": 48,
+    "move": "Bonemerang"
+   },
+   {
+    "level": 55,
+    "move": "Rage"
+   }
+  ],
+  "tm_hm": [
+   "HM04",
+   "TM01",
+   "TM05",
+   "TM06",
+   "TM08",
+   "TM09",
+   "TM10",
+   "TM11",
+   "TM12",
+   "TM13",
+   "TM14",
+   "TM15",
+   "TM17",
+   "TM18",
+   "TM19",
+   "TM20",
+   "TM26",
+   "TM27",
+   "TM28",
+   "TM31",
+   "TM32",
+   "TM34",
+   "TM38",
+   "TM40",
+   "TM44",
+   "TM50"
+  ],
+  "evolutions": []
+ },
+ "Meowth": {
+  "dex": 52,
+  "types": [
+   "Normal"
+  ],
+  "base": {
+   "hp": 40,
+   "atk": 45,
+   "def": 35,
+   "spd": 90,
+   "spc": 40
+  },
+  "catch_rate": 255,
+  "base_exp": 69,
+  "growth": "medium_fast",
+  "learnset": [
+   {
+    "level": 1,
+    "move": "Scratch"
+   },
+   {
+    "level": 1,
+    "move": "Growl"
+   },
+   {
+    "level": 12,
+    "move": "Bite"
+   },
+   {
+    "level": 17,
+    "move": "Pay Day"
+   },
+   {
+    "level": 24,
+    "move": "Screech"
+   },
+   {
+    "level": 33,
+    "move": "Fury Swipes"
+   },
+   {
+    "level": 44,
+    "move": "Slash"
+   }
+  ],
+  "tm_hm": [
+   "TM06",
+   "TM08",
+   "TM09",
+   "TM10",
+   "TM11",
+   "TM12",
+   "TM16",
+   "TM20",
+   "TM24",
+   "TM25",
+   "TM31",
+   "TM32",
+   "TM34",
+   "TM39",
+   "TM40",
+   "TM44",
+   "TM50"
+  ],
+  "evolutions": [
+   {
+    "to": "Persian",
+    "method": "level",
+    "param": 28
+   }
+  ]
+ },
+ "Metapod": {
+  "dex": 11,
+  "types": [
+   "Bug"
+  ],
+  "base": {
+   "hp": 50,
+   "atk": 20,
+   "def": 55,
+   "spd": 30,
+   "spc": 25
+  },
+  "catch_rate": 120,
+  "base_exp": 72,
+  "growth": "medium_fast",
+  "learnset": [
+   {
+    "level": 1,
+    "move": "Harden"
+   }
+  ],
+  "tm_hm": [],
+  "evolutions": [
+   {
+    "to": "Butterfree",
+    "method": "level",
+    "param": 10
+   }
+  ]
+ },
+ "Mew": {
+  "dex": 151,
+  "types": [
+   "Psychic"
+  ],
+  "base": {
+   "hp": 100,
+   "atk": 100,
+   "def": 100,
+   "spd": 100,
+   "spc": 100
+  },
+  "catch_rate": 45,
+  "base_exp": 64,
+  "growth": "medium_slow",
+  "learnset": [
+   {
+    "level": 1,
+    "move": "Pound"
+   },
+   {
+    "level": 10,
+    "move": "Transform"
+   },
+   {
+    "level": 20,
+    "move": "Mega Punch"
+   },
+   {
+    "level": 30,
+    "move": "Metronome"
+   },
+   {
+    "level": 40,
+    "move": "Psychic"
+   }
+  ],
+  "tm_hm": [
+   "HM01",
+   "HM02",
+   "HM03",
+   "HM04",
+   "HM05",
+   "TM01",
+   "TM02",
+   "TM03",
+   "TM04",
+   "TM05",
+   "TM06",
+   "TM07",
+   "TM08",
+   "TM09",
+   "TM10",
+   "TM11",
+   "TM12",
+   "TM13",
+   "TM14",
+   "TM15",
+   "TM16",
+   "TM17",
+   "TM18",
+   "TM19",
+   "TM20",
+   "TM21",
+   "TM22",
+   "TM23",
+   "TM24",
+   "TM25",
+   "TM26",
+   "TM27",
+   "TM28",
+   "TM29",
+   "TM30",
+   "TM31",
+   "TM32",
+   "TM33",
+   "TM34",
+   "TM35",
+   "TM36",
+   "TM37",
+   "TM38",
+   "TM39",
+   "TM40",
+   "TM41",
+   "TM42",
+   "TM43",
+   "TM44",
+   "TM45",
+   "TM46",
+   "TM47",
+   "TM48",
+   "TM49",
+   "TM50"
+  ],
+  "evolutions": []
+ },
+ "Mewtwo": {
+  "dex": 150,
+  "types": [
+   "Psychic"
+  ],
+  "base": {
+   "hp": 106,
+   "atk": 110,
+   "def": 90,
+   "spd": 130,
+   "spc": 154
+  },
+  "catch_rate": 3,
+  "base_exp": 220,
+  "growth": "slow",
+  "learnset": [
+   {
+    "level": 1,
+    "move": "Confusion"
+   },
+   {
+    "level": 1,
+    "move": "Disable"
+   },
+   {
+    "level": 1,
+    "move": "Swift"
+   },
+   {
+    "level": 1,
+    "move": "Psychic"
+   },
+   {
+    "level": 63,
+    "move": "Barrier"
+   },
+   {
+    "level": 66,
+    "move": "Psychic"
+   },
+   {
+    "level": 70,
+    "move": "Recover"
+   },
+   {
+    "level": 75,
+    "move": "Mist"
+   },
+   {
+    "level": 81,
+    "move": "Amnesia"
+   }
+  ],
+  "tm_hm": [
+   "HM04",
+   "HM05",
+   "TM01",
+   "TM05",
+   "TM06",
+   "TM08",
+   "TM09",
+   "TM10",
+   "TM11",
+   "TM12",
+   "TM13",
+   "TM14",
+   "TM15",
+   "TM16",
+   "TM17",
+   "TM18",
+   "TM19",
+   "TM20",
+   "TM22",
+   "TM24",
+   "TM25",
+   "TM29",
+   "TM30",
+   "TM31",
+   "TM32",
+   "TM33",
+   "TM34",
+   "TM35",
+   "TM36",
+   "TM38",
+   "TM40",
+   "TM44",
+   "TM45",
+   "TM46",
+   "TM49",
+   "TM50"
+  ],
+  "evolutions": []
+ },
+ "Moltres": {
+  "dex": 146,
+  "types": [
+   "Fire",
+   "Flying"
+  ],
+  "base": {
+   "hp": 90,
+   "atk": 100,
+   "def": 90,
+   "spd": 90,
+   "spc": 125
+  },
+  "catch_rate": 3,
+  "base_exp": 217,
+  "growth": "slow",
+  "learnset": [
+   {
+    "level": 1,
+    "move": "Peck"
+   },
+   {
+    "level": 1,
+    "move": "Fire Spin"
+   },
+   {
+    "level": 51,
+    "move": "Leer"
+   },
+   {
+    "level": 55,
+    "move": "Agility"
+   },
+   {
+    "level": 60,
+    "move": "Sky Attack"
+   }
+  ],
+  "tm_hm": [
+   "HM02",
+   "TM02",
+   "TM04",
+   "TM06",
+   "TM09",
+   "TM10",
+   "TM15",
+   "TM20",
+   "TM31",
+   "TM32",
+   "TM33",
+   "TM34",
+   "TM38",
+   "TM39",
+   "TM43",
+   "TM44",
+   "TM50"
+  ],
+  "evolutions": []
+ },
+ "Mr. Mime": {
+  "dex": 122,
+  "types": [
+   "Psychic"
+  ],
+  "base": {
+   "hp": 40,
+   "atk": 45,
+   "def": 65,
+   "spd": 90,
+   "spc": 100
+  },
+  "catch_rate": 45,
+  "base_exp": 136,
+  "growth": "medium_fast",
+  "learnset": [
+   {
+    "level": 1,
+    "move": "Confusion"
+   },
+   {
+    "level": 1,
+    "move": "Barrier"
+   },
+   {
+    "level": 15,
+    "move": "Confusion"
+   },
+   {
+    "level": 23,
+    "move": "Light Screen"
+   },
+   {
+    "level": 31,
+    "move": "Double Slap"
+   },
+   {
+    "level": 39,
+    "move": "Meditate"
+   },
+   {
+    "level": 47,
+    "move": "Substitute"
+   }
+  ],
+  "tm_hm": [
+   "HM05",
+   "TM01",
+   "TM05",
+   "TM06",
+   "TM08",
+   "TM09",
+   "TM10",
+   "TM15",
+   "TM17",
+   "TM18",
+   "TM19",
+   "TM20",
+   "TM22",
+   "TM24",
+   "TM25",
+   "TM29",
+   "TM30",
+   "TM31",
+   "TM32",
+   "TM33",
+   "TM34",
+   "TM35",
+   "TM40",
+   "TM44",
+   "TM45",
+   "TM46",
+   "TM50"
+  ],
+  "evolutions": []
+ },
+ "Muk": {
+  "dex": 89,
+  "types": [
+   "Poison"
+  ],
+  "base": {
+   "hp": 105,
+   "atk": 105,
+   "def": 75,
+   "spd": 50,
+   "spc": 65
+  },
+  "catch_rate": 75,
+  "base_exp": 157,
+  "growth": "medium_fast",
+  "learnset": [
+   {
+    "level": 1,
+    "move": "Pound"
+   },
+   {
+    "level": 1,
+    "move": "Disable"
+   },
+   {
+    "level": 1,
+    "move": "Poison Gas"
+   },
+   {
+    "level": 30,
+    "move": "Poison Gas"
+   },
+   {
+    "level": 33,
+    "move": "Minimize"
+   },
+   {
+    "level": 37,
+    "move": "Sludge"
+   },
+   {
+    "level": 45,
+    "move": "Harden"
+   },
+   {
+    "level": 53,
+    "move": "Screech"
+   },
+   {
+    "level": 60,
+    "move": "Acid Armor"
+   }
+  ],
+  "tm_hm": [
+   "TM06",
+   "TM08",
+   "TM15",
+   "TM20",
+   "TM21",
+   "TM24",
+   "TM25",
+   "TM31",
+   "TM32",
+   "TM34",
+   "TM36",
+   "TM38",
+   "TM44",
+   "TM47",
+   "TM50"
+  ],
+  "evolutions": []
+ },
+ "Nidoking": {
+  "dex": 34,
+  "types": [
+   "Poison",
+   "Ground"
+  ],
+  "base": {
+   "hp": 81,
+   "atk": 92,
+   "def": 77,
+   "spd": 85,
+   "spc": 75
+  },
+  "catch_rate": 45,
+  "base_exp": 195,
+  "growth": "medium_slow",
+  "learnset": [
+   {
+    "level": 1,
+    "move": "Tackle"
+   },
+   {
+    "level": 1,
+    "move": "Horn Attack"
+   },
+   {
+    "level": 1,
+    "move": "Poison Sting"
+   },
+   {
+    "level": 1,
+    "move": "Thrash"
+   },
+   {
+    "level": 8,
+    "move": "Horn Attack"
+   },
+   {
+    "level": 14,
+    "move": "Poison Sting"
+   },
+   {
+    "level": 23,
+    "move": "Thrash"
+   }
+  ],
+  "tm_hm": [
+   "HM03",
+   "HM04",
+   "TM01",
+   "TM05",
+   "TM06",
+   "TM07",
+   "TM08",
+   "TM09",
+   "TM10",
+   "TM11",
+   "TM12",
+   "TM13",
+   "TM14",
+   "TM15",
+   "TM16",
+   "TM17",
+   "TM18",
+   "TM19",
+   "TM20",
+   "TM24",
+   "TM25",
+   "TM26",
+   "TM27",
+   "TM31",
+   "TM32",
+   "TM33",
+   "TM34",
+   "TM38",
+   "TM40",
+   "TM44",
+   "TM48",
+   "TM50"
+  ],
+  "evolutions": []
+ },
+ "Nidoqueen": {
+  "dex": 31,
+  "types": [
+   "Poison",
+   "Ground"
+  ],
+  "base": {
+   "hp": 90,
+   "atk": 82,
+   "def": 87,
+   "spd": 76,
+   "spc": 75
+  },
+  "catch_rate": 45,
+  "base_exp": 194,
+  "growth": "medium_slow",
+  "learnset": [
+   {
+    "level": 1,
+    "move": "Tackle"
+   },
+   {
+    "level": 1,
+    "move": "Scratch"
+   },
+   {
+    "level": 1,
+    "move": "Tail Whip"
+   },
+   {
+    "level": 1,
+    "move": "Body Slam"
+   },
+   {
+    "level": 8,
+    "move": "Scratch"
+   },
+   {
+    "level": 14,
+    "move": "Poison Sting"
+   },
+   {
+    "level": 23,
+    "move": "Body Slam"
+   }
+  ],
+  "tm_hm": [
+   "HM03",
+   "HM04",
+   "TM01",
+   "TM05",
+   "TM06",
+   "TM07",
+   "TM08",
+   "TM09",
+   "TM10",
+   "TM11",
+   "TM12",
+   "TM13",
+   "TM14",
+   "TM15",
+   "TM16",
+   "TM17",
+   "TM18",
+   "TM19",
+   "TM20",
+   "TM24",
+   "TM25",
+   "TM26",
+   "TM27",
+   "TM31",
+   "TM32",
+   "TM33",
+   "TM34",
+   "TM38",
+   "TM40",
+   "TM44",
+   "TM48",
+   "TM50"
+  ],
+  "evolutions": []
+ },
+ "Nidoran♀": {
+  "dex": 29,
+  "types": [
+   "Poison"
+  ],
+  "base": {
+   "hp": 55,
+   "atk": 47,
+   "def": 52,
+   "spd": 41,
+   "spc": 40
+  },
+  "catch_rate": 235,
+  "base_exp": 59,
+  "growth": "medium_slow",
+  "learnset": [
+   {
+    "level": 1,
+    "move": "Growl"
+   },
+   {
+    "level": 1,
+    "move": "Tackle"
+   },
+   {
+    "level": 8,
+    "move": "Scratch"
+   },
+   {
+    "level": 14,
+    "move": "Poison Sting"
+   },
+   {
+    "level": 21,
+    "move": "Tail Whip"
+   },
+   {
+    "level": 29,
+    "move": "Bite"
+   },
+   {
+    "level": 36,
+    "move": "Fury Swipes"
+   },
+   {
+    "level": 43,
+    "move": "Double Kick"
+   }
+  ],
+  "tm_hm": [
+   "TM06",
+   "TM08",
+   "TM09",
+   "TM10",
+   "TM14",
+   "TM20",
+   "TM24",
+   "TM25",
+   "TM31",
+   "TM32",
+   "TM33",
+   "TM34",
+   "TM40",
+   "TM44",
+   "TM50"
+  ],
+  "evolutions": [
+   {
+    "to": "Nidorina",
+    "method": "level",
+    "param": 16
+   }
+  ]
+ },
+ "Nidoran♂": {
+  "dex": 32,
+  "types": [
+   "Poison"
+  ],
+  "base": {
+   "hp": 46,
+   "atk": 57,
+   "def": 40,
+   "spd": 50,
+   "spc": 40
+  },
+  "catch_rate": 235,
+  "base_exp": 60,
+  "growth": "medium_slow",
+  "learnset": [
+   {
+    "level": 1,
+    "move": "Leer"
+   },
+   {
+    "level": 1,
+    "move": "Tackle"
+   },
+   {
+    "level": 8,
+    "move": "Horn Attack"
+   },
+   {
+    "level": 14,
+    "move": "Poison Sting"
+   },
+   {
+    "level": 21,
+    "move": "Focus Energy"
+   },
+   {
+    "level": 29,
+    "move": "Fury Attack"
+   },
+   {
+    "level": 36,
+    "move": "Horn Drill"
+   },
+   {
+    "level": 43,
+    "move": "Double Kick"
+   }
+  ],
+  "tm_hm": [
+   "TM06",
+   "TM07",
+   "TM08",
+   "TM09",
+   "TM10",
+   "TM14",
+   "TM20",
+   "TM24",
+   "TM25",
+   "TM31",
+   "TM32",
+   "TM33",
+   "TM34",
+   "TM40",
+   "TM44",
+   "TM50"
+  ],
+  "evolutions": [
+   {
+    "to": "Nidorino",
+    "method": "level",
+    "param": 16
+   }
+  ]
+ },
+ "Nidorina": {
+  "dex": 30,
+  "types": [
+   "Poison"
+  ],
+  "base": {
+   "hp": 70,
+   "atk": 62,
+   "def": 67,
+   "spd": 56,
+   "spc": 55
+  },
+  "catch_rate": 120,
+  "base_exp": 117,
+  "growth": "medium_slow",
+  "learnset": [
+   {
+    "level": 1,
+    "move": "Growl"
+   },
+   {
+    "level": 1,
+    "move": "Tackle"
+   },
+   {
+    "level": 1,
+    "move": "Scratch"
+   },
+   {
+    "level": 8,
+    "move": "Scratch"
+   },
+   {
+    "level": 14,
+    "move": "Poison Sting"
+   },
+   {
+    "level": 23,
+    "move": "Tail Whip"
+   },
+   {
+    "level": 32,
+    "move": "Bite"
+   },
+   {
+    "level": 41,
+    "move": "Fury Swipes"
+   },
+   {
+    "level": 50,
+    "move": "Double Kick"
+   }
+  ],
+  "tm_hm": [
+   "TM06",
+   "TM07",
+   "TM08",
+   "TM09",
+   "TM10",
+   "TM11",
+   "TM12",
+   "TM13",
+   "TM14",
+   "TM20",
+   "TM24",
+   "TM25",
+   "TM31",
+   "TM32",
+   "TM33",
+   "TM34",
+   "TM40",
+   "TM44",
+   "TM50"
+  ],
+  "evolutions": [
+   {
+    "to": "Nidoqueen",
+    "method": "item",
+    "param": "Moon Stone"
+   }
+  ]
+ },
+ "Nidorino": {
+  "dex": 33,
+  "types": [
+   "Poison"
+  ],
+  "base": {
+   "hp": 61,
+   "atk": 72,
+   "def": 57,
+   "spd": 65,
+   "spc": 55
+  },
+  "catch_rate": 120,
+  "base_exp": 118,
+  "growth": "medium_slow",
+  "learnset": [
+   {
+    "level": 1,
+    "move": "Leer"
+   },
+   {
+    "level": 1,
+    "move": "Tackle"
+   },
+   {
+    "level": 1,
+    "move": "Horn Attack"
+   },
+   {
+    "level": 8,
+    "move": "Horn Attack"
+   },
+   {
+    "level": 14,
+    "move": "Poison Sting"
+   },
+   {
+    "level": 23,
+    "move": "Focus Energy"
+   },
+   {
+    "level": 32,
+    "move": "Fury Attack"
+   },
+   {
+    "level": 41,
+    "move": "Horn Drill"
+   },
+   {
+    "level": 50,
+    "move": "Double Kick"
+   }
+  ],
+  "tm_hm": [
+   "TM06",
+   "TM07",
+   "TM08",
+   "TM09",
+   "TM10",
+   "TM11",
+   "TM12",
+   "TM13",
+   "TM14",
+   "TM20",
+   "TM24",
+   "TM25",
+   "TM31",
+   "TM32",
+   "TM33",
+   "TM34",
+   "TM40",
+   "TM44",
+   "TM50"
+  ],
+  "evolutions": [
+   {
+    "to": "Nidoking",
+    "method": "item",
+    "param": "Moon Stone"
+   }
+  ]
+ },
+ "Ninetales": {
+  "dex": 38,
+  "types": [
+   "Fire"
+  ],
+  "base": {
+   "hp": 73,
+   "atk": 76,
+   "def": 75,
+   "spd": 100,
+   "spc": 100
+  },
+  "catch_rate": 75,
+  "base_exp": 178,
+  "growth": "medium_fast",
+  "learnset": [
+   {
+    "level": 1,
+    "move": "Ember"
+   },
+   {
+    "level": 1,
+    "move": "Tail Whip"
+   },
+   {
+    "level": 1,
+    "move": "Quick Attack"
+   },
+   {
+    "level": 1,
+    "move": "Roar"
+   }
+  ],
+  "tm_hm": [
+   "TM06",
+   "TM08",
+   "TM09",
+   "TM10",
+   "TM15",
+   "TM20",
+   "TM28",
+   "TM31",
+   "TM32",
+   "TM33",
+   "TM34",
+   "TM38",
+   "TM39",
+   "TM40",
+   "TM44",
+   "TM50"
+  ],
+  "evolutions": []
+ },
+ "Oddish": {
+  "dex": 43,
+  "types": [
+   "Grass",
+   "Poison"
+  ],
+  "base": {
+   "hp": 45,
+   "atk": 50,
+   "def": 55,
+   "spd": 30,
+   "spc": 75
+  },
+  "catch_rate": 255,
+  "base_exp": 78,
+  "growth": "medium_slow",
+  "learnset": [
+   {
+    "level": 1,
+    "move": "Absorb"
+   },
+   {
+    "level": 15,
+    "move": "Poison Powder"
+   },
+   {
+    "level": 17,
+    "move": "Stun Spore"
+   },
+   {
+    "level": 19,
+    "move": "Sleep Powder"
+   },
+   {
+    "level": 24,
+    "move": "Acid"
+   },
+   {
+    "level": 33,
+    "move": "Petal Dance"
+   },
+   {
+    "level": 46,
+    "move": "Solar Beam"
+   }
+  ],
+  "tm_hm": [
+   "HM01",
+   "TM03",
+   "TM06",
+   "TM09",
+   "TM10",
+   "TM20",
+   "TM21",
+   "TM22",
+   "TM31",
+   "TM32",
+   "TM33",
+   "TM34",
+   "TM44",
+   "TM50"
+  ],
+  "evolutions": [
+   {
+    "to": "Gloom",
+    "method": "level",
+    "param": 21
+   }
+  ]
+ },
+ "Omanyte": {
+  "dex": 138,
+  "types": [
+   "Rock",
+   "Water"
+  ],
+  "base": {
+   "hp": 35,
+   "atk": 40,
+   "def": 100,
+   "spd": 35,
+   "spc": 90
+  },
+  "catch_rate": 45,
+  "base_exp": 120,
+  "growth": "medium_fast",
+  "learnset": [
+   {
+    "level": 1,
+    "move": "Water Gun"
+   },
+   {
+    "level": 1,
+    "move": "Withdraw"
+   },
+   {
+    "level": 34,
+    "move": "Horn Attack"
+   },
+   {
+    "level": 39,
+    "move": "Leer"
+   },
+   {
+    "level": 46,
+    "move": "Spike Cannon"
+   },
+   {
+    "level": 53,
+    "move": "Hydro Pump"
+   }
+  ],
+  "tm_hm": [
+   "HM03",
+   "TM06",
+   "TM08",
+   "TM09",
+   "TM10",
+   "TM11",
+   "TM12",
+   "TM13",
+   "TM14",
+   "TM20",
+   "TM31",
+   "TM32",
+   "TM33",
+   "TM34",
+   "TM44",
+   "TM50"
+  ],
+  "evolutions": [
+   {
+    "to": "Omastar",
+    "method": "level",
+    "param": 40
+   }
+  ]
+ },
+ "Omastar": {
+  "dex": 139,
+  "types": [
+   "Rock",
+   "Water"
+  ],
+  "base": {
+   "hp": 70,
+   "atk": 60,
+   "def": 125,
+   "spd": 55,
+   "spc": 115
+  },
+  "catch_rate": 45,
+  "base_exp": 199,
+  "growth": "medium_fast",
+  "learnset": [
+   {
+    "level": 1,
+    "move": "Water Gun"
+   },
+   {
+    "level": 1,
+    "move": "Withdraw"
+   },
+   {
+    "level": 1,
+    "move": "Horn Attack"
+   },
+   {
+    "level": 34,
+    "move": "Horn Attack"
+   },
+   {
+    "level": 39,
+    "move": "Leer"
+   },
+   {
+    "level": 44,
+    "move": "Spike Cannon"
+   },
+   {
+    "level": 49,
+    "move": "Hydro Pump"
+   }
+  ],
+  "tm_hm": [
+   "HM03",
+   "TM06",
+   "TM07",
+   "TM08",
+   "TM09",
+   "TM10",
+   "TM11",
+   "TM12",
+   "TM13",
+   "TM14",
+   "TM15",
+   "TM17",
+   "TM19",
+   "TM20",
+   "TM31",
+   "TM32",
+   "TM33",
+   "TM34",
+   "TM40",
+   "TM44",
+   "TM50"
+  ],
+  "evolutions": []
+ },
+ "Onix": {
+  "dex": 95,
+  "types": [
+   "Rock",
+   "Ground"
+  ],
+  "base": {
+   "hp": 35,
+   "atk": 45,
+   "def": 160,
+   "spd": 70,
+   "spc": 30
+  },
+  "catch_rate": 45,
+  "base_exp": 108,
+  "growth": "medium_fast",
+  "learnset": [
+   {
+    "level": 1,
+    "move": "Tackle"
+   },
+   {
+    "level": 1,
+    "move": "Screech"
+   },
+   {
+    "level": 15,
+    "move": "Bind"
+   },
+   {
+    "level": 19,
+    "move": "Rock Throw"
+   },
+   {
+    "level": 25,
+    "move": "Rage"
+   },
+   {
+    "level": 33,
+    "move": "Slam"
+   },
+   {
+    "level": 43,
+    "move": "Harden"
+   }
+  ],
+  "tm_hm": [
+   "HM04",
+   "TM06",
+   "TM08",
+   "TM09",
+   "TM10",
+   "TM20",
+   "TM26",
+   "TM27",
+   "TM28",
+   "TM31",
+   "TM32",
+   "TM34",
+   "TM36",
+   "TM40",
+   "TM44",
+   "TM47",
+   "TM48",
+   "TM50"
+  ],
+  "evolutions": []
+ },
+ "Paras": {
+  "dex": 46,
+  "types": [
+   "Bug",
+   "Grass"
+  ],
+  "base": {
+   "hp": 35,
+   "atk": 70,
+   "def": 55,
+   "spd": 25,
+   "spc": 55
+  },
+  "catch_rate": 190,
+  "base_exp": 70,
+  "growth": "medium_fast",
+  "learnset": [
+   {
+    "level": 1,
+    "move": "Scratch"
+   },
+   {
+    "level": 13,
+    "move": "Stun Spore"
+   },
+   {
+    "level": 20,
+    "move": "Leech Life"
+   },
+   {
+    "level": 27,
+    "move": "Spore"
+   },
+   {
+    "level": 34,
+    "move": "Slash"
+   },
+   {
+    "level": 41,
+    "move": "Growth"
+   }
+  ],
+  "tm_hm": [
+   "HM01",
+   "TM03",
+   "TM06",
+   "TM08",
+   "TM09",
+   "TM10",
+   "TM20",
+   "TM21",
+   "TM22",
+   "TM28",
+   "TM31",
+   "TM32",
+   "TM33",
+   "TM34",
+   "TM40",
+   "TM44",
+   "TM50"
+  ],
+  "evolutions": [
+   {
+    "to": "Parasect",
+    "method": "level",
+    "param": 24
+   }
+  ]
+ },
+ "Parasect": {
+  "dex": 47,
+  "types": [
+   "Bug",
+   "Grass"
+  ],
+  "base": {
+   "hp": 60,
+   "atk": 95,
+   "def": 80,
+   "spd": 30,
+   "spc": 80
+  },
+  "catch_rate": 75,
+  "base_exp": 128,
+  "growth": "medium_fast",
+  "learnset": [
+   {
+    "level": 1,
+    "move": "Scratch"
+   },
+   {
+    "level": 1,
+    "move": "Stun Spore"
+   },
+   {
+    "level": 1,
+    "move": "Leech Life"
+   },
+   {
+    "level": 13,
+    "move": "Stun Spore"
+   },
+   {
+    "level": 20,
+    "move": "Leech Life"
+   },
+   {
+    "level": 30,
+    "move": "Spore"
+   },
+   {
+    "level": 39,
+    "move": "Slash"
+   },
+   {
+    "level": 48,
+    "move": "Growth"
+   }
+  ],
+  "tm_hm": [
+   "HM01",
+   "TM03",
+   "TM06",
+   "TM08",
+   "TM09",
+   "TM10",
+   "TM15",
+   "TM20",
+   "TM21",
+   "TM22",
+   "TM28",
+   "TM31",
+   "TM32",
+   "TM33",
+   "TM34",
+   "TM40",
+   "TM44",
+   "TM50"
+  ],
+  "evolutions": []
+ },
+ "Persian": {
+  "dex": 53,
+  "types": [
+   "Normal"
+  ],
+  "base": {
+   "hp": 65,
+   "atk": 70,
+   "def": 60,
+   "spd": 115,
+   "spc": 65
+  },
+  "catch_rate": 90,
+  "base_exp": 148,
+  "growth": "medium_fast",
+  "learnset": [
+   {
+    "level": 1,
+    "move": "Scratch"
+   },
+   {
+    "level": 1,
+    "move": "Growl"
+   },
+   {
+    "level": 1,
+    "move": "Bite"
+   },
+   {
+    "level": 1,
+    "move": "Screech"
+   },
+   {
+    "level": 12,
+    "move": "Bite"
+   },
+   {
+    "level": 17,
+    "move": "Pay Day"
+   },
+   {
+    "level": 24,
+    "move": "Screech"
+   },
+   {
+    "level": 37,
+    "move": "Fury Swipes"
+   },
+   {
+    "level": 51,
+    "move": "Slash"
+   }
+  ],
+  "tm_hm": [
+   "TM06",
+   "TM08",
+   "TM09",
+   "TM10",
+   "TM11",
+   "TM12",
+   "TM15",
+   "TM16",
+   "TM20",
+   "TM24",
+   "TM25",
+   "TM31",
+   "TM32",
+   "TM34",
+   "TM39",
+   "TM40",
+   "TM44",
+   "TM50"
+  ],
+  "evolutions": []
+ },
+ "Pidgeot": {
+  "dex": 18,
+  "types": [
+   "Normal",
+   "Flying"
+  ],
+  "base": {
+   "hp": 83,
+   "atk": 80,
+   "def": 75,
+   "spd": 91,
+   "spc": 70
+  },
+  "catch_rate": 45,
+  "base_exp": 172,
+  "growth": "medium_slow",
+  "learnset": [
+   {
+    "level": 1,
+    "move": "Gust"
+   },
+   {
+    "level": 1,
+    "move": "Sand Attack"
+   },
+   {
+    "level": 1,
+    "move": "Quick Attack"
+   },
+   {
+    "level": 5,
+    "move": "Sand Attack"
+   },
+   {
+    "level": 12,
+    "move": "Quick Attack"
+   },
+   {
+    "level": 21,
+    "move": "Whirlwind"
+   },
+   {
+    "level": 31,
+    "move": "Wing Attack"
+   },
+   {
+    "level": 44,
+    "move": "Agility"
+   },
+   {
+    "level": 54,
+    "move": "Mirror Move"
+   }
+  ],
+  "tm_hm": [
+   "HM02",
+   "TM02",
+   "TM04",
+   "TM06",
+   "TM09",
+   "TM10",
+   "TM15",
+   "TM20",
+   "TM31",
+   "TM32",
+   "TM33",
+   "TM34",
+   "TM39",
+   "TM43",
+   "TM44",
+   "TM50"
+  ],
+  "evolutions": []
+ },
+ "Pidgeotto": {
+  "dex": 17,
+  "types": [
+   "Normal",
+   "Flying"
+  ],
+  "base": {
+   "hp": 63,
+   "atk": 60,
+   "def": 55,
+   "spd": 71,
+   "spc": 50
+  },
+  "catch_rate": 120,
+  "base_exp": 113,
+  "growth": "medium_slow",
+  "learnset": [
+   {
+    "level": 1,
+    "move": "Gust"
+   },
+   {
+    "level": 1,
+    "move": "Sand Attack"
+   },
+   {
+    "level": 5,
+    "move": "Sand Attack"
+   },
+   {
+    "level": 12,
+    "move": "Quick Attack"
+   },
+   {
+    "level": 21,
+    "move": "Whirlwind"
+   },
+   {
+    "level": 31,
+    "move": "Wing Attack"
+   },
+   {
+    "level": 40,
+    "move": "Agility"
+   },
+   {
+    "level": 49,
+    "move": "Mirror Move"
+   }
+  ],
+  "tm_hm": [
+   "HM02",
+   "TM02",
+   "TM04",
+   "TM06",
+   "TM09",
+   "TM10",
+   "TM20",
+   "TM31",
+   "TM32",
+   "TM33",
+   "TM34",
+   "TM39",
+   "TM43",
+   "TM44",
+   "TM50"
+  ],
+  "evolutions": [
+   {
+    "to": "Pidgeot",
+    "method": "level",
+    "param": 36
+   }
+  ]
+ },
+ "Pidgey": {
+  "dex": 16,
+  "types": [
+   "Normal",
+   "Flying"
+  ],
+  "base": {
+   "hp": 40,
+   "atk": 45,
+   "def": 40,
+   "spd": 56,
+   "spc": 35
+  },
+  "catch_rate": 255,
+  "base_exp": 55,
+  "growth": "medium_slow",
+  "learnset": [
+   {
+    "level": 1,
+    "move": "Gust"
+   },
+   {
+    "level": 5,
+    "move": "Sand Attack"
+   },
+   {
+    "level": 12,
+    "move": "Quick Attack"
+   },
+   {
+    "level": 19,
+    "move": "Whirlwind"
+   },
+   {
+    "level": 28,
+    "move": "Wing Attack"
+   },
+   {
+    "level": 36,
+    "move": "Agility"
+   },
+   {
+    "level": 44,
+    "move": "Mirror Move"
+   }
+  ],
+  "tm_hm": [
+   "HM02",
+   "TM02",
+   "TM04",
+   "TM06",
+   "TM09",
+   "TM10",
+   "TM20",
+   "TM31",
+   "TM32",
+   "TM33",
+   "TM34",
+   "TM39",
+   "TM43",
+   "TM44",
+   "TM50"
+  ],
+  "evolutions": [
+   {
+    "to": "Pidgeotto",
+    "method": "level",
+    "param": 18
+   }
+  ]
+ },
+ "Pikachu": {
+  "dex": 25,
+  "types": [
+   "Electric"
+  ],
+  "base": {
+   "hp": 35,
+   "atk": 55,
+   "def": 30,
+   "spd": 90,
+   "spc": 50
+  },
+  "catch_rate": 190,
+  "base_exp": 82,
+  "growth": "medium_fast",
+  "learnset": [
+   {
+    "level": 1,
+    "move": "Thunder Shock"
+   },
+   {
+    "level": 1,
+    "move": "Growl"
+   },
+   {
+    "level": 9,
+    "move": "Thunder Wave"
+   },
+   {
+    "level": 16,
+    "move": "Quick Attack"
+   },
+   {
+    "level": 26,
+    "move": "Swift"
+   },
+   {
+    "level": 33,
+    "move": "Agility"
+   },
+   {
+    "level": 43,
+    "move": "Thunder"
+   }
+  ],
+  "tm_hm": [
+   "HM05",
+   "TM01",
+   "TM05",
+   "TM06",
+   "TM08",
+   "TM09",
+   "TM10",
+   "TM16",
+   "TM17",
+   "TM19",
+   "TM20",
+   "TM24",
+   "TM25",
+   "TM31",
+   "TM32",
+   "TM33",
+   "TM34",
+   "TM39",
+   "TM40",
+   "TM44",
+   "TM45",
+   "TM50"
+  ],
+  "evolutions": [
+   {
+    "to": "Raichu",
+    "method": "item",
+    "param": "Thunder Stone"
+   }
+  ]
+ },
+ "Pinsir": {
+  "dex": 127,
+  "types": [
+   "Bug"
+  ],
+  "base": {
+   "hp": 65,
+   "atk": 125,
+   "def": 100,
+   "spd": 85,
+   "spc": 55
+  },
+  "catch_rate": 45,
+  "base_exp": 200,
+  "growth": "slow",
+  "learnset": [
+   {
+    "level": 1,
+    "move": "Vice Grip"
+   },
+   {
+    "level": 25,
+    "move": "Seismic Toss"
+   },
+   {
+    "level": 30,
+    "move": "Guillotine"
+   },
+   {
+    "level": 36,
+    "move": "Focus Energy"
+   },
+   {
+    "level": 43,
+    "move": "Harden"
+   },
+   {
+    "level": 49,
+    "move": "Slash"
+   },
+   {
+    "level": 54,
+    "move": "Swords Dance"
+   }
+  ],
+  "tm_hm": [
+   "HM01",
+   "HM04",
+   "TM03",
+   "TM06",
+   "TM08",
+   "TM09",
+   "TM10",
+   "TM15",
+   "TM17",
+   "TM19",
+   "TM20",
+   "TM31",
+   "TM32",
+   "TM34",
+   "TM44",
+   "TM50"
+  ],
+  "evolutions": []
+ },
+ "Poliwag": {
+  "dex": 60,
+  "types": [
+   "Water"
+  ],
+  "base": {
+   "hp": 40,
+   "atk": 50,
+   "def": 40,
+   "spd": 90,
+   "spc": 40
+  },
+  "catch_rate": 255,
+  "base_exp": 77,
+  "growth": "medium_slow",
+  "learnset": [
+   {
+    "level": 1,
+    "move": "Bubble"
+   },
+   {
+    "level": 16,
+    "move": "Hypnosis"
+   },
+   {
+    "level": 19,
+    "move": "Water Gun"
+   },
+   {
+    "level": 25,
+    "move": "Double Slap"
+   },
+   {
+    "level": 31,
+    "move": "Body Slam"
+   },
+   {
+    "level": 38,
+    "move": "Amnesia"
+   },
+   {
+    "level": 45,
+    "move": "Hydro Pump"
+   }
+  ],
+  "tm_hm": [
+   "HM03",
+   "TM06",
+   "TM08",
+   "TM09",
+   "TM10",
+   "TM11",
+   "TM12",
+   "TM13",
+   "TM14",
+   "TM20",
+   "TM29",
+   "TM31",
+   "TM32",
+   "TM34",
+   "TM40",
+   "TM44",
+   "TM46",
+   "TM50"
+  ],
+  "evolutions": [
+   {
+    "to": "Poliwhirl",
+    "method": "level",
+    "param": 25
+   }
+  ]
+ },
+ "Poliwhirl": {
+  "dex": 61,
+  "types": [
+   "Water"
+  ],
+  "base": {
+   "hp": 65,
+   "atk": 65,
+   "def": 65,
+   "spd": 90,
+   "spc": 50
+  },
+  "catch_rate": 120,
+  "base_exp": 131,
+  "growth": "medium_slow",
+  "learnset": [
+   {
+    "level": 1,
+    "move": "Bubble"
+   },
+   {
+    "level": 1,
+    "move": "Hypnosis"
+   },
+   {
+    "level": 1,
+    "move": "Water Gun"
+   },
+   {
+    "level": 16,
+    "move": "Hypnosis"
+   },
+   {
+    "level": 19,
+    "move": "Water Gun"
+   },
+   {
+    "level": 26,
+    "move": "Double Slap"
+   },
+   {
+    "level": 33,
+    "move": "Body Slam"
+   },
+   {
+    "level": 41,
+    "move": "Amnesia"
+   },
+   {
+    "level": 49,
+    "move": "Hydro Pump"
+   }
+  ],
+  "tm_hm": [
+   "HM03",
+   "HM04",
+   "TM01",
+   "TM05",
+   "TM06",
+   "TM08",
+   "TM09",
+   "TM10",
+   "TM11",
+   "TM12",
+   "TM13",
+   "TM14",
+   "TM17",
+   "TM18",
+   "TM19",
+   "TM20",
+   "TM26",
+   "TM27",
+   "TM29",
+   "TM31",
+   "TM32",
+   "TM34",
+   "TM35",
+   "TM40",
+   "TM44",
+   "TM46",
+   "TM50"
+  ],
+  "evolutions": [
+   {
+    "to": "Poliwrath",
+    "method": "item",
+    "param": "Water Stone"
+   }
+  ]
+ },
+ "Poliwrath": {
+  "dex": 62,
+  "types": [
+   "Water",
+   "Fighting"
+  ],
+  "base": {
+   "hp": 90,
+   "atk": 85,
+   "def": 95,
+   "spd": 70,
+   "spc": 70
+  },
+  "catch_rate": 45,
+  "base_exp": 185,
+  "growth": "medium_slow",
+  "learnset": [
+   {
+    "level": 1,
+    "move": "Hypnosis"
+   },
+   {
+    "level": 1,
+    "move": "Water Gun"
+   },
+   {
+    "level": 1,
+    "move": "Double Slap"
+   },
+   {
+    "level": 1,
+    "move": "Body Slam"
+   },
+   {
+    "level": 16,
+    "move": "Hypnosis"
+   },
+   {
+    "level": 19,
+    "move": "Water Gun"
+   }
+  ],
+  "tm_hm": [
+   "HM03",
+   "HM04",
+   "TM01",
+   "TM05",
+   "TM06",
+   "TM08",
+   "TM09",
+   "TM10",
+   "TM11",
+   "TM12",
+   "TM13",
+   "TM14",
+   "TM15",
+   "TM17",
+   "TM18",
+   "TM19",
+   "TM20",
+   "TM26",
+   "TM27",
+   "TM29",
+   "TM31",
+   "TM32",
+   "TM34",
+   "TM35",
+   "TM40",
+   "TM44",
+   "TM46",
+   "TM50"
+  ],
+  "evolutions": []
+ },
+ "Ponyta": {
+  "dex": 77,
+  "types": [
+   "Fire"
+  ],
+  "base": {
+   "hp": 50,
+   "atk": 85,
+   "def": 55,
+   "spd": 90,
+   "spc": 65
+  },
+  "catch_rate": 190,
+  "base_exp": 152,
+  "growth": "medium_fast",
+  "learnset": [
+   {
+    "level": 1,
+    "move": "Ember"
+   },
+   {
+    "level": 30,
+    "move": "Tail Whip"
+   },
+   {
+    "level": 32,
+    "move": "Stomp"
+   },
+   {
+    "level": 35,
+    "move": "Growl"
+   },
+   {
+    "level": 39,
+    "move": "Fire Spin"
+   },
+   {
+    "level": 43,
+    "move": "Take Down"
+   },
+   {
+    "level": 48,
+    "move": "Agility"
+   }
+  ],
+  "tm_hm": [
+   "TM06",
+   "TM07",
+   "TM08",
+   "TM09",
+   "TM10",
+   "TM20",
+   "TM31",
+   "TM32",
+   "TM33",
+   "TM34",
+   "TM38",
+   "TM39",
+   "TM40",
+   "TM44",
+   "TM50"
+  ],
+  "evolutions": [
+   {
+    "to": "Rapidash",
+    "method": "level",
+    "param": 40
+   }
+  ]
+ },
+ "Porygon": {
+  "dex": 137,
+  "types": [
+   "Normal"
+  ],
+  "base": {
+   "hp": 65,
+   "atk": 60,
+   "def": 70,
+   "spd": 40,
+   "spc": 75
+  },
+  "catch_rate": 45,
+  "base_exp": 130,
+  "growth": "medium_fast",
+  "learnset": [
+   {
+    "level": 1,
+    "move": "Tackle"
+   },
+   {
+    "level": 1,
+    "move": "Sharpen"
+   },
+   {
+    "level": 1,
+    "move": "Conversion"
+   },
+   {
+    "level": 23,
+    "move": "Psybeam"
+   },
+   {
+    "level": 28,
+    "move": "Recover"
+   },
+   {
+    "level": 35,
+    "move": "Agility"
+   },
+   {
+    "level": 42,
+    "move": "Tri Attack"
+   }
+  ],
+  "tm_hm": [
+   "HM05",
+   "TM06",
+   "TM09",
+   "TM10",
+   "TM13",
+   "TM14",
+   "TM15",
+   "TM20",
+   "TM24",
+   "TM25",
+   "TM29",
+   "TM30",
+   "TM31",
+   "TM32",
+   "TM33",
+   "TM34",
+   "TM39",
+   "TM40",
+   "TM44",
+   "TM45",
+   "TM46",
+   "TM49",
+   "TM50"
+  ],
+  "evolutions": []
+ },
+ "Primeape": {
+  "dex": 57,
+  "types": [
+   "Fighting"
+  ],
+  "base": {
+   "hp": 65,
+   "atk": 105,
+   "def": 60,
+   "spd": 95,
+   "spc": 60
+  },
+  "catch_rate": 75,
+  "base_exp": 149,
+  "growth": "medium_fast",
+  "learnset": [
+   {
+    "level": 1,
+    "move": "Scratch"
+   },
+   {
+    "level": 1,
+    "move": "Leer"
+   },
+   {
+    "level": 1,
+    "move": "Karate Chop"
+   },
+   {
+    "level": 1,
+    "move": "Fury Swipes"
+   },
+   {
+    "level": 15,
+    "move": "Karate Chop"
+   },
+   {
+    "level": 21,
+    "move": "Fury Swipes"
+   },
+   {
+    "level": 27,
+    "move": "Focus Energy"
+   },
+   {
+    "level": 37,
+    "move": "Seismic Toss"
+   },
+   {
+    "level": 46,
+    "move": "Thrash"
+   }
+  ],
+  "tm_hm": [
+   "HM04",
+   "TM01",
+   "TM05",
+   "TM06",
+   "TM08",
+   "TM09",
+   "TM10",
+   "TM15",
+   "TM16",
+   "TM17",
+   "TM18",
+   "TM19",
+   "TM20",
+   "TM24",
+   "TM25",
+   "TM28",
+   "TM31",
+   "TM32",
+   "TM34",
+   "TM35",
+   "TM39",
+   "TM40",
+   "TM44",
+   "TM48",
+   "TM50"
+  ],
+  "evolutions": []
+ },
+ "Psyduck": {
+  "dex": 54,
+  "types": [
+   "Water"
+  ],
+  "base": {
+   "hp": 50,
+   "atk": 52,
+   "def": 48,
+   "spd": 55,
+   "spc": 50
+  },
+  "catch_rate": 190,
+  "base_exp": 80,
+  "growth": "medium_fast",
+  "learnset": [
+   {
+    "level": 1,
+    "move": "Scratch"
+   },
+   {
+    "level": 28,
+    "move": "Tail Whip"
+   },
+   {
+    "level": 31,
+    "move": "Disable"
+   },
+   {
+    "level": 36,
+    "move": "Confusion"
+   },
+   {
+    "level": 43,
+    "move": "Fury Swipes"
+   },
+   {
+    "level": 52,
+    "move": "Hydro Pump"
+   }
+  ],
+  "tm_hm": [
+   "HM03",
+   "HM04",
+   "TM01",
+   "TM05",
+   "TM06",
+   "TM08",
+   "TM09",
+   "TM10",
+   "TM11",
+   "TM12",
+   "TM13",
+   "TM14",
+   "TM16",
+   "TM17",
+   "TM18",
+   "TM19",
+   "TM20",
+   "TM28",
+   "TM31",
+   "TM32",
+   "TM34",
+   "TM39",
+   "TM40",
+   "TM44",
+   "TM50"
+  ],
+  "evolutions": [
+   {
+    "to": "Golduck",
+    "method": "level",
+    "param": 33
+   }
+  ]
+ },
+ "Raichu": {
+  "dex": 26,
+  "types": [
+   "Electric"
+  ],
+  "base": {
+   "hp": 60,
+   "atk": 90,
+   "def": 55,
+   "spd": 100,
+   "spc": 90
+  },
+  "catch_rate": 75,
+  "base_exp": 122,
+  "growth": "medium_fast",
+  "learnset": [
+   {
+    "level": 1,
+    "move": "Thunder Shock"
+   },
+   {
+    "level": 1,
+    "move": "Growl"
+   },
+   {
+    "level": 1,
+    "move": "Thunder Wave"
+   }
+  ],
+  "tm_hm": [
+   "HM05",
+   "TM01",
+   "TM05",
+   "TM06",
+   "TM08",
+   "TM09",
+   "TM10",
+   "TM15",
+   "TM16",
+   "TM17",
+   "TM19",
+   "TM20",
+   "TM24",
+   "TM25",
+   "TM31",
+   "TM32",
+   "TM33",
+   "TM34",
+   "TM39",
+   "TM40",
+   "TM44",
+   "TM45",
+   "TM50"
+  ],
+  "evolutions": []
+ },
+ "Rapidash": {
+  "dex": 78,
+  "types": [
+   "Fire"
+  ],
+  "base": {
+   "hp": 65,
+   "atk": 100,
+   "def": 70,
+   "spd": 105,
+   "spc": 80
+  },
+  "catch_rate": 60,
+  "base_exp": 192,
+  "growth": "medium_fast",
+  "learnset": [
+   {
+    "level": 1,
+    "move": "Ember"
+   },
+   {
+    "level": 1,
+    "move": "Tail Whip"
+   },
+   {
+    "level": 1,
+    "move": "Stomp"
+   },
+   {
+    "level": 1,
+    "move": "Growl"
+   },
+   {
+    "level": 30,
+    "move": "Tail Whip"
+   },
+   {
+    "level": 32,
+    "move": "Stomp"
+   },
+   {
+    "level": 35,
+    "move": "Growl"
+   },
+   {
+    "level": 39,
+    "move": "Fire Spin"
+   },
+   {
+    "level": 47,
+    "move": "Take Down"
+   },
+   {
+    "level": 55,
+    "move": "Agility"
+   }
+  ],
+  "tm_hm": [
+   "TM06",
+   "TM07",
+   "TM08",
+   "TM09",
+   "TM10",
+   "TM15",
+   "TM20",
+   "TM31",
+   "TM32",
+   "TM33",
+   "TM34",
+   "TM38",
+   "TM39",
+   "TM40",
+   "TM44",
+   "TM50"
+  ],
+  "evolutions": []
+ },
+ "Raticate": {
+  "dex": 20,
+  "types": [
+   "Normal"
+  ],
+  "base": {
+   "hp": 55,
+   "atk": 81,
+   "def": 60,
+   "spd": 97,
+   "spc": 50
+  },
+  "catch_rate": 90,
+  "base_exp": 116,
+  "growth": "medium_fast",
+  "learnset": [
+   {
+    "level": 1,
+    "move": "Tackle"
+   },
+   {
+    "level": 1,
+    "move": "Tail Whip"
+   },
+   {
+    "level": 1,
+    "move": "Quick Attack"
+   },
+   {
+    "level": 7,
+    "move": "Quick Attack"
+   },
+   {
+    "level": 14,
+    "move": "Hyper Fang"
+   },
+   {
+    "level": 27,
+    "move": "Focus Energy"
+   },
+   {
+    "level": 41,
+    "move": "Super Fang"
+   }
+  ],
+  "tm_hm": [
+   "TM06",
+   "TM08",
+   "TM09",
+   "TM10",
+   "TM11",
+   "TM12",
+   "TM13",
+   "TM14",
+   "TM15",
+   "TM20",
+   "TM24",
+   "TM25",
+   "TM28",
+   "TM31",
+   "TM32",
+   "TM34",
+   "TM39",
+   "TM40",
+   "TM44",
+   "TM50"
+  ],
+  "evolutions": []
+ },
+ "Rattata": {
+  "dex": 19,
+  "types": [
+   "Normal"
+  ],
+  "base": {
+   "hp": 30,
+   "atk": 56,
+   "def": 35,
+   "spd": 72,
+   "spc": 25
+  },
+  "catch_rate": 255,
+  "base_exp": 57,
+  "growth": "medium_fast",
+  "learnset": [
+   {
+    "level": 1,
+    "move": "Tackle"
+   },
+   {
+    "level": 1,
+    "move": "Tail Whip"
+   },
+   {
+    "level": 7,
+    "move": "Quick Attack"
+   },
+   {
+    "level": 14,
+    "move": "Hyper Fang"
+   },
+   {
+    "level": 23,
+    "move": "Focus Energy"
+   },
+   {
+    "level": 34,
+    "move": "Super Fang"
+   }
+  ],
+  "tm_hm": [
+   "TM06",
+   "TM08",
+   "TM09",
+   "TM10",
+   "TM11",
+   "TM12",
+   "TM14",
+   "TM20",
+   "TM24",
+   "TM25",
+   "TM28",
+   "TM31",
+   "TM32",
+   "TM34",
+   "TM39",
+   "TM40",
+   "TM44",
+   "TM50"
+  ],
+  "evolutions": [
+   {
+    "to": "Raticate",
+    "method": "level",
+    "param": 20
+   }
+  ]
+ },
+ "Rhydon": {
+  "dex": 112,
+  "types": [
+   "Ground",
+   "Rock"
+  ],
+  "base": {
+   "hp": 105,
+   "atk": 130,
+   "def": 120,
+   "spd": 40,
+   "spc": 45
+  },
+  "catch_rate": 60,
+  "base_exp": 204,
+  "growth": "slow",
+  "learnset": [
+   {
+    "level": 1,
+    "move": "Horn Attack"
+   },
+   {
+    "level": 1,
+    "move": "Stomp"
+   },
+   {
+    "level": 1,
+    "move": "Tail Whip"
+   },
+   {
+    "level": 1,
+    "move": "Fury Attack"
+   },
+   {
+    "level": 30,
+    "move": "Stomp"
+   },
+   {
+    "level": 35,
+    "move": "Tail Whip"
+   },
+   {
+    "level": 40,
+    "move": "Fury Attack"
+   },
+   {
+    "level": 48,
+    "move": "Horn Drill"
+   },
+   {
+    "level": 55,
+    "move": "Leer"
+   },
+   {
+    "level": 64,
+    "move": "Take Down"
+   }
+  ],
+  "tm_hm": [
+   "HM03",
+   "HM04",
+   "TM01",
+   "TM05",
+   "TM06",
+   "TM07",
+   "TM08",
+   "TM09",
+   "TM10",
+   "TM11",
+   "TM12",
+   "TM13",
+   "TM14",
+   "TM15",
+   "TM16",
+   "TM17",
+   "TM18",
+   "TM19",
+   "TM20",
+   "TM24",
+   "TM25",
+   "TM26",
+   "TM27",
+   "TM28",
+   "TM31",
+   "TM32",
+   "TM34",
+   "TM38",
+   "TM40",
+   "TM44",
+   "TM48",
+   "TM50"
+  ],
+  "evolutions": []
+ },
+ "Rhyhorn": {
+  "dex": 111,
+  "types": [
+   "Ground",
+   "Rock"
+  ],
+  "base": {
+   "hp": 80,
+   "atk": 85,
+   "def": 95,
+   "spd": 25,
+   "spc": 30
+  },
+  "catch_rate": 120,
+  "base_exp": 135,
+  "growth": "slow",
+  "learnset": [
+   {
+    "level": 1,
+    "move": "Horn Attack"
+   },
+   {
+    "level": 30,
+    "move": "Stomp"
+   },
+   {
+    "level": 35,
+    "move": "Tail Whip"
+   },
+   {
+    "level": 40,
+    "move": "Fury Attack"
+   },
+   {
+    "level": 45,
+    "move": "Horn Drill"
+   },
+   {
+    "level": 50,
+    "move": "Leer"
+   },
+   {
+    "level": 55,
+    "move": "Take Down"
+   }
+  ],
+  "tm_hm": [
+   "HM04",
+   "TM06",
+   "TM07",
+   "TM08",
+   "TM09",
+   "TM10",
+   "TM20",
+   "TM24",
+   "TM25",
+   "TM26",
+   "TM27",
+   "TM28",
+   "TM31",
+   "TM32",
+   "TM34",
+   "TM38",
+   "TM40",
+   "TM44",
+   "TM48",
+   "TM50"
+  ],
+  "evolutions": [
+   {
+    "to": "Rhydon",
+    "method": "level",
+    "param": 42
+   }
+  ]
+ },
+ "Sandshrew": {
+  "dex": 27,
+  "types": [
+   "Ground"
+  ],
+  "base": {
+   "hp": 50,
+   "atk": 75,
+   "def": 85,
+   "spd": 40,
+   "spc": 30
+  },
+  "catch_rate": 255,
+  "base_exp": 93,
+  "growth": "medium_fast",
+  "learnset": [
+   {
+    "level": 1,
+    "move": "Scratch"
+   },
+   {
+    "level": 10,
+    "move": "Sand Attack"
+   },
+   {
+    "level": 17,
+    "move": "Slash"
+   },
+   {
+    "level": 24,
+    "move": "Poison Sting"
+   },
+   {
+    "level": 31,
+    "move": "Swift"
+   },
+   {
+    "level": 38,
+    "move": "Fury Swipes"
+   }
+  ],
+  "tm_hm": [
+   "HM01",
+   "HM04",
+   "TM03",
+   "TM06",
+   "TM08",
+   "TM09",
+   "TM10",
+   "TM17",
+   "TM19",
+   "TM20",
+   "TM26",
+   "TM27",
+   "TM28",
+   "TM31",
+   "TM32",
+   "TM34",
+   "TM39",
+   "TM40",
+   "TM44",
+   "TM48",
+   "TM50"
+  ],
+  "evolutions": [
+   {
+    "to": "Sandslash",
+    "method": "level",
+    "param": 22
+   }
+  ]
+ },
+ "Sandslash": {
+  "dex": 28,
+  "types": [
+   "Ground"
+  ],
+  "base": {
+   "hp": 75,
+   "atk": 100,
+   "def": 110,
+   "spd": 65,
+   "spc": 55
+  },
+  "catch_rate": 90,
+  "base_exp": 163,
+  "growth": "medium_fast",
+  "learnset": [
+   {
+    "level": 1,
+    "move": "Scratch"
+   },
+   {
+    "level": 1,
+    "move": "Sand Attack"
+   },
+   {
+    "level": 10,
+    "move": "Sand Attack"
+   },
+   {
+    "level": 17,
+    "move": "Slash"
+   },
+   {
+    "level": 27,
+    "move": "Poison Sting"
+   },
+   {
+    "level": 36,
+    "move": "Swift"
+   },
+   {
+    "level": 47,
+    "move": "Fury Swipes"
+   }
+  ],
+  "tm_hm": [
+   "HM01",
+   "HM04",
+   "TM03",
+   "TM06",
+   "TM08",
+   "TM09",
+   "TM10",
+   "TM15",
+   "TM17",
+   "TM19",
+   "TM20",
+   "TM26",
+   "TM27",
+   "TM28",
+   "TM31",
+   "TM32",
+   "TM34",
+   "TM39",
+   "TM40",
+   "TM44",
+   "TM48",
+   "TM50"
+  ],
+  "evolutions": []
+ },
+ "Scyther": {
+  "dex": 123,
+  "types": [
+   "Bug",
+   "Flying"
+  ],
+  "base": {
+   "hp": 70,
+   "atk": 110,
+   "def": 80,
+   "spd": 105,
+   "spc": 55
+  },
+  "catch_rate": 45,
+  "base_exp": 187,
+  "growth": "medium_fast",
+  "learnset": [
+   {
+    "level": 1,
+    "move": "Quick Attack"
+   },
+   {
+    "level": 17,
+    "move": "Leer"
+   },
+   {
+    "level": 20,
+    "move": "Focus Energy"
+   },
+   {
+    "level": 24,
+    "move": "Double Team"
+   },
+   {
+    "level": 29,
+    "move": "Slash"
+   },
+   {
+    "level": 35,
+    "move": "Swords Dance"
+   },
+   {
+    "level": 42,
+    "move": "Agility"
+   }
+  ],
+  "tm_hm": [
+   "HM01",
+   "TM03",
+   "TM06",
+   "TM09",
+   "TM10",
+   "TM15",
+   "TM20",
+   "TM31",
+   "TM32",
+   "TM34",
+   "TM39",
+   "TM40",
+   "TM44",
+   "TM50"
+  ],
+  "evolutions": []
+ },
+ "Seadra": {
+  "dex": 117,
+  "types": [
+   "Water"
+  ],
+  "base": {
+   "hp": 55,
+   "atk": 65,
+   "def": 95,
+   "spd": 85,
+   "spc": 95
+  },
+  "catch_rate": 75,
+  "base_exp": 155,
+  "growth": "medium_fast",
+  "learnset": [
+   {
+    "level": 1,
+    "move": "Bubble"
+   },
+   {
+    "level": 1,
+    "move": "Smokescreen"
+   },
+   {
+    "level": 19,
+    "move": "Smokescreen"
+   },
+   {
+    "level": 24,
+    "move": "Leer"
+   },
+   {
+    "level": 30,
+    "move": "Water Gun"
+   },
+   {
+    "level": 41,
+    "move": "Agility"
+   },
+   {
+    "level": 52,
+    "move": "Hydro Pump"
+   }
+  ],
+  "tm_hm": [
+   "HM03",
+   "TM06",
+   "TM09",
+   "TM10",
+   "TM11",
+   "TM12",
+   "TM13",
+   "TM14",
+   "TM15",
+   "TM20",
+   "TM31",
+   "TM32",
+   "TM34",
+   "TM39",
+   "TM40",
+   "TM44",
+   "TM50"
+  ],
+  "evolutions": []
+ },
+ "Seaking": {
+  "dex": 119,
+  "types": [
+   "Water"
+  ],
+  "base": {
+   "hp": 80,
+   "atk": 92,
+   "def": 65,
+   "spd": 68,
+   "spc": 80
+  },
+  "catch_rate": 60,
+  "base_exp": 170,
+  "growth": "medium_fast",
+  "learnset": [
+   {
+    "level": 1,
+    "move": "Peck"
+   },
+   {
+    "level": 1,
+    "move": "Tail Whip"
+   },
+   {
+    "level": 1,
+    "move": "Supersonic"
+   },
+   {
+    "level": 19,
+    "move": "Supersonic"
+   },
+   {
+    "level": 24,
+    "move": "Horn Attack"
+   },
+   {
+    "level": 30,
+    "move": "Fury Attack"
+   },
+   {
+    "level": 39,
+    "move": "Waterfall"
+   },
+   {
+    "level": 48,
+    "move": "Horn Drill"
+   },
+   {
+    "level": 54,
+    "move": "Agility"
+   }
+  ],
+  "tm_hm": [
+   "HM03",
+   "TM06",
+   "TM07",
+   "TM09",
+   "TM10",
+   "TM11",
+   "TM12",
+   "TM13",
+   "TM14",
+   "TM15",
+   "TM20",
+   "TM31",
+   "TM32",
+   "TM34",
+   "TM39",
+   "TM40",
+   "TM44",
+   "TM50"
+  ],
+  "evolutions": []
+ },
+ "Seel": {
+  "dex": 86,
+  "types": [
+   "Water"
+  ],
+  "base": {
+   "hp": 65,
+   "atk": 45,
+   "def": 55,
+   "spd": 45,
+   "spc": 70
+  },
+  "catch_rate": 190,
+  "base_exp": 100,
+  "growth": "medium_fast",
+  "learnset": [
+   {
+    "level": 1,
+    "move": "Headbutt"
+   },
+   {
+    "level": 30,
+    "move": "Growl"
+   },
+   {
+    "level": 35,
+    "move": "Aurora Beam"
+   },
+   {
+    "level": 40,
+    "move": "Rest"
+   },
+   {
+    "level": 45,
+    "move": "Take Down"
+   },
+   {
+    "level": 50,
+    "move": "Ice Beam"
+   }
+  ],
+  "tm_hm": [
+   "HM03",
+   "HM04",
+   "TM06",
+   "TM07",
+   "TM08",
+   "TM09",
+   "TM10",
+   "TM11",
+   "TM12",
+   "TM13",
+   "TM14",
+   "TM16",
+   "TM20",
+   "TM31",
+   "TM32",
+   "TM34",
+   "TM40",
+   "TM44",
+   "TM50"
+  ],
+  "evolutions": [
+   {
+    "to": "Dewgong",
+    "method": "level",
+    "param": 34
+   }
+  ]
+ },
+ "Shellder": {
+  "dex": 90,
+  "types": [
+   "Water"
+  ],
+  "base": {
+   "hp": 30,
+   "atk": 65,
+   "def": 100,
+   "spd": 40,
+   "spc": 45
+  },
+  "catch_rate": 190,
+  "base_exp": 97,
+  "growth": "slow",
+  "learnset": [
+   {
+    "level": 1,
+    "move": "Tackle"
+   },
+   {
+    "level": 1,
+    "move": "Withdraw"
+   },
+   {
+    "level": 18,
+    "move": "Supersonic"
+   },
+   {
+    "level": 23,
+    "move": "Clamp"
+   },
+   {
+    "level": 30,
+    "move": "Aurora Beam"
+   },
+   {
+    "level": 39,
+    "move": "Leer"
+   },
+   {
+    "level": 50,
+    "move": "Ice Beam"
+   }
+  ],
+  "tm_hm": [
+   "HM03",
+   "TM06",
+   "TM09",
+   "TM10",
+   "TM11",
+   "TM12",
+   "TM13",
+   "TM14",
+   "TM20",
+   "TM30",
+   "TM31",
+   "TM32",
+   "TM33",
+   "TM34",
+   "TM36",
+   "TM39",
+   "TM44",
+   "TM47",
+   "TM49",
+   "TM50"
+  ],
+  "evolutions": [
+   {
+    "to": "Cloyster",
+    "method": "item",
+    "param": "Water Stone"
+   }
+  ]
+ },
+ "Slowbro": {
+  "dex": 80,
+  "types": [
+   "Water",
+   "Psychic"
+  ],
+  "base": {
+   "hp": 95,
+   "atk": 75,
+   "def": 110,
+   "spd": 30,
+   "spc": 80
+  },
+  "catch_rate": 75,
+  "base_exp": 164,
+  "growth": "medium_fast",
+  "learnset": [
+   {
+    "level": 1,
+    "move": "Confusion"
+   },
+   {
+    "level": 1,
+    "move": "Disable"
+   },
+   {
+    "level": 1,
+    "move": "Headbutt"
+   },
+   {
+    "level": 18,
+    "move": "Disable"
+   },
+   {
+    "level": 22,
+    "move": "Headbutt"
+   },
+   {
+    "level": 27,
+    "move": "Growl"
+   },
+   {
+    "level": 33,
+    "move": "Water Gun"
+   },
+   {
+    "level": 37,
+    "move": "Withdraw"
+   },
+   {
+    "level": 44,
+    "move": "Amnesia"
+   },
+   {
+    "level": 55,
+    "move": "Psychic"
+   }
+  ],
+  "tm_hm": [
+   "HM03",
+   "HM04",
+   "HM05",
+   "TM01",
+   "TM05",
+   "TM06",
+   "TM08",
+   "TM09",
+   "TM10",
+   "TM11",
+   "TM12",
+   "TM13",
+   "TM14",
+   "TM15",
+   "TM16",
+   "TM17",
+   "TM18",
+   "TM19",
+   "TM20",
+   "TM26",
+   "TM27",
+   "TM28",
+   "TM29",
+   "TM30",
+   "TM31",
+   "TM32",
+   "TM33",
+   "TM34",
+   "TM38",
+   "TM39",
+   "TM40",
+   "TM44",
+   "TM45",
+   "TM46",
+   "TM49",
+   "TM50"
+  ],
+  "evolutions": []
+ },
+ "Slowpoke": {
+  "dex": 79,
+  "types": [
+   "Water",
+   "Psychic"
+  ],
+  "base": {
+   "hp": 90,
+   "atk": 65,
+   "def": 65,
+   "spd": 15,
+   "spc": 40
+  },
+  "catch_rate": 190,
+  "base_exp": 99,
+  "growth": "medium_fast",
+  "learnset": [
+   {
+    "level": 1,
+    "move": "Confusion"
+   },
+   {
+    "level": 18,
+    "move": "Disable"
+   },
+   {
+    "level": 22,
+    "move": "Headbutt"
+   },
+   {
+    "level": 27,
+    "move": "Growl"
+   },
+   {
+    "level": 33,
+    "move": "Water Gun"
+   },
+   {
+    "level": 40,
+    "move": "Amnesia"
+   },
+   {
+    "level": 48,
+    "move": "Psychic"
+   }
+  ],
+  "tm_hm": [
+   "HM03",
+   "HM04",
+   "HM05",
+   "TM06",
+   "TM08",
+   "TM09",
+   "TM10",
+   "TM11",
+   "TM12",
+   "TM13",
+   "TM14",
+   "TM16",
+   "TM20",
+   "TM26",
+   "TM27",
+   "TM28",
+   "TM29",
+   "TM30",
+   "TM31",
+   "TM32",
+   "TM33",
+   "TM34",
+   "TM38",
+   "TM39",
+   "TM40",
+   "TM44",
+   "TM45",
+   "TM46",
+   "TM49",
+   "TM50"
+  ],
+  "evolutions": [
+   {
+    "to": "Slowbro",
+    "method": "level",
+    "param": 37
+   }
+  ]
+ },
+ "Snorlax": {
+  "dex": 143,
+  "types": [
+   "Normal"
+  ],
+  "base": {
+   "hp": 160,
+   "atk": 110,
+   "def": 65,
+   "spd": 30,
+   "spc": 65
+  },
+  "catch_rate": 25,
+  "base_exp": 154,
+  "growth": "slow",
+  "learnset": [
+   {
+    "level": 1,
+    "move": "Headbutt"
+   },
+   {
+    "level": 1,
+    "move": "Amnesia"
+   },
+   {
+    "level": 1,
+    "move": "Rest"
+   },
+   {
+    "level": 35,
+    "move": "Body Slam"
+   },
+   {
+    "level": 41,
+    "move": "Harden"
+   },
+   {
+    "level": 48,
+    "move": "Double-Edge"
+   },
+   {
+    "level": 56,
+    "move": "Hyper Beam"
+   }
+  ],
+  "tm_hm": [
+   "HM03",
+   "HM04",
+   "TM01",
+   "TM05",
+   "TM06",
+   "TM08",
+   "TM09",
+   "TM10",
+   "TM11",
+   "TM12",
+   "TM13",
+   "TM14",
+   "TM15",
+   "TM16",
+   "TM17",
+   "TM18",
+   "TM19",
+   "TM20",
+   "TM22",
+   "TM24",
+   "TM25",
+   "TM26",
+   "TM27",
+   "TM29",
+   "TM31",
+   "TM32",
+   "TM33",
+   "TM34",
+   "TM35",
+   "TM36",
+   "TM38",
+   "TM40",
+   "TM44",
+   "TM46",
+   "TM48",
+   "TM50"
+  ],
+  "evolutions": []
+ },
+ "Spearow": {
+  "dex": 21,
+  "types": [
+   "Normal",
+   "Flying"
+  ],
+  "base": {
+   "hp": 40,
+   "atk": 60,
+   "def": 30,
+   "spd": 70,
+   "spc": 31
+  },
+  "catch_rate": 255,
+  "base_exp": 58,
+  "growth": "medium_fast",
+  "learnset": [
+   {
+    "level": 1,
+    "move": "Peck"
+   },
+   {
+    "level": 1,
+    "move": "Growl"
+   },
+   {
+    "level": 9,
+    "move": "Leer"
+   },
+   {
+    "level": 15,
+    "move": "Fury Attack"
+   },
+   {
+    "level": 22,
+    "move": "Mirror Move"
+   },
+   {
+    "level": 29,
+    "move": "Drill Peck"
+   },
+   {
+    "level": 36,
+    "move": "Agility"
+   }
+  ],
+  "tm_hm": [
+   "HM02",
+   "TM02",
+   "TM04",
+   "TM06",
+   "TM09",
+   "TM10",
+   "TM20",
+   "TM31",
+   "TM32",
+   "TM34",
+   "TM39",
+   "TM43",
+   "TM44",
+   "TM50"
+  ],
+  "evolutions": [
+   {
+    "to": "Fearow",
+    "method": "level",
+    "param": 20
+   }
+  ]
+ },
+ "Squirtle": {
+  "dex": 7,
+  "types": [
+   "Water"
+  ],
+  "base": {
+   "hp": 44,
+   "atk": 48,
+   "def": 65,
+   "spd": 43,
+   "spc": 50
+  },
+  "catch_rate": 45,
+  "base_exp": 66,
+  "growth": "medium_slow",
+  "learnset": [
+   {
+    "level": 1,
+    "move": "Tackle"
+   },
+   {
+    "level": 1,
+    "move": "Tail Whip"
+   },
+   {
+    "level": 8,
+    "move": "Bubble"
+   },
+   {
+    "level": 15,
+    "move": "Water Gun"
+   },
+   {
+    "level": 22,
+    "move": "Bite"
+   },
+   {
+    "level": 28,
+    "move": "Withdraw"
+   },
+   {
+    "level": 35,
+    "move": "Skull Bash"
+   },
+   {
+    "level": 42,
+    "move": "Hydro Pump"
+   }
+  ],
+  "tm_hm": [
+   "HM03",
+   "HM04",
+   "TM01",
+   "TM05",
+   "TM06",
+   "TM08",
+   "TM09",
+   "TM10",
+   "TM11",
+   "TM12",
+   "TM13",
+   "TM14",
+   "TM17",
+   "TM18",
+   "TM19",
+   "TM20",
+   "TM28",
+   "TM31",
+   "TM32",
+   "TM33",
+   "TM34",
+   "TM40",
+   "TM44",
+   "TM50"
+  ],
+  "evolutions": [
+   {
+    "to": "Wartortle",
+    "method": "level",
+    "param": 16
+   }
+  ]
+ },
+ "Starmie": {
+  "dex": 121,
+  "types": [
+   "Water",
+   "Psychic"
+  ],
+  "base": {
+   "hp": 60,
+   "atk": 75,
+   "def": 85,
+   "spd": 115,
+   "spc": 100
+  },
+  "catch_rate": 60,
+  "base_exp": 207,
+  "growth": "slow",
+  "learnset": [
+   {
+    "level": 1,
+    "move": "Tackle"
+   },
+   {
+    "level": 1,
+    "move": "Water Gun"
+   },
+   {
+    "level": 1,
+    "move": "Harden"
+   }
+  ],
+  "tm_hm": [
+   "HM03",
+   "HM05",
+   "TM06",
+   "TM09",
+   "TM10",
+   "TM11",
+   "TM12",
+   "TM13",
+   "TM14",
+   "TM15",
+   "TM20",
+   "TM24",
+   "TM25",
+   "TM29",
+   "TM30",
+   "TM31",
+   "TM32",
+   "TM33",
+   "TM34",
+   "TM39",
+   "TM40",
+   "TM44",
+   "TM45",
+   "TM46",
+   "TM49",
+   "TM50"
+  ],
+  "evolutions": []
+ },
+ "Staryu": {
+  "dex": 120,
+  "types": [
+   "Water"
+  ],
+  "base": {
+   "hp": 30,
+   "atk": 45,
+   "def": 55,
+   "spd": 85,
+   "spc": 70
+  },
+  "catch_rate": 225,
+  "base_exp": 106,
+  "growth": "slow",
+  "learnset": [
+   {
+    "level": 1,
+    "move": "Tackle"
+   },
+   {
+    "level": 17,
+    "move": "Water Gun"
+   },
+   {
+    "level": 22,
+    "move": "Harden"
+   },
+   {
+    "level": 27,
+    "move": "Recover"
+   },
+   {
+    "level": 32,
+    "move": "Swift"
+   },
+   {
+    "level": 37,
+    "move": "Minimize"
+   },
+   {
+    "level": 42,
+    "move": "Light Screen"
+   },
+   {
+    "level": 47,
+    "move": "Hydro Pump"
+   }
+  ],
+  "tm_hm": [
+   "HM03",
+   "HM05",
+   "TM06",
+   "TM09",
+   "TM10",
+   "TM11",
+   "TM12",
+   "TM13",
+   "TM14",
+   "TM20",
+   "TM24",
+   "TM25",
+   "TM29",
+   "TM30",
+   "TM31",
+   "TM32",
+   "TM33",
+   "TM34",
+   "TM39",
+   "TM40",
+   "TM44",
+   "TM45",
+   "TM46",
+   "TM49",
+   "TM50"
+  ],
+  "evolutions": [
+   {
+    "to": "Starmie",
+    "method": "item",
+    "param": "Water Stone"
+   }
+  ]
+ },
+ "Tangela": {
+  "dex": 114,
+  "types": [
+   "Grass"
+  ],
+  "base": {
+   "hp": 65,
+   "atk": 55,
+   "def": 115,
+   "spd": 60,
+   "spc": 100
+  },
+  "catch_rate": 45,
+  "base_exp": 166,
+  "growth": "medium_fast",
+  "learnset": [
+   {
+    "level": 1,
+    "move": "Constrict"
+   },
+   {
+    "level": 1,
+    "move": "Bind"
+   },
+   {
+    "level": 29,
+    "move": "Absorb"
+   },
+   {
+    "level": 32,
+    "move": "Poison Powder"
+   },
+   {
+    "level": 36,
+    "move": "Stun Spore"
+   },
+   {
+    "level": 39,
+    "move": "Sleep Powder"
+   },
+   {
+    "level": 45,
+    "move": "Slam"
+   },
+   {
+    "level": 49,
+    "move": "Growth"
+   }
+  ],
+  "tm_hm": [
+   "HM01",
+   "TM03",
+   "TM06",
+   "TM08",
+   "TM09",
+   "TM10",
+   "TM15",
+   "TM20",
+   "TM21",
+   "TM22",
+   "TM31",
+   "TM32",
+   "TM34",
+   "TM40",
+   "TM44",
+   "TM50"
+  ],
+  "evolutions": []
+ },
+ "Tauros": {
+  "dex": 128,
+  "types": [
+   "Normal"
+  ],
+  "base": {
+   "hp": 75,
+   "atk": 100,
+   "def": 95,
+   "spd": 110,
+   "spc": 70
+  },
+  "catch_rate": 45,
+  "base_exp": 211,
+  "growth": "slow",
+  "learnset": [
+   {
+    "level": 1,
+    "move": "Tackle"
+   },
+   {
+    "level": 21,
+    "move": "Stomp"
+   },
+   {
+    "level": 28,
+    "move": "Tail Whip"
+   },
+   {
+    "level": 35,
+    "move": "Leer"
+   },
+   {
+    "level": 44,
+    "move": "Rage"
+   },
+   {
+    "level": 51,
+    "move": "Take Down"
+   }
+  ],
+  "tm_hm": [
+   "HM04",
+   "TM06",
+   "TM07",
+   "TM08",
+   "TM09",
+   "TM10",
+   "TM13",
+   "TM14",
+   "TM15",
+   "TM20",
+   "TM24",
+   "TM25",
+   "TM26",
+   "TM27",
+   "TM31",
+   "TM32",
+   "TM34",
+   "TM38",
+   "TM40",
+   "TM44",
+   "TM50"
+  ],
+  "evolutions": []
+ },
+ "Tentacool": {
+  "dex": 72,
+  "types": [
+   "Water",
+   "Poison"
+  ],
+  "base": {
+   "hp": 40,
+   "atk": 40,
+   "def": 35,
+   "spd": 70,
+   "spc": 100
+  },
+  "catch_rate": 190,
+  "base_exp": 105,
+  "growth": "slow",
+  "learnset": [
+   {
+    "level": 1,
+    "move": "Acid"
+   },
+   {
+    "level": 7,
+    "move": "Supersonic"
+   },
+   {
+    "level": 13,
+    "move": "Wrap"
+   },
+   {
+    "level": 18,
+    "move": "Poison Sting"
+   },
+   {
+    "level": 22,
+    "move": "Water Gun"
+   },
+   {
+    "level": 27,
+    "move": "Constrict"
+   },
+   {
+    "level": 33,
+    "move": "Barrier"
+   },
+   {
+    "level": 40,
+    "move": "Screech"
+   },
+   {
+    "level": 48,
+    "move": "Hydro Pump"
+   }
+  ],
+  "tm_hm": [
+   "HM01",
+   "HM03",
+   "TM03",
+   "TM06",
+   "TM09",
+   "TM10",
+   "TM11",
+   "TM12",
+   "TM13",
+   "TM14",
+   "TM20",
+   "TM21",
+   "TM31",
+   "TM32",
+   "TM33",
+   "TM34",
+   "TM40",
+   "TM44",
+   "TM50"
+  ],
+  "evolutions": [
+   {
+    "to": "Tentacruel",
+    "method": "level",
+    "param": 30
+   }
+  ]
+ },
+ "Tentacruel": {
+  "dex": 73,
+  "types": [
+   "Water",
+   "Poison"
+  ],
+  "base": {
+   "hp": 80,
+   "atk": 70,
+   "def": 65,
+   "spd": 100,
+   "spc": 120
+  },
+  "catch_rate": 60,
+  "base_exp": 205,
+  "growth": "slow",
+  "learnset": [
+   {
+    "level": 1,
+    "move": "Acid"
+   },
+   {
+    "level": 1,
+    "move": "Supersonic"
+   },
+   {
+    "level": 1,
+    "move": "Wrap"
+   },
+   {
+    "level": 7,
+    "move": "Supersonic"
+   },
+   {
+    "level": 13,
+    "move": "Wrap"
+   },
+   {
+    "level": 18,
+    "move": "Poison Sting"
+   },
+   {
+    "level": 22,
+    "move": "Water Gun"
+   },
+   {
+    "level": 27,
+    "move": "Constrict"
+   },
+   {
+    "level": 35,
+    "move": "Barrier"
+   },
+   {
+    "level": 43,
+    "move": "Screech"
+   },
+   {
+    "level": 50,
+    "move": "Hydro Pump"
+   }
+  ],
+  "tm_hm": [
+   "HM01",
+   "HM03",
+   "TM03",
+   "TM06",
+   "TM09",
+   "TM10",
+   "TM11",
+   "TM12",
+   "TM13",
+   "TM14",
+   "TM15",
+   "TM20",
+   "TM21",
+   "TM31",
+   "TM32",
+   "TM33",
+   "TM34",
+   "TM40",
+   "TM44",
+   "TM50"
+  ],
+  "evolutions": []
+ },
+ "Vaporeon": {
+  "dex": 134,
+  "types": [
+   "Water"
+  ],
+  "base": {
+   "hp": 130,
+   "atk": 65,
+   "def": 60,
+   "spd": 65,
+   "spc": 110
+  },
+  "catch_rate": 45,
+  "base_exp": 196,
+  "growth": "medium_fast",
+  "learnset": [
+   {
+    "level": 1,
+    "move": "Tackle"
+   },
+   {
+    "level": 1,
+    "move": "Sand Attack"
+   },
+   {
+    "level": 1,
+    "move": "Quick Attack"
+   },
+   {
+    "level": 1,
+    "move": "Water Gun"
+   },
+   {
+    "level": 27,
+    "move": "Quick Attack"
+   },
+   {
+    "level": 31,
+    "move": "Water Gun"
+   },
+   {
+    "level": 37,
+    "move": "Tail Whip"
+   },
+   {
+    "level": 40,
+    "move": "Bite"
+   },
+   {
+    "level": 42,
+    "move": "Acid Armor"
+   },
+   {
+    "level": 44,
+    "move": "Haze"
+   },
+   {
+    "level": 48,
+    "move": "Mist"
+   },
+   {
+    "level": 54,
+    "move": "Hydro Pump"
+   }
+  ],
+  "tm_hm": [
+   "HM03",
+   "TM06",
+   "TM08",
+   "TM09",
+   "TM10",
+   "TM11",
+   "TM12",
+   "TM13",
+   "TM14",
+   "TM15",
+   "TM20",
+   "TM31",
+   "TM32",
+   "TM33",
+   "TM34",
+   "TM39",
+   "TM40",
+   "TM44",
+   "TM50"
+  ],
+  "evolutions": []
+ },
+ "Venomoth": {
+  "dex": 49,
+  "types": [
+   "Bug",
+   "Poison"
+  ],
+  "base": {
+   "hp": 70,
+   "atk": 65,
+   "def": 60,
+   "spd": 90,
+   "spc": 90
+  },
+  "catch_rate": 75,
+  "base_exp": 138,
+  "growth": "medium_fast",
+  "learnset": [
+   {
+    "level": 1,
+    "move": "Tackle"
+   },
+   {
+    "level": 1,
+    "move": "Disable"
+   },
+   {
+    "level": 1,
+    "move": "Poison Powder"
+   },
+   {
+    "level": 1,
+    "move": "Leech Life"
+   },
+   {
+    "level": 24,
+    "move": "Poison Powder"
+   },
+   {
+    "level": 27,
+    "move": "Leech Life"
+   },
+   {
+    "level": 30,
+    "move": "Stun Spore"
+   },
+   {
+    "level": 38,
+    "move": "Psybeam"
+   },
+   {
+    "level": 43,
+    "move": "Sleep Powder"
+   },
+   {
+    "level": 50,
+    "move": "Psychic"
+   }
+  ],
+  "tm_hm": [
+   "TM02",
+   "TM04",
+   "TM06",
+   "TM09",
+   "TM10",
+   "TM15",
+   "TM20",
+   "TM21",
+   "TM22",
+   "TM29",
+   "TM30",
+   "TM31",
+   "TM32",
+   "TM33",
+   "TM34",
+   "TM39",
+   "TM44",
+   "TM46",
+   "TM50"
+  ],
+  "evolutions": []
+ },
+ "Venonat": {
+  "dex": 48,
+  "types": [
+   "Bug",
+   "Poison"
+  ],
+  "base": {
+   "hp": 60,
+   "atk": 55,
+   "def": 50,
+   "spd": 45,
+   "spc": 40
+  },
+  "catch_rate": 190,
+  "base_exp": 75,
+  "growth": "medium_fast",
+  "learnset": [
+   {
+    "level": 1,
+    "move": "Tackle"
+   },
+   {
+    "level": 1,
+    "move": "Disable"
+   },
+   {
+    "level": 24,
+    "move": "Poison Powder"
+   },
+   {
+    "level": 27,
+    "move": "Leech Life"
+   },
+   {
+    "level": 30,
+    "move": "Stun Spore"
+   },
+   {
+    "level": 35,
+    "move": "Psybeam"
+   },
+   {
+    "level": 38,
+    "move": "Sleep Powder"
+   },
+   {
+    "level": 43,
+    "move": "Psychic"
+   }
+  ],
+  "tm_hm": [
+   "TM06",
+   "TM09",
+   "TM10",
+   "TM20",
+   "TM21",
+   "TM22",
+   "TM29",
+   "TM31",
+   "TM32",
+   "TM33",
+   "TM34",
+   "TM44",
+   "TM46",
+   "TM50"
+  ],
+  "evolutions": [
+   {
+    "to": "Venomoth",
+    "method": "level",
+    "param": 31
+   }
+  ]
+ },
+ "Venusaur": {
+  "dex": 3,
+  "types": [
+   "Grass",
+   "Poison"
+  ],
+  "base": {
+   "hp": 80,
+   "atk": 82,
+   "def": 83,
+   "spd": 80,
+   "spc": 100
+  },
+  "catch_rate": 45,
+  "base_exp": 208,
+  "growth": "medium_slow",
+  "learnset": [
+   {
+    "level": 1,
+    "move": "Tackle"
+   },
+   {
+    "level": 1,
+    "move": "Growl"
+   },
+   {
+    "level": 1,
+    "move": "Leech Seed"
+   },
+   {
+    "level": 1,
+    "move": "Vine Whip"
+   },
+   {
+    "level": 7,
+    "move": "Leech Seed"
+   },
+   {
+    "level": 13,
+    "move": "Vine Whip"
+   },
+   {
+    "level": 22,
+    "move": "Poison Powder"
+   },
+   {
+    "level": 30,
+    "move": "Razor Leaf"
+   },
+   {
+    "level": 43,
+    "move": "Growth"
+   },
+   {
+    "level": 55,
+    "move": "Sleep Powder"
+   },
+   {
+    "level": 65,
+    "move": "Solar Beam"
+   }
+  ],
+  "tm_hm": [
+   "HM01",
+   "TM03",
+   "TM06",
+   "TM08",
+   "TM09",
+   "TM10",
+   "TM15",
+   "TM20",
+   "TM21",
+   "TM22",
+   "TM31",
+   "TM32",
+   "TM33",
+   "TM34",
+   "TM44",
+   "TM50"
+  ],
+  "evolutions": []
+ },
+ "Victreebel": {
+  "dex": 71,
+  "types": [
+   "Grass",
+   "Poison"
+  ],
+  "base": {
+   "hp": 80,
+   "atk": 105,
+   "def": 65,
+   "spd": 70,
+   "spc": 100
+  },
+  "catch_rate": 45,
+  "base_exp": 191,
+  "growth": "medium_slow",
+  "learnset": [
+   {
+    "level": 1,
+    "move": "Sleep Powder"
+   },
+   {
+    "level": 1,
+    "move": "Stun Spore"
+   },
+   {
+    "level": 1,
+    "move": "Acid"
+   },
+   {
+    "level": 1,
+    "move": "Razor Leaf"
+   },
+   {
+    "level": 13,
+    "move": "Wrap"
+   },
+   {
+    "level": 15,
+    "move": "Poison Powder"
+   },
+   {
+    "level": 18,
+    "move": "Sleep Powder"
+   }
+  ],
+  "tm_hm": [
+   "HM01",
+   "TM03",
+   "TM06",
+   "TM08",
+   "TM09",
+   "TM10",
+   "TM15",
+   "TM20",
+   "TM21",
+   "TM22",
+   "TM31",
+   "TM32",
+   "TM33",
+   "TM34",
+   "TM44",
+   "TM50"
+  ],
+  "evolutions": []
+ },
+ "Vileplume": {
+  "dex": 45,
+  "types": [
+   "Grass",
+   "Poison"
+  ],
+  "base": {
+   "hp": 75,
+   "atk": 80,
+   "def": 85,
+   "spd": 50,
+   "spc": 100
+  },
+  "catch_rate": 45,
+  "base_exp": 184,
+  "growth": "medium_slow",
+  "learnset": [
+   {
+    "level": 1,
+    "move": "Stun Spore"
+   },
+   {
+    "level": 1,
+    "move": "Sleep Powder"
+   },
+   {
+    "level": 1,
+    "move": "Acid"
+   },
+   {
+    "level": 1,
+    "move": "Petal Dance"
+   },
+   {
+    "level": 15,
+    "move": "Poison Powder"
+   },
+   {
+    "level": 17,
+    "move": "Stun Spore"
+   },
+   {
+    "level": 19,
+    "move": "Sleep Powder"
+   }
+  ],
+  "tm_hm": [
+   "HM01",
+   "TM03",
+   "TM06",
+   "TM08",
+   "TM09",
+   "TM10",
+   "TM15",
+   "TM20",
+   "TM21",
+   "TM22",
+   "TM31",
+   "TM32",
+   "TM33",
+   "TM34",
+   "TM44",
+   "TM50"
+  ],
+  "evolutions": []
+ },
+ "Voltorb": {
+  "dex": 100,
+  "types": [
+   "Electric"
+  ],
+  "base": {
+   "hp": 40,
+   "atk": 30,
+   "def": 50,
+   "spd": 100,
+   "spc": 55
+  },
+  "catch_rate": 190,
+  "base_exp": 103,
+  "growth": "medium_fast",
+  "learnset": [
+   {
+    "level": 1,
+    "move": "Tackle"
+   },
+   {
+    "level": 1,
+    "move": "Screech"
+   },
+   {
+    "level": 17,
+    "move": "Sonic Boom"
+   },
+   {
+    "level": 22,
+    "move": "Self-Destruct"
+   },
+   {
+    "level": 29,
+    "move": "Light Screen"
+   },
+   {
+    "level": 36,
+    "move": "Swift"
+   },
+   {
+    "level": 43,
+    "move": "Explosion"
+   }
+  ],
+  "tm_hm": [
+   "HM05",
+   "TM06",
+   "TM09",
+   "TM20",
+   "TM24",
+   "TM25",
+   "TM30",
+   "TM31",
+   "TM32",
+   "TM33",
+   "TM34",
+   "TM36",
+   "TM39",
+   "TM44",
+   "TM45",
+   "TM47",
+   "TM50"
+  ],
+  "evolutions": [
+   {
+    "to": "Electrode",
+    "method": "level",
+    "param": 30
+   }
+  ]
+ },
+ "Vulpix": {
+  "dex": 37,
+  "types": [
+   "Fire"
+  ],
+  "base": {
+   "hp": 38,
+   "atk": 41,
+   "def": 40,
+   "spd": 65,
+   "spc": 65
+  },
+  "catch_rate": 190,
+  "base_exp": 63,
+  "growth": "medium_fast",
+  "learnset": [
+   {
+    "level": 1,
+    "move": "Ember"
+   },
+   {
+    "level": 1,
+    "move": "Tail Whip"
+   },
+   {
+    "level": 16,
+    "move": "Quick Attack"
+   },
+   {
+    "level": 21,
+    "move": "Roar"
+   },
+   {
+    "level": 28,
+    "move": "Confuse Ray"
+   },
+   {
+    "level": 35,
+    "move": "Flamethrower"
+   },
+   {
+    "level": 42,
+    "move": "Fire Spin"
+   }
+  ],
+  "tm_hm": [
+   "TM06",
+   "TM08",
+   "TM09",
+   "TM10",
+   "TM20",
+   "TM28",
+   "TM31",
+   "TM32",
+   "TM33",
+   "TM34",
+   "TM38",
+   "TM39",
+   "TM40",
+   "TM44",
+   "TM50"
+  ],
+  "evolutions": [
+   {
+    "to": "Ninetales",
+    "method": "item",
+    "param": "Fire Stone"
+   }
+  ]
+ },
+ "Wartortle": {
+  "dex": 8,
+  "types": [
+   "Water"
+  ],
+  "base": {
+   "hp": 59,
+   "atk": 63,
+   "def": 80,
+   "spd": 58,
+   "spc": 65
+  },
+  "catch_rate": 45,
+  "base_exp": 143,
+  "growth": "medium_slow",
+  "learnset": [
+   {
+    "level": 1,
+    "move": "Tackle"
+   },
+   {
+    "level": 1,
+    "move": "Tail Whip"
+   },
+   {
+    "level": 1,
+    "move": "Bubble"
+   },
+   {
+    "level": 8,
+    "move": "Bubble"
+   },
+   {
+    "level": 15,
+    "move": "Water Gun"
+   },
+   {
+    "level": 24,
+    "move": "Bite"
+   },
+   {
+    "level": 31,
+    "move": "Withdraw"
+   },
+   {
+    "level": 39,
+    "move": "Skull Bash"
+   },
+   {
+    "level": 47,
+    "move": "Hydro Pump"
+   }
+  ],
+  "tm_hm": [
+   "HM03",
+   "HM04",
+   "TM01",
+   "TM05",
+   "TM06",
+   "TM08",
+   "TM09",
+   "TM10",
+   "TM11",
+   "TM12",
+   "TM13",
+   "TM14",
+   "TM17",
+   "TM18",
+   "TM19",
+   "TM20",
+   "TM28",
+   "TM31",
+   "TM32",
+   "TM33",
+   "TM34",
+   "TM40",
+   "TM44",
+   "TM50"
+  ],
+  "evolutions": [
+   {
+    "to": "Blastoise",
+    "method": "level",
+    "param": 36
+   }
+  ]
+ },
+ "Weedle": {
+  "dex": 13,
+  "types": [
+   "Bug",
+   "Poison"
+  ],
+  "base": {
+   "hp": 40,
+   "atk": 35,
+   "def": 30,
+   "spd": 50,
+   "spc": 20
+  },
+  "catch_rate": 255,
+  "base_exp": 52,
+  "growth": "medium_fast",
+  "learnset": [
+   {
+    "level": 1,
+    "move": "Poison Sting"
+   },
+   {
+    "level": 1,
+    "move": "String Shot"
+   }
+  ],
+  "tm_hm": [],
+  "evolutions": [
+   {
+    "to": "Kakuna",
+    "method": "level",
+    "param": 7
+   }
+  ]
+ },
+ "Weepinbell": {
+  "dex": 70,
+  "types": [
+   "Grass",
+   "Poison"
+  ],
+  "base": {
+   "hp": 65,
+   "atk": 90,
+   "def": 50,
+   "spd": 55,
+   "spc": 85
+  },
+  "catch_rate": 120,
+  "base_exp": 151,
+  "growth": "medium_slow",
+  "learnset": [
+   {
+    "level": 1,
+    "move": "Vine Whip"
+   },
+   {
+    "level": 1,
+    "move": "Growth"
+   },
+   {
+    "level": 1,
+    "move": "Wrap"
+   },
+   {
+    "level": 13,
+    "move": "Wrap"
+   },
+   {
+    "level": 15,
+    "move": "Poison Powder"
+   },
+   {
+    "level": 18,
+    "move": "Sleep Powder"
+   },
+   {
+    "level": 23,
+    "move": "Stun Spore"
+   },
+   {
+    "level": 29,
+    "move": "Acid"
+   },
+   {
+    "level": 38,
+    "move": "Razor Leaf"
+   },
+   {
+    "level": 49,
+    "move": "Slam"
+   }
+  ],
+  "tm_hm": [
+   "HM01",
+   "TM03",
+   "TM06",
+   "TM09",
+   "TM10",
+   "TM20",
+   "TM21",
+   "TM22",
+   "TM31",
+   "TM32",
+   "TM33",
+   "TM34",
+   "TM44",
+   "TM50"
+  ],
+  "evolutions": [
+   {
+    "to": "Victreebel",
+    "method": "item",
+    "param": "Leaf Stone"
+   }
+  ]
+ },
+ "Weezing": {
+  "dex": 110,
+  "types": [
+   "Poison"
+  ],
+  "base": {
+   "hp": 65,
+   "atk": 90,
+   "def": 120,
+   "spd": 60,
+   "spc": 85
+  },
+  "catch_rate": 60,
+  "base_exp": 173,
+  "growth": "medium_fast",
+  "learnset": [
+   {
+    "level": 1,
+    "move": "Tackle"
+   },
+   {
+    "level": 1,
+    "move": "Smog"
+   },
+   {
+    "level": 1,
+    "move": "Sludge"
+   },
+   {
+    "level": 32,
+    "move": "Sludge"
+   },
+   {
+    "level": 39,
+    "move": "Smokescreen"
+   },
+   {
+    "level": 43,
+    "move": "Self-Destruct"
+   },
+   {
+    "level": 49,
+    "move": "Haze"
+   },
+   {
+    "level": 53,
+    "move": "Explosion"
+   }
+  ],
+  "tm_hm": [
+   "TM06",
+   "TM15",
+   "TM20",
+   "TM24",
+   "TM25",
+   "TM31",
+   "TM32",
+   "TM34",
+   "TM36",
+   "TM38",
+   "TM44",
+   "TM47",
+   "TM50"
+  ],
+  "evolutions": []
+ },
+ "Wigglytuff": {
+  "dex": 40,
+  "types": [
+   "Normal"
+  ],
+  "base": {
+   "hp": 140,
+   "atk": 70,
+   "def": 45,
+   "spd": 45,
+   "spc": 50
+  },
+  "catch_rate": 50,
+  "base_exp": 109,
+  "growth": "fast",
+  "learnset": [
+   {
+    "level": 1,
+    "move": "Sing"
+   },
+   {
+    "level": 1,
+    "move": "Disable"
+   },
+   {
+    "level": 1,
+    "move": "Defense Curl"
+   },
+   {
+    "level": 1,
+    "move": "Double Slap"
+   }
+  ],
+  "tm_hm": [
+   "HM04",
+   "HM05",
+   "TM01",
+   "TM05",
+   "TM06",
+   "TM08",
+   "TM09",
+   "TM10",
+   "TM11",
+   "TM12",
+   "TM13",
+   "TM14",
+   "TM15",
+   "TM17",
+   "TM18",
+   "TM19",
+   "TM20",
+   "TM22",
+   "TM24",
+   "TM25",
+   "TM29",
+   "TM30",
+   "TM31",
+   "TM32",
+   "TM33",
+   "TM34",
+   "TM38",
+   "TM40",
+   "TM44",
+   "TM45",
+   "TM46",
+   "TM49",
+   "TM50"
+  ],
+  "evolutions": []
+ },
+ "Zapdos": {
+  "dex": 145,
+  "types": [
+   "Electric",
+   "Flying"
+  ],
+  "base": {
+   "hp": 90,
+   "atk": 90,
+   "def": 85,
+   "spd": 100,
+   "spc": 125
+  },
+  "catch_rate": 3,
+  "base_exp": 216,
+  "growth": "slow",
+  "learnset": [
+   {
+    "level": 1,
+    "move": "Thunder Shock"
+   },
+   {
+    "level": 1,
+    "move": "Drill Peck"
+   },
+   {
+    "level": 51,
+    "move": "Thunder"
+   },
+   {
+    "level": 55,
+    "move": "Agility"
+   },
+   {
+    "level": 60,
+    "move": "Light Screen"
+   }
+  ],
+  "tm_hm": [
+   "HM02",
+   "HM05",
+   "TM02",
+   "TM04",
+   "TM06",
+   "TM09",
+   "TM10",
+   "TM15",
+   "TM20",
+   "TM24",
+   "TM25",
+   "TM31",
+   "TM32",
+   "TM33",
+   "TM34",
+   "TM39",
+   "TM43",
+   "TM44",
+   "TM45",
+   "TM50"
+  ],
+  "evolutions": []
+ },
+ "Zubat": {
+  "dex": 41,
+  "types": [
+   "Poison",
+   "Flying"
+  ],
+  "base": {
+   "hp": 40,
+   "atk": 45,
+   "def": 35,
+   "spd": 55,
+   "spc": 40
+  },
+  "catch_rate": 255,
+  "base_exp": 54,
+  "growth": "medium_fast",
+  "learnset": [
+   {
+    "level": 1,
+    "move": "Leech Life"
+   },
+   {
+    "level": 10,
+    "move": "Supersonic"
+   },
+   {
+    "level": 15,
+    "move": "Bite"
+   },
+   {
+    "level": 21,
+    "move": "Confuse Ray"
+   },
+   {
+    "level": 28,
+    "move": "Wing Attack"
+   },
+   {
+    "level": 36,
+    "move": "Haze"
+   }
+  ],
+  "tm_hm": [
+   "TM02",
+   "TM04",
+   "TM06",
+   "TM09",
+   "TM10",
+   "TM20",
+   "TM21",
+   "TM31",
+   "TM32",
+   "TM34",
+   "TM39",
+   "TM44",
+   "TM50"
+  ],
+  "evolutions": [
+   {
+    "to": "Golbat",
+    "method": "level",
+    "param": 22
+   }
+  ]
+ }
+}

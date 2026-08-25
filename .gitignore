@@ -52,3 +52,7 @@ uv.lock
 
 # Environment
 .env
+
+# Agent run artifacts (briefs, delegated-review scratch)
+.agent-runs/
+.fastcontext/

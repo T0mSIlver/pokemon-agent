@@ -1,0 +1,8060 @@
+{
+ "generated_from": "0cd19d3b877b7dc66d12c7050bed9a7f38154d4b",
+ "maps": {
+  "Agatha's Room": {
+   "map_id": 247,
+   "size": [
+    10,
+    12
+   ],
+   "size_blocks": [
+    5,
+    6
+   ],
+   "connections": {},
+   "warps": [
+    {
+     "x": 4,
+     "y": 11,
+     "to_map": "Bruno's Room",
+     "to_warp": 2
+    },
+    {
+     "x": 5,
+     "y": 11,
+     "to_map": "Bruno's Room",
+     "to_warp": 3
+    },
+    {
+     "x": 4,
+     "y": 0,
+     "to_map": "Lance's Room",
+     "to_warp": 0
+    },
+    {
+     "x": 5,
+     "y": 0,
+     "to_map": "Lance's Room",
+     "to_warp": 0
+    }
+   ]
+  },
+  "Cerulean Bike Shop": {
+   "map_id": 66,
+   "size": [
+    8,
+    8
+   ],
+   "size_blocks": [
+    4,
+    4
+   ],
+   "connections": {},
+   "warps": [
+    {
+     "x": 2,
+     "y": 7,
+     "to_map": "Cerulean City",
+     "to_warp": 4
+    },
+    {
+     "x": 3,
+     "y": 7,
+     "to_map": "Cerulean City",
+     "to_warp": 4
+    }
+   ]
+  },
+  "Bill's House": {
+   "map_id": 88,
+   "size": [
+    8,
+    8
+   ],
+   "size_blocks": [
+    4,
+    4
+   ],
+   "connections": {},
+   "warps": [
+    {
+     "x": 2,
+     "y": 7,
+     "to_map": "Route 25",
+     "to_warp": 0
+    },
+    {
+     "x": 3,
+     "y": 7,
+     "to_map": "Route 25",
+     "to_warp": 0
+    }
+   ]
+  },
+  "Blue's House": {
+   "map_id": 39,
+   "size": [
+    8,
+    8
+   ],
+   "size_blocks": [
+    4,
+    4
+   ],
+   "connections": {},
+   "warps": [
+    {
+     "x": 2,
+     "y": 7,
+     "to_map": "Pallet Town",
+     "to_warp": 1
+    },
+    {
+     "x": 3,
+     "y": 7,
+     "to_map": "Pallet Town",
+     "to_warp": 1
+    }
+   ]
+  },
+  "Bruno's Room": {
+   "map_id": 246,
+   "size": [
+    10,
+    12
+   ],
+   "size_blocks": [
+    5,
+    6
+   ],
+   "connections": {},
+   "warps": [
+    {
+     "x": 4,
+     "y": 11,
+     "to_map": "Lorelei's Room",
+     "to_warp": 2
+    },
+    {
+     "x": 5,
+     "y": 11,
+     "to_map": "Lorelei's Room",
+     "to_warp": 3
+    },
+    {
+     "x": 4,
+     "y": 0,
+     "to_map": "Agatha's Room",
+     "to_warp": 0
+    },
+    {
+     "x": 5,
+     "y": 0,
+     "to_map": "Agatha's Room",
+     "to_warp": 1
+    }
+   ]
+  },
+  "Celadon Chief House": {
+   "map_id": 139,
+   "size": [
+    8,
+    8
+   ],
+   "size_blocks": [
+    4,
+    4
+   ],
+   "connections": {},
+   "warps": [
+    {
+     "x": 2,
+     "y": 7,
+     "to_map": "Celadon City",
+     "to_warp": 11
+    },
+    {
+     "x": 3,
+     "y": 7,
+     "to_map": "Celadon City",
+     "to_warp": 11
+    }
+   ]
+  },
+  "Celadon City": {
+   "map_id": 6,
+   "size": [
+    50,
+    36
+   ],
+   "size_blocks": [
+    25,
+    18
+   ],
+   "connections": {
+    "west": "Route 16",
+    "east": "Route 7"
+   },
+   "warps": [
+    {
+     "x": 8,
+     "y": 13,
+     "to_map": "Celadon Dept Store 1F",
+     "to_warp": 0
+    },
+    {
+     "x": 10,
+     "y": 13,
+     "to_map": "Celadon Dept Store 1F",
+     "to_warp": 2
+    },
+    {
+     "x": 24,
+     "y": 9,
+     "to_map": "Celadon Mansion 1F",
+     "to_warp": 0
+    },
+    {
+     "x": 24,
+     "y": 3,
+     "to_map": "Celadon Mansion 1F",
+     "to_warp": 2
+    },
+    {
+     "x": 25,
+     "y": 3,
+     "to_map": "Celadon Mansion 1F",
+     "to_warp": 2
+    },
+    {
+     "x": 41,
+     "y": 9,
+     "to_map": "Celadon Pokecenter",
+     "to_warp": 0
+    },
+    {
+     "x": 12,
+     "y": 27,
+     "to_map": "Celadon Gym",
+     "to_warp": 0
+    },
+    {
+     "x": 28,
+     "y": 19,
+     "to_map": "Game Corner",
+     "to_warp": 0
+    },
+    {
+     "x": 39,
+     "y": 19,
+     "to_map": "Celadon Dept Store 5F",
+     "to_warp": 0
+    },
+    {
+     "x": 33,
+     "y": 19,
+     "to_map": "Game Corner Prize Room",
+     "to_warp": 0
+    },
+    {
+     "x": 31,
+     "y": 27,
+     "to_map": "Celadon Diner",
+     "to_warp": 0
+    },
+    {
+     "x": 35,
+     "y": 27,
+     "to_map": "Celadon Chief House",
+     "to_warp": 0
+    },
+    {
+     "x": 43,
+     "y": 27,
+     "to_map": "Celadon Hotel",
+     "to_warp": 0
+    }
+   ]
+  },
+  "Celadon Diner": {
+   "map_id": 138,
+   "size": [
+    10,
+    8
+   ],
+   "size_blocks": [
+    5,
+    4
+   ],
+   "connections": {},
+   "warps": [
+    {
+     "x": 3,
+     "y": 7,
+     "to_map": "Celadon City",
+     "to_warp": 10
+    },
+    {
+     "x": 4,
+     "y": 7,
+     "to_map": "Celadon City",
+     "to_warp": 10
+    }
+   ]
+  },
+  "Celadon Gym": {
+   "map_id": 134,
+   "size": [
+    10,
+    18
+   ],
+   "size_blocks": [
+    5,
+    9
+   ],
+   "connections": {},
+   "warps": [
+    {
+     "x": 4,
+     "y": 17,
+     "to_map": "Celadon City",
+     "to_warp": 6
+    },
+    {
+     "x": 5,
+     "y": 17,
+     "to_map": "Celadon City",
+     "to_warp": 6
+    }
+   ]
+  },
+  "Celadon Hotel": {
+   "map_id": 140,
+   "size": [
+    14,
+    8
+   ],
+   "size_blocks": [
+    7,
+    4
+   ],
+   "connections": {},
+   "warps": [
+    {
+     "x": 3,
+     "y": 7,
+     "to_map": "Celadon City",
+     "to_warp": 12
+    },
+    {
+     "x": 4,
+     "y": 7,
+     "to_map": "Celadon City",
+     "to_warp": 12
+    }
+   ]
+  },
+  "Celadon Mansion 1F": {
+   "map_id": 128,
+   "size": [
+    8,
+    12
+   ],
+   "size_blocks": [
+    4,
+    6
+   ],
+   "connections": {},
+   "warps": [
+    {
+     "x": 4,
+     "y": 11,
+     "to_map": "Celadon City",
+     "to_warp": 2
+    },
+    {
+     "x": 5,
+     "y": 11,
+     "to_map": "Celadon City",
+     "to_warp": 2
+    },
+    {
+     "x": 4,
+     "y": 0,
+     "to_map": "Celadon City",
+     "to_warp": 4
+    },
+    {
+     "x": 7,
+     "y": 1,
+     "to_map": "Celadon Mansion 2F",
+     "to_warp": 1
+    },
+    {
+     "x": 2,
+     "y": 1,
+     "to_map": "Celadon Mansion 2F",
+     "to_warp": 2
+    }
+   ]
+  },
+  "Celadon Mansion 2F": {
+   "map_id": 129,
+   "size": [
+    8,
+    12
+   ],
+   "size_blocks": [
+    4,
+    6
+   ],
+   "connections": {},
+   "warps": [
+    {
+     "x": 6,
+     "y": 1,
+     "to_map": "Celadon Mansion 3F",
+     "to_warp": 0
+    },
+    {
+     "x": 7,
+     "y": 1,
+     "to_map": "Celadon Mansion 1F",
+     "to_warp": 3
+    },
+    {
+     "x": 2,
+     "y": 1,
+     "to_map": "Celadon Mansion 1F",
+     "to_warp": 4
+    },
+    {
+     "x": 4,
+     "y": 1,
+     "to_map": "Celadon Mansion 3F",
+     "to_warp": 3
+    }
+   ]
+  },
+  "Celadon Mansion 3F": {
+   "map_id": 130,
+   "size": [
+    8,
+    12
+   ],
+   "size_blocks": [
+    4,
+    6
+   ],
+   "connections": {},
+   "warps": [
+    {
+     "x": 6,
+     "y": 1,
+     "to_map": "Celadon Mansion 2F",
+     "to_warp": 0
+    },
+    {
+     "x": 7,
+     "y": 1,
+     "to_map": "Celadon Mansion Roof",
+     "to_warp": 0
+    },
+    {
+     "x": 2,
+     "y": 1,
+     "to_map": "Celadon Mansion Roof",
+     "to_warp": 1
+    },
+    {
+     "x": 4,
+     "y": 1,
+     "to_map": "Celadon Mansion 2F",
+     "to_warp": 3
+    }
+   ]
+  },
+  "Celadon Mansion Roof": {
+   "map_id": 131,
+   "size": [
+    8,
+    12
+   ],
+   "size_blocks": [
+    4,
+    6
+   ],
+   "connections": {},
+   "warps": [
+    {
+     "x": 6,
+     "y": 1,
+     "to_map": "Celadon Mansion 3F",
+     "to_warp": 1
+    },
+    {
+     "x": 2,
+     "y": 1,
+     "to_map": "Celadon Mansion 3F",
+     "to_warp": 2
+    },
+    {
+     "x": 2,
+     "y": 7,
+     "to_map": "Celadon Mansion Roof House",
+     "to_warp": 0
+    }
+   ]
+  },
+  "Celadon Mansion Roof House": {
+   "map_id": 132,
+   "size": [
+    8,
+    8
+   ],
+   "size_blocks": [
+    4,
+    4
+   ],
+   "connections": {},
+   "warps": [
+    {
+     "x": 2,
+     "y": 7,
+     "to_map": "Celadon Mansion Roof",
+     "to_warp": 2
+    },
+    {
+     "x": 3,
+     "y": 7,
+     "to_map": "Celadon Mansion Roof",
+     "to_warp": 2
+    }
+   ]
+  },
+  "Celadon Dept Store 1F": {
+   "map_id": 122,
+   "size": [
+    20,
+    8
+   ],
+   "size_blocks": [
+    10,
+    4
+   ],
+   "connections": {},
+   "warps": [
+    {
+     "x": 2,
+     "y": 7,
+     "to_map": "Celadon City",
+     "to_warp": 0
+    },
+    {
+     "x": 3,
+     "y": 7,
+     "to_map": "Celadon City",
+     "to_warp": 0
+    },
+    {
+     "x": 16,
+     "y": 7,
+     "to_map": "Celadon City",
+     "to_warp": 1
+    },
+    {
+     "x": 17,
+     "y": 7,
+     "to_map": "Celadon City",
+     "to_warp": 1
+    },
+    {
+     "x": 12,
+     "y": 1,
+     "to_map": "Celadon Dept Store 2F",
+     "to_warp": 0
+    },
+    {
+     "x": 1,
+     "y": 1,
+     "to_map": "Celadon Dept Store Elevator",
+     "to_warp": 0
+    }
+   ]
+  },
+  "Celadon Dept Store 2F": {
+   "map_id": 123,
+   "size": [
+    20,
+    8
+   ],
+   "size_blocks": [
+    10,
+    4
+   ],
+   "connections": {},
+   "warps": [
+    {
+     "x": 12,
+     "y": 1,
+     "to_map": "Celadon Dept Store 1F",
+     "to_warp": 4
+    },
+    {
+     "x": 16,
+     "y": 1,
+     "to_map": "Celadon Dept Store 3F",
+     "to_warp": 1
+    },
+    {
+     "x": 1,
+     "y": 1,
+     "to_map": "Celadon Dept Store Elevator",
+     "to_warp": 0
+    }
+   ]
+  },
+  "Celadon Dept Store 3F": {
+   "map_id": 124,
+   "size": [
+    20,
+    8
+   ],
+   "size_blocks": [
+    10,
+    4
+   ],
+   "connections": {},
+   "warps": [
+    {
+     "x": 12,
+     "y": 1,
+     "to_map": "Celadon Dept Store 4F",
+     "to_warp": 0
+    },
+    {
+     "x": 16,
+     "y": 1,
+     "to_map": "Celadon Dept Store 2F",
+     "to_warp": 1
+    },
+    {
+     "x": 1,
+     "y": 1,
+     "to_map": "Celadon Dept Store Elevator",
+     "to_warp": 0
+    }
+   ]
+  },
+  "Celadon Dept Store 4F": {
+   "map_id": 125,
+   "size": [
+    20,
+    8
+   ],
+   "size_blocks": [
+    10,
+    4
+   ],
+   "connections": {},
+   "warps": [
+    {
+     "x": 12,
+     "y": 1,
+     "to_map": "Celadon Dept Store 3F",
+     "to_warp": 0
+    },
+    {
+     "x": 16,
+     "y": 1,
+     "to_map": "Celadon Dept Store 5F",
+     "to_warp": 1
+    },
+    {
+     "x": 1,
+     "y": 1,
+     "to_map": "Celadon Dept Store Elevator",
+     "to_warp": 0
+    }
+   ]
+  },
+  "Celadon Dept Store 5F": {
+   "map_id": 136,
+   "size": [
+    20,
+    8
+   ],
+   "size_blocks": [
+    10,
+    4
+   ],
+   "connections": {},
+   "warps": [
+    {
+     "x": 12,
+     "y": 1,
+     "to_map": "Celadon Dept Store Roof",
+     "to_warp": 0
+    },
+    {
+     "x": 16,
+     "y": 1,
+     "to_map": "Celadon Dept Store 4F",
+     "to_warp": 1
+    },
+    {
+     "x": 1,
+     "y": 1,
+     "to_map": "Celadon Dept Store Elevator",
+     "to_warp": 0
+    }
+   ]
+  },
+  "Celadon Dept Store Elevator": {
+   "map_id": 127,
+   "size": [
+    4,
+    4
+   ],
+   "size_blocks": [
+    2,
+    2
+   ],
+   "connections": {},
+   "warps": [
+    {
+     "x": 1,
+     "y": 3,
+     "to_map": "Celadon Dept Store 1F",
+     "to_warp": 5
+    },
+    {
+     "x": 2,
+     "y": 3,
+     "to_map": "Celadon Dept Store 1F",
+     "to_warp": 5
+    }
+   ]
+  },
+  "Celadon Dept Store Roof": {
+   "map_id": 126,
+   "size": [
+    20,
+    8
+   ],
+   "size_blocks": [
+    10,
+    4
+   ],
+   "connections": {},
+   "warps": [
+    {
+     "x": 15,
+     "y": 2,
+     "to_map": "Celadon Dept Store 5F",
+     "to_warp": 0
+    }
+   ]
+  },
+  "Celadon Pokecenter": {
+   "map_id": 133,
+   "size": [
+    14,
+    8
+   ],
+   "size_blocks": [
+    7,
+    4
+   ],
+   "connections": {},
+   "warps": [
+    {
+     "x": 3,
+     "y": 7,
+     "to_map": "Celadon City",
+     "to_warp": 5
+    },
+    {
+     "x": 4,
+     "y": 7,
+     "to_map": "Celadon City",
+     "to_warp": 5
+    }
+   ]
+  },
+  "Cerulean Badge House": {
+   "map_id": 230,
+   "size": [
+    8,
+    8
+   ],
+   "size_blocks": [
+    4,
+    4
+   ],
+   "connections": {},
+   "warps": [
+    {
+     "x": 2,
+     "y": 0,
+     "to_map": "Cerulean City",
+     "to_warp": 9
+    },
+    {
+     "x": 2,
+     "y": 7,
+     "to_map": "Cerulean City",
+     "to_warp": 8
+    },
+    {
+     "x": 3,
+     "y": 7,
+     "to_map": "Cerulean City",
+     "to_warp": 8
+    }
+   ]
+  },
+  "Cerulean Cave 1F": {
+   "map_id": 228,
+   "size": [
+    30,
+    18
+   ],
+   "size_blocks": [
+    15,
+    9
+   ],
+   "connections": {},
+   "warps": [
+    {
+     "x": 24,
+     "y": 17,
+     "to_map": "Cerulean City",
+     "to_warp": 6
+    },
+    {
+     "x": 25,
+     "y": 17,
+     "to_map": "Cerulean City",
+     "to_warp": 6
+    },
+    {
+     "x": 27,
+     "y": 1,
+     "to_map": "Cerulean Cave 2F",
+     "to_warp": 0
+    },
+    {
+     "x": 23,
+     "y": 7,
+     "to_map": "Cerulean Cave 2F",
+     "to_warp": 1
+    },
+    {
+     "x": 18,
+     "y": 9,
+     "to_map": "Cerulean Cave 2F",
+     "to_warp": 2
+    },
+    {
+     "x": 7,
+     "y": 1,
+     "to_map": "Cerulean Cave 2F",
+     "to_warp": 3
+    },
+    {
+     "x": 1,
+     "y": 3,
+     "to_map": "Cerulean Cave 2F",
+     "to_warp": 4
+    },
+    {
+     "x": 3,
+     "y": 11,
+     "to_map": "Cerulean Cave 2F",
+     "to_warp": 5
+    },
+    {
+     "x": 0,
+     "y": 6,
+     "to_map": "Cerulean Cave B1F",
+     "to_warp": 0
+    }
+   ]
+  },
+  "Cerulean Cave 2F": {
+   "map_id": 226,
+   "size": [
+    30,
+    18
+   ],
+   "size_blocks": [
+    15,
+    9
+   ],
+   "connections": {},
+   "warps": [
+    {
+     "x": 29,
+     "y": 1,
+     "to_map": "Cerulean Cave 1F",
+     "to_warp": 2
+    },
+    {
+     "x": 22,
+     "y": 6,
+     "to_map": "Cerulean Cave 1F",
+     "to_warp": 3
+    },
+    {
+     "x": 19,
+     "y": 7,
+     "to_map": "Cerulean Cave 1F",
+     "to_warp": 4
+    },
+    {
+     "x": 9,
+     "y": 1,
+     "to_map": "Cerulean Cave 1F",
+     "to_warp": 5
+    },
+    {
+     "x": 1,
+     "y": 3,
+     "to_map": "Cerulean Cave 1F",
+     "to_warp": 6
+    },
+    {
+     "x": 3,
+     "y": 11,
+     "to_map": "Cerulean Cave 1F",
+     "to_warp": 7
+    }
+   ]
+  },
+  "Cerulean Cave B1F": {
+   "map_id": 227,
+   "size": [
+    30,
+    18
+   ],
+   "size_blocks": [
+    15,
+    9
+   ],
+   "connections": {},
+   "warps": [
+    {
+     "x": 3,
+     "y": 6,
+     "to_map": "Cerulean Cave 1F",
+     "to_warp": 8
+    }
+   ]
+  },
+  "Cerulean City": {
+   "map_id": 3,
+   "size": [
+    40,
+    36
+   ],
+   "size_blocks": [
+    20,
+    18
+   ],
+   "connections": {
+    "north": "Route 24",
+    "south": "Route 5",
+    "west": "Route 4",
+    "east": "Route 9"
+   },
+   "warps": [
+    {
+     "x": 27,
+     "y": 11,
+     "to_map": "Cerulean Trashed House",
+     "to_warp": 0
+    },
+    {
+     "x": 13,
+     "y": 15,
+     "to_map": "Cerulean Trade House",
+     "to_warp": 0
+    },
+    {
+     "x": 19,
+     "y": 17,
+     "to_map": "Cerulean Pokecenter",
+     "to_warp": 0
+    },
+    {
+     "x": 30,
+     "y": 19,
+     "to_map": "Cerulean Gym",
+     "to_warp": 0
+    },
+    {
+     "x": 13,
+     "y": 25,
+     "to_map": "Cerulean Bike Shop",
+     "to_warp": 0
+    },
+    {
+     "x": 25,
+     "y": 25,
+     "to_map": "Cerulean Mart",
+     "to_warp": 0
+    },
+    {
+     "x": 4,
+     "y": 11,
+     "to_map": "Cerulean Cave 1F",
+     "to_warp": 0
+    },
+    {
+     "x": 27,
+     "y": 9,
+     "to_map": "Cerulean Trashed House",
+     "to_warp": 2
+    },
+    {
+     "x": 9,
+     "y": 11,
+     "to_map": "Cerulean Badge House",
+     "to_warp": 1
+    },
+    {
+     "x": 9,
+     "y": 9,
+     "to_map": "Cerulean Badge House",
+     "to_warp": 0
+    }
+   ]
+  },
+  "Cerulean Gym": {
+   "map_id": 65,
+   "size": [
+    10,
+    14
+   ],
+   "size_blocks": [
+    5,
+    7
+   ],
+   "connections": {},
+   "warps": [
+    {
+     "x": 4,
+     "y": 13,
+     "to_map": "Cerulean City",
+     "to_warp": 3
+    },
+    {
+     "x": 5,
+     "y": 13,
+     "to_map": "Cerulean City",
+     "to_warp": 3
+    }
+   ]
+  },
+  "Cerulean Mart": {
+   "map_id": 67,
+   "size": [
+    8,
+    8
+   ],
+   "size_blocks": [
+    4,
+    4
+   ],
+   "connections": {},
+   "warps": [
+    {
+     "x": 3,
+     "y": 7,
+     "to_map": "Cerulean City",
+     "to_warp": 5
+    },
+    {
+     "x": 4,
+     "y": 7,
+     "to_map": "Cerulean City",
+     "to_warp": 5
+    }
+   ]
+  },
+  "Cerulean Pokecenter": {
+   "map_id": 64,
+   "size": [
+    14,
+    8
+   ],
+   "size_blocks": [
+    7,
+    4
+   ],
+   "connections": {},
+   "warps": [
+    {
+     "x": 3,
+     "y": 7,
+     "to_map": "Cerulean City",
+     "to_warp": 2
+    },
+    {
+     "x": 4,
+     "y": 7,
+     "to_map": "Cerulean City",
+     "to_warp": 2
+    }
+   ]
+  },
+  "Cerulean Trade House": {
+   "map_id": 63,
+   "size": [
+    8,
+    8
+   ],
+   "size_blocks": [
+    4,
+    4
+   ],
+   "connections": {},
+   "warps": [
+    {
+     "x": 2,
+     "y": 7,
+     "to_map": "Cerulean City",
+     "to_warp": 1
+    },
+    {
+     "x": 3,
+     "y": 7,
+     "to_map": "Cerulean City",
+     "to_warp": 1
+    }
+   ]
+  },
+  "Cerulean Trashed House": {
+   "map_id": 62,
+   "size": [
+    8,
+    8
+   ],
+   "size_blocks": [
+    4,
+    4
+   ],
+   "connections": {},
+   "warps": [
+    {
+     "x": 2,
+     "y": 7,
+     "to_map": "Cerulean City",
+     "to_warp": 0
+    },
+    {
+     "x": 3,
+     "y": 7,
+     "to_map": "Cerulean City",
+     "to_warp": 0
+    },
+    {
+     "x": 3,
+     "y": 0,
+     "to_map": "Cerulean City",
+     "to_warp": 7
+    }
+   ]
+  },
+  "Champion's Room": {
+   "map_id": 120,
+   "size": [
+    8,
+    8
+   ],
+   "size_blocks": [
+    4,
+    4
+   ],
+   "connections": {},
+   "warps": [
+    {
+     "x": 3,
+     "y": 7,
+     "to_map": "Lance's Room",
+     "to_warp": 1
+    },
+    {
+     "x": 4,
+     "y": 7,
+     "to_map": "Lance's Room",
+     "to_warp": 2
+    },
+    {
+     "x": 3,
+     "y": 0,
+     "to_map": "Hall of Fame",
+     "to_warp": 0
+    },
+    {
+     "x": 4,
+     "y": 0,
+     "to_map": "Hall of Fame",
+     "to_warp": 0
+    }
+   ]
+  },
+  "Cinnabar Gym": {
+   "map_id": 166,
+   "size": [
+    20,
+    18
+   ],
+   "size_blocks": [
+    10,
+    9
+   ],
+   "connections": {},
+   "warps": [
+    {
+     "x": 16,
+     "y": 17,
+     "to_map": "Cinnabar Island",
+     "to_warp": 1
+    },
+    {
+     "x": 17,
+     "y": 17,
+     "to_map": "Cinnabar Island",
+     "to_warp": 1
+    }
+   ]
+  },
+  "Cinnabar Island": {
+   "map_id": 8,
+   "size": [
+    20,
+    18
+   ],
+   "size_blocks": [
+    10,
+    9
+   ],
+   "connections": {
+    "north": "Route 21",
+    "east": "Route 20"
+   },
+   "warps": [
+    {
+     "x": 6,
+     "y": 3,
+     "to_map": "Pokemon Mansion 1F",
+     "to_warp": 1
+    },
+    {
+     "x": 18,
+     "y": 3,
+     "to_map": "Cinnabar Gym",
+     "to_warp": 0
+    },
+    {
+     "x": 6,
+     "y": 9,
+     "to_map": "Cinnabar Lab",
+     "to_warp": 0
+    },
+    {
+     "x": 11,
+     "y": 11,
+     "to_map": "Cinnabar Pokecenter",
+     "to_warp": 0
+    },
+    {
+     "x": 15,
+     "y": 11,
+     "to_map": "Cinnabar Mart",
+     "to_warp": 0
+    }
+   ]
+  },
+  "Cinnabar Lab": {
+   "map_id": 167,
+   "size": [
+    18,
+    8
+   ],
+   "size_blocks": [
+    9,
+    4
+   ],
+   "connections": {},
+   "warps": [
+    {
+     "x": 2,
+     "y": 7,
+     "to_map": "Cinnabar Island",
+     "to_warp": 2
+    },
+    {
+     "x": 3,
+     "y": 7,
+     "to_map": "Cinnabar Island",
+     "to_warp": 2
+    },
+    {
+     "x": 8,
+     "y": 4,
+     "to_map": "Cinnabar Lab Trade Room",
+     "to_warp": 0
+    },
+    {
+     "x": 12,
+     "y": 4,
+     "to_map": "Cinnabar Lab Metronome Room",
+     "to_warp": 0
+    },
+    {
+     "x": 16,
+     "y": 4,
+     "to_map": "Cinnabar Lab Fossil Room",
+     "to_warp": 0
+    }
+   ]
+  },
+  "Cinnabar Lab Fossil Room": {
+   "map_id": 170,
+   "size": [
+    8,
+    8
+   ],
+   "size_blocks": [
+    4,
+    4
+   ],
+   "connections": {},
+   "warps": [
+    {
+     "x": 2,
+     "y": 7,
+     "to_map": "Cinnabar Lab",
+     "to_warp": 4
+    },
+    {
+     "x": 3,
+     "y": 7,
+     "to_map": "Cinnabar Lab",
+     "to_warp": 4
+    }
+   ]
+  },
+  "Cinnabar Lab Metronome Room": {
+   "map_id": 169,
+   "size": [
+    8,
+    8
+   ],
+   "size_blocks": [
+    4,
+    4
+   ],
+   "connections": {},
+   "warps": [
+    {
+     "x": 2,
+     "y": 7,
+     "to_map": "Cinnabar Lab",
+     "to_warp": 3
+    },
+    {
+     "x": 3,
+     "y": 7,
+     "to_map": "Cinnabar Lab",
+     "to_warp": 3
+    }
+   ]
+  },
+  "Cinnabar Lab Trade Room": {
+   "map_id": 168,
+   "size": [
+    8,
+    8
+   ],
+   "size_blocks": [
+    4,
+    4
+   ],
+   "connections": {},
+   "warps": [
+    {
+     "x": 2,
+     "y": 7,
+     "to_map": "Cinnabar Lab",
+     "to_warp": 2
+    },
+    {
+     "x": 3,
+     "y": 7,
+     "to_map": "Cinnabar Lab",
+     "to_warp": 2
+    }
+   ]
+  },
+  "Cinnabar Mart": {
+   "map_id": 172,
+   "size": [
+    8,
+    8
+   ],
+   "size_blocks": [
+    4,
+    4
+   ],
+   "connections": {},
+   "warps": [
+    {
+     "x": 3,
+     "y": 7,
+     "to_map": "Cinnabar Island",
+     "to_warp": 4
+    },
+    {
+     "x": 4,
+     "y": 7,
+     "to_map": "Cinnabar Island",
+     "to_warp": 4
+    }
+   ]
+  },
+  "Cinnabar Pokecenter": {
+   "map_id": 171,
+   "size": [
+    14,
+    8
+   ],
+   "size_blocks": [
+    7,
+    4
+   ],
+   "connections": {},
+   "warps": [
+    {
+     "x": 3,
+     "y": 7,
+     "to_map": "Cinnabar Island",
+     "to_warp": 3
+    },
+    {
+     "x": 4,
+     "y": 7,
+     "to_map": "Cinnabar Island",
+     "to_warp": 3
+    }
+   ]
+  },
+  "Colosseum": {
+   "map_id": 240,
+   "size": [
+    10,
+    8
+   ],
+   "size_blocks": [
+    5,
+    4
+   ],
+   "connections": {},
+   "warps": []
+  },
+  "Copycat's House 1F": {
+   "map_id": 175,
+   "size": [
+    8,
+    8
+   ],
+   "size_blocks": [
+    4,
+    4
+   ],
+   "connections": {},
+   "warps": [
+    {
+     "x": 2,
+     "y": 7,
+     "to_map": "Saffron City",
+     "to_warp": 0
+    },
+    {
+     "x": 3,
+     "y": 7,
+     "to_map": "Saffron City",
+     "to_warp": 0
+    },
+    {
+     "x": 7,
+     "y": 1,
+     "to_map": "Copycat's House 2F",
+     "to_warp": 0
+    }
+   ]
+  },
+  "Copycat's House 2F": {
+   "map_id": 176,
+   "size": [
+    8,
+    8
+   ],
+   "size_blocks": [
+    4,
+    4
+   ],
+   "connections": {},
+   "warps": [
+    {
+     "x": 7,
+     "y": 1,
+     "to_map": "Copycat's House 1F",
+     "to_warp": 2
+    }
+   ]
+  },
+  "Daycare": {
+   "map_id": 72,
+   "size": [
+    8,
+    8
+   ],
+   "size_blocks": [
+    4,
+    4
+   ],
+   "connections": {},
+   "warps": [
+    {
+     "x": 2,
+     "y": 7,
+     "to_map": "Route 5",
+     "to_warp": 4
+    },
+    {
+     "x": 3,
+     "y": 7,
+     "to_map": "Route 5",
+     "to_warp": 4
+    }
+   ]
+  },
+  "Diglett's Cave": {
+   "map_id": 197,
+   "size": [
+    40,
+    36
+   ],
+   "size_blocks": [
+    20,
+    18
+   ],
+   "connections": {},
+   "warps": [
+    {
+     "x": 5,
+     "y": 5,
+     "to_map": "Diglett's Cave Route 2",
+     "to_warp": 2
+    },
+    {
+     "x": 37,
+     "y": 31,
+     "to_map": "Diglett's Cave Route 11",
+     "to_warp": 2
+    }
+   ]
+  },
+  "Diglett's Cave Route 11": {
+   "map_id": 85,
+   "size": [
+    8,
+    8
+   ],
+   "size_blocks": [
+    4,
+    4
+   ],
+   "connections": {},
+   "warps": [
+    {
+     "x": 2,
+     "y": 7,
+     "to_map": "Route 11",
+     "to_warp": 4
+    },
+    {
+     "x": 3,
+     "y": 7,
+     "to_map": "Route 11",
+     "to_warp": 4
+    },
+    {
+     "x": 4,
+     "y": 4,
+     "to_map": "Diglett's Cave",
+     "to_warp": 1
+    }
+   ]
+  },
+  "Diglett's Cave Route 2": {
+   "map_id": 46,
+   "size": [
+    8,
+    8
+   ],
+   "size_blocks": [
+    4,
+    4
+   ],
+   "connections": {},
+   "warps": [
+    {
+     "x": 2,
+     "y": 7,
+     "to_map": "Route 2",
+     "to_warp": 0
+    },
+    {
+     "x": 3,
+     "y": 7,
+     "to_map": "Route 2",
+     "to_warp": 0
+    },
+    {
+     "x": 4,
+     "y": 4,
+     "to_map": "Diglett's Cave",
+     "to_warp": 0
+    }
+   ]
+  },
+  "Fighting Dojo": {
+   "map_id": 177,
+   "size": [
+    10,
+    12
+   ],
+   "size_blocks": [
+    5,
+    6
+   ],
+   "connections": {},
+   "warps": [
+    {
+     "x": 4,
+     "y": 11,
+     "to_map": "Saffron City",
+     "to_warp": 1
+    },
+    {
+     "x": 5,
+     "y": 11,
+     "to_map": "Saffron City",
+     "to_warp": 1
+    }
+   ]
+  },
+  "Fuchsia Bill's Grandpa's House": {
+   "map_id": 153,
+   "size": [
+    8,
+    8
+   ],
+   "size_blocks": [
+    4,
+    4
+   ],
+   "connections": {},
+   "warps": [
+    {
+     "x": 2,
+     "y": 7,
+     "to_map": "Fuchsia City",
+     "to_warp": 1
+    },
+    {
+     "x": 3,
+     "y": 7,
+     "to_map": "Fuchsia City",
+     "to_warp": 1
+    }
+   ]
+  },
+  "Fuchsia City": {
+   "map_id": 7,
+   "size": [
+    40,
+    36
+   ],
+   "size_blocks": [
+    20,
+    18
+   ],
+   "connections": {
+    "south": "Route 19",
+    "west": "Route 18",
+    "east": "Route 15"
+   },
+   "warps": [
+    {
+     "x": 5,
+     "y": 13,
+     "to_map": "Fuchsia Mart",
+     "to_warp": 0
+    },
+    {
+     "x": 11,
+     "y": 27,
+     "to_map": "Fuchsia Bill's Grandpa's House",
+     "to_warp": 0
+    },
+    {
+     "x": 19,
+     "y": 27,
+     "to_map": "Fuchsia Pokecenter",
+     "to_warp": 0
+    },
+    {
+     "x": 27,
+     "y": 27,
+     "to_map": "Warden's House",
+     "to_warp": 0
+    },
+    {
+     "x": 18,
+     "y": 3,
+     "to_map": "Safari Zone Gate",
+     "to_warp": 0
+    },
+    {
+     "x": 5,
+     "y": 27,
+     "to_map": "Fuchsia Gym",
+     "to_warp": 0
+    },
+    {
+     "x": 22,
+     "y": 13,
+     "to_map": "Fuchsia Meeting Room",
+     "to_warp": 0
+    },
+    {
+     "x": 31,
+     "y": 27,
+     "to_map": "Fuchsia Good Rod House",
+     "to_warp": 1
+    },
+    {
+     "x": 31,
+     "y": 24,
+     "to_map": "Fuchsia Good Rod House",
+     "to_warp": 0
+    }
+   ]
+  },
+  "Fuchsia Good Rod House": {
+   "map_id": 164,
+   "size": [
+    8,
+    8
+   ],
+   "size_blocks": [
+    4,
+    4
+   ],
+   "connections": {},
+   "warps": [
+    {
+     "x": 2,
+     "y": 0,
+     "to_map": "Fuchsia City",
+     "to_warp": 8
+    },
+    {
+     "x": 2,
+     "y": 7,
+     "to_map": "Fuchsia City",
+     "to_warp": 7
+    },
+    {
+     "x": 3,
+     "y": 7,
+     "to_map": "Fuchsia City",
+     "to_warp": 7
+    }
+   ]
+  },
+  "Fuchsia Gym": {
+   "map_id": 157,
+   "size": [
+    10,
+    18
+   ],
+   "size_blocks": [
+    5,
+    9
+   ],
+   "connections": {},
+   "warps": [
+    {
+     "x": 4,
+     "y": 17,
+     "to_map": "Fuchsia City",
+     "to_warp": 5
+    },
+    {
+     "x": 5,
+     "y": 17,
+     "to_map": "Fuchsia City",
+     "to_warp": 5
+    }
+   ]
+  },
+  "Fuchsia Mart": {
+   "map_id": 152,
+   "size": [
+    8,
+    8
+   ],
+   "size_blocks": [
+    4,
+    4
+   ],
+   "connections": {},
+   "warps": [
+    {
+     "x": 3,
+     "y": 7,
+     "to_map": "Fuchsia City",
+     "to_warp": 0
+    },
+    {
+     "x": 4,
+     "y": 7,
+     "to_map": "Fuchsia City",
+     "to_warp": 0
+    }
+   ]
+  },
+  "Fuchsia Meeting Room": {
+   "map_id": 158,
+   "size": [
+    14,
+    8
+   ],
+   "size_blocks": [
+    7,
+    4
+   ],
+   "connections": {},
+   "warps": [
+    {
+     "x": 4,
+     "y": 7,
+     "to_map": "Fuchsia City",
+     "to_warp": 6
+    },
+    {
+     "x": 5,
+     "y": 7,
+     "to_map": "Fuchsia City",
+     "to_warp": 6
+    }
+   ]
+  },
+  "Fuchsia Pokecenter": {
+   "map_id": 154,
+   "size": [
+    14,
+    8
+   ],
+   "size_blocks": [
+    7,
+    4
+   ],
+   "connections": {},
+   "warps": [
+    {
+     "x": 3,
+     "y": 7,
+     "to_map": "Fuchsia City",
+     "to_warp": 2
+    },
+    {
+     "x": 4,
+     "y": 7,
+     "to_map": "Fuchsia City",
+     "to_warp": 2
+    }
+   ]
+  },
+  "Game Corner": {
+   "map_id": 135,
+   "size": [
+    20,
+    18
+   ],
+   "size_blocks": [
+    10,
+    9
+   ],
+   "connections": {},
+   "warps": [
+    {
+     "x": 15,
+     "y": 17,
+     "to_map": "Celadon City",
+     "to_warp": 7
+    },
+    {
+     "x": 16,
+     "y": 17,
+     "to_map": "Celadon City",
+     "to_warp": 7
+    },
+    {
+     "x": 17,
+     "y": 4,
+     "to_map": "Rocket Hideout B1F",
+     "to_warp": 1
+    }
+   ]
+  },
+  "Game Corner Prize Room": {
+   "map_id": 137,
+   "size": [
+    10,
+    8
+   ],
+   "size_blocks": [
+    5,
+    4
+   ],
+   "connections": {},
+   "warps": [
+    {
+     "x": 4,
+     "y": 7,
+     "to_map": "Celadon City",
+     "to_warp": 9
+    },
+    {
+     "x": 5,
+     "y": 7,
+     "to_map": "Celadon City",
+     "to_warp": 9
+    }
+   ]
+  },
+  "Hall of Fame": {
+   "map_id": 118,
+   "size": [
+    10,
+    8
+   ],
+   "size_blocks": [
+    5,
+    4
+   ],
+   "connections": {},
+   "warps": [
+    {
+     "x": 4,
+     "y": 7,
+     "to_map": "Champion's Room",
+     "to_warp": 2
+    },
+    {
+     "x": 5,
+     "y": 7,
+     "to_map": "Champion's Room",
+     "to_warp": 3
+    }
+   ]
+  },
+  "Indigo Plateau": {
+   "map_id": 9,
+   "size": [
+    20,
+    18
+   ],
+   "size_blocks": [
+    10,
+    9
+   ],
+   "connections": {
+    "south": "Route 23"
+   },
+   "warps": [
+    {
+     "x": 9,
+     "y": 5,
+     "to_map": "Indigo Plateau Lobby",
+     "to_warp": 0
+    },
+    {
+     "x": 10,
+     "y": 5,
+     "to_map": "Indigo Plateau Lobby",
+     "to_warp": 0
+    }
+   ]
+  },
+  "Indigo Plateau Lobby": {
+   "map_id": 174,
+   "size": [
+    16,
+    12
+   ],
+   "size_blocks": [
+    8,
+    6
+   ],
+   "connections": {},
+   "warps": [
+    {
+     "x": 7,
+     "y": 11,
+     "to_map": "Indigo Plateau",
+     "to_warp": 0
+    },
+    {
+     "x": 8,
+     "y": 11,
+     "to_map": "Indigo Plateau",
+     "to_warp": 1
+    },
+    {
+     "x": 8,
+     "y": 0,
+     "to_map": "Lorelei's Room",
+     "to_warp": 0
+    }
+   ]
+  },
+  "Lance's Room": {
+   "map_id": 113,
+   "size": [
+    26,
+    26
+   ],
+   "size_blocks": [
+    13,
+    13
+   ],
+   "connections": {},
+   "warps": [
+    {
+     "x": 24,
+     "y": 16,
+     "to_map": "Agatha's Room",
+     "to_warp": 2
+    },
+    {
+     "x": 5,
+     "y": 0,
+     "to_map": "Champion's Room",
+     "to_warp": 0
+    },
+    {
+     "x": 6,
+     "y": 0,
+     "to_map": "Champion's Room",
+     "to_warp": 0
+    }
+   ]
+  },
+  "Lavender Cubone House": {
+   "map_id": 151,
+   "size": [
+    8,
+    8
+   ],
+   "size_blocks": [
+    4,
+    4
+   ],
+   "connections": {},
+   "warps": [
+    {
+     "x": 2,
+     "y": 7,
+     "to_map": "Lavender Town",
+     "to_warp": 4
+    },
+    {
+     "x": 3,
+     "y": 7,
+     "to_map": "Lavender Town",
+     "to_warp": 4
+    }
+   ]
+  },
+  "Lavender Mart": {
+   "map_id": 150,
+   "size": [
+    8,
+    8
+   ],
+   "size_blocks": [
+    4,
+    4
+   ],
+   "connections": {},
+   "warps": [
+    {
+     "x": 3,
+     "y": 7,
+     "to_map": "Lavender Town",
+     "to_warp": 3
+    },
+    {
+     "x": 4,
+     "y": 7,
+     "to_map": "Lavender Town",
+     "to_warp": 3
+    }
+   ]
+  },
+  "Lavender Pokecenter": {
+   "map_id": 141,
+   "size": [
+    14,
+    8
+   ],
+   "size_blocks": [
+    7,
+    4
+   ],
+   "connections": {},
+   "warps": [
+    {
+     "x": 3,
+     "y": 7,
+     "to_map": "Lavender Town",
+     "to_warp": 0
+    },
+    {
+     "x": 4,
+     "y": 7,
+     "to_map": "Lavender Town",
+     "to_warp": 0
+    }
+   ]
+  },
+  "Lavender Town": {
+   "map_id": 4,
+   "size": [
+    20,
+    18
+   ],
+   "size_blocks": [
+    10,
+    9
+   ],
+   "connections": {
+    "north": "Route 10",
+    "south": "Route 12",
+    "west": "Route 8"
+   },
+   "warps": [
+    {
+     "x": 3,
+     "y": 5,
+     "to_map": "Lavender Pokecenter",
+     "to_warp": 0
+    },
+    {
+     "x": 14,
+     "y": 5,
+     "to_map": "Pokemon Tower 1F",
+     "to_warp": 0
+    },
+    {
+     "x": 7,
+     "y": 9,
+     "to_map": "Mr Fuji's House",
+     "to_warp": 0
+    },
+    {
+     "x": 15,
+     "y": 13,
+     "to_map": "Lavender Mart",
+     "to_warp": 0
+    },
+    {
+     "x": 3,
+     "y": 13,
+     "to_map": "Lavender Cubone House",
+     "to_warp": 0
+    },
+    {
+     "x": 7,
+     "y": 13,
+     "to_map": "Name Rater's House",
+     "to_warp": 0
+    }
+   ]
+  },
+  "Lorelei's Room": {
+   "map_id": 245,
+   "size": [
+    10,
+    12
+   ],
+   "size_blocks": [
+    5,
+    6
+   ],
+   "connections": {},
+   "warps": [
+    {
+     "x": 4,
+     "y": 11,
+     "to_map": "Indigo Plateau Lobby",
+     "to_warp": 2
+    },
+    {
+     "x": 5,
+     "y": 11,
+     "to_map": "Indigo Plateau Lobby",
+     "to_warp": 2
+    },
+    {
+     "x": 4,
+     "y": 0,
+     "to_map": "Bruno's Room",
+     "to_warp": 0
+    },
+    {
+     "x": 5,
+     "y": 0,
+     "to_map": "Bruno's Room",
+     "to_warp": 1
+    }
+   ]
+  },
+  "Mr Fuji's House": {
+   "map_id": 149,
+   "size": [
+    8,
+    8
+   ],
+   "size_blocks": [
+    4,
+    4
+   ],
+   "connections": {},
+   "warps": [
+    {
+     "x": 2,
+     "y": 7,
+     "to_map": "Lavender Town",
+     "to_warp": 2
+    },
+    {
+     "x": 3,
+     "y": 7,
+     "to_map": "Lavender Town",
+     "to_warp": 2
+    }
+   ]
+  },
+  "Mr Psychic's House": {
+   "map_id": 183,
+   "size": [
+    8,
+    8
+   ],
+   "size_blocks": [
+    4,
+    4
+   ],
+   "connections": {},
+   "warps": [
+    {
+     "x": 2,
+     "y": 7,
+     "to_map": "Saffron City",
+     "to_warp": 7
+    },
+    {
+     "x": 3,
+     "y": 7,
+     "to_map": "Saffron City",
+     "to_warp": 7
+    }
+   ]
+  },
+  "Mt Moon 1F": {
+   "map_id": 59,
+   "size": [
+    40,
+    36
+   ],
+   "size_blocks": [
+    20,
+    18
+   ],
+   "connections": {},
+   "warps": [
+    {
+     "x": 14,
+     "y": 35,
+     "to_map": "Route 4",
+     "to_warp": 1
+    },
+    {
+     "x": 15,
+     "y": 35,
+     "to_map": "Route 4",
+     "to_warp": 1
+    },
+    {
+     "x": 5,
+     "y": 5,
+     "to_map": "Mt Moon B1F",
+     "to_warp": 0
+    },
+    {
+     "x": 17,
+     "y": 11,
+     "to_map": "Mt Moon B1F",
+     "to_warp": 2
+    },
+    {
+     "x": 25,
+     "y": 15,
+     "to_map": "Mt Moon B1F",
+     "to_warp": 3
+    }
+   ]
+  },
+  "Mt Moon B1F": {
+   "map_id": 60,
+   "size": [
+    28,
+    28
+   ],
+   "size_blocks": [
+    14,
+    14
+   ],
+   "connections": {},
+   "warps": [
+    {
+     "x": 5,
+     "y": 5,
+     "to_map": "Mt Moon 1F",
+     "to_warp": 2
+    },
+    {
+     "x": 17,
+     "y": 11,
+     "to_map": "Mt Moon B2F",
+     "to_warp": 0
+    },
+    {
+     "x": 25,
+     "y": 9,
+     "to_map": "Mt Moon 1F",
+     "to_warp": 3
+    },
+    {
+     "x": 25,
+     "y": 15,
+     "to_map": "Mt Moon 1F",
+     "to_warp": 4
+    },
+    {
+     "x": 21,
+     "y": 17,
+     "to_map": "Mt Moon B2F",
+     "to_warp": 1
+    },
+    {
+     "x": 13,
+     "y": 27,
+     "to_map": "Mt Moon B2F",
+     "to_warp": 2
+    },
+    {
+     "x": 23,
+     "y": 3,
+     "to_map": "Mt Moon B2F",
+     "to_warp": 3
+    },
+    {
+     "x": 27,
+     "y": 3,
+     "to_map": "Route 4",
+     "to_warp": 2
+    }
+   ]
+  },
+  "Mt Moon B2F": {
+   "map_id": 61,
+   "size": [
+    40,
+    36
+   ],
+   "size_blocks": [
+    20,
+    18
+   ],
+   "connections": {},
+   "warps": [
+    {
+     "x": 25,
+     "y": 9,
+     "to_map": "Mt Moon B1F",
+     "to_warp": 1
+    },
+    {
+     "x": 21,
+     "y": 17,
+     "to_map": "Mt Moon B1F",
+     "to_warp": 4
+    },
+    {
+     "x": 15,
+     "y": 27,
+     "to_map": "Mt Moon B1F",
+     "to_warp": 5
+    },
+    {
+     "x": 5,
+     "y": 7,
+     "to_map": "Mt Moon B1F",
+     "to_warp": 6
+    }
+   ]
+  },
+  "Mt Moon Pokecenter": {
+   "map_id": 68,
+   "size": [
+    14,
+    8
+   ],
+   "size_blocks": [
+    7,
+    4
+   ],
+   "connections": {},
+   "warps": [
+    {
+     "x": 3,
+     "y": 7,
+     "to_map": "Route 4",
+     "to_warp": 0
+    },
+    {
+     "x": 4,
+     "y": 7,
+     "to_map": "Route 4",
+     "to_warp": 0
+    }
+   ]
+  },
+  "Pewter Museum 1F": {
+   "map_id": 52,
+   "size": [
+    20,
+    8
+   ],
+   "size_blocks": [
+    10,
+    4
+   ],
+   "connections": {},
+   "warps": [
+    {
+     "x": 10,
+     "y": 7,
+     "to_map": "Pewter City",
+     "to_warp": 0
+    },
+    {
+     "x": 11,
+     "y": 7,
+     "to_map": "Pewter City",
+     "to_warp": 0
+    },
+    {
+     "x": 16,
+     "y": 7,
+     "to_map": "Pewter City",
+     "to_warp": 1
+    },
+    {
+     "x": 17,
+     "y": 7,
+     "to_map": "Pewter City",
+     "to_warp": 1
+    },
+    {
+     "x": 7,
+     "y": 7,
+     "to_map": "Pewter Museum 2F",
+     "to_warp": 0
+    }
+   ]
+  },
+  "Pewter Museum 2F": {
+   "map_id": 53,
+   "size": [
+    14,
+    8
+   ],
+   "size_blocks": [
+    7,
+    4
+   ],
+   "connections": {},
+   "warps": [
+    {
+     "x": 7,
+     "y": 7,
+     "to_map": "Pewter Museum 1F",
+     "to_warp": 4
+    }
+   ]
+  },
+  "Name Rater's House": {
+   "map_id": 229,
+   "size": [
+    8,
+    8
+   ],
+   "size_blocks": [
+    4,
+    4
+   ],
+   "connections": {},
+   "warps": [
+    {
+     "x": 2,
+     "y": 7,
+     "to_map": "Lavender Town",
+     "to_warp": 5
+    },
+    {
+     "x": 3,
+     "y": 7,
+     "to_map": "Lavender Town",
+     "to_warp": 5
+    }
+   ]
+  },
+  "Oak's Lab": {
+   "map_id": 40,
+   "size": [
+    10,
+    12
+   ],
+   "size_blocks": [
+    5,
+    6
+   ],
+   "connections": {},
+   "warps": [
+    {
+     "x": 4,
+     "y": 11,
+     "to_map": "Pallet Town",
+     "to_warp": 2
+    },
+    {
+     "x": 5,
+     "y": 11,
+     "to_map": "Pallet Town",
+     "to_warp": 2
+    }
+   ]
+  },
+  "Pallet Town": {
+   "map_id": 0,
+   "size": [
+    20,
+    18
+   ],
+   "size_blocks": [
+    10,
+    9
+   ],
+   "connections": {
+    "north": "Route 1",
+    "south": "Route 21"
+   },
+   "warps": [
+    {
+     "x": 5,
+     "y": 5,
+     "to_map": "Red's House 1F",
+     "to_warp": 0
+    },
+    {
+     "x": 13,
+     "y": 5,
+     "to_map": "Blue's House",
+     "to_warp": 0
+    },
+    {
+     "x": 12,
+     "y": 11,
+     "to_map": "Oak's Lab",
+     "to_warp": 1
+    }
+   ]
+  },
+  "Pewter City": {
+   "map_id": 2,
+   "size": [
+    40,
+    36
+   ],
+   "size_blocks": [
+    20,
+    18
+   ],
+   "connections": {
+    "south": "Route 2",
+    "east": "Route 3"
+   },
+   "warps": [
+    {
+     "x": 14,
+     "y": 7,
+     "to_map": "Pewter Museum 1F",
+     "to_warp": 0
+    },
+    {
+     "x": 19,
+     "y": 5,
+     "to_map": "Pewter Museum 1F",
+     "to_warp": 2
+    },
+    {
+     "x": 16,
+     "y": 17,
+     "to_map": "Pewter Gym",
+     "to_warp": 0
+    },
+    {
+     "x": 29,
+     "y": 13,
+     "to_map": "Pewter Nidoran House",
+     "to_warp": 0
+    },
+    {
+     "x": 23,
+     "y": 17,
+     "to_map": "Pewter Mart",
+     "to_warp": 0
+    },
+    {
+     "x": 7,
+     "y": 29,
+     "to_map": "Pewter Speech House",
+     "to_warp": 0
+    },
+    {
+     "x": 13,
+     "y": 25,
+     "to_map": "Pewter Pokecenter",
+     "to_warp": 0
+    }
+   ]
+  },
+  "Pewter Gym": {
+   "map_id": 54,
+   "size": [
+    10,
+    14
+   ],
+   "size_blocks": [
+    5,
+    7
+   ],
+   "connections": {},
+   "warps": [
+    {
+     "x": 4,
+     "y": 13,
+     "to_map": "Pewter City",
+     "to_warp": 2
+    },
+    {
+     "x": 5,
+     "y": 13,
+     "to_map": "Pewter City",
+     "to_warp": 2
+    }
+   ]
+  },
+  "Pewter Mart": {
+   "map_id": 56,
+   "size": [
+    8,
+    8
+   ],
+   "size_blocks": [
+    4,
+    4
+   ],
+   "connections": {},
+   "warps": [
+    {
+     "x": 3,
+     "y": 7,
+     "to_map": "Pewter City",
+     "to_warp": 4
+    },
+    {
+     "x": 4,
+     "y": 7,
+     "to_map": "Pewter City",
+     "to_warp": 4
+    }
+   ]
+  },
+  "Pewter Nidoran House": {
+   "map_id": 55,
+   "size": [
+    8,
+    8
+   ],
+   "size_blocks": [
+    4,
+    4
+   ],
+   "connections": {},
+   "warps": [
+    {
+     "x": 2,
+     "y": 7,
+     "to_map": "Pewter City",
+     "to_warp": 3
+    },
+    {
+     "x": 3,
+     "y": 7,
+     "to_map": "Pewter City",
+     "to_warp": 3
+    }
+   ]
+  },
+  "Pewter Pokecenter": {
+   "map_id": 58,
+   "size": [
+    14,
+    8
+   ],
+   "size_blocks": [
+    7,
+    4
+   ],
+   "connections": {},
+   "warps": [
+    {
+     "x": 3,
+     "y": 7,
+     "to_map": "Pewter City",
+     "to_warp": 6
+    },
+    {
+     "x": 4,
+     "y": 7,
+     "to_map": "Pewter City",
+     "to_warp": 6
+    }
+   ]
+  },
+  "Pewter Speech House": {
+   "map_id": 57,
+   "size": [
+    8,
+    8
+   ],
+   "size_blocks": [
+    4,
+    4
+   ],
+   "connections": {},
+   "warps": [
+    {
+     "x": 2,
+     "y": 7,
+     "to_map": "Pewter City",
+     "to_warp": 5
+    },
+    {
+     "x": 3,
+     "y": 7,
+     "to_map": "Pewter City",
+     "to_warp": 5
+    }
+   ]
+  },
+  "Pokemon Fan Club": {
+   "map_id": 90,
+   "size": [
+    8,
+    8
+   ],
+   "size_blocks": [
+    4,
+    4
+   ],
+   "connections": {},
+   "warps": [
+    {
+     "x": 2,
+     "y": 7,
+     "to_map": "Vermilion City",
+     "to_warp": 1
+    },
+    {
+     "x": 3,
+     "y": 7,
+     "to_map": "Vermilion City",
+     "to_warp": 1
+    }
+   ]
+  },
+  "Pokemon Mansion 1F": {
+   "map_id": 165,
+   "size": [
+    30,
+    28
+   ],
+   "size_blocks": [
+    15,
+    14
+   ],
+   "connections": {},
+   "warps": [
+    {
+     "x": 4,
+     "y": 27,
+     "to_map": "Cinnabar Island",
+     "to_warp": 0
+    },
+    {
+     "x": 5,
+     "y": 27,
+     "to_map": "Cinnabar Island",
+     "to_warp": 0
+    },
+    {
+     "x": 6,
+     "y": 27,
+     "to_map": "Cinnabar Island",
+     "to_warp": 0
+    },
+    {
+     "x": 7,
+     "y": 27,
+     "to_map": "Cinnabar Island",
+     "to_warp": 0
+    },
+    {
+     "x": 5,
+     "y": 10,
+     "to_map": "Pokemon Mansion 2F",
+     "to_warp": 0
+    },
+    {
+     "x": 21,
+     "y": 23,
+     "to_map": "Pokemon Mansion B1F",
+     "to_warp": 0
+    },
+    {
+     "x": 26,
+     "y": 27,
+     "to_map": "Cinnabar Island",
+     "to_warp": 0
+    },
+    {
+     "x": 27,
+     "y": 27,
+     "to_map": "Cinnabar Island",
+     "to_warp": 0
+    }
+   ]
+  },
+  "Pokemon Mansion 2F": {
+   "map_id": 214,
+   "size": [
+    30,
+    28
+   ],
+   "size_blocks": [
+    15,
+    14
+   ],
+   "connections": {},
+   "warps": [
+    {
+     "x": 5,
+     "y": 10,
+     "to_map": "Pokemon Mansion 1F",
+     "to_warp": 4
+    },
+    {
+     "x": 7,
+     "y": 10,
+     "to_map": "Pokemon Mansion 3F",
+     "to_warp": 0
+    },
+    {
+     "x": 25,
+     "y": 14,
+     "to_map": "Pokemon Mansion 3F",
+     "to_warp": 2
+    },
+    {
+     "x": 6,
+     "y": 1,
+     "to_map": "Pokemon Mansion 3F",
+     "to_warp": 1
+    }
+   ]
+  },
+  "Pokemon Mansion 3F": {
+   "map_id": 215,
+   "size": [
+    30,
+    18
+   ],
+   "size_blocks": [
+    15,
+    9
+   ],
+   "connections": {},
+   "warps": [
+    {
+     "x": 7,
+     "y": 10,
+     "to_map": "Pokemon Mansion 2F",
+     "to_warp": 1
+    },
+    {
+     "x": 6,
+     "y": 1,
+     "to_map": "Pokemon Mansion 2F",
+     "to_warp": 3
+    },
+    {
+     "x": 25,
+     "y": 14,
+     "to_map": "Pokemon Mansion 2F",
+     "to_warp": 2
+    }
+   ]
+  },
+  "Pokemon Mansion B1F": {
+   "map_id": 216,
+   "size": [
+    30,
+    28
+   ],
+   "size_blocks": [
+    15,
+    14
+   ],
+   "connections": {},
+   "warps": [
+    {
+     "x": 23,
+     "y": 22,
+     "to_map": "Pokemon Mansion 1F",
+     "to_warp": 5
+    }
+   ]
+  },
+  "Pokemon Tower 1F": {
+   "map_id": 142,
+   "size": [
+    20,
+    18
+   ],
+   "size_blocks": [
+    10,
+    9
+   ],
+   "connections": {},
+   "warps": [
+    {
+     "x": 10,
+     "y": 17,
+     "to_map": "Lavender Town",
+     "to_warp": 1
+    },
+    {
+     "x": 11,
+     "y": 17,
+     "to_map": "Lavender Town",
+     "to_warp": 1
+    },
+    {
+     "x": 18,
+     "y": 9,
+     "to_map": "Pokemon Tower 2F",
+     "to_warp": 1
+    }
+   ]
+  },
+  "Pokemon Tower 2F": {
+   "map_id": 143,
+   "size": [
+    20,
+    18
+   ],
+   "size_blocks": [
+    10,
+    9
+   ],
+   "connections": {},
+   "warps": [
+    {
+     "x": 3,
+     "y": 9,
+     "to_map": "Pokemon Tower 3F",
+     "to_warp": 0
+    },
+    {
+     "x": 18,
+     "y": 9,
+     "to_map": "Pokemon Tower 1F",
+     "to_warp": 2
+    }
+   ]
+  },
+  "Pokemon Tower 3F": {
+   "map_id": 144,
+   "size": [
+    20,
+    18
+   ],
+   "size_blocks": [
+    10,
+    9
+   ],
+   "connections": {},
+   "warps": [
+    {
+     "x": 3,
+     "y": 9,
+     "to_map": "Pokemon Tower 2F",
+     "to_warp": 0
+    },
+    {
+     "x": 18,
+     "y": 9,
+     "to_map": "Pokemon Tower 4F",
+     "to_warp": 1
+    }
+   ]
+  },
+  "Pokemon Tower 4F": {
+   "map_id": 145,
+   "size": [
+    20,
+    18
+   ],
+   "size_blocks": [
+    10,
+    9
+   ],
+   "connections": {},
+   "warps": [
+    {
+     "x": 3,
+     "y": 9,
+     "to_map": "Pokemon Tower 5F",
+     "to_warp": 0
+    },
+    {
+     "x": 18,
+     "y": 9,
+     "to_map": "Pokemon Tower 3F",
+     "to_warp": 1
+    }
+   ]
+  },
+  "Pokemon Tower 5F": {
+   "map_id": 146,
+   "size": [
+    20,
+    18
+   ],
+   "size_blocks": [
+    10,
+    9
+   ],
+   "connections": {},
+   "warps": [
+    {
+     "x": 3,
+     "y": 9,
+     "to_map": "Pokemon Tower 4F",
+     "to_warp": 0
+    },
+    {
+     "x": 18,
+     "y": 9,
+     "to_map": "Pokemon Tower 6F",
+     "to_warp": 0
+    }
+   ]
+  },
+  "Pokemon Tower 6F": {
+   "map_id": 147,
+   "size": [
+    20,
+    18
+   ],
+   "size_blocks": [
+    10,
+    9
+   ],
+   "connections": {},
+   "warps": [
+    {
+     "x": 18,
+     "y": 9,
+     "to_map": "Pokemon Tower 5F",
+     "to_warp": 1
+    },
+    {
+     "x": 9,
+     "y": 16,
+     "to_map": "Pokemon Tower 7F",
+     "to_warp": 0
+    }
+   ]
+  },
+  "Pokemon Tower 7F": {
+   "map_id": 148,
+   "size": [
+    20,
+    18
+   ],
+   "size_blocks": [
+    10,
+    9
+   ],
+   "connections": {},
+   "warps": [
+    {
+     "x": 9,
+     "y": 16,
+     "to_map": "Pokemon Tower 6F",
+     "to_warp": 1
+    }
+   ]
+  },
+  "Power Plant": {
+   "map_id": 83,
+   "size": [
+    40,
+    36
+   ],
+   "size_blocks": [
+    20,
+    18
+   ],
+   "connections": {},
+   "warps": [
+    {
+     "x": 4,
+     "y": 35,
+     "to_map": "Route 10",
+     "to_warp": 3
+    },
+    {
+     "x": 5,
+     "y": 35,
+     "to_map": "Route 10",
+     "to_warp": 3
+    },
+    {
+     "x": 0,
+     "y": 11,
+     "to_map": "Route 10",
+     "to_warp": 3
+    }
+   ]
+  },
+  "Red's House 1F": {
+   "map_id": 37,
+   "size": [
+    8,
+    8
+   ],
+   "size_blocks": [
+    4,
+    4
+   ],
+   "connections": {},
+   "warps": [
+    {
+     "x": 2,
+     "y": 7,
+     "to_map": "Pallet Town",
+     "to_warp": 0
+    },
+    {
+     "x": 3,
+     "y": 7,
+     "to_map": "Pallet Town",
+     "to_warp": 0
+    },
+    {
+     "x": 7,
+     "y": 1,
+     "to_map": "Red's House 2F",
+     "to_warp": 0
+    }
+   ]
+  },
+  "Red's House 2F": {
+   "map_id": 38,
+   "size": [
+    8,
+    8
+   ],
+   "size_blocks": [
+    4,
+    4
+   ],
+   "connections": {},
+   "warps": [
+    {
+     "x": 7,
+     "y": 1,
+     "to_map": "Red's House 1F",
+     "to_warp": 2
+    }
+   ]
+  },
+  "Rock Tunnel 1F": {
+   "map_id": 82,
+   "size": [
+    40,
+    36
+   ],
+   "size_blocks": [
+    20,
+    18
+   ],
+   "connections": {},
+   "warps": [
+    {
+     "x": 15,
+     "y": 3,
+     "to_map": "Route 10",
+     "to_warp": 1
+    },
+    {
+     "x": 15,
+     "y": 0,
+     "to_map": "Route 10",
+     "to_warp": 1
+    },
+    {
+     "x": 15,
+     "y": 33,
+     "to_map": "Route 10",
+     "to_warp": 2
+    },
+    {
+     "x": 15,
+     "y": 35,
+     "to_map": "Route 10",
+     "to_warp": 2
+    },
+    {
+     "x": 37,
+     "y": 3,
+     "to_map": "Rock Tunnel B1F",
+     "to_warp": 0
+    },
+    {
+     "x": 5,
+     "y": 3,
+     "to_map": "Rock Tunnel B1F",
+     "to_warp": 1
+    },
+    {
+     "x": 17,
+     "y": 11,
+     "to_map": "Rock Tunnel B1F",
+     "to_warp": 2
+    },
+    {
+     "x": 37,
+     "y": 17,
+     "to_map": "Rock Tunnel B1F",
+     "to_warp": 3
+    }
+   ]
+  },
+  "Rock Tunnel B1F": {
+   "map_id": 232,
+   "size": [
+    40,
+    36
+   ],
+   "size_blocks": [
+    20,
+    18
+   ],
+   "connections": {},
+   "warps": [
+    {
+     "x": 33,
+     "y": 25,
+     "to_map": "Rock Tunnel 1F",
+     "to_warp": 4
+    },
+    {
+     "x": 27,
+     "y": 3,
+     "to_map": "Rock Tunnel 1F",
+     "to_warp": 5
+    },
+    {
+     "x": 23,
+     "y": 11,
+     "to_map": "Rock Tunnel 1F",
+     "to_warp": 6
+    },
+    {
+     "x": 3,
+     "y": 3,
+     "to_map": "Rock Tunnel 1F",
+     "to_warp": 7
+    }
+   ]
+  },
+  "Rock Tunnel Pokecenter": {
+   "map_id": 81,
+   "size": [
+    14,
+    8
+   ],
+   "size_blocks": [
+    7,
+    4
+   ],
+   "connections": {},
+   "warps": [
+    {
+     "x": 3,
+     "y": 7,
+     "to_map": "Route 10",
+     "to_warp": 0
+    },
+    {
+     "x": 4,
+     "y": 7,
+     "to_map": "Route 10",
+     "to_warp": 0
+    }
+   ]
+  },
+  "Rocket Hideout B1F": {
+   "map_id": 199,
+   "size": [
+    30,
+    28
+   ],
+   "size_blocks": [
+    15,
+    14
+   ],
+   "connections": {},
+   "warps": [
+    {
+     "x": 23,
+     "y": 2,
+     "to_map": "Rocket Hideout B2F",
+     "to_warp": 0
+    },
+    {
+     "x": 21,
+     "y": 2,
+     "to_map": "Game Corner",
+     "to_warp": 2
+    },
+    {
+     "x": 24,
+     "y": 19,
+     "to_map": "Rocket Hideout Elevator",
+     "to_warp": 0
+    },
+    {
+     "x": 21,
+     "y": 24,
+     "to_map": "Rocket Hideout B2F",
+     "to_warp": 3
+    },
+    {
+     "x": 25,
+     "y": 19,
+     "to_map": "Rocket Hideout Elevator",
+     "to_warp": 1
+    }
+   ]
+  },
+  "Rocket Hideout B2F": {
+   "map_id": 200,
+   "size": [
+    30,
+    28
+   ],
+   "size_blocks": [
+    15,
+    14
+   ],
+   "connections": {},
+   "warps": [
+    {
+     "x": 27,
+     "y": 8,
+     "to_map": "Rocket Hideout B1F",
+     "to_warp": 0
+    },
+    {
+     "x": 21,
+     "y": 8,
+     "to_map": "Rocket Hideout B3F",
+     "to_warp": 0
+    },
+    {
+     "x": 24,
+     "y": 19,
+     "to_map": "Rocket Hideout Elevator",
+     "to_warp": 0
+    },
+    {
+     "x": 21,
+     "y": 22,
+     "to_map": "Rocket Hideout B1F",
+     "to_warp": 3
+    },
+    {
+     "x": 25,
+     "y": 19,
+     "to_map": "Rocket Hideout Elevator",
+     "to_warp": 1
+    }
+   ]
+  },
+  "Rocket Hideout B3F": {
+   "map_id": 201,
+   "size": [
+    30,
+    28
+   ],
+   "size_blocks": [
+    15,
+    14
+   ],
+   "connections": {},
+   "warps": [
+    {
+     "x": 25,
+     "y": 6,
+     "to_map": "Rocket Hideout B2F",
+     "to_warp": 1
+    },
+    {
+     "x": 19,
+     "y": 18,
+     "to_map": "Rocket Hideout B4F",
+     "to_warp": 0
+    }
+   ]
+  },
+  "Rocket Hideout B4F": {
+   "map_id": 202,
+   "size": [
+    30,
+    24
+   ],
+   "size_blocks": [
+    15,
+    12
+   ],
+   "connections": {},
+   "warps": [
+    {
+     "x": 19,
+     "y": 10,
+     "to_map": "Rocket Hideout B3F",
+     "to_warp": 1
+    },
+    {
+     "x": 24,
+     "y": 15,
+     "to_map": "Rocket Hideout Elevator",
+     "to_warp": 0
+    },
+    {
+     "x": 25,
+     "y": 15,
+     "to_map": "Rocket Hideout Elevator",
+     "to_warp": 1
+    }
+   ]
+  },
+  "Rocket Hideout Elevator": {
+   "map_id": 203,
+   "size": [
+    6,
+    8
+   ],
+   "size_blocks": [
+    3,
+    4
+   ],
+   "connections": {},
+   "warps": [
+    {
+     "x": 2,
+     "y": 1,
+     "to_map": "Rocket Hideout B1F",
+     "to_warp": 2
+    },
+    {
+     "x": 3,
+     "y": 1,
+     "to_map": "Rocket Hideout B1F",
+     "to_warp": 4
+    }
+   ]
+  },
+  "Route 1": {
+   "map_id": 12,
+   "size": [
+    20,
+    36
+   ],
+   "size_blocks": [
+    10,
+    18
+   ],
+   "connections": {
+    "north": "Viridian City",
+    "south": "Pallet Town"
+   },
+   "warps": []
+  },
+  "Route 10": {
+   "map_id": 21,
+   "size": [
+    20,
+    72
+   ],
+   "size_blocks": [
+    10,
+    36
+   ],
+   "connections": {
+    "south": "Lavender Town",
+    "west": "Route 9"
+   },
+   "warps": [
+    {
+     "x": 11,
+     "y": 19,
+     "to_map": "Rock Tunnel Pokecenter",
+     "to_warp": 0
+    },
+    {
+     "x": 8,
+     "y": 17,
+     "to_map": "Rock Tunnel 1F",
+     "to_warp": 0
+    },
+    {
+     "x": 8,
+     "y": 53,
+     "to_map": "Rock Tunnel 1F",
+     "to_warp": 2
+    },
+    {
+     "x": 6,
+     "y": 39,
+     "to_map": "Power Plant",
+     "to_warp": 0
+    }
+   ]
+  },
+  "Route 11": {
+   "map_id": 22,
+   "size": [
+    60,
+    18
+   ],
+   "size_blocks": [
+    30,
+    9
+   ],
+   "connections": {
+    "west": "Vermilion City",
+    "east": "Route 12"
+   },
+   "warps": [
+    {
+     "x": 49,
+     "y": 8,
+     "to_map": "Route 11 Gate 1F",
+     "to_warp": 0
+    },
+    {
+     "x": 49,
+     "y": 9,
+     "to_map": "Route 11 Gate 1F",
+     "to_warp": 1
+    },
+    {
+     "x": 58,
+     "y": 8,
+     "to_map": "Route 11 Gate 1F",
+     "to_warp": 2
+    },
+    {
+     "x": 58,
+     "y": 9,
+     "to_map": "Route 11 Gate 1F",
+     "to_warp": 3
+    },
+    {
+     "x": 4,
+     "y": 5,
+     "to_map": "Diglett's Cave Route 11",
+     "to_warp": 0
+    }
+   ]
+  },
+  "Route 11 Gate 1F": {
+   "map_id": 84,
+   "size": [
+    8,
+    10
+   ],
+   "size_blocks": [
+    4,
+    5
+   ],
+   "connections": {},
+   "warps": [
+    {
+     "x": 0,
+     "y": 4,
+     "to_map": "Route 11",
+     "to_warp": 0
+    },
+    {
+     "x": 0,
+     "y": 5,
+     "to_map": "Route 11",
+     "to_warp": 1
+    },
+    {
+     "x": 7,
+     "y": 4,
+     "to_map": "Route 11",
+     "to_warp": 2
+    },
+    {
+     "x": 7,
+     "y": 5,
+     "to_map": "Route 11",
+     "to_warp": 3
+    },
+    {
+     "x": 6,
+     "y": 8,
+     "to_map": "Route 11 Gate 2F",
+     "to_warp": 0
+    }
+   ]
+  },
+  "Route 11 Gate 2F": {
+   "map_id": 86,
+   "size": [
+    8,
+    8
+   ],
+   "size_blocks": [
+    4,
+    4
+   ],
+   "connections": {},
+   "warps": [
+    {
+     "x": 7,
+     "y": 7,
+     "to_map": "Route 11 Gate 1F",
+     "to_warp": 4
+    }
+   ]
+  },
+  "Route 12": {
+   "map_id": 23,
+   "size": [
+    20,
+    108
+   ],
+   "size_blocks": [
+    10,
+    54
+   ],
+   "connections": {
+    "north": "Lavender Town",
+    "south": "Route 13",
+    "west": "Route 11"
+   },
+   "warps": [
+    {
+     "x": 10,
+     "y": 15,
+     "to_map": "Route 12 Gate 1F",
+     "to_warp": 0
+    },
+    {
+     "x": 11,
+     "y": 15,
+     "to_map": "Route 12 Gate 1F",
+     "to_warp": 1
+    },
+    {
+     "x": 10,
+     "y": 21,
+     "to_map": "Route 12 Gate 1F",
+     "to_warp": 2
+    },
+    {
+     "x": 11,
+     "y": 77,
+     "to_map": "Route 12 Super Rod House",
+     "to_warp": 0
+    }
+   ]
+  },
+  "Route 12 Gate 1F": {
+   "map_id": 87,
+   "size": [
+    10,
+    8
+   ],
+   "size_blocks": [
+    5,
+    4
+   ],
+   "connections": {},
+   "warps": [
+    {
+     "x": 4,
+     "y": 0,
+     "to_map": "Route 12",
+     "to_warp": 0
+    },
+    {
+     "x": 5,
+     "y": 0,
+     "to_map": "Route 12",
+     "to_warp": 1
+    },
+    {
+     "x": 4,
+     "y": 7,
+     "to_map": "Route 12",
+     "to_warp": 2
+    },
+    {
+     "x": 5,
+     "y": 7,
+     "to_map": "Route 12",
+     "to_warp": 2
+    },
+    {
+     "x": 8,
+     "y": 6,
+     "to_map": "Route 12 Gate 2F",
+     "to_warp": 0
+    }
+   ]
+  },
+  "Route 12 Gate 2F": {
+   "map_id": 195,
+   "size": [
+    8,
+    8
+   ],
+   "size_blocks": [
+    4,
+    4
+   ],
+   "connections": {},
+   "warps": [
+    {
+     "x": 7,
+     "y": 7,
+     "to_map": "Route 12 Gate 1F",
+     "to_warp": 4
+    }
+   ]
+  },
+  "Route 12 Super Rod House": {
+   "map_id": 189,
+   "size": [
+    8,
+    8
+   ],
+   "size_blocks": [
+    4,
+    4
+   ],
+   "connections": {},
+   "warps": [
+    {
+     "x": 2,
+     "y": 7,
+     "to_map": "Route 12",
+     "to_warp": 3
+    },
+    {
+     "x": 3,
+     "y": 7,
+     "to_map": "Route 12",
+     "to_warp": 3
+    }
+   ]
+  },
+  "Route 13": {
+   "map_id": 24,
+   "size": [
+    60,
+    18
+   ],
+   "size_blocks": [
+    30,
+    9
+   ],
+   "connections": {
+    "north": "Route 12",
+    "west": "Route 14"
+   },
+   "warps": []
+  },
+  "Route 14": {
+   "map_id": 25,
+   "size": [
+    20,
+    54
+   ],
+   "size_blocks": [
+    10,
+    27
+   ],
+   "connections": {
+    "west": "Route 15",
+    "east": "Route 13"
+   },
+   "warps": []
+  },
+  "Route 15": {
+   "map_id": 26,
+   "size": [
+    60,
+    18
+   ],
+   "size_blocks": [
+    30,
+    9
+   ],
+   "connections": {
+    "west": "Fuchsia City",
+    "east": "Route 14"
+   },
+   "warps": [
+    {
+     "x": 7,
+     "y": 8,
+     "to_map": "Route 15 Gate 1F",
+     "to_warp": 0
+    },
+    {
+     "x": 7,
+     "y": 9,
+     "to_map": "Route 15 Gate 1F",
+     "to_warp": 1
+    },
+    {
+     "x": 14,
+     "y": 8,
+     "to_map": "Route 15 Gate 1F",
+     "to_warp": 2
+    },
+    {
+     "x": 14,
+     "y": 9,
+     "to_map": "Route 15 Gate 1F",
+     "to_warp": 3
+    }
+   ]
+  },
+  "Route 15 Gate 1F": {
+   "map_id": 184,
+   "size": [
+    8,
+    10
+   ],
+   "size_blocks": [
+    4,
+    5
+   ],
+   "connections": {},
+   "warps": [
+    {
+     "x": 0,
+     "y": 4,
+     "to_map": "Route 15",
+     "to_warp": 0
+    },
+    {
+     "x": 0,
+     "y": 5,
+     "to_map": "Route 15",
+     "to_warp": 1
+    },
+    {
+     "x": 7,
+     "y": 4,
+     "to_map": "Route 15",
+     "to_warp": 2
+    },
+    {
+     "x": 7,
+     "y": 5,
+     "to_map": "Route 15",
+     "to_warp": 3
+    },
+    {
+     "x": 6,
+     "y": 8,
+     "to_map": "Route 15 Gate 2F",
+     "to_warp": 0
+    }
+   ]
+  },
+  "Route 15 Gate 2F": {
+   "map_id": 185,
+   "size": [
+    8,
+    8
+   ],
+   "size_blocks": [
+    4,
+    4
+   ],
+   "connections": {},
+   "warps": [
+    {
+     "x": 7,
+     "y": 7,
+     "to_map": "Route 15 Gate 1F",
+     "to_warp": 4
+    }
+   ]
+  },
+  "Route 16": {
+   "map_id": 27,
+   "size": [
+    40,
+    18
+   ],
+   "size_blocks": [
+    20,
+    9
+   ],
+   "connections": {
+    "south": "Route 17",
+    "east": "Celadon City"
+   },
+   "warps": [
+    {
+     "x": 17,
+     "y": 10,
+     "to_map": "Route 16 Gate 1F",
+     "to_warp": 0
+    },
+    {
+     "x": 17,
+     "y": 11,
+     "to_map": "Route 16 Gate 1F",
+     "to_warp": 1
+    },
+    {
+     "x": 24,
+     "y": 10,
+     "to_map": "Route 16 Gate 1F",
+     "to_warp": 2
+    },
+    {
+     "x": 24,
+     "y": 11,
+     "to_map": "Route 16 Gate 1F",
+     "to_warp": 3
+    },
+    {
+     "x": 17,
+     "y": 4,
+     "to_map": "Route 16 Gate 1F",
+     "to_warp": 4
+    },
+    {
+     "x": 17,
+     "y": 5,
+     "to_map": "Route 16 Gate 1F",
+     "to_warp": 5
+    },
+    {
+     "x": 24,
+     "y": 4,
+     "to_map": "Route 16 Gate 1F",
+     "to_warp": 6
+    },
+    {
+     "x": 24,
+     "y": 5,
+     "to_map": "Route 16 Gate 1F",
+     "to_warp": 7
+    },
+    {
+     "x": 7,
+     "y": 5,
+     "to_map": "Route 16 Fly House",
+     "to_warp": 0
+    }
+   ]
+  },
+  "Route 16 Fly House": {
+   "map_id": 188,
+   "size": [
+    8,
+    8
+   ],
+   "size_blocks": [
+    4,
+    4
+   ],
+   "connections": {},
+   "warps": [
+    {
+     "x": 2,
+     "y": 7,
+     "to_map": "Route 16",
+     "to_warp": 8
+    },
+    {
+     "x": 3,
+     "y": 7,
+     "to_map": "Route 16",
+     "to_warp": 8
+    }
+   ]
+  },
+  "Route 16 Gate 1F": {
+   "map_id": 186,
+   "size": [
+    8,
+    14
+   ],
+   "size_blocks": [
+    4,
+    7
+   ],
+   "connections": {},
+   "warps": [
+    {
+     "x": 0,
+     "y": 8,
+     "to_map": "Route 16",
+     "to_warp": 0
+    },
+    {
+     "x": 0,
+     "y": 9,
+     "to_map": "Route 16",
+     "to_warp": 1
+    },
+    {
+     "x": 7,
+     "y": 8,
+     "to_map": "Route 16",
+     "to_warp": 2
+    },
+    {
+     "x": 7,
+     "y": 9,
+     "to_map": "Route 16",
+     "to_warp": 2
+    },
+    {
+     "x": 0,
+     "y": 2,
+     "to_map": "Route 16",
+     "to_warp": 4
+    },
+    {
+     "x": 0,
+     "y": 3,
+     "to_map": "Route 16",
+     "to_warp": 5
+    },
+    {
+     "x": 7,
+     "y": 2,
+     "to_map": "Route 16",
+     "to_warp": 6
+    },
+    {
+     "x": 7,
+     "y": 3,
+     "to_map": "Route 16",
+     "to_warp": 7
+    },
+    {
+     "x": 6,
+     "y": 12,
+     "to_map": "Route 16 Gate 2F",
+     "to_warp": 0
+    }
+   ]
+  },
+  "Route 16 Gate 2F": {
+   "map_id": 187,
+   "size": [
+    8,
+    8
+   ],
+   "size_blocks": [
+    4,
+    4
+   ],
+   "connections": {},
+   "warps": [
+    {
+     "x": 7,
+     "y": 7,
+     "to_map": "Route 16 Gate 1F",
+     "to_warp": 8
+    }
+   ]
+  },
+  "Route 17": {
+   "map_id": 28,
+   "size": [
+    20,
+    144
+   ],
+   "size_blocks": [
+    10,
+    72
+   ],
+   "connections": {
+    "north": "Route 16",
+    "south": "Route 18"
+   },
+   "warps": []
+  },
+  "Route 18": {
+   "map_id": 29,
+   "size": [
+    50,
+    18
+   ],
+   "size_blocks": [
+    25,
+    9
+   ],
+   "connections": {
+    "north": "Route 17",
+    "east": "Fuchsia City"
+   },
+   "warps": [
+    {
+     "x": 33,
+     "y": 8,
+     "to_map": "Route 18 Gate 1F",
+     "to_warp": 0
+    },
+    {
+     "x": 33,
+     "y": 9,
+     "to_map": "Route 18 Gate 1F",
+     "to_warp": 1
+    },
+    {
+     "x": 40,
+     "y": 8,
+     "to_map": "Route 18 Gate 1F",
+     "to_warp": 2
+    },
+    {
+     "x": 40,
+     "y": 9,
+     "to_map": "Route 18 Gate 1F",
+     "to_warp": 3
+    }
+   ]
+  },
+  "Route 18 Gate 1F": {
+   "map_id": 190,
+   "size": [
+    8,
+    10
+   ],
+   "size_blocks": [
+    4,
+    5
+   ],
+   "connections": {},
+   "warps": [
+    {
+     "x": 0,
+     "y": 4,
+     "to_map": "Route 18",
+     "to_warp": 0
+    },
+    {
+     "x": 0,
+     "y": 5,
+     "to_map": "Route 18",
+     "to_warp": 1
+    },
+    {
+     "x": 7,
+     "y": 4,
+     "to_map": "Route 18",
+     "to_warp": 2
+    },
+    {
+     "x": 7,
+     "y": 5,
+     "to_map": "Route 18",
+     "to_warp": 3
+    },
+    {
+     "x": 6,
+     "y": 8,
+     "to_map": "Route 18 Gate 2F",
+     "to_warp": 0
+    }
+   ]
+  },
+  "Route 18 Gate 2F": {
+   "map_id": 191,
+   "size": [
+    8,
+    8
+   ],
+   "size_blocks": [
+    4,
+    4
+   ],
+   "connections": {},
+   "warps": [
+    {
+     "x": 7,
+     "y": 7,
+     "to_map": "Route 18 Gate 1F",
+     "to_warp": 4
+    }
+   ]
+  },
+  "Route 19": {
+   "map_id": 30,
+   "size": [
+    20,
+    54
+   ],
+   "size_blocks": [
+    10,
+    27
+   ],
+   "connections": {
+    "north": "Fuchsia City",
+    "west": "Route 20"
+   },
+   "warps": []
+  },
+  "Route 2": {
+   "map_id": 13,
+   "size": [
+    20,
+    72
+   ],
+   "size_blocks": [
+    10,
+    36
+   ],
+   "connections": {
+    "north": "Pewter City",
+    "south": "Viridian City"
+   },
+   "warps": [
+    {
+     "x": 12,
+     "y": 9,
+     "to_map": "Diglett's Cave Route 2",
+     "to_warp": 0
+    },
+    {
+     "x": 3,
+     "y": 11,
+     "to_map": "Viridian Forest North Gate",
+     "to_warp": 1
+    },
+    {
+     "x": 15,
+     "y": 19,
+     "to_map": "Route 2 Trade House",
+     "to_warp": 0
+    },
+    {
+     "x": 16,
+     "y": 35,
+     "to_map": "Route 2 Gate",
+     "to_warp": 1
+    },
+    {
+     "x": 15,
+     "y": 39,
+     "to_map": "Route 2 Gate",
+     "to_warp": 2
+    },
+    {
+     "x": 3,
+     "y": 43,
+     "to_map": "Viridian Forest South Gate",
+     "to_warp": 2
+    }
+   ]
+  },
+  "Route 20": {
+   "map_id": 31,
+   "size": [
+    100,
+    18
+   ],
+   "size_blocks": [
+    50,
+    9
+   ],
+   "connections": {
+    "west": "Cinnabar Island",
+    "east": "Route 19"
+   },
+   "warps": [
+    {
+     "x": 48,
+     "y": 5,
+     "to_map": "Seafoam Islands 1F",
+     "to_warp": 0
+    },
+    {
+     "x": 58,
+     "y": 9,
+     "to_map": "Seafoam Islands 1F",
+     "to_warp": 2
+    }
+   ]
+  },
+  "Route 21": {
+   "map_id": 32,
+   "size": [
+    20,
+    90
+   ],
+   "size_blocks": [
+    10,
+    45
+   ],
+   "connections": {
+    "north": "Pallet Town",
+    "south": "Cinnabar Island"
+   },
+   "warps": []
+  },
+  "Route 22": {
+   "map_id": 33,
+   "size": [
+    40,
+    18
+   ],
+   "size_blocks": [
+    20,
+    9
+   ],
+   "connections": {
+    "north": "Route 23",
+    "east": "Viridian City"
+   },
+   "warps": [
+    {
+     "x": 8,
+     "y": 5,
+     "to_map": "Route 22 Gate",
+     "to_warp": 0
+    }
+   ]
+  },
+  "Route 22 Gate": {
+   "map_id": 193,
+   "size": [
+    10,
+    8
+   ],
+   "size_blocks": [
+    5,
+    4
+   ],
+   "connections": {},
+   "warps": [
+    {
+     "x": 4,
+     "y": 7,
+     "to_map": null,
+     "to_warp": 0
+    },
+    {
+     "x": 5,
+     "y": 7,
+     "to_map": null,
+     "to_warp": 0
+    },
+    {
+     "x": 4,
+     "y": 0,
+     "to_map": null,
+     "to_warp": 0
+    },
+    {
+     "x": 5,
+     "y": 0,
+     "to_map": "Route 23",
+     "to_warp": 1
+    }
+   ]
+  },
+  "Route 23": {
+   "map_id": 34,
+   "size": [
+    20,
+    144
+   ],
+   "size_blocks": [
+    10,
+    72
+   ],
+   "connections": {
+    "north": "Indigo Plateau",
+    "south": "Route 22"
+   },
+   "warps": [
+    {
+     "x": 7,
+     "y": 139,
+     "to_map": "Route 22 Gate",
+     "to_warp": 2
+    },
+    {
+     "x": 8,
+     "y": 139,
+     "to_map": "Route 22 Gate",
+     "to_warp": 3
+    },
+    {
+     "x": 4,
+     "y": 31,
+     "to_map": "Victory Road 1F",
+     "to_warp": 0
+    },
+    {
+     "x": 14,
+     "y": 31,
+     "to_map": "Victory Road 2F",
+     "to_warp": 1
+    }
+   ]
+  },
+  "Route 24": {
+   "map_id": 35,
+   "size": [
+    20,
+    36
+   ],
+   "size_blocks": [
+    10,
+    18
+   ],
+   "connections": {
+    "south": "Cerulean City",
+    "east": "Route 25"
+   },
+   "warps": []
+  },
+  "Route 25": {
+   "map_id": 36,
+   "size": [
+    60,
+    18
+   ],
+   "size_blocks": [
+    30,
+    9
+   ],
+   "connections": {
+    "west": "Route 24"
+   },
+   "warps": [
+    {
+     "x": 45,
+     "y": 3,
+     "to_map": "Bill's House",
+     "to_warp": 0
+    }
+   ]
+  },
+  "Route 2 Gate": {
+   "map_id": 49,
+   "size": [
+    10,
+    8
+   ],
+   "size_blocks": [
+    5,
+    4
+   ],
+   "connections": {},
+   "warps": [
+    {
+     "x": 4,
+     "y": 0,
+     "to_map": "Route 2",
+     "to_warp": 3
+    },
+    {
+     "x": 5,
+     "y": 0,
+     "to_map": "Route 2",
+     "to_warp": 3
+    },
+    {
+     "x": 4,
+     "y": 7,
+     "to_map": "Route 2",
+     "to_warp": 4
+    },
+    {
+     "x": 5,
+     "y": 7,
+     "to_map": "Route 2",
+     "to_warp": 4
+    }
+   ]
+  },
+  "Route 2 Trade House": {
+   "map_id": 48,
+   "size": [
+    8,
+    8
+   ],
+   "size_blocks": [
+    4,
+    4
+   ],
+   "connections": {},
+   "warps": [
+    {
+     "x": 2,
+     "y": 7,
+     "to_map": "Route 2",
+     "to_warp": 2
+    },
+    {
+     "x": 3,
+     "y": 7,
+     "to_map": "Route 2",
+     "to_warp": 2
+    }
+   ]
+  },
+  "Route 3": {
+   "map_id": 14,
+   "size": [
+    70,
+    18
+   ],
+   "size_blocks": [
+    35,
+    9
+   ],
+   "connections": {
+    "north": "Route 4",
+    "west": "Pewter City"
+   },
+   "warps": []
+  },
+  "Route 4": {
+   "map_id": 15,
+   "size": [
+    90,
+    18
+   ],
+   "size_blocks": [
+    45,
+    9
+   ],
+   "connections": {
+    "south": "Route 3",
+    "east": "Cerulean City"
+   },
+   "warps": [
+    {
+     "x": 11,
+     "y": 5,
+     "to_map": "Mt Moon Pokecenter",
+     "to_warp": 0
+    },
+    {
+     "x": 18,
+     "y": 5,
+     "to_map": "Mt Moon 1F",
+     "to_warp": 0
+    },
+    {
+     "x": 24,
+     "y": 5,
+     "to_map": "Mt Moon B1F",
+     "to_warp": 7
+    }
+   ]
+  },
+  "Route 5": {
+   "map_id": 16,
+   "size": [
+    20,
+    36
+   ],
+   "size_blocks": [
+    10,
+    18
+   ],
+   "connections": {
+    "north": "Cerulean City",
+    "south": "Saffron City"
+   },
+   "warps": [
+    {
+     "x": 10,
+     "y": 29,
+     "to_map": "Route 5 Gate",
+     "to_warp": 3
+    },
+    {
+     "x": 9,
+     "y": 29,
+     "to_map": "Route 5 Gate",
+     "to_warp": 2
+    },
+    {
+     "x": 10,
+     "y": 33,
+     "to_map": "Route 5 Gate",
+     "to_warp": 0
+    },
+    {
+     "x": 17,
+     "y": 27,
+     "to_map": "Underground Path Route 5",
+     "to_warp": 0
+    },
+    {
+     "x": 10,
+     "y": 21,
+     "to_map": "Daycare",
+     "to_warp": 0
+    }
+   ]
+  },
+  "Route 5 Gate": {
+   "map_id": 70,
+   "size": [
+    8,
+    6
+   ],
+   "size_blocks": [
+    4,
+    3
+   ],
+   "connections": {},
+   "warps": [
+    {
+     "x": 3,
+     "y": 5,
+     "to_map": "Route 5",
+     "to_warp": 2
+    },
+    {
+     "x": 4,
+     "y": 5,
+     "to_map": "Route 5",
+     "to_warp": 2
+    },
+    {
+     "x": 3,
+     "y": 0,
+     "to_map": "Route 5",
+     "to_warp": 1
+    },
+    {
+     "x": 4,
+     "y": 0,
+     "to_map": "Route 5",
+     "to_warp": 0
+    }
+   ]
+  },
+  "Route 6": {
+   "map_id": 17,
+   "size": [
+    20,
+    36
+   ],
+   "size_blocks": [
+    10,
+    18
+   ],
+   "connections": {
+    "north": "Saffron City",
+    "south": "Vermilion City"
+   },
+   "warps": [
+    {
+     "x": 9,
+     "y": 1,
+     "to_map": "Route 6 Gate",
+     "to_warp": 2
+    },
+    {
+     "x": 10,
+     "y": 1,
+     "to_map": "Route 6 Gate",
+     "to_warp": 2
+    },
+    {
+     "x": 10,
+     "y": 7,
+     "to_map": "Route 6 Gate",
+     "to_warp": 0
+    },
+    {
+     "x": 17,
+     "y": 13,
+     "to_map": "Underground Path Route 6",
+     "to_warp": 0
+    }
+   ]
+  },
+  "Route 6 Gate": {
+   "map_id": 73,
+   "size": [
+    8,
+    6
+   ],
+   "size_blocks": [
+    4,
+    3
+   ],
+   "connections": {},
+   "warps": [
+    {
+     "x": 3,
+     "y": 5,
+     "to_map": "Route 6",
+     "to_warp": 2
+    },
+    {
+     "x": 4,
+     "y": 5,
+     "to_map": "Route 6",
+     "to_warp": 2
+    },
+    {
+     "x": 3,
+     "y": 0,
+     "to_map": "Route 6",
+     "to_warp": 1
+    },
+    {
+     "x": 4,
+     "y": 0,
+     "to_map": "Route 6",
+     "to_warp": 1
+    }
+   ]
+  },
+  "Route 7": {
+   "map_id": 18,
+   "size": [
+    20,
+    18
+   ],
+   "size_blocks": [
+    10,
+    9
+   ],
+   "connections": {
+    "west": "Celadon City",
+    "east": "Saffron City"
+   },
+   "warps": [
+    {
+     "x": 18,
+     "y": 9,
+     "to_map": "Route 7 Gate",
+     "to_warp": 2
+    },
+    {
+     "x": 18,
+     "y": 10,
+     "to_map": "Route 7 Gate",
+     "to_warp": 3
+    },
+    {
+     "x": 11,
+     "y": 9,
+     "to_map": "Route 7 Gate",
+     "to_warp": 0
+    },
+    {
+     "x": 11,
+     "y": 10,
+     "to_map": "Route 7 Gate",
+     "to_warp": 1
+    },
+    {
+     "x": 5,
+     "y": 13,
+     "to_map": "Underground Path Route 7",
+     "to_warp": 0
+    }
+   ]
+  },
+  "Route 7 Gate": {
+   "map_id": 76,
+   "size": [
+    6,
+    8
+   ],
+   "size_blocks": [
+    3,
+    4
+   ],
+   "connections": {},
+   "warps": [
+    {
+     "x": 0,
+     "y": 3,
+     "to_map": "Route 7",
+     "to_warp": 3
+    },
+    {
+     "x": 0,
+     "y": 4,
+     "to_map": "Route 7",
+     "to_warp": 3
+    },
+    {
+     "x": 5,
+     "y": 3,
+     "to_map": "Route 7",
+     "to_warp": 0
+    },
+    {
+     "x": 5,
+     "y": 4,
+     "to_map": "Route 7",
+     "to_warp": 1
+    }
+   ]
+  },
+  "Route 8": {
+   "map_id": 19,
+   "size": [
+    60,
+    18
+   ],
+   "size_blocks": [
+    30,
+    9
+   ],
+   "connections": {
+    "west": "Saffron City",
+    "east": "Lavender Town"
+   },
+   "warps": [
+    {
+     "x": 1,
+     "y": 9,
+     "to_map": "Route 8 Gate",
+     "to_warp": 0
+    },
+    {
+     "x": 1,
+     "y": 10,
+     "to_map": "Route 8 Gate",
+     "to_warp": 1
+    },
+    {
+     "x": 8,
+     "y": 9,
+     "to_map": "Route 8 Gate",
+     "to_warp": 2
+    },
+    {
+     "x": 8,
+     "y": 10,
+     "to_map": "Route 8 Gate",
+     "to_warp": 3
+    },
+    {
+     "x": 13,
+     "y": 3,
+     "to_map": "Underground Path Route 8",
+     "to_warp": 0
+    }
+   ]
+  },
+  "Route 8 Gate": {
+   "map_id": 79,
+   "size": [
+    6,
+    8
+   ],
+   "size_blocks": [
+    3,
+    4
+   ],
+   "connections": {},
+   "warps": [
+    {
+     "x": 0,
+     "y": 3,
+     "to_map": "Route 8",
+     "to_warp": 0
+    },
+    {
+     "x": 0,
+     "y": 4,
+     "to_map": "Route 8",
+     "to_warp": 1
+    },
+    {
+     "x": 5,
+     "y": 3,
+     "to_map": "Route 8",
+     "to_warp": 2
+    },
+    {
+     "x": 5,
+     "y": 4,
+     "to_map": "Route 8",
+     "to_warp": 3
+    }
+   ]
+  },
+  "Route 9": {
+   "map_id": 20,
+   "size": [
+    60,
+    18
+   ],
+   "size_blocks": [
+    30,
+    9
+   ],
+   "connections": {
+    "west": "Cerulean City",
+    "east": "Route 10"
+   },
+   "warps": []
+  },
+  "S.S. Anne 1F": {
+   "map_id": 95,
+   "size": [
+    40,
+    18
+   ],
+   "size_blocks": [
+    20,
+    9
+   ],
+   "connections": {},
+   "warps": [
+    {
+     "x": 26,
+     "y": 0,
+     "to_map": "Vermilion Dock",
+     "to_warp": 1
+    },
+    {
+     "x": 27,
+     "y": 0,
+     "to_map": "Vermilion Dock",
+     "to_warp": 1
+    },
+    {
+     "x": 31,
+     "y": 8,
+     "to_map": "S.S. Anne 1F Rooms",
+     "to_warp": 0
+    },
+    {
+     "x": 23,
+     "y": 8,
+     "to_map": "S.S. Anne 1F Rooms",
+     "to_warp": 1
+    },
+    {
+     "x": 19,
+     "y": 8,
+     "to_map": "S.S. Anne 1F Rooms",
+     "to_warp": 2
+    },
+    {
+     "x": 15,
+     "y": 8,
+     "to_map": "S.S. Anne 1F Rooms",
+     "to_warp": 3
+    },
+    {
+     "x": 11,
+     "y": 8,
+     "to_map": "S.S. Anne 1F Rooms",
+     "to_warp": 4
+    },
+    {
+     "x": 7,
+     "y": 8,
+     "to_map": "S.S. Anne 1F Rooms",
+     "to_warp": 5
+    },
+    {
+     "x": 2,
+     "y": 6,
+     "to_map": "S.S. Anne 2F",
+     "to_warp": 6
+    },
+    {
+     "x": 37,
+     "y": 15,
+     "to_map": "S.S. Anne B1F",
+     "to_warp": 5
+    },
+    {
+     "x": 3,
+     "y": 16,
+     "to_map": "S.S. Anne Kitchen",
+     "to_warp": 0
+    }
+   ]
+  },
+  "S.S. Anne 1F Rooms": {
+   "map_id": 102,
+   "size": [
+    24,
+    16
+   ],
+   "size_blocks": [
+    12,
+    8
+   ],
+   "connections": {},
+   "warps": [
+    {
+     "x": 0,
+     "y": 0,
+     "to_map": "S.S. Anne 1F",
+     "to_warp": 2
+    },
+    {
+     "x": 10,
+     "y": 0,
+     "to_map": "S.S. Anne 1F",
+     "to_warp": 3
+    },
+    {
+     "x": 20,
+     "y": 0,
+     "to_map": "S.S. Anne 1F",
+     "to_warp": 4
+    },
+    {
+     "x": 0,
+     "y": 10,
+     "to_map": "S.S. Anne 1F",
+     "to_warp": 5
+    },
+    {
+     "x": 10,
+     "y": 10,
+     "to_map": "S.S. Anne 1F",
+     "to_warp": 6
+    },
+    {
+     "x": 20,
+     "y": 10,
+     "to_map": "S.S. Anne 1F",
+     "to_warp": 7
+    }
+   ]
+  },
+  "S.S. Anne 2F": {
+   "map_id": 96,
+   "size": [
+    40,
+    18
+   ],
+   "size_blocks": [
+    20,
+    9
+   ],
+   "connections": {},
+   "warps": [
+    {
+     "x": 9,
+     "y": 11,
+     "to_map": "S.S. Anne 2F Rooms",
+     "to_warp": 0
+    },
+    {
+     "x": 13,
+     "y": 11,
+     "to_map": "S.S. Anne 2F Rooms",
+     "to_warp": 2
+    },
+    {
+     "x": 17,
+     "y": 11,
+     "to_map": "S.S. Anne 2F Rooms",
+     "to_warp": 4
+    },
+    {
+     "x": 21,
+     "y": 11,
+     "to_map": "S.S. Anne 2F Rooms",
+     "to_warp": 6
+    },
+    {
+     "x": 25,
+     "y": 11,
+     "to_map": "S.S. Anne 2F Rooms",
+     "to_warp": 8
+    },
+    {
+     "x": 29,
+     "y": 11,
+     "to_map": "S.S. Anne 2F Rooms",
+     "to_warp": 10
+    },
+    {
+     "x": 2,
+     "y": 4,
+     "to_map": "S.S. Anne 1F",
+     "to_warp": 8
+    },
+    {
+     "x": 2,
+     "y": 12,
+     "to_map": "S.S. Anne 3F",
+     "to_warp": 1
+    },
+    {
+     "x": 36,
+     "y": 4,
+     "to_map": "S.S. Anne Captain's Room",
+     "to_warp": 0
+    }
+   ]
+  },
+  "S.S. Anne 2F Rooms": {
+   "map_id": 103,
+   "size": [
+    24,
+    16
+   ],
+   "size_blocks": [
+    12,
+    8
+   ],
+   "connections": {},
+   "warps": [
+    {
+     "x": 2,
+     "y": 5,
+     "to_map": "S.S. Anne 2F",
+     "to_warp": 0
+    },
+    {
+     "x": 3,
+     "y": 5,
+     "to_map": "S.S. Anne 2F",
+     "to_warp": 0
+    },
+    {
+     "x": 12,
+     "y": 5,
+     "to_map": "S.S. Anne 2F",
+     "to_warp": 1
+    },
+    {
+     "x": 13,
+     "y": 5,
+     "to_map": "S.S. Anne 2F",
+     "to_warp": 1
+    },
+    {
+     "x": 22,
+     "y": 5,
+     "to_map": "S.S. Anne 2F",
+     "to_warp": 2
+    },
+    {
+     "x": 23,
+     "y": 5,
+     "to_map": "S.S. Anne 2F",
+     "to_warp": 2
+    },
+    {
+     "x": 2,
+     "y": 15,
+     "to_map": "S.S. Anne 2F",
+     "to_warp": 3
+    },
+    {
+     "x": 3,
+     "y": 15,
+     "to_map": "S.S. Anne 2F",
+     "to_warp": 3
+    },
+    {
+     "x": 12,
+     "y": 15,
+     "to_map": "S.S. Anne 2F",
+     "to_warp": 4
+    },
+    {
+     "x": 13,
+     "y": 15,
+     "to_map": "S.S. Anne 2F",
+     "to_warp": 4
+    },
+    {
+     "x": 22,
+     "y": 15,
+     "to_map": "S.S. Anne 2F",
+     "to_warp": 5
+    },
+    {
+     "x": 23,
+     "y": 15,
+     "to_map": "S.S. Anne 2F",
+     "to_warp": 5
+    }
+   ]
+  },
+  "S.S. Anne 3F": {
+   "map_id": 97,
+   "size": [
+    20,
+    6
+   ],
+   "size_blocks": [
+    10,
+    3
+   ],
+   "connections": {},
+   "warps": [
+    {
+     "x": 0,
+     "y": 3,
+     "to_map": "S.S. Anne Bow",
+     "to_warp": 0
+    },
+    {
+     "x": 19,
+     "y": 3,
+     "to_map": "S.S. Anne 2F",
+     "to_warp": 7
+    }
+   ]
+  },
+  "S.S. Anne B1F": {
+   "map_id": 98,
+   "size": [
+    30,
+    8
+   ],
+   "size_blocks": [
+    15,
+    4
+   ],
+   "connections": {},
+   "warps": [
+    {
+     "x": 23,
+     "y": 3,
+     "to_map": "S.S. Anne B1F Rooms",
+     "to_warp": 8
+    },
+    {
+     "x": 19,
+     "y": 3,
+     "to_map": "S.S. Anne B1F Rooms",
+     "to_warp": 6
+    },
+    {
+     "x": 15,
+     "y": 3,
+     "to_map": "S.S. Anne B1F Rooms",
+     "to_warp": 4
+    },
+    {
+     "x": 11,
+     "y": 3,
+     "to_map": "S.S. Anne B1F Rooms",
+     "to_warp": 2
+    },
+    {
+     "x": 7,
+     "y": 3,
+     "to_map": "S.S. Anne B1F Rooms",
+     "to_warp": 0
+    },
+    {
+     "x": 27,
+     "y": 5,
+     "to_map": "S.S. Anne 1F",
+     "to_warp": 9
+    }
+   ]
+  },
+  "S.S. Anne B1F Rooms": {
+   "map_id": 104,
+   "size": [
+    24,
+    16
+   ],
+   "size_blocks": [
+    12,
+    8
+   ],
+   "connections": {},
+   "warps": [
+    {
+     "x": 2,
+     "y": 5,
+     "to_map": "S.S. Anne B1F",
+     "to_warp": 4
+    },
+    {
+     "x": 3,
+     "y": 5,
+     "to_map": "S.S. Anne B1F",
+     "to_warp": 4
+    },
+    {
+     "x": 12,
+     "y": 5,
+     "to_map": "S.S. Anne B1F",
+     "to_warp": 3
+    },
+    {
+     "x": 13,
+     "y": 5,
+     "to_map": "S.S. Anne B1F",
+     "to_warp": 3
+    },
+    {
+     "x": 22,
+     "y": 5,
+     "to_map": "S.S. Anne B1F",
+     "to_warp": 2
+    },
+    {
+     "x": 23,
+     "y": 5,
+     "to_map": "S.S. Anne B1F",
+     "to_warp": 2
+    },
+    {
+     "x": 2,
+     "y": 15,
+     "to_map": "S.S. Anne B1F",
+     "to_warp": 1
+    },
+    {
+     "x": 3,
+     "y": 15,
+     "to_map": "S.S. Anne B1F",
+     "to_warp": 1
+    },
+    {
+     "x": 12,
+     "y": 15,
+     "to_map": "S.S. Anne B1F",
+     "to_warp": 0
+    },
+    {
+     "x": 13,
+     "y": 15,
+     "to_map": "S.S. Anne B1F",
+     "to_warp": 0
+    }
+   ]
+  },
+  "S.S. Anne Bow": {
+   "map_id": 99,
+   "size": [
+    20,
+    14
+   ],
+   "size_blocks": [
+    10,
+    7
+   ],
+   "connections": {},
+   "warps": [
+    {
+     "x": 13,
+     "y": 6,
+     "to_map": "S.S. Anne 3F",
+     "to_warp": 0
+    },
+    {
+     "x": 13,
+     "y": 7,
+     "to_map": "S.S. Anne 3F",
+     "to_warp": 0
+    }
+   ]
+  },
+  "S.S. Anne Captain's Room": {
+   "map_id": 101,
+   "size": [
+    6,
+    8
+   ],
+   "size_blocks": [
+    3,
+    4
+   ],
+   "connections": {},
+   "warps": [
+    {
+     "x": 0,
+     "y": 7,
+     "to_map": "S.S. Anne 2F",
+     "to_warp": 8
+    }
+   ]
+  },
+  "S.S. Anne Kitchen": {
+   "map_id": 100,
+   "size": [
+    14,
+    16
+   ],
+   "size_blocks": [
+    7,
+    8
+   ],
+   "connections": {},
+   "warps": [
+    {
+     "x": 6,
+     "y": 0,
+     "to_map": "S.S. Anne 1F",
+     "to_warp": 10
+    }
+   ]
+  },
+  "Safari Zone Center": {
+   "map_id": 220,
+   "size": [
+    30,
+    26
+   ],
+   "size_blocks": [
+    15,
+    13
+   ],
+   "connections": {},
+   "warps": [
+    {
+     "x": 14,
+     "y": 25,
+     "to_map": "Safari Zone Gate",
+     "to_warp": 2
+    },
+    {
+     "x": 15,
+     "y": 25,
+     "to_map": "Safari Zone Gate",
+     "to_warp": 3
+    },
+    {
+     "x": 0,
+     "y": 10,
+     "to_map": "Safari Zone West",
+     "to_warp": 4
+    },
+    {
+     "x": 0,
+     "y": 11,
+     "to_map": "Safari Zone West",
+     "to_warp": 5
+    },
+    {
+     "x": 14,
+     "y": 0,
+     "to_map": "Safari Zone North",
+     "to_warp": 4
+    },
+    {
+     "x": 15,
+     "y": 0,
+     "to_map": "Safari Zone North",
+     "to_warp": 5
+    },
+    {
+     "x": 29,
+     "y": 10,
+     "to_map": "Safari Zone East",
+     "to_warp": 2
+    },
+    {
+     "x": 29,
+     "y": 11,
+     "to_map": "Safari Zone East",
+     "to_warp": 3
+    },
+    {
+     "x": 17,
+     "y": 19,
+     "to_map": "Safari Zone Center Rest House",
+     "to_warp": 0
+    }
+   ]
+  },
+  "Safari Zone Center Rest House": {
+   "map_id": 221,
+   "size": [
+    8,
+    8
+   ],
+   "size_blocks": [
+    4,
+    4
+   ],
+   "connections": {},
+   "warps": [
+    {
+     "x": 2,
+     "y": 7,
+     "to_map": "Safari Zone Center",
+     "to_warp": 8
+    },
+    {
+     "x": 3,
+     "y": 7,
+     "to_map": "Safari Zone Center",
+     "to_warp": 8
+    }
+   ]
+  },
+  "Safari Zone East": {
+   "map_id": 217,
+   "size": [
+    30,
+    26
+   ],
+   "size_blocks": [
+    15,
+    13
+   ],
+   "connections": {},
+   "warps": [
+    {
+     "x": 0,
+     "y": 4,
+     "to_map": "Safari Zone North",
+     "to_warp": 6
+    },
+    {
+     "x": 0,
+     "y": 5,
+     "to_map": "Safari Zone North",
+     "to_warp": 7
+    },
+    {
+     "x": 0,
+     "y": 22,
+     "to_map": "Safari Zone Center",
+     "to_warp": 6
+    },
+    {
+     "x": 0,
+     "y": 23,
+     "to_map": "Safari Zone Center",
+     "to_warp": 6
+    },
+    {
+     "x": 25,
+     "y": 9,
+     "to_map": "Safari Zone East Rest House",
+     "to_warp": 0
+    }
+   ]
+  },
+  "Safari Zone East Rest House": {
+   "map_id": 224,
+   "size": [
+    8,
+    8
+   ],
+   "size_blocks": [
+    4,
+    4
+   ],
+   "connections": {},
+   "warps": [
+    {
+     "x": 2,
+     "y": 7,
+     "to_map": "Safari Zone East",
+     "to_warp": 4
+    },
+    {
+     "x": 3,
+     "y": 7,
+     "to_map": "Safari Zone East",
+     "to_warp": 4
+    }
+   ]
+  },
+  "Safari Zone Gate": {
+   "map_id": 156,
+   "size": [
+    8,
+    6
+   ],
+   "size_blocks": [
+    4,
+    3
+   ],
+   "connections": {},
+   "warps": [
+    {
+     "x": 3,
+     "y": 5,
+     "to_map": "Fuchsia City",
+     "to_warp": 4
+    },
+    {
+     "x": 4,
+     "y": 5,
+     "to_map": "Fuchsia City",
+     "to_warp": 4
+    },
+    {
+     "x": 3,
+     "y": 0,
+     "to_map": "Safari Zone Center",
+     "to_warp": 0
+    },
+    {
+     "x": 4,
+     "y": 0,
+     "to_map": "Safari Zone Center",
+     "to_warp": 1
+    }
+   ]
+  },
+  "Safari Zone North": {
+   "map_id": 218,
+   "size": [
+    40,
+    36
+   ],
+   "size_blocks": [
+    20,
+    18
+   ],
+   "connections": {},
+   "warps": [
+    {
+     "x": 2,
+     "y": 35,
+     "to_map": "Safari Zone West",
+     "to_warp": 0
+    },
+    {
+     "x": 3,
+     "y": 35,
+     "to_map": "Safari Zone West",
+     "to_warp": 1
+    },
+    {
+     "x": 8,
+     "y": 35,
+     "to_map": "Safari Zone West",
+     "to_warp": 2
+    },
+    {
+     "x": 9,
+     "y": 35,
+     "to_map": "Safari Zone West",
+     "to_warp": 3
+    },
+    {
+     "x": 20,
+     "y": 35,
+     "to_map": "Safari Zone Center",
+     "to_warp": 4
+    },
+    {
+     "x": 21,
+     "y": 35,
+     "to_map": "Safari Zone Center",
+     "to_warp": 5
+    },
+    {
+     "x": 39,
+     "y": 30,
+     "to_map": "Safari Zone East",
+     "to_warp": 0
+    },
+    {
+     "x": 39,
+     "y": 31,
+     "to_map": "Safari Zone East",
+     "to_warp": 1
+    },
+    {
+     "x": 35,
+     "y": 3,
+     "to_map": "Safari Zone North Rest House",
+     "to_warp": 0
+    }
+   ]
+  },
+  "Safari Zone North Rest House": {
+   "map_id": 225,
+   "size": [
+    8,
+    8
+   ],
+   "size_blocks": [
+    4,
+    4
+   ],
+   "connections": {},
+   "warps": [
+    {
+     "x": 2,
+     "y": 7,
+     "to_map": "Safari Zone North",
+     "to_warp": 8
+    },
+    {
+     "x": 3,
+     "y": 7,
+     "to_map": "Safari Zone North",
+     "to_warp": 8
+    }
+   ]
+  },
+  "Safari Zone Secret House": {
+   "map_id": 222,
+   "size": [
+    8,
+    8
+   ],
+   "size_blocks": [
+    4,
+    4
+   ],
+   "connections": {},
+   "warps": [
+    {
+     "x": 2,
+     "y": 7,
+     "to_map": "Safari Zone West",
+     "to_warp": 6
+    },
+    {
+     "x": 3,
+     "y": 7,
+     "to_map": "Safari Zone West",
+     "to_warp": 6
+    }
+   ]
+  },
+  "Safari Zone West": {
+   "map_id": 219,
+   "size": [
+    30,
+    26
+   ],
+   "size_blocks": [
+    15,
+    13
+   ],
+   "connections": {},
+   "warps": [
+    {
+     "x": 20,
+     "y": 0,
+     "to_map": "Safari Zone North",
+     "to_warp": 0
+    },
+    {
+     "x": 21,
+     "y": 0,
+     "to_map": "Safari Zone North",
+     "to_warp": 1
+    },
+    {
+     "x": 26,
+     "y": 0,
+     "to_map": "Safari Zone North",
+     "to_warp": 2
+    },
+    {
+     "x": 27,
+     "y": 0,
+     "to_map": "Safari Zone North",
+     "to_warp": 3
+    },
+    {
+     "x": 29,
+     "y": 22,
+     "to_map": "Safari Zone Center",
+     "to_warp": 2
+    },
+    {
+     "x": 29,
+     "y": 23,
+     "to_map": "Safari Zone Center",
+     "to_warp": 3
+    },
+    {
+     "x": 3,
+     "y": 3,
+     "to_map": "Safari Zone Secret House",
+     "to_warp": 0
+    },
+    {
+     "x": 11,
+     "y": 11,
+     "to_map": "Safari Zone West Rest House",
+     "to_warp": 0
+    }
+   ]
+  },
+  "Safari Zone West Rest House": {
+   "map_id": 223,
+   "size": [
+    8,
+    8
+   ],
+   "size_blocks": [
+    4,
+    4
+   ],
+   "connections": {},
+   "warps": [
+    {
+     "x": 2,
+     "y": 7,
+     "to_map": "Safari Zone West",
+     "to_warp": 7
+    },
+    {
+     "x": 3,
+     "y": 7,
+     "to_map": "Safari Zone West",
+     "to_warp": 7
+    }
+   ]
+  },
+  "Saffron City": {
+   "map_id": 10,
+   "size": [
+    40,
+    36
+   ],
+   "size_blocks": [
+    20,
+    18
+   ],
+   "connections": {
+    "north": "Route 5",
+    "south": "Route 6",
+    "west": "Route 7",
+    "east": "Route 8"
+   },
+   "warps": [
+    {
+     "x": 7,
+     "y": 5,
+     "to_map": "Copycat's House 1F",
+     "to_warp": 0
+    },
+    {
+     "x": 26,
+     "y": 3,
+     "to_map": "Fighting Dojo",
+     "to_warp": 0
+    },
+    {
+     "x": 34,
+     "y": 3,
+     "to_map": "Saffron Gym",
+     "to_warp": 0
+    },
+    {
+     "x": 13,
+     "y": 11,
+     "to_map": "Saffron Pidgey House",
+     "to_warp": 0
+    },
+    {
+     "x": 25,
+     "y": 11,
+     "to_map": "Saffron Mart",
+     "to_warp": 0
+    },
+    {
+     "x": 18,
+     "y": 21,
+     "to_map": "Silph Co 1F",
+     "to_warp": 0
+    },
+    {
+     "x": 9,
+     "y": 29,
+     "to_map": "Saffron Pokecenter",
+     "to_warp": 0
+    },
+    {
+     "x": 29,
+     "y": 29,
+     "to_map": "Mr Psychic's House",
+     "to_warp": 0
+    }
+   ]
+  },
+  "Saffron Gym": {
+   "map_id": 178,
+   "size": [
+    20,
+    18
+   ],
+   "size_blocks": [
+    10,
+    9
+   ],
+   "connections": {},
+   "warps": [
+    {
+     "x": 8,
+     "y": 17,
+     "to_map": "Saffron City",
+     "to_warp": 2
+    },
+    {
+     "x": 9,
+     "y": 17,
+     "to_map": "Saffron City",
+     "to_warp": 2
+    },
+    {
+     "x": 1,
+     "y": 3,
+     "to_map": "Saffron Gym",
+     "to_warp": 22
+    },
+    {
+     "x": 5,
+     "y": 3,
+     "to_map": "Saffron Gym",
+     "to_warp": 15
+    },
+    {
+     "x": 1,
+     "y": 5,
+     "to_map": "Saffron Gym",
+     "to_warp": 18
+    },
+    {
+     "x": 5,
+     "y": 5,
+     "to_map": "Saffron Gym",
+     "to_warp": 8
+    },
+    {
+     "x": 1,
+     "y": 9,
+     "to_map": "Saffron Gym",
+     "to_warp": 27
+    },
+    {
+     "x": 5,
+     "y": 9,
+     "to_map": "Saffron Gym",
+     "to_warp": 16
+    },
+    {
+     "x": 1,
+     "y": 11,
+     "to_map": "Saffron Gym",
+     "to_warp": 5
+    },
+    {
+     "x": 5,
+     "y": 11,
+     "to_map": "Saffron Gym",
+     "to_warp": 13
+    },
+    {
+     "x": 1,
+     "y": 15,
+     "to_map": "Saffron Gym",
+     "to_warp": 23
+    },
+    {
+     "x": 5,
+     "y": 15,
+     "to_map": "Saffron Gym",
+     "to_warp": 30
+    },
+    {
+     "x": 1,
+     "y": 17,
+     "to_map": "Saffron Gym",
+     "to_warp": 17
+    },
+    {
+     "x": 5,
+     "y": 17,
+     "to_map": "Saffron Gym",
+     "to_warp": 9
+    },
+    {
+     "x": 9,
+     "y": 3,
+     "to_map": "Saffron Gym",
+     "to_warp": 26
+    },
+    {
+     "x": 11,
+     "y": 3,
+     "to_map": "Saffron Gym",
+     "to_warp": 3
+    },
+    {
+     "x": 9,
+     "y": 5,
+     "to_map": "Saffron Gym",
+     "to_warp": 7
+    },
+    {
+     "x": 11,
+     "y": 5,
+     "to_map": "Saffron Gym",
+     "to_warp": 12
+    },
+    {
+     "x": 11,
+     "y": 11,
+     "to_map": "Saffron Gym",
+     "to_warp": 4
+    },
+    {
+     "x": 11,
+     "y": 15,
+     "to_map": "Saffron Gym",
+     "to_warp": 31
+    },
+    {
+     "x": 15,
+     "y": 3,
+     "to_map": "Saffron Gym",
+     "to_warp": 24
+    },
+    {
+     "x": 19,
+     "y": 3,
+     "to_map": "Saffron Gym",
+     "to_warp": 28
+    },
+    {
+     "x": 15,
+     "y": 5,
+     "to_map": "Saffron Gym",
+     "to_warp": 2
+    },
+    {
+     "x": 19,
+     "y": 5,
+     "to_map": "Saffron Gym",
+     "to_warp": 10
+    },
+    {
+     "x": 15,
+     "y": 9,
+     "to_map": "Saffron Gym",
+     "to_warp": 20
+    },
+    {
+     "x": 19,
+     "y": 9,
+     "to_map": "Saffron Gym",
+     "to_warp": 29
+    },
+    {
+     "x": 15,
+     "y": 11,
+     "to_map": "Saffron Gym",
+     "to_warp": 14
+    },
+    {
+     "x": 19,
+     "y": 11,
+     "to_map": "Saffron Gym",
+     "to_warp": 6
+    },
+    {
+     "x": 15,
+     "y": 15,
+     "to_map": "Saffron Gym",
+     "to_warp": 21
+    },
+    {
+     "x": 19,
+     "y": 15,
+     "to_map": "Saffron Gym",
+     "to_warp": 25
+    },
+    {
+     "x": 15,
+     "y": 17,
+     "to_map": "Saffron Gym",
+     "to_warp": 11
+    },
+    {
+     "x": 19,
+     "y": 17,
+     "to_map": "Saffron Gym",
+     "to_warp": 19
+    }
+   ]
+  },
+  "Saffron Mart": {
+   "map_id": 180,
+   "size": [
+    8,
+    8
+   ],
+   "size_blocks": [
+    4,
+    4
+   ],
+   "connections": {},
+   "warps": [
+    {
+     "x": 3,
+     "y": 7,
+     "to_map": "Saffron City",
+     "to_warp": 4
+    },
+    {
+     "x": 4,
+     "y": 7,
+     "to_map": "Saffron City",
+     "to_warp": 4
+    }
+   ]
+  },
+  "Saffron Pidgey House": {
+   "map_id": 179,
+   "size": [
+    8,
+    8
+   ],
+   "size_blocks": [
+    4,
+    4
+   ],
+   "connections": {},
+   "warps": [
+    {
+     "x": 2,
+     "y": 7,
+     "to_map": "Saffron City",
+     "to_warp": 3
+    },
+    {
+     "x": 3,
+     "y": 7,
+     "to_map": "Saffron City",
+     "to_warp": 3
+    }
+   ]
+  },
+  "Saffron Pokecenter": {
+   "map_id": 182,
+   "size": [
+    14,
+    8
+   ],
+   "size_blocks": [
+    7,
+    4
+   ],
+   "connections": {},
+   "warps": [
+    {
+     "x": 3,
+     "y": 7,
+     "to_map": "Saffron City",
+     "to_warp": 6
+    },
+    {
+     "x": 4,
+     "y": 7,
+     "to_map": "Saffron City",
+     "to_warp": 6
+    }
+   ]
+  },
+  "Seafoam Islands 1F": {
+   "map_id": 192,
+   "size": [
+    30,
+    18
+   ],
+   "size_blocks": [
+    15,
+    9
+   ],
+   "connections": {},
+   "warps": [
+    {
+     "x": 4,
+     "y": 17,
+     "to_map": "Route 20",
+     "to_warp": 0
+    },
+    {
+     "x": 5,
+     "y": 17,
+     "to_map": "Route 20",
+     "to_warp": 0
+    },
+    {
+     "x": 26,
+     "y": 17,
+     "to_map": "Route 20",
+     "to_warp": 1
+    },
+    {
+     "x": 27,
+     "y": 17,
+     "to_map": "Route 20",
+     "to_warp": 1
+    },
+    {
+     "x": 7,
+     "y": 5,
+     "to_map": "Seafoam Islands B1F",
+     "to_warp": 1
+    },
+    {
+     "x": 25,
+     "y": 3,
+     "to_map": "Seafoam Islands B1F",
+     "to_warp": 6
+    },
+    {
+     "x": 23,
+     "y": 15,
+     "to_map": "Seafoam Islands B1F",
+     "to_warp": 4
+    }
+   ]
+  },
+  "Seafoam Islands B1F": {
+   "map_id": 159,
+   "size": [
+    30,
+    18
+   ],
+   "size_blocks": [
+    15,
+    9
+   ],
+   "connections": {},
+   "warps": [
+    {
+     "x": 4,
+     "y": 2,
+     "to_map": "Seafoam Islands B2F",
+     "to_warp": 0
+    },
+    {
+     "x": 7,
+     "y": 5,
+     "to_map": "Seafoam Islands 1F",
+     "to_warp": 4
+    },
+    {
+     "x": 13,
+     "y": 7,
+     "to_map": "Seafoam Islands B2F",
+     "to_warp": 2
+    },
+    {
+     "x": 19,
+     "y": 15,
+     "to_map": "Seafoam Islands B2F",
+     "to_warp": 3
+    },
+    {
+     "x": 23,
+     "y": 15,
+     "to_map": "Seafoam Islands 1F",
+     "to_warp": 6
+    },
+    {
+     "x": 25,
+     "y": 11,
+     "to_map": "Seafoam Islands B2F",
+     "to_warp": 5
+    },
+    {
+     "x": 25,
+     "y": 3,
+     "to_map": "Seafoam Islands 1F",
+     "to_warp": 5
+    }
+   ]
+  },
+  "Seafoam Islands B2F": {
+   "map_id": 160,
+   "size": [
+    30,
+    18
+   ],
+   "size_blocks": [
+    15,
+    9
+   ],
+   "connections": {},
+   "warps": [
+    {
+     "x": 5,
+     "y": 3,
+     "to_map": "Seafoam Islands B1F",
+     "to_warp": 0
+    },
+    {
+     "x": 5,
+     "y": 13,
+     "to_map": "Seafoam Islands B3F",
+     "to_warp": 0
+    },
+    {
+     "x": 13,
+     "y": 7,
+     "to_map": "Seafoam Islands B1F",
+     "to_warp": 2
+    },
+    {
+     "x": 19,
+     "y": 15,
+     "to_map": "Seafoam Islands B1F",
+     "to_warp": 3
+    },
+    {
+     "x": 25,
+     "y": 3,
+     "to_map": "Seafoam Islands B3F",
+     "to_warp": 3
+    },
+    {
+     "x": 25,
+     "y": 11,
+     "to_map": "Seafoam Islands B1F",
+     "to_warp": 5
+    },
+    {
+     "x": 25,
+     "y": 14,
+     "to_map": "Seafoam Islands B3F",
+     "to_warp": 4
+    }
+   ]
+  },
+  "Seafoam Islands B3F": {
+   "map_id": 161,
+   "size": [
+    30,
+    18
+   ],
+   "size_blocks": [
+    15,
+    9
+   ],
+   "connections": {},
+   "warps": [
+    {
+     "x": 5,
+     "y": 12,
+     "to_map": "Seafoam Islands B2F",
+     "to_warp": 1
+    },
+    {
+     "x": 8,
+     "y": 6,
+     "to_map": "Seafoam Islands B4F",
+     "to_warp": 2
+    },
+    {
+     "x": 25,
+     "y": 4,
+     "to_map": "Seafoam Islands B4F",
+     "to_warp": 3
+    },
+    {
+     "x": 25,
+     "y": 3,
+     "to_map": "Seafoam Islands B2F",
+     "to_warp": 4
+    },
+    {
+     "x": 25,
+     "y": 14,
+     "to_map": "Seafoam Islands B2F",
+     "to_warp": 6
+    },
+    {
+     "x": 20,
+     "y": 17,
+     "to_map": "Seafoam Islands B4F",
+     "to_warp": 0
+    },
+    {
+     "x": 21,
+     "y": 17,
+     "to_map": "Seafoam Islands B4F",
+     "to_warp": 1
+    }
+   ]
+  },
+  "Seafoam Islands B4F": {
+   "map_id": 162,
+   "size": [
+    30,
+    18
+   ],
+   "size_blocks": [
+    15,
+    9
+   ],
+   "connections": {},
+   "warps": [
+    {
+     "x": 20,
+     "y": 17,
+     "to_map": "Seafoam Islands B3F",
+     "to_warp": 5
+    },
+    {
+     "x": 21,
+     "y": 17,
+     "to_map": "Seafoam Islands B3F",
+     "to_warp": 6
+    },
+    {
+     "x": 11,
+     "y": 7,
+     "to_map": "Seafoam Islands B3F",
+     "to_warp": 1
+    },
+    {
+     "x": 25,
+     "y": 4,
+     "to_map": "Seafoam Islands B3F",
+     "to_warp": 2
+    }
+   ]
+  },
+  "Silph Co 10F": {
+   "map_id": 234,
+   "size": [
+    16,
+    18
+   ],
+   "size_blocks": [
+    8,
+    9
+   ],
+   "connections": {},
+   "warps": [
+    {
+     "x": 8,
+     "y": 0,
+     "to_map": "Silph Co 9F",
+     "to_warp": 0
+    },
+    {
+     "x": 10,
+     "y": 0,
+     "to_map": "Silph Co 11F",
+     "to_warp": 0
+    },
+    {
+     "x": 12,
+     "y": 0,
+     "to_map": "Silph Co Elevator",
+     "to_warp": 0
+    },
+    {
+     "x": 9,
+     "y": 11,
+     "to_map": "Silph Co 4F",
+     "to_warp": 3
+    },
+    {
+     "x": 13,
+     "y": 15,
+     "to_map": "Silph Co 4F",
+     "to_warp": 5
+    },
+    {
+     "x": 13,
+     "y": 7,
+     "to_map": "Silph Co 4F",
+     "to_warp": 6
+    }
+   ]
+  },
+  "Silph Co 11F": {
+   "map_id": 235,
+   "size": [
+    18,
+    18
+   ],
+   "size_blocks": [
+    9,
+    9
+   ],
+   "connections": {},
+   "warps": [
+    {
+     "x": 9,
+     "y": 0,
+     "to_map": "Silph Co 10F",
+     "to_warp": 1
+    },
+    {
+     "x": 13,
+     "y": 0,
+     "to_map": "Silph Co Elevator",
+     "to_warp": 0
+    },
+    {
+     "x": 5,
+     "y": 5,
+     "to_map": null,
+     "to_warp": 9
+    },
+    {
+     "x": 3,
+     "y": 2,
+     "to_map": "Silph Co 7F",
+     "to_warp": 3
+    }
+   ]
+  },
+  "Silph Co 1F": {
+   "map_id": 181,
+   "size": [
+    30,
+    18
+   ],
+   "size_blocks": [
+    15,
+    9
+   ],
+   "connections": {},
+   "warps": [
+    {
+     "x": 10,
+     "y": 17,
+     "to_map": "Saffron City",
+     "to_warp": 5
+    },
+    {
+     "x": 11,
+     "y": 17,
+     "to_map": "Saffron City",
+     "to_warp": 5
+    },
+    {
+     "x": 26,
+     "y": 0,
+     "to_map": "Silph Co 2F",
+     "to_warp": 0
+    },
+    {
+     "x": 20,
+     "y": 0,
+     "to_map": "Silph Co Elevator",
+     "to_warp": 0
+    },
+    {
+     "x": 16,
+     "y": 10,
+     "to_map": "Silph Co 3F",
+     "to_warp": 6
+    }
+   ]
+  },
+  "Silph Co 2F": {
+   "map_id": 207,
+   "size": [
+    30,
+    18
+   ],
+   "size_blocks": [
+    15,
+    9
+   ],
+   "connections": {},
+   "warps": [
+    {
+     "x": 24,
+     "y": 0,
+     "to_map": "Silph Co 1F",
+     "to_warp": 2
+    },
+    {
+     "x": 26,
+     "y": 0,
+     "to_map": "Silph Co 3F",
+     "to_warp": 0
+    },
+    {
+     "x": 20,
+     "y": 0,
+     "to_map": "Silph Co Elevator",
+     "to_warp": 0
+    },
+    {
+     "x": 3,
+     "y": 3,
+     "to_map": "Silph Co 3F",
+     "to_warp": 6
+    },
+    {
+     "x": 13,
+     "y": 3,
+     "to_map": "Silph Co 8F",
+     "to_warp": 4
+    },
+    {
+     "x": 27,
+     "y": 15,
+     "to_map": "Silph Co 8F",
+     "to_warp": 5
+    },
+    {
+     "x": 9,
+     "y": 15,
+     "to_map": "Silph Co 6F",
+     "to_warp": 4
+    }
+   ]
+  },
+  "Silph Co 3F": {
+   "map_id": 208,
+   "size": [
+    30,
+    18
+   ],
+   "size_blocks": [
+    15,
+    9
+   ],
+   "connections": {},
+   "warps": [
+    {
+     "x": 26,
+     "y": 0,
+     "to_map": "Silph Co 2F",
+     "to_warp": 1
+    },
+    {
+     "x": 24,
+     "y": 0,
+     "to_map": "Silph Co 4F",
+     "to_warp": 0
+    },
+    {
+     "x": 20,
+     "y": 0,
+     "to_map": "Silph Co Elevator",
+     "to_warp": 0
+    },
+    {
+     "x": 23,
+     "y": 11,
+     "to_map": "Silph Co 3F",
+     "to_warp": 9
+    },
+    {
+     "x": 3,
+     "y": 3,
+     "to_map": "Silph Co 5F",
+     "to_warp": 5
+    },
+    {
+     "x": 3,
+     "y": 15,
+     "to_map": "Silph Co 5F",
+     "to_warp": 6
+    },
+    {
+     "x": 27,
+     "y": 3,
+     "to_map": "Silph Co 2F",
+     "to_warp": 3
+    },
+    {
+     "x": 3,
+     "y": 11,
+     "to_map": "Silph Co 9F",
+     "to_warp": 3
+    },
+    {
+     "x": 11,
+     "y": 11,
+     "to_map": "Silph Co 7F",
+     "to_warp": 4
+    },
+    {
+     "x": 27,
+     "y": 15,
+     "to_map": "Silph Co 3F",
+     "to_warp": 3
+    }
+   ]
+  },
+  "Silph Co 4F": {
+   "map_id": 209,
+   "size": [
+    30,
+    18
+   ],
+   "size_blocks": [
+    15,
+    9
+   ],
+   "connections": {},
+   "warps": [
+    {
+     "x": 24,
+     "y": 0,
+     "to_map": "Silph Co 3F",
+     "to_warp": 1
+    },
+    {
+     "x": 26,
+     "y": 0,
+     "to_map": "Silph Co 5F",
+     "to_warp": 1
+    },
+    {
+     "x": 20,
+     "y": 0,
+     "to_map": "Silph Co Elevator",
+     "to_warp": 0
+    },
+    {
+     "x": 11,
+     "y": 7,
+     "to_map": "Silph Co 10F",
+     "to_warp": 3
+    },
+    {
+     "x": 17,
+     "y": 3,
+     "to_map": "Silph Co 6F",
+     "to_warp": 3
+    },
+    {
+     "x": 3,
+     "y": 15,
+     "to_map": "Silph Co 10F",
+     "to_warp": 4
+    },
+    {
+     "x": 17,
+     "y": 11,
+     "to_map": "Silph Co 10F",
+     "to_warp": 5
+    }
+   ]
+  },
+  "Silph Co 5F": {
+   "map_id": 210,
+   "size": [
+    30,
+    18
+   ],
+   "size_blocks": [
+    15,
+    9
+   ],
+   "connections": {},
+   "warps": [
+    {
+     "x": 24,
+     "y": 0,
+     "to_map": "Silph Co 6F",
+     "to_warp": 1
+    },
+    {
+     "x": 26,
+     "y": 0,
+     "to_map": "Silph Co 4F",
+     "to_warp": 1
+    },
+    {
+     "x": 20,
+     "y": 0,
+     "to_map": "Silph Co Elevator",
+     "to_warp": 0
+    },
+    {
+     "x": 27,
+     "y": 3,
+     "to_map": "Silph Co 7F",
+     "to_warp": 5
+    },
+    {
+     "x": 9,
+     "y": 15,
+     "to_map": "Silph Co 9F",
+     "to_warp": 4
+    },
+    {
+     "x": 11,
+     "y": 5,
+     "to_map": "Silph Co 3F",
+     "to_warp": 4
+    },
+    {
+     "x": 3,
+     "y": 15,
+     "to_map": "Silph Co 3F",
+     "to_warp": 5
+    }
+   ]
+  },
+  "Silph Co 6F": {
+   "map_id": 211,
+   "size": [
+    26,
+    18
+   ],
+   "size_blocks": [
+    13,
+    9
+   ],
+   "connections": {},
+   "warps": [
+    {
+     "x": 16,
+     "y": 0,
+     "to_map": "Silph Co 7F",
+     "to_warp": 1
+    },
+    {
+     "x": 14,
+     "y": 0,
+     "to_map": "Silph Co 5F",
+     "to_warp": 0
+    },
+    {
+     "x": 18,
+     "y": 0,
+     "to_map": "Silph Co Elevator",
+     "to_warp": 0
+    },
+    {
+     "x": 3,
+     "y": 3,
+     "to_map": "Silph Co 4F",
+     "to_warp": 4
+    },
+    {
+     "x": 23,
+     "y": 3,
+     "to_map": "Silph Co 2F",
+     "to_warp": 6
+    }
+   ]
+  },
+  "Silph Co 7F": {
+   "map_id": 212,
+   "size": [
+    26,
+    18
+   ],
+   "size_blocks": [
+    13,
+    9
+   ],
+   "connections": {},
+   "warps": [
+    {
+     "x": 16,
+     "y": 0,
+     "to_map": "Silph Co 8F",
+     "to_warp": 1
+    },
+    {
+     "x": 22,
+     "y": 0,
+     "to_map": "Silph Co 6F",
+     "to_warp": 0
+    },
+    {
+     "x": 18,
+     "y": 0,
+     "to_map": "Silph Co Elevator",
+     "to_warp": 0
+    },
+    {
+     "x": 5,
+     "y": 7,
+     "to_map": "Silph Co 11F",
+     "to_warp": 3
+    },
+    {
+     "x": 5,
+     "y": 3,
+     "to_map": "Silph Co 3F",
+     "to_warp": 8
+    },
+    {
+     "x": 21,
+     "y": 15,
+     "to_map": "Silph Co 5F",
+     "to_warp": 3
+    }
+   ]
+  },
+  "Silph Co 8F": {
+   "map_id": 213,
+   "size": [
+    26,
+    18
+   ],
+   "size_blocks": [
+    13,
+    9
+   ],
+   "connections": {},
+   "warps": [
+    {
+     "x": 16,
+     "y": 0,
+     "to_map": "Silph Co 9F",
+     "to_warp": 1
+    },
+    {
+     "x": 14,
+     "y": 0,
+     "to_map": "Silph Co 7F",
+     "to_warp": 0
+    },
+    {
+     "x": 18,
+     "y": 0,
+     "to_map": "Silph Co Elevator",
+     "to_warp": 0
+    },
+    {
+     "x": 3,
+     "y": 11,
+     "to_map": "Silph Co 8F",
+     "to_warp": 6
+    },
+    {
+     "x": 3,
+     "y": 15,
+     "to_map": "Silph Co 2F",
+     "to_warp": 4
+    },
+    {
+     "x": 11,
+     "y": 5,
+     "to_map": "Silph Co 2F",
+     "to_warp": 5
+    },
+    {
+     "x": 11,
+     "y": 9,
+     "to_map": "Silph Co 8F",
+     "to_warp": 3
+    }
+   ]
+  },
+  "Silph Co 9F": {
+   "map_id": 233,
+   "size": [
+    26,
+    18
+   ],
+   "size_blocks": [
+    13,
+    9
+   ],
+   "connections": {},
+   "warps": [
+    {
+     "x": 14,
+     "y": 0,
+     "to_map": "Silph Co 10F",
+     "to_warp": 0
+    },
+    {
+     "x": 16,
+     "y": 0,
+     "to_map": "Silph Co 8F",
+     "to_warp": 0
+    },
+    {
+     "x": 18,
+     "y": 0,
+     "to_map": "Silph Co Elevator",
+     "to_warp": 0
+    },
+    {
+     "x": 9,
+     "y": 3,
+     "to_map": "Silph Co 3F",
+     "to_warp": 7
+    },
+    {
+     "x": 17,
+     "y": 15,
+     "to_map": "Silph Co 5F",
+     "to_warp": 4
+    }
+   ]
+  },
+  "Silph Co Elevator": {
+   "map_id": 236,
+   "size": [
+    4,
+    4
+   ],
+   "size_blocks": [
+    2,
+    2
+   ],
+   "connections": {},
+   "warps": [
+    {
+     "x": 1,
+     "y": 3,
+     "to_map": "Unused Map ED",
+     "to_warp": 0
+    },
+    {
+     "x": 2,
+     "y": 3,
+     "to_map": "Unused Map ED",
+     "to_warp": 0
+    }
+   ]
+  },
+  "Trade Center": {
+   "map_id": 239,
+   "size": [
+    10,
+    8
+   ],
+   "size_blocks": [
+    5,
+    4
+   ],
+   "connections": {},
+   "warps": []
+  },
+  "Underground Path North South": {
+   "map_id": 119,
+   "size": [
+    8,
+    48
+   ],
+   "size_blocks": [
+    4,
+    24
+   ],
+   "connections": {},
+   "warps": [
+    {
+     "x": 5,
+     "y": 4,
+     "to_map": "Underground Path Route 5",
+     "to_warp": 2
+    },
+    {
+     "x": 2,
+     "y": 41,
+     "to_map": "Underground Path Route 6",
+     "to_warp": 2
+    }
+   ]
+  },
+  "Underground Path Route 5": {
+   "map_id": 71,
+   "size": [
+    8,
+    8
+   ],
+   "size_blocks": [
+    4,
+    4
+   ],
+   "connections": {},
+   "warps": [
+    {
+     "x": 3,
+     "y": 7,
+     "to_map": "Route 5",
+     "to_warp": 3
+    },
+    {
+     "x": 4,
+     "y": 7,
+     "to_map": "Route 5",
+     "to_warp": 3
+    },
+    {
+     "x": 4,
+     "y": 4,
+     "to_map": "Underground Path North South",
+     "to_warp": 0
+    }
+   ]
+  },
+  "Underground Path Route 6": {
+   "map_id": 74,
+   "size": [
+    8,
+    8
+   ],
+   "size_blocks": [
+    4,
+    4
+   ],
+   "connections": {},
+   "warps": [
+    {
+     "x": 3,
+     "y": 7,
+     "to_map": "Route 6",
+     "to_warp": 3
+    },
+    {
+     "x": 4,
+     "y": 7,
+     "to_map": "Route 6",
+     "to_warp": 3
+    },
+    {
+     "x": 4,
+     "y": 4,
+     "to_map": "Underground Path North South",
+     "to_warp": 1
+    }
+   ]
+  },
+  "Underground Path Route 7": {
+   "map_id": 77,
+   "size": [
+    8,
+    8
+   ],
+   "size_blocks": [
+    4,
+    4
+   ],
+   "connections": {},
+   "warps": [
+    {
+     "x": 3,
+     "y": 7,
+     "to_map": "Route 7",
+     "to_warp": 4
+    },
+    {
+     "x": 4,
+     "y": 7,
+     "to_map": "Route 7",
+     "to_warp": 4
+    },
+    {
+     "x": 4,
+     "y": 4,
+     "to_map": "Underground Path West East",
+     "to_warp": 0
+    }
+   ]
+  },
+  "Underground Path Route 7 Copy": {
+   "map_id": 78,
+   "size": [
+    8,
+    8
+   ],
+   "size_blocks": [
+    4,
+    4
+   ],
+   "connections": {},
+   "warps": [
+    {
+     "x": 3,
+     "y": 7,
+     "to_map": null,
+     "to_warp": 5
+    },
+    {
+     "x": 4,
+     "y": 7,
+     "to_map": null,
+     "to_warp": 5
+    },
+    {
+     "x": 4,
+     "y": 4,
+     "to_map": "Underground Path West East",
+     "to_warp": 0
+    }
+   ]
+  },
+  "Underground Path Route 8": {
+   "map_id": 80,
+   "size": [
+    8,
+    8
+   ],
+   "size_blocks": [
+    4,
+    4
+   ],
+   "connections": {},
+   "warps": [
+    {
+     "x": 3,
+     "y": 7,
+     "to_map": "Route 8",
+     "to_warp": 4
+    },
+    {
+     "x": 4,
+     "y": 7,
+     "to_map": "Route 8",
+     "to_warp": 4
+    },
+    {
+     "x": 4,
+     "y": 4,
+     "to_map": "Underground Path West East",
+     "to_warp": 1
+    }
+   ]
+  },
+  "Underground Path West East": {
+   "map_id": 121,
+   "size": [
+    50,
+    8
+   ],
+   "size_blocks": [
+    25,
+    4
+   ],
+   "connections": {},
+   "warps": [
+    {
+     "x": 2,
+     "y": 5,
+     "to_map": "Underground Path Route 7",
+     "to_warp": 2
+    },
+    {
+     "x": 47,
+     "y": 2,
+     "to_map": "Underground Path Route 8",
+     "to_warp": 2
+    }
+   ]
+  },
+  "Vermilion City": {
+   "map_id": 5,
+   "size": [
+    40,
+    36
+   ],
+   "size_blocks": [
+    20,
+    18
+   ],
+   "connections": {
+    "north": "Route 6",
+    "east": "Route 11"
+   },
+   "warps": [
+    {
+     "x": 11,
+     "y": 3,
+     "to_map": "Vermilion Pokecenter",
+     "to_warp": 0
+    },
+    {
+     "x": 9,
+     "y": 13,
+     "to_map": "Pokemon Fan Club",
+     "to_warp": 0
+    },
+    {
+     "x": 23,
+     "y": 13,
+     "to_map": "Vermilion Mart",
+     "to_warp": 0
+    },
+    {
+     "x": 12,
+     "y": 19,
+     "to_map": "Vermilion Gym",
+     "to_warp": 0
+    },
+    {
+     "x": 23,
+     "y": 19,
+     "to_map": "Vermilion Pidgey House",
+     "to_warp": 0
+    },
+    {
+     "x": 18,
+     "y": 31,
+     "to_map": "Vermilion Dock",
+     "to_warp": 0
+    },
+    {
+     "x": 19,
+     "y": 31,
+     "to_map": "Vermilion Dock",
+     "to_warp": 0
+    },
+    {
+     "x": 15,
+     "y": 13,
+     "to_map": "Vermilion Trade House",
+     "to_warp": 0
+    },
+    {
+     "x": 7,
+     "y": 3,
+     "to_map": "Vermilion Old Rod House",
+     "to_warp": 0
+    }
+   ]
+  },
+  "Vermilion Dock": {
+   "map_id": 94,
+   "size": [
+    28,
+    12
+   ],
+   "size_blocks": [
+    14,
+    6
+   ],
+   "connections": {},
+   "warps": [
+    {
+     "x": 14,
+     "y": 0,
+     "to_map": "Vermilion City",
+     "to_warp": 5
+    },
+    {
+     "x": 14,
+     "y": 2,
+     "to_map": "S.S. Anne 1F",
+     "to_warp": 1
+    }
+   ]
+  },
+  "Vermilion Gym": {
+   "map_id": 92,
+   "size": [
+    10,
+    18
+   ],
+   "size_blocks": [
+    5,
+    9
+   ],
+   "connections": {},
+   "warps": [
+    {
+     "x": 4,
+     "y": 17,
+     "to_map": "Vermilion City",
+     "to_warp": 3
+    },
+    {
+     "x": 5,
+     "y": 17,
+     "to_map": "Vermilion City",
+     "to_warp": 3
+    }
+   ]
+  },
+  "Vermilion Mart": {
+   "map_id": 91,
+   "size": [
+    8,
+    8
+   ],
+   "size_blocks": [
+    4,
+    4
+   ],
+   "connections": {},
+   "warps": [
+    {
+     "x": 3,
+     "y": 7,
+     "to_map": "Vermilion City",
+     "to_warp": 2
+    },
+    {
+     "x": 4,
+     "y": 7,
+     "to_map": "Vermilion City",
+     "to_warp": 2
+    }
+   ]
+  },
+  "Vermilion Old Rod House": {
+   "map_id": 163,
+   "size": [
+    8,
+    8
+   ],
+   "size_blocks": [
+    4,
+    4
+   ],
+   "connections": {},
+   "warps": [
+    {
+     "x": 2,
+     "y": 7,
+     "to_map": "Vermilion City",
+     "to_warp": 8
+    },
+    {
+     "x": 3,
+     "y": 7,
+     "to_map": "Vermilion City",
+     "to_warp": 8
+    }
+   ]
+  },
+  "Vermilion Pidgey House": {
+   "map_id": 93,
+   "size": [
+    8,
+    8
+   ],
+   "size_blocks": [
+    4,
+    4
+   ],
+   "connections": {},
+   "warps": [
+    {
+     "x": 2,
+     "y": 7,
+     "to_map": "Vermilion City",
+     "to_warp": 4
+    },
+    {
+     "x": 3,
+     "y": 7,
+     "to_map": "Vermilion City",
+     "to_warp": 4
+    }
+   ]
+  },
+  "Vermilion Pokecenter": {
+   "map_id": 89,
+   "size": [
+    14,
+    8
+   ],
+   "size_blocks": [
+    7,
+    4
+   ],
+   "connections": {},
+   "warps": [
+    {
+     "x": 3,
+     "y": 7,
+     "to_map": "Vermilion City",
+     "to_warp": 0
+    },
+    {
+     "x": 4,
+     "y": 7,
+     "to_map": "Vermilion City",
+     "to_warp": 0
+    }
+   ]
+  },
+  "Vermilion Trade House": {
+   "map_id": 196,
+   "size": [
+    8,
+    8
+   ],
+   "size_blocks": [
+    4,
+    4
+   ],
+   "connections": {},
+   "warps": [
+    {
+     "x": 2,
+     "y": 7,
+     "to_map": "Vermilion City",
+     "to_warp": 7
+    },
+    {
+     "x": 3,
+     "y": 7,
+     "to_map": "Vermilion City",
+     "to_warp": 7
+    }
+   ]
+  },
+  "Victory Road 1F": {
+   "map_id": 108,
+   "size": [
+    20,
+    18
+   ],
+   "size_blocks": [
+    10,
+    9
+   ],
+   "connections": {},
+   "warps": [
+    {
+     "x": 8,
+     "y": 17,
+     "to_map": "Route 23",
+     "to_warp": 2
+    },
+    {
+     "x": 9,
+     "y": 17,
+     "to_map": "Route 23",
+     "to_warp": 2
+    },
+    {
+     "x": 1,
+     "y": 1,
+     "to_map": "Victory Road 2F",
+     "to_warp": 0
+    }
+   ]
+  },
+  "Victory Road 2F": {
+   "map_id": 194,
+   "size": [
+    30,
+    18
+   ],
+   "size_blocks": [
+    15,
+    9
+   ],
+   "connections": {},
+   "warps": [
+    {
+     "x": 0,
+     "y": 8,
+     "to_map": "Victory Road 1F",
+     "to_warp": 2
+    },
+    {
+     "x": 29,
+     "y": 7,
+     "to_map": "Route 23",
+     "to_warp": 3
+    },
+    {
+     "x": 29,
+     "y": 8,
+     "to_map": "Route 23",
+     "to_warp": 3
+    },
+    {
+     "x": 23,
+     "y": 7,
+     "to_map": "Victory Road 3F",
+     "to_warp": 0
+    },
+    {
+     "x": 25,
+     "y": 14,
+     "to_map": "Victory Road 3F",
+     "to_warp": 2
+    },
+    {
+     "x": 27,
+     "y": 7,
+     "to_map": "Victory Road 3F",
+     "to_warp": 1
+    },
+    {
+     "x": 1,
+     "y": 1,
+     "to_map": "Victory Road 3F",
+     "to_warp": 3
+    }
+   ]
+  },
+  "Victory Road 3F": {
+   "map_id": 198,
+   "size": [
+    30,
+    18
+   ],
+   "size_blocks": [
+    15,
+    9
+   ],
+   "connections": {},
+   "warps": [
+    {
+     "x": 23,
+     "y": 7,
+     "to_map": "Victory Road 2F",
+     "to_warp": 3
+    },
+    {
+     "x": 26,
+     "y": 8,
+     "to_map": "Victory Road 2F",
+     "to_warp": 5
+    },
+    {
+     "x": 27,
+     "y": 15,
+     "to_map": "Victory Road 2F",
+     "to_warp": 4
+    },
+    {
+     "x": 2,
+     "y": 0,
+     "to_map": "Victory Road 2F",
+     "to_warp": 6
+    }
+   ]
+  },
+  "Viridian City": {
+   "map_id": 1,
+   "size": [
+    40,
+    36
+   ],
+   "size_blocks": [
+    20,
+    18
+   ],
+   "connections": {
+    "north": "Route 2",
+    "south": "Route 1",
+    "west": "Route 22"
+   },
+   "warps": [
+    {
+     "x": 23,
+     "y": 25,
+     "to_map": "Viridian Pokecenter",
+     "to_warp": 0
+    },
+    {
+     "x": 29,
+     "y": 19,
+     "to_map": "Viridian Mart",
+     "to_warp": 0
+    },
+    {
+     "x": 21,
+     "y": 15,
+     "to_map": "Viridian School",
+     "to_warp": 0
+    },
+    {
+     "x": 21,
+     "y": 9,
+     "to_map": "Viridian House",
+     "to_warp": 0
+    },
+    {
+     "x": 32,
+     "y": 7,
+     "to_map": "Viridian Gym",
+     "to_warp": 0
+    }
+   ]
+  },
+  "Viridian Forest": {
+   "map_id": 51,
+   "size": [
+    34,
+    48
+   ],
+   "size_blocks": [
+    17,
+    24
+   ],
+   "connections": {},
+   "warps": [
+    {
+     "x": 1,
+     "y": 0,
+     "to_map": "Viridian Forest North Gate",
+     "to_warp": 2
+    },
+    {
+     "x": 2,
+     "y": 0,
+     "to_map": "Viridian Forest North Gate",
+     "to_warp": 3
+    },
+    {
+     "x": 15,
+     "y": 47,
+     "to_map": "Viridian Forest South Gate",
+     "to_warp": 1
+    },
+    {
+     "x": 16,
+     "y": 47,
+     "to_map": "Viridian Forest South Gate",
+     "to_warp": 1
+    },
+    {
+     "x": 17,
+     "y": 47,
+     "to_map": "Viridian Forest South Gate",
+     "to_warp": 1
+    },
+    {
+     "x": 18,
+     "y": 47,
+     "to_map": "Viridian Forest South Gate",
+     "to_warp": 1
+    }
+   ]
+  },
+  "Viridian Forest North Gate": {
+   "map_id": 47,
+   "size": [
+    10,
+    8
+   ],
+   "size_blocks": [
+    5,
+    4
+   ],
+   "connections": {},
+   "warps": [
+    {
+     "x": 4,
+     "y": 0,
+     "to_map": "Route 2",
+     "to_warp": 1
+    },
+    {
+     "x": 5,
+     "y": 0,
+     "to_map": "Route 2",
+     "to_warp": 1
+    },
+    {
+     "x": 4,
+     "y": 7,
+     "to_map": "Viridian Forest",
+     "to_warp": 0
+    },
+    {
+     "x": 5,
+     "y": 7,
+     "to_map": "Viridian Forest",
+     "to_warp": 0
+    }
+   ]
+  },
+  "Viridian Forest South Gate": {
+   "map_id": 50,
+   "size": [
+    10,
+    8
+   ],
+   "size_blocks": [
+    5,
+    4
+   ],
+   "connections": {},
+   "warps": [
+    {
+     "x": 4,
+     "y": 0,
+     "to_map": "Viridian Forest",
+     "to_warp": 3
+    },
+    {
+     "x": 5,
+     "y": 0,
+     "to_map": "Viridian Forest",
+     "to_warp": 4
+    },
+    {
+     "x": 4,
+     "y": 7,
+     "to_map": "Route 2",
+     "to_warp": 5
+    },
+    {
+     "x": 5,
+     "y": 7,
+     "to_map": "Route 2",
+     "to_warp": 5
+    }
+   ]
+  },
+  "Viridian Gym": {
+   "map_id": 45,
+   "size": [
+    20,
+    18
+   ],
+   "size_blocks": [
+    10,
+    9
+   ],
+   "connections": {},
+   "warps": [
+    {
+     "x": 16,
+     "y": 17,
+     "to_map": "Viridian City",
+     "to_warp": 4
+    },
+    {
+     "x": 17,
+     "y": 17,
+     "to_map": "Viridian City",
+     "to_warp": 4
+    }
+   ]
+  },
+  "Viridian Mart": {
+   "map_id": 42,
+   "size": [
+    8,
+    8
+   ],
+   "size_blocks": [
+    4,
+    4
+   ],
+   "connections": {},
+   "warps": [
+    {
+     "x": 3,
+     "y": 7,
+     "to_map": "Viridian City",
+     "to_warp": 1
+    },
+    {
+     "x": 4,
+     "y": 7,
+     "to_map": "Viridian City",
+     "to_warp": 1
+    }
+   ]
+  },
+  "Viridian House": {
+   "map_id": 44,
+   "size": [
+    8,
+    8
+   ],
+   "size_blocks": [
+    4,
+    4
+   ],
+   "connections": {},
+   "warps": [
+    {
+     "x": 2,
+     "y": 7,
+     "to_map": "Viridian City",
+     "to_warp": 3
+    },
+    {
+     "x": 3,
+     "y": 7,
+     "to_map": "Viridian City",
+     "to_warp": 3
+    }
+   ]
+  },
+  "Viridian Pokecenter": {
+   "map_id": 41,
+   "size": [
+    14,
+    8
+   ],
+   "size_blocks": [
+    7,
+    4
+   ],
+   "connections": {},
+   "warps": [
+    {
+     "x": 3,
+     "y": 7,
+     "to_map": "Viridian City",
+     "to_warp": 0
+    },
+    {
+     "x": 4,
+     "y": 7,
+     "to_map": "Viridian City",
+     "to_warp": 0
+    }
+   ]
+  },
+  "Viridian School": {
+   "map_id": 43,
+   "size": [
+    8,
+    8
+   ],
+   "size_blocks": [
+    4,
+    4
+   ],
+   "connections": {},
+   "warps": [
+    {
+     "x": 2,
+     "y": 7,
+     "to_map": "Viridian City",
+     "to_warp": 2
+    },
+    {
+     "x": 3,
+     "y": 7,
+     "to_map": "Viridian City",
+     "to_warp": 2
+    }
+   ]
+  },
+  "Warden's House": {
+   "map_id": 155,
+   "size": [
+    10,
+    8
+   ],
+   "size_blocks": [
+    5,
+    4
+   ],
+   "connections": {},
+   "warps": [
+    {
+     "x": 4,
+     "y": 7,
+     "to_map": "Fuchsia City",
+     "to_warp": 3
+    },
+    {
+     "x": 5,
+     "y": 7,
+     "to_map": "Fuchsia City",
+     "to_warp": 3
+    }
+   ]
+  }
+ }
+}

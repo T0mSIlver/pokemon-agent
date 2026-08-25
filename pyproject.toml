@@ -68,11 +68,14 @@ include = ["pokemon_agent*"]
 
 [tool.setuptools.package-data]
 "pokemon_agent.dashboard" = ["static/**/*"]
-"pokemon_agent" = ["data/*.json"]
+"pokemon_agent" = ["data/*.json", "data/game/*.json", "data/guides/*.md"]
 
 [tool.ruff]
 line-length = 100
 target-version = "py310"
+# Throwaway reproduction scripts written by delegated review agents. Kept on
+# disk while a finding is open, never shipped, never linted.
+extend-exclude = [".agent-runs"]
 
 [tool.ruff.lint]
 select = ["E", "F", "I", "W"]
