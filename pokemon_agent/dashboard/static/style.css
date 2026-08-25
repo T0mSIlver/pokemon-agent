@@ -1093,11 +1093,13 @@ pre {
 .hud-rail-key[data-key="done"]::before    { background: var(--hud-cyan); opacity: 1; }
 .hud-rail-key[data-key="current"]::before { background: var(--hud-hazard); opacity: 1; }
 .hud-rail-key[data-key="todo"]::before    { background: var(--hud-line-strong); opacity: 0.7; }
-.hud-rail-key[data-key="badge"]::before   {
-    background: none;
-    border: 1px solid var(--hud-good);
-    transform: rotate(45deg) scale(0.72);
-}
+/* Badge and item are kinds, not states: their key is the marker glyph in the
+   label, so the swatch is dropped rather than implying a fourth colour. */
+.hud-rail-key[data-key="badge"] { color: var(--hud-good); }
+.hud-rail-key[data-key="item"]  { color: var(--hud-plasma); }
+
+.hud-rail-key[data-key="badge"]::before,
+.hud-rail-key[data-key="item"]::before { content: none; }
 
 /* Wide content scrolls inside its own box; the page body never does. */
 .hud-rail-scroll {
@@ -1111,14 +1113,18 @@ pre {
     align-items: flex-end;
     gap: 2px;
     min-width: 567px;   /* 63 rungs × 9px: below this the box scrolls */
-    height: 58px;
+    height: 52px;
 }
 
+/* Every rung is the same height. Milestone kind is a category, not a quantity —
+   a taller tick used to read as a bigger number and there is no number there.
+   Kind is a marker above the tick instead: diamond for a badge, dot for an
+   item, nothing for a plain event. */
 .hud-rung {
     flex: 1 1 0;
     min-width: 7px;
     padding: 0;
-    height: 32px;
+    height: 30px;
     align-self: flex-end;
     background: var(--hud-surface-2);
     border: 1px solid var(--hud-line);
@@ -1127,11 +1133,32 @@ pre {
     position: relative;
     transition: background 180ms var(--ease-hud),
                 border-color 180ms var(--ease-hud),
-                height 180ms var(--ease-hud);
+                box-shadow 180ms var(--ease-hud);
 }
 
-.hud-rung[data-kind="badge"] { height: 48px; }
-.hud-rung[data-kind="item"]  { height: 39px; }
+.hud-rung[data-kind="badge"]::before,
+.hud-rung[data-kind="item"]::before {
+    content: "";
+    position: absolute;
+    left: 50%;
+    top: -9px;
+    width: 5px;
+    height: 5px;
+    transform: translateX(-50%);
+    border: 1px solid var(--hud-good);
+}
+
+.hud-rung[data-kind="badge"]::before {
+    transform: translateX(-50%) rotate(45deg);
+}
+
+.hud-rung[data-kind="item"]::before {
+    border-radius: 50%;
+    border-color: var(--hud-plasma);
+}
+
+.hud-rung[data-state="done"][data-kind="badge"]::before { background: var(--hud-good); }
+.hud-rung[data-state="done"][data-kind="item"]::before  { background: var(--hud-plasma); }
 
 .hud-rung[data-state="done"] {
     background: var(--hud-cyan);
@@ -1152,11 +1179,12 @@ pre {
     animation: hud-pulse 2.2s var(--ease-hud) infinite;
 }
 
-/* A caret over the current rung: position readable without colour. */
+/* A caret over the current rung: position readable without colour. It sits
+   above the kind marker so the two never collide on a badge rung. */
 .hud-rung[data-state="current"]::after {
     content: "▾";
     position: absolute;
-    top: -13px;
+    top: -20px;
     left: 50%;
     transform: translateX(-50%);
     font-size: 0.6rem;
@@ -1173,7 +1201,7 @@ pre {
 .hud-rung:focus-visible {
     outline: none;
     border-color: var(--hud-text);
-    height: 58px;
+    box-shadow: 0 0 0 1px var(--hud-text);
 }
 
 .hud-rail-underline {
@@ -1215,6 +1243,9 @@ pre {
     border: 1px solid var(--hud-line);
 }
 
+/* `display: block` above would otherwise beat the hidden attribute. */
+.hud-presses-chart[hidden] { display: none; }
+
 .hud-presses-chart text {
     font-family: var(--font-mono);
     font-size: 7px;
@@ -1231,6 +1262,17 @@ pre {
     font-size: var(--fs-micro);
     color: var(--hud-dim);
     font-variant-numeric: tabular-nums;
+}
+
+/* With no rung priced there is no plot, so the caption stands in for the chart
+   rather than a blank plot area standing in for the caption. */
+.hud-chart-caption[data-state="empty"] {
+    max-width: 560px;
+    padding: 8px 10px;
+    line-height: 1.55;
+    background: var(--hud-surface-2);
+    border: 1px solid var(--hud-line);
+    border-left: 3px solid var(--hud-line-strong);
 }
 
 /* -- first-gym benchmark -------------------------------------------- */
@@ -1401,9 +1443,8 @@ pre {
     letter-spacing: 0.06em;
     color: var(--hud-dim);
     font-variant-numeric: tabular-nums;
-    white-space: nowrap;
-    overflow: hidden;
-    text-overflow: ellipsis;
+    /* Wraps rather than ellipsing: nothing on this page gets cut off. */
+    overflow-wrap: anywhere;
 }
 
 .hud-health-pill[data-sev="good"] { border-left-color: var(--sev-good); background: var(--sev-good-soft); }
@@ -1491,7 +1532,9 @@ pre {
 /* ------------------------------------------------------------------ */
 .hud-hero {
     display: grid;
-    grid-template-columns: minmax(0, 2.45fr) minmax(320px, 0.95fr);
+    /* The annotated frame is the operator's main view of what the model sees,
+       so the right column is wide enough to render it near 1:1. */
+    grid-template-columns: minmax(0, 1.75fr) minmax(360px, 1fr);
     gap: var(--sp-4);
 }
 
@@ -1499,8 +1542,10 @@ pre {
 .hud-chat {
     display: flex;
     flex-direction: column;
-    min-height: 68vh;
-    max-height: 86vh;
+    /* Bounded in pixels as well as vh: on a tall window a bare 68vh floor left
+       hundreds of blank pixels under the last stream entry. */
+    min-height: clamp(360px, 68vh, 760px);
+    max-height: clamp(420px, 86vh, 980px);
 }
 
 .hud-chat-body {
@@ -1914,20 +1959,73 @@ pre {
     display: flex;
     flex-direction: column;
     gap: var(--sp-3);
-    min-height: 62vh;
+    /* A viewport-only floor reserves 62% of a very tall window whether or not
+       there is anything to put in it. Cap it so the panel ends at its content. */
+    min-height: clamp(360px, 62vh, 720px);
 }
 
+/* One stacked pair: both panes take the full column width, so their edges line
+   up, and each image keeps its own aspect ratio instead of being letterboxed
+   into a shared one. The annotated frame gets the whole column because it is
+   the image the model navigates from. */
 .hud-frame-shot {
     position: relative;
     display: grid;
-    grid-template-columns: minmax(0, 2fr) minmax(0, 1fr);
-    gap: var(--sp-2);
+    grid-template-columns: minmax(0, 1fr);
+    gap: var(--sp-3);
 }
+
+.hud-frame-pane {
+    display: flex;
+    flex-direction: column;
+    gap: 5px;
+    margin: 0;
+    min-width: 0;
+}
+
+.hud-frame-cap {
+    display: flex;
+    align-items: baseline;
+    gap: var(--sp-2);
+    flex-wrap: wrap;
+    font-family: var(--font-display);
+    font-size: 0.58rem;
+    letter-spacing: 0.18em;
+    text-transform: uppercase;
+}
+
+.hud-frame-cap-name {
+    display: inline-flex;
+    align-items: center;
+    gap: 5px;
+    font-weight: 600;
+    color: var(--hud-hazard);
+}
+
+.hud-frame-cap-name--raw { color: var(--hud-cyan); }
+
+.hud-frame-cap-tag {
+    font-family: var(--font-mono);
+    font-size: 0.56rem;
+    letter-spacing: 0.08em;
+    text-transform: none;
+    color: var(--hud-dim);
+}
+
+.hud-frame-cap-live {
+    padding: 1px 6px;
+    color: var(--hud-cyan);
+    border: 1px solid var(--hud-cyan);
+    background: rgba(92, 224, 255, 0.08);
+}
+
+.hud-frame-cap-live[hidden] { display: none; }
 
 .hud-frame-view {
     position: relative;
+    display: block;
     background: #000;
-    aspect-ratio: 10 / 9;
+    min-height: 96px;
     overflow: hidden;
     cursor: zoom-in;
     outline: none;
@@ -1940,11 +2038,26 @@ pre {
 
 .hud-frame-annotated {
     border: 1px solid var(--hud-hazard);
+    /* A rendered diagram, not pixel art: past its natural size it only blurs, so
+       the box hugs the image instead of stretching it. */
+    width: fit-content;
+    max-width: 100%;
+}
+
+.hud-frame-annotated img {
+    width: auto;
+    max-width: 100%;
+    image-rendering: auto;
 }
 
 .hud-frame-raw {
     border: 1px solid var(--hud-line-strong);
     box-shadow: inset 0 0 24px rgba(92, 224, 255, 0.12);
+    /* Same left edge and same treatment as the annotated frame, at a size that
+       suits a 160×144 source and keeps the panel level with the stream beside
+       it. Click either frame for the full-size view. */
+    width: 288px;
+    max-width: 100%;
 }
 
 .hud-frame-view:hover,
@@ -1961,13 +2074,16 @@ pre {
     cursor: zoom-out;
 }
 
+/* Height follows the image, so nothing is letterboxed and nothing is cropped. */
 .hud-frame-view img {
+    display: block;
     width: 100%;
-    height: 100%;
-    object-fit: contain;
+    height: auto;
     image-rendering: pixelated;
 }
 
+/* Corner tag for the inline frame reads in the stream, which are thumbnails
+   with nothing to obscure. The two panel frames caption themselves instead. */
 .hud-frame-label {
     position: absolute;
     padding: 2px 6px;
@@ -2020,6 +2136,8 @@ pre {
 
 .hud-frame-view:fullscreen img,
 .hud-frame-view:-webkit-full-screen img {
+    width: 100%;
+    height: 100%;
     object-fit: contain;
 }
 
@@ -2028,10 +2146,6 @@ pre {
 .hud-frame-view:-webkit-full-screen .hud-frame-label,
 .hud-frame-view:-webkit-full-screen .hud-frame-bracket {
     z-index: 4;
-}
-
-.hud-frame-raw {
-    position: relative;
 }
 
 .hud-frame-stats {

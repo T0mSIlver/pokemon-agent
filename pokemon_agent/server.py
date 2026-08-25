@@ -2631,6 +2631,39 @@ async def progress():
     return payload
 
 
+@app.get("/gamedata/{topic}")
+async def game_data(
+    topic: str,
+    # `map` shadows the builtin inside this function and nowhere else; it is
+    # spelled that way because it is the query string the agent types.
+    map: Optional[str] = None,
+    name: Optional[str] = None,
+    limit: Optional[int] = None,
+    full: bool = False,
+    against: Optional[str] = None,
+):
+    """The static game database: trainers, encounters, items, shops, species, moves, types.
+
+    Read-only and emulator-free — the ROM is not consulted and nothing is
+    pressed, so a script may ask before it commits to a plan. Answers are
+    shaped to be printed rather than dumped; see
+    :data:`capabilities.GAMEDATA_TOPICS` for the list.
+    """
+    try:
+        return capabilities.gamedata_payload(
+            topic,
+            map_name=map,
+            name=name,
+            limit=limit,
+            full=full,
+            against=against,
+        )
+    except capabilities.CapabilityError as exc:
+        raise _capability_error(exc) from exc
+    except FileNotFoundError as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
+
+
 # ---------------------------------------------------------------------------
 # WebSocket
 # ---------------------------------------------------------------------------

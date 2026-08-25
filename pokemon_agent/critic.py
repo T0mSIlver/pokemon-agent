@@ -28,6 +28,8 @@ from pathlib import Path
 from typing import Any, Awaitable, Callable, Iterable, Iterator, Optional
 
 from pokemon_agent.agent_cli import ActionError, expand_actions
+from pokemon_agent.bench.metrics import compute as compute_run_metrics
+from pokemon_agent.bench.registry import RunRegistry
 from pokemon_agent.pi_supervisor import (
     IMAGE_SUFFIXES,
     extract_leading_comment,
@@ -73,16 +75,22 @@ SALVAGED_ANSWER_NOTICE = (
 #: Images the critic gets to look at, in the order pi receives them.
 CRITIC_IMAGE_FILES = ("latest_map.png", "latest_frame_annotated.png")
 
-#: Hard ceiling on the handoff, in words. The next session reads this text exactly
-#: once, against a 110k-token context budget: 900 words is roughly 1,200 tokens, or
-#: about 1% of that budget. The old 300-word cap saved ~800 tokens and paid for it
-#: by chopping the retrospective mid-sentence, which routinely lost the concrete
-#: "do this differently next time" list at the end - the single most valuable thing
-#: the critic produces. Spending the tokens is the better trade every time.
-MAX_HANDOFF_WORDS = 900
+#: Hard ceiling on the critic's prose, in words.
+#:
+#: This was 900 - about 1,200 tokens - back when the retrospective was the whole
+#: handoff and its opening paragraph had to carry what the session achieved. It no
+#: longer does: :class:`SessionFacts` states that from the receipts, in a form the
+#: critic cannot get wrong, and rides above the prose in the same message. What is
+#: left for the critic is the part a counter cannot produce - which mistake cost
+#: the most and what to do instead - and that is a few paragraphs, not an essay.
+#:
+#: The first principle is minimum context: the agent builds its own, and every word
+#: here is a word it did not spend looking at the game. 260 words is roughly 350
+#: tokens, and the whole handoff lands around 500.
+MAX_HANDOFF_WORDS = 260
 #: What the critic is *asked* for. The ceiling above is a backstop, not the target,
 #: so a critic that lands slightly long still gets to finish its own last sentence.
-TARGET_HANDOFF_WORDS = 500
+TARGET_HANDOFF_WORDS = 160
 
 #: Appended when the cap does bite, in place of a bare "...", so a shortened handoff
 #: says that it was shortened and how much is missing.
@@ -542,6 +550,318 @@ def read_notes(workspace_dir: Path, limit: int = NOTES_CHAR_LIMIT) -> str:
     return text[:limit].rstrip() + "\n...[truncated]..."
 
 
+# ---------------------------------------------------------------------------
+# Ground truth off the run receipts
+#
+# Everything above this line is the model's account of the session, read back out
+# of its own transcript. Everything below is the harness's account, read out of
+# ``<data_dir>/runs/<run_id>/receipts.jsonl``, which the server writes after each
+# action batch and the agent never touches.
+#
+# The distinction is the point. Ask a model what it achieved and you get an answer
+# shaped like an achievement: one real retrospective on disk told the next session
+# to go and beat a gym leader the run had already beaten, because nothing in the
+# digest said the badge was won. Counts are not opinions, so the critic is handed
+# them and told not to argue with them, and the next session is handed them
+# whether or not a critic ever ran.
+# ---------------------------------------------------------------------------
+
+#: Where the harness records which run a session belonged to and when it began, so
+#: the session after it can still slice the receipts when the server was killed in
+#: between and no in-memory state survived.
+SESSION_MARK_FILENAME = "session_mark.json"
+
+#: ``tool`` on the bookkeeping receipt a run opens with. It spent no buttons, so
+#: it is not a thing the agent reached for and does not belong in the tool mix.
+RUN_START_TOOL = "run_start"
+
+SAVES_DIRNAME = "saves"
+#: The harness writes one of these per batch. There are thousands and none of them
+#: is a place the agent chose to come back to, so none is worth a token.
+AUTO_SAVE_PREFIX = "auto__"
+SAVE_SUFFIX = ".state"
+#: Named saves offered to the next session, newest first. Six is one line.
+MAX_HANDOFF_SAVES = 6
+#: Milestone ids named before the rest collapse into "+n more".
+MAX_HANDOFF_MILESTONES = 4
+#: Tools named in the mix line.
+MAX_HANDOFF_TOOLS = 4
+#: Below this a revisited tile is just walking, not a trap.
+HOTSPOT_MIN_VISITS = 5
+
+FACTS_HEADING = "Ground truth from the run receipts"
+FACTS_DIGEST_HEADING = f"{FACTS_HEADING} (authoritative - do not contradict these)"
+
+
+def _plural(count: int, noun: str, plural: str = "") -> str:
+    return f"{count:,} " + (noun if count == 1 else (plural or noun + "s"))
+
+
+def _position(pos: Optional[tuple[int, int]]) -> str:
+    return f"({pos[0]},{pos[1]})" if pos else "?"
+
+
+@dataclass(frozen=True)
+class SessionFacts:
+    """What the receipts say the run has cost and the last session did with it.
+
+    Every field is safe on an empty run: a run whose first session is still
+    starting has one receipt in it, and the next session must still get a usable
+    first message out of that.
+    """
+
+    run_id: str = ""
+    session_index: int = 0
+    total_presses: int = 0
+    #: Milestone ids true at the end of the run, baseline included, newest first.
+    done: tuple[str, ...] = ()
+    done_count: int = 0
+    #: Milestones the finished session earned. Usually empty, and that is the point.
+    gained: tuple[str, ...] = ()
+
+    session_presses: int = 0
+    session_batches: int = 0
+    blocked_batches: int = 0
+    position_samples: int = 0
+    unique_positions: int = 0
+    ended_map: str = ""
+    ended_pos: Optional[tuple[int, int]] = None
+    ended_hp: Optional[tuple[int, int]] = None
+    party_size: int = 0
+    whiteouts: int = 0
+    reloads: int = 0
+    hot_map: str = ""
+    hot_pos: Optional[tuple[int, int]] = None
+    hot_visits: int = 0
+    tool_mix: tuple[tuple[str, int], ...] = ()
+    saves: tuple[str, ...] = ()
+
+    @property
+    def presses_per_new_tile(self) -> Optional[float]:
+        if not self.unique_positions or not self.session_presses:
+            return None
+        return round(self.session_presses / self.unique_positions, 1)
+
+    def lines(self) -> list[str]:
+        """The block as bullets. A row with nothing to say is not written."""
+
+        rows = [
+            f"- Run {self.run_id or 'unknown'}, session {self.session_index or 1}. "
+            f"{_plural(self.total_presses, 'press', 'presses')} spent on it so far."
+        ]
+        if self.done:
+            named = list(self.done[:MAX_HANDOFF_MILESTONES])
+            rest = self.done_count - len(named)
+            listed = ", ".join(named) + (f" +{rest} more" if rest > 0 else "")
+            gained = (
+                "Gained last session: " + ", ".join(self.gained)
+                if self.gained
+                else "Nothing new last session"
+            )
+            rows.append(f"- Already done ({self.done_count}): {listed}. {gained}.")
+
+        tail = f"ended on {self.ended_map or '?'} {_position(self.ended_pos)}"
+        if self.ended_hp:
+            tail += f", HP {self.ended_hp[0]}/{self.ended_hp[1]}, party {self.party_size}"
+        rows.append(
+            f"- Last session: {_plural(self.session_presses, 'press', 'presses')} over "
+            f"{_plural(self.session_batches, 'batch', 'batches')}, {tail}."
+        )
+
+        if self.unique_positions:
+            rate = self.presses_per_new_tile
+            blocked = ""
+            if self.session_batches:
+                share = round(100 * self.blocked_batches / self.session_batches)
+                blocked = (
+                    f"; {self.blocked_batches:,} of {self.session_batches:,} "
+                    f"batches ({share}%) moved nothing"
+                )
+            rows.append(
+                f"- Walking: {self.unique_positions:,} distinct tiles from "
+                f"{self.position_samples:,} samples"
+                + (f" ({rate} presses per new tile)" if rate else "")
+                + blocked
+                + "."
+            )
+
+        if self.hot_pos and self.hot_visits >= HOTSPOT_MIN_VISITS:
+            rows.append(
+                f"- Most revisited tile: {self.hot_map or '?'} {_position(self.hot_pos)}, "
+                f"stood on {self.hot_visits:,} times."
+            )
+
+        if self.whiteouts or self.reloads:
+            rows.append(f"- Whiteouts: {self.whiteouts}. Save reloads: {self.reloads}.")
+
+        if self.tool_mix:
+            rendered = ", ".join(f"{name} x{count}" for name, count in self.tool_mix)
+            rows.append(f"- Tools it reached for: {rendered}.")
+
+        if self.saves:
+            rows.append(
+                "- Saves on disk, newest first, loadable with `./poke load <name>`: "
+                + ", ".join(self.saves)
+                + "."
+            )
+        return rows
+
+    def render(self, heading: str = FACTS_HEADING) -> str:
+        rows = self.lines()
+        return (f"### {heading}\n" + "\n".join(rows)) if rows else ""
+
+
+def list_named_saves(data_dir: Optional[Path], limit: int = MAX_HANDOFF_SAVES) -> tuple[str, ...]:
+    """The newest saves the agent named itself, newest first.
+
+    A save it never lists is a save it never loads. ``./poke saves`` was called
+    zero times across the nine sessions this was built from, while ``pewter_start``
+    sat on disk through three sessions of the trap it would have escaped.
+    """
+
+    if data_dir is None or limit <= 0:
+        return ()
+    try:
+        entries = [
+            (entry.stat().st_mtime, entry.stem)
+            for entry in (Path(data_dir) / SAVES_DIRNAME).iterdir()
+            if entry.suffix == SAVE_SUFFIX and not entry.name.startswith(AUTO_SAVE_PREFIX)
+        ]
+    except OSError:
+        return ()
+    entries.sort(key=lambda item: (-item[0], item[1]))
+    return tuple(name for _, name in entries[:limit])
+
+
+def collect_session_facts(
+    *,
+    data_dir: Optional[Path],
+    run_id: Optional[str],
+    since_t: Optional[float] = None,
+    session_index: int = 0,
+    saves_limit: int = MAX_HANDOFF_SAVES,
+) -> Optional[SessionFacts]:
+    """Read the run back off disk. ``None`` when there is nothing to read.
+
+    ``since_t`` splits the run into "the session that just ended" and everything
+    before it. It is a wall clock rather than a sequence number on purpose: the
+    sequence counter lives in a process a crash takes with it, and the mark file
+    on disk does not.
+    """
+
+    if data_dir is None or not run_id:
+        return None
+    try:
+        record = RunRegistry(Path(data_dir)).load(run_id)
+    except Exception:  # noqa: BLE001 — an unreadable run is a run with no facts
+        return None
+    receipts = tuple(record.receipts)
+    if not receipts:
+        return None
+
+    metrics = compute_run_metrics(record)
+    baseline: list[str] = []
+    for receipt in receipts:
+        raw = receipt.extra.get("baseline_milestones")
+        if isinstance(raw, list):
+            baseline = [str(item) for item in raw]
+            break
+
+    # An empty slice means the mark is newer than every receipt — a session that
+    # pressed nothing. Reporting the whole run there would be a lie; reporting
+    # zero is the truth, so the slice stands as it is.
+    session = [one for one in receipts if since_t is None or one.t >= since_t]
+    # Newest first: the last rung reached is the one that says where the run is.
+    earned = [item.milestone_id for item in reversed(metrics.attainments)]
+
+    visits: Counter[tuple[str, int, int]] = Counter()
+    tools: Counter[str] = Counter()
+    gained: list[str] = []
+    session_presses = batches = blocked = samples = whiteouts = reloads = party_size = 0
+    ended_map = ""
+    ended_pos: Optional[tuple[int, int]] = None
+    ended_hp: Optional[tuple[int, int]] = None
+    for receipt in session:
+        session_presses += receipt.presses
+        gained.extend(receipt.milestones_new)
+        if receipt.is_action_batch:
+            batches += 1
+            if receipt.moved == 0:
+                blocked += 1
+        if receipt.tool and receipt.tool != RUN_START_TOOL:
+            tools[receipt.tool] += 1
+        whiteouts += int(receipt.whiteout)
+        reloads += int(receipt.reloaded)
+        if receipt.pos is not None:
+            samples += 1
+            visits[(receipt.map_name or "?", receipt.pos[0], receipt.pos[1])] += 1
+            ended_map, ended_pos = receipt.map_name, receipt.pos
+        if receipt.hp is not None:
+            ended_hp = receipt.hp
+        if receipt.party_size:
+            party_size = receipt.party_size
+
+    hot_map, hot_pos, hot_visits = "", None, 0
+    if visits:
+        (hot_map, x, y), hot_visits = visits.most_common(1)[0]
+        hot_pos = (x, y)
+
+    return SessionFacts(
+        run_id=record.run_id,
+        session_index=session_index or 1,
+        total_presses=metrics.total_presses,
+        done=tuple(dict.fromkeys([*earned, *baseline])),
+        done_count=len(dict.fromkeys([*earned, *baseline])),
+        gained=tuple(dict.fromkeys(gained)),
+        session_presses=session_presses,
+        session_batches=batches,
+        blocked_batches=blocked,
+        position_samples=samples,
+        unique_positions=len(visits),
+        ended_map=ended_map,
+        ended_pos=ended_pos,
+        ended_hp=ended_hp,
+        party_size=party_size,
+        whiteouts=whiteouts,
+        reloads=reloads,
+        hot_map=hot_map,
+        hot_pos=hot_pos,
+        hot_visits=hot_visits,
+        tool_mix=tuple(tools.most_common(MAX_HANDOFF_TOOLS)),
+        saves=list_named_saves(data_dir, saves_limit),
+    )
+
+
+def session_mark_path(workspace_dir: Path) -> Path:
+    return critic_debug_dir(workspace_dir) / SESSION_MARK_FILENAME
+
+
+def read_session_mark(workspace_dir: Path) -> JsonDict:
+    """What the previous session stamped about itself, or ``{}``."""
+
+    try:
+        payload = json.loads(session_mark_path(workspace_dir).read_text(encoding="utf-8"))
+    except (OSError, UnicodeDecodeError, ValueError):
+        return {}
+    return payload if isinstance(payload, dict) else {}
+
+
+def write_session_mark(
+    workspace_dir: Path, *, run_id: Optional[str], started_t: float, session_index: int
+) -> None:
+    """Stamp this session into the workspace. Best effort, never raises."""
+
+    payload = {
+        "run_id": run_id or "",
+        "started_t": float(started_t),
+        "session_index": int(session_index),
+    }
+    with contextlib.suppress(OSError):
+        session_mark_path(workspace_dir).write_text(
+            json.dumps(payload, sort_keys=True) + "\n", encoding="utf-8"
+        )
+
+
 @dataclass
 class DigestInput:
     """Everything the digest can draw on. Every field is optional."""
@@ -557,6 +877,8 @@ class DigestInput:
     map_summary: Optional[JsonDict] = None
     notes: str = ""
     calls: list[ToolCall] = field(default_factory=list)
+    #: Receipts, not recollection. Rendered first and never trimmed.
+    facts: Optional[SessionFacts] = None
 
 
 def build_digest(data: DigestInput, *, char_budget: int = DIGEST_CHAR_BUDGET) -> str:
@@ -582,6 +904,7 @@ def build_digest(data: DigestInput, *, char_budget: int = DIGEST_CHAR_BUDGET) ->
     def render(narration_rows: list[str], recent_rows: list[str], notes: str) -> str:
         sections = [
             "# Finished session digest",
+            _section(FACTS_DIGEST_HEADING, data.facts.lines() if data.facts else []),
             _section("Session", header),
             _section("Game state at the start of the session", format_game_state(data.start_state)),
             _section("Game state now", format_game_state(data.final_state)),
@@ -622,13 +945,16 @@ Below is a digest of what the finished session did: its goal, the game state bef
 measured statistics from its own tool calls, the map it explored, the narration it wrote, its
 last tool calls, and the notes file it maintains.
 
+The "{FACTS_DIGEST_HEADING}" block is measured, not remembered. Where it and the
+narration disagree, it wins, and a claim it contradicts is a claim you must not make. It is also
+handed to the next agent verbatim, above whatever you write, so do not restate what it says.
+
 The retrospective is the next agent's first instruction. Cover, in this order and with no
 preamble:
 
-1. What the last session actually achieved, in one or two lines.
-2. The specific mistakes it made, each cited with evidence from the numbers above.
-3. Concrete, checkable things to do differently next session.
-4. Anything learned about this map worth carrying forward: layout, exits, where encounters are.
+1. The mistake that cost the most presses, cited with numbers from above.
+2. Concrete, checkable things to do differently, and what to do instead.
+3. Anything learned about this map worth carrying forward: exits, walls, ledges, encounters.
 
 Hard constraints:
 - Aim for about {TARGET_HANDOFF_WORDS} words; {MAX_HANDOFF_WORDS} is the hard ceiling. Finish

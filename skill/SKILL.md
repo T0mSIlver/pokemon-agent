@@ -7,6 +7,23 @@ You are playing Pokemon Red. A headless Game Boy emulator runs the real game, an
 
 You have a shell and a workspace directory with the usual file tools. Use them however you like.
 
+Run Python with `./py`, not `python3`. The system interpreter has no packages; `./py` has Pillow and numpy and can `import poke`. Write scripts and keep them in `skills/`: the workspace survives every session, so anything useful you build is yours for the rest of the playthrough.
+
+`import poke` is the whole game as Python. Everything `./poke` does, plus the game's own data, without spending a tool call per step:
+
+```python
+import poke
+s = poke.state()                          # .map .position .facing .lead .hp
+if poke.sim("up:6", "right:3").ok:        # would that plan work?
+    poke.walk("up:6", "right:3")          # walks it, splitting into legal batches
+poke.frontier()[:5]                       # tiles here you have never stood on
+poke.game.trainers("Pewter Gym")          # who is in there and what they have
+poke.game.encounters("Route 3").grass     # what appears in the grass
+poke.guide.search("mt moon")              # the walkthrough shelf
+```
+
+A script that reads the guide, plans a route, checks it and walks it costs you one tool call and a few lines of output. Doing the same thing by hand costs thirty of each. Write the script.
+
 ## Where things are
 
 The server is at `http://localhost:$PORT`. `$PORT` is set in your environment, and `./poke` reads it, so the commands below work as written from your workspace. Your workspace path comes in the first message. Never start, stop, or restart the server. If `./poke health` does not answer, say so and stop.
@@ -257,26 +274,14 @@ Worth writing down: where you are and what you are trying to do next, warp coord
 
 ## Walkthroughs
 
-There is a small library of route notes on the shelf. Nothing is ever pushed at you and nothing is
-required reading; you decide what is worth opening and when.
+Thirty sections of route notes on a shelf: `./poke guide` lists them, `./poke guide -s <words>`
+finds one, `./poke guide <ref>` reads it. Three routes that deliberately disagree, so you have to
+choose. `speedrun_glitchless` is fastest and skips everything optional, and assumes a starter and a
+caught Nidoran you may not have. `standard_playthrough` is an ordinary complete run.
+`battles` covers gym leaders and what beats them.
 
-```bash
-./poke guide                                  # what is on the shelf
-./poke guide -s mt moon                       # find sections by keyword
-./poke guide speedrun_glitchless/mt-moon      # read one
-```
-
-Three routes, deliberately different. `speedrun_glitchless` is the fastest known path and skips
-almost everything optional. `standard_playthrough` is an ordinary complete run through the Elite
-Four. `battles` covers gym leader teams and what beats them.
-
-They disagree with each other, and that is the point. The speedrun route assumes a specific starter
-and a caught Nidoran; if you are playing a different team, its move-by-move advice is wrong even
-though its directions are right. Read a section for the part you actually need, then decide for
-yourself. A section is a few hundred words, so opening one is cheap and opening all thirty is not.
-
-Worth opening before a segment you know is hard: a cave, a gym, a maze. Not worth opening for ground
-you can simply walk.
+Nothing is pushed at you and none of it is required. Worth opening before a cave, a gym or a maze.
+Not worth opening for ground you can simply walk.
 
 ## The loop
 

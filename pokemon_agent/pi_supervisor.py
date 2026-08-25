@@ -9,6 +9,8 @@ import json
 import os
 import re
 import shutil
+import subprocess
+import sys
 import time
 import uuid
 from collections import deque
@@ -30,6 +32,29 @@ CriticContextProvider = Callable[[], Union[dict[str, Any], Awaitable[dict[str, A
 
 DEFAULT_TOOLS = ["read", "bash", "edit", "write"]
 FRAME_IMAGE_FILES = ("latest_frame_annotated.png", "latest_frame.png")
+
+#: Dropped into the workspace's `skills/` the first time it is staged, and never
+#: rewritten afterwards. The point it has to make is that the directory is not
+#: scratch space: it is still here next session, and nothing else reads it.
+WORKSPACE_SKILLS_README = """\
+# skills
+
+Scripts here survive. This workspace outlives a session, so anything you leave
+in this directory is still here next time, and nothing else in the harness reads
+it or cleans it out. It is yours.
+
+Run one with the workspace interpreter:
+
+    ./py skills/cross_mt_moon.py
+
+`import poke` resolves from anywhere under the workspace when you run scripts
+that way. `poke.py` is the client — state, act, sim, walk, goto, calc, frontier,
+guide and the game database, all as Python. `./poke --help` is the same server
+as one-shot commands, for when a script would be overkill.
+
+A script that worked once is worth keeping. A script that nearly worked is worth
+fixing rather than rewriting from memory next session.
+"""
 STREAM_ENTRY_CAP = 5000
 
 # Text the operator can open in the dashboard is never silently shortened. Short
@@ -2123,11 +2148,34 @@ class PiSupervisor:
     # `poke` exists because hand-built curl JSON was losing roughly 40% of the
     # agent's actions to a single dropped closing quote. Bare arguments cannot be
     # misquoted: the CLI has no JSON and no string literal to truncate.
-    WORKSPACE_HELPERS = {"poke": Path("pokemon_agent") / "agent_cli.py"}
+    #
+    # `poke.py` is the same server as a library, so a plan longer than one batch
+    # is one script instead of thirty tool calls and thirty observations. `py`
+    # runs it under the workspace interpreter, which has Pillow and the
+    # workspace on PYTHONPATH.
+    WORKSPACE_HELPERS = {
+        "poke": Path("pokemon_agent") / "agent_cli.py",
+        "poke.py": Path("pokemon_agent") / "agent_api.py",
+        "py": Path("pokemon_agent") / "data" / "workspace" / "py",
+    }
 
-    #: Earlier helpers, removed. A workspace outlives a session, so a stale copy
-    #: would keep working and the quoting failure would come back with it.
-    STALE_WORKSPACE_HELPERS = ("agent_curl.sh", "act")
+    #: Earlier helpers and dead contracts, removed. A workspace outlives a
+    #: session, so a stale copy would keep working: the quoting failure would
+    #: come back with `agent_curl.sh`, and `turn_plan.json` would keep answering
+    #: for a turn-plan protocol that no longer exists.
+    STALE_WORKSPACE_HELPERS = ("agent_curl.sh", "act", "turn_plan.json")
+
+    #: The model's own directory. Staging creates it and explains it once, then
+    #: never touches what is inside.
+    WORKSPACE_SKILLS_DIRNAME = "skills"
+
+    #: The interpreter `py` runs. Built once, never rebuilt.
+    WORKSPACE_VENV_DIRNAME = ".venv"
+    WORKSPACE_VENV_PACKAGES = ("pillow", "numpy")
+    WORKSPACE_VENV_TIMEOUT_SECONDS = 300.0
+    #: Written inside the venv once its packages are in. Presence is what
+    #: "already built" means; a bare directory is a build that did not finish.
+    WORKSPACE_VENV_STAMP = ".pokemon-agent-packages"
 
     def _stage_workspace_helpers(self) -> None:
         for name, relative_source in self.WORKSPACE_HELPERS.items():
@@ -2139,6 +2187,66 @@ class PiSupervisor:
             destination.chmod(0o755)
         for stale in self.STALE_WORKSPACE_HELPERS:
             (self.workspace_dir / stale).unlink(missing_ok=True)
+        self._stage_workspace_skills()
+        self._stage_workspace_venv()
+
+    def _stage_workspace_skills(self) -> None:
+        """Make the scripts directory, and say once that it survives.
+
+        The workspace outlives a session; `NOTES.md` already depends on that.
+        The README is written only when it is absent, because everything under
+        this directory belongs to the model — including, after the first
+        session, the README.
+        """
+        skills_dir = self.workspace_dir / self.WORKSPACE_SKILLS_DIRNAME
+        skills_dir.mkdir(parents=True, exist_ok=True)
+        readme = skills_dir / "README.md"
+        if not readme.exists():
+            readme.write_text(WORKSPACE_SKILLS_README, encoding="utf-8")
+
+    def _stage_workspace_venv(self) -> None:
+        """A Python whose imports work, for `py` to run scripts with.
+
+        The system python3 has no third-party packages, so the first script
+        written to open a frame with Pillow simply crashed. Built once: a
+        rebuild would put tens of seconds on the front of every session start.
+
+        "Once" is stamped, not inferred from the directory existing. A venv
+        whose ``pip install`` failed still has a ``bin/python``, so treating the
+        directory as proof would leave the interpreter permanently short of the
+        packages it exists to provide; with the stamp, the next session finishes
+        the job instead. Failing outright is a missing convenience, never a
+        reason a run cannot start.
+        """
+        venv_dir = self.workspace_dir / self.WORKSPACE_VENV_DIRNAME
+        interpreter = venv_dir / "bin" / "python"
+        stamp = venv_dir / self.WORKSPACE_VENV_STAMP
+        if stamp.exists() and interpreter.exists():
+            return
+        try:
+            self.workspace_dir.mkdir(parents=True, exist_ok=True)
+            if not interpreter.exists():
+                subprocess.run(
+                    [sys.executable, "-m", "venv", str(venv_dir)],
+                    check=True,
+                    capture_output=True,
+                    timeout=self.WORKSPACE_VENV_TIMEOUT_SECONDS,
+                )
+            subprocess.run(
+                [
+                    str(venv_dir / "bin" / "pip"),
+                    "install",
+                    "--quiet",
+                    "--disable-pip-version-check",
+                    *self.WORKSPACE_VENV_PACKAGES,
+                ],
+                check=True,
+                capture_output=True,
+                timeout=self.WORKSPACE_VENV_TIMEOUT_SECONDS,
+            )
+            stamp.write_text(" ".join(self.WORKSPACE_VENV_PACKAGES), encoding="utf-8")
+        except Exception as exc:  # noqa: BLE001 — a missing venv must not stop a run
+            print(f"[pi] WARNING: workspace interpreter not built, ./py will not run: {exc}")
 
     def _build_command(self) -> list[str]:
         assert self.pi_binary is not None

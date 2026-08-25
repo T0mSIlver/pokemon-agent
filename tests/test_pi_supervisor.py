@@ -2,13 +2,16 @@ import asyncio
 import base64
 import gc
 import json
+import os
 import subprocess
+import sys
 import time
 from pathlib import Path
 from typing import Optional
 
 import pytest
 
+from pokemon_agent import pi_supervisor as pi_supervisor_module
 from pokemon_agent.bench.registry import STATUS_FINISHED, RunRegistry
 from pokemon_agent.critic import (
     CRITIC_RAW_FILENAME,
@@ -47,6 +50,22 @@ from pokemon_agent.pi_supervisor import (
     repair_orphaned_tool_calls,
 )
 from pokemon_agent.run_recorder import RUN_POINTER_FILENAME, RunRecorder
+
+#: The real thing, captured before the autouse fixture below stubs it out, so
+#: the two tests that are about the workspace interpreter can still call it.
+STAGE_WORKSPACE_VENV = PiSupervisor._stage_workspace_venv
+
+
+@pytest.fixture(autouse=True)
+def no_real_workspace_venv(monkeypatch):
+    """Staging builds a real venv; no test in this file wants one.
+
+    Every session start stages the workspace, and a venv with Pillow and numpy
+    in it is a hundred megabytes and several seconds. Multiplied by the starts
+    in this file that filled the disk the suite runs on.
+    """
+    monkeypatch.setattr(PiSupervisor, "_stage_workspace_venv", lambda self: None)
+
 
 FAKE_RPC_SERVER = '''#!/usr/bin/env python3
 """Minimal stand-in for `pi --mode rpc`: JSON commands in, JSON events out."""
@@ -2647,3 +2666,163 @@ async def test_a_lost_slot_is_the_loudest_thing_the_supervisor_reports(tmp_path:
     ]
     assert any("slot lost" in (entry["system"]["label"]) for entry in errors)
     assert any(event["type"] == "pi_intervention_slot_lost" for event in events)
+
+
+# ---------------------------------------------------------------------------
+# Workspace staging
+#
+# The workspace outlives a session, so everything staged into it has to be
+# refreshed on the way in and everything retired has to be removed — a stale
+# copy keeps working, which is exactly how a deleted contract comes back.
+# ---------------------------------------------------------------------------
+
+
+def staged(tmp_path: Path) -> Path:
+    workspace = tmp_path / "workspace"
+    supervisor = PiSupervisor(workspace_dir=workspace, server_url="http://localhost:1")
+    supervisor._stage_workspace_helpers()
+    return workspace
+
+
+def test_staging_puts_the_cli_the_client_and_the_wrapper_in_the_workspace(tmp_path):
+    workspace = staged(tmp_path)
+
+    for name in ("poke", "poke.py", "py"):
+        staged_file = workspace / name
+        assert staged_file.is_file(), name
+        assert os.access(staged_file, os.X_OK), name
+
+    repo_root = Path(__file__).resolve().parents[1]
+    assert (workspace / "poke").read_bytes() == (
+        repo_root / "pokemon_agent" / "agent_cli.py"
+    ).read_bytes()
+    assert (workspace / "poke.py").read_bytes() == (
+        repo_root / "pokemon_agent" / "agent_api.py"
+    ).read_bytes()
+
+
+def test_the_staged_client_imports_under_a_plain_interpreter(tmp_path):
+    """`import poke` has to work from the workspace, with no package on the path."""
+    workspace = staged(tmp_path)
+
+    result = subprocess.run(
+        [
+            sys.executable,
+            "-c",
+            "import poke; print(poke.limits()['max_actions_per_batch'], poke.client())",
+        ],
+        cwd=workspace,
+        capture_output=True,
+        text=True,
+        env={"PATH": os.environ.get("PATH", ""), "PORT": "4242"},
+    )
+
+    assert result.returncode == 0, result.stderr
+    assert result.stdout.strip() == "40 Client('http://localhost:4242')"
+
+
+def test_staging_removes_helpers_and_contracts_that_were_retired(tmp_path):
+    workspace = tmp_path / "workspace"
+    workspace.mkdir(parents=True)
+    for stale in PiSupervisor.STALE_WORKSPACE_HELPERS:
+        (workspace / stale).write_text("stale")
+
+    staged(tmp_path)
+
+    for stale in PiSupervisor.STALE_WORKSPACE_HELPERS:
+        assert not (workspace / stale).exists(), stale
+    assert "turn_plan.json" in PiSupervisor.STALE_WORKSPACE_HELPERS
+
+
+def test_staging_makes_the_skills_directory_and_explains_it_once(tmp_path):
+    workspace = staged(tmp_path)
+    readme = workspace / "skills" / "README.md"
+
+    assert readme.is_file()
+    assert "survive" in readme.read_text()
+    assert "./py" in readme.read_text()
+
+    # Everything under skills/ belongs to the model, including the README once
+    # it has edited it, and its own scripts and notes.
+    readme.write_text("mine now")
+    (workspace / "skills" / "cross_mt_moon.py").write_text("import poke")
+    (workspace / "NOTES.md").write_text("what I learned")
+
+    staged(tmp_path)
+
+    assert readme.read_text() == "mine now"
+    assert (workspace / "skills" / "cross_mt_moon.py").read_text() == "import poke"
+    assert (workspace / "NOTES.md").read_text() == "what I learned"
+
+
+def fake_venv_builder(workspace: Path, calls: list, fail_install: bool = False):
+    """Stand in for `python -m venv` and `pip install`, without either."""
+
+    def run(command, **kwargs):
+        calls.append(list(command))
+        if "venv" in command:
+            (workspace / ".venv" / "bin").mkdir(parents=True, exist_ok=True)
+            (workspace / ".venv" / "bin" / "python").write_text("#!/bin/sh\n")
+        elif fail_install:
+            raise subprocess.CalledProcessError(1, command)
+        return subprocess.CompletedProcess(command, 0)
+
+    return run
+
+
+def test_the_workspace_interpreter_is_built_once_and_never_rebuilt(tmp_path, monkeypatch):
+    workspace = tmp_path / "workspace"
+    supervisor = PiSupervisor(workspace_dir=workspace, server_url="http://localhost:1")
+    calls: list[list[str]] = []
+    monkeypatch.setattr(pi_supervisor_module.subprocess, "run", fake_venv_builder(workspace, calls))
+
+    STAGE_WORKSPACE_VENV(supervisor)
+
+    assert len(calls) == 2
+    assert calls[0][1:3] == ["-m", "venv"]
+    assert "pillow" in calls[1] and "numpy" in calls[1]
+    assert (workspace / ".venv" / PiSupervisor.WORKSPACE_VENV_STAMP).exists()
+
+    # A session start must not pay for the venv twice.
+    STAGE_WORKSPACE_VENV(supervisor)
+    assert len(calls) == 2
+
+
+def test_a_venv_whose_packages_never_landed_is_finished_next_session(tmp_path, monkeypatch):
+    """A `bin/python` is not proof: pip is the half that matters and can fail."""
+    workspace = tmp_path / "workspace"
+    supervisor = PiSupervisor(workspace_dir=workspace, server_url="http://localhost:1")
+    calls: list[list[str]] = []
+    monkeypatch.setattr(
+        pi_supervisor_module.subprocess,
+        "run",
+        fake_venv_builder(workspace, calls, fail_install=True),
+    )
+
+    STAGE_WORKSPACE_VENV(supervisor)
+    assert (workspace / ".venv" / "bin" / "python").exists()
+    assert not (workspace / ".venv" / PiSupervisor.WORKSPACE_VENV_STAMP).exists()
+
+    calls.clear()
+    monkeypatch.setattr(pi_supervisor_module.subprocess, "run", fake_venv_builder(workspace, calls))
+    STAGE_WORKSPACE_VENV(supervisor)
+
+    # Only the install is retried; the interpreter is already there.
+    assert len(calls) == 1
+    assert "pillow" in calls[0]
+    assert (workspace / ".venv" / PiSupervisor.WORKSPACE_VENV_STAMP).exists()
+
+
+def test_a_workspace_interpreter_that_will_not_build_does_not_stop_the_run(
+    tmp_path, monkeypatch, capsys
+):
+    supervisor = PiSupervisor(workspace_dir=tmp_path / "workspace", server_url="http://localhost:1")
+
+    def explode(command, **kwargs):
+        raise OSError("no python here")
+
+    monkeypatch.setattr(pi_supervisor_module.subprocess, "run", explode)
+
+    STAGE_WORKSPACE_VENV(supervisor)
+
+    assert "no python here" in capsys.readouterr().out

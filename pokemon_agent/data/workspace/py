@@ -1,0 +1,15 @@
+#!/usr/bin/env bash
+# Run a Python script with the workspace interpreter.
+#
+# The system python3 has no third-party packages. This one has Pillow and numpy,
+# and it can `import poke` from the workspace, so a script can drive the game and
+# look at the frames in the same breath:
+#
+#   ./py script.py
+#   ./py -c 'import poke; print(poke.state().map)'
+#
+# It is a plain venv at .venv beside this file. Add to it with:
+#   .venv/bin/pip install <package>
+set -euo pipefail
+here="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+exec env PYTHONPATH="$here${PYTHONPATH:+:$PYTHONPATH}" "$here/.venv/bin/python" "$@"

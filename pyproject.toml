@@ -68,7 +68,13 @@ include = ["pokemon_agent*"]
 
 [tool.setuptools.package-data]
 "pokemon_agent.dashboard" = ["static/**/*"]
-"pokemon_agent" = ["data/*.json", "data/game/*.json", "data/guides/*.md"]
+"pokemon_agent" = [
+    "data/*.json",
+    "data/game/*.json",
+    "data/guides/*.md",
+    # Staged into the agent's workspace, so it has to ship with the package.
+    "data/workspace/*",
+]
 
 [tool.ruff]
 line-length = 100

@@ -26,6 +26,7 @@
         realtimeChip: $('realtimeChip'),
         piModelChip: $('piModelChip'),
         frameTimestamp: $('frameTimestamp'),
+        frameLiveTag: $('frameLiveTag'),
         annotatedFrame: $('annotatedFrame'),
         rawFrame: $('rawFrame'),
         piSessionChip: $('piSessionChip'),
@@ -267,13 +268,20 @@
 
     const HEALTH_GLYPH = { good: '\u25cf', warn: '\u25b2', crit: '\u2715', idle: '\u00b7' };
 
+    // A rate off one or two samples is noise, not a verdict: one blocked step out
+    // of one observation is 100% and means nothing. Until a rate has this many
+    // samples behind it the pill stays neutral and shows how far along it is.
+    const HEALTH_MIN_SAMPLES = 8;
+
     // value >= crit is critical, value >= warn is a warning, below both is fine.
+    // `tally` metrics are plain counts, not rates: they need no sample floor, and
+    // below the warning line they read as neutral rather than as a green verdict.
     const HEALTH_SPECS = [
-        { key: 'blocked',   label: 'Blocked',   warn: 0.10, crit: 0.25 },
-        { key: 'toolerr',   label: 'Tool err',  warn: 0.02, crit: 0.08 },
-        { key: 'revisit',   label: 'Revisit',   warn: 2.0,  crit: 3.5  },
-        { key: 'whiteouts', label: 'Whiteouts', warn: 1,    crit: 3    },
-        { key: 'reloads',   label: 'Reloads',   warn: 2,    crit: 5    },
+        { key: 'blocked',   label: 'Blocked',   warn: 0.10, crit: 0.25, unit: 'obs'   },
+        { key: 'toolerr',   label: 'Tool err',  warn: 0.02, crit: 0.08, unit: 'calls' },
+        { key: 'revisit',   label: 'Revisit',   warn: 2.0,  crit: 3.5,  unit: 'steps' },
+        { key: 'whiteouts', label: 'Whiteouts', warn: 1,    crit: 3,    tally: true   },
+        { key: 'reloads',   label: 'Reloads',   warn: 3,    crit: 6,    tally: true   },
     ];
     const streamFilters = new Set(['all']);
     let streamSearchQuery = '';
@@ -1858,7 +1866,9 @@
             ['COORDS', `${pos.x ?? '--'}, ${pos.y ?? '--'}`],
             ['FACING', player.facing || 'unknown'],
             ['BATTLE', battle.in_battle ? (battle.type || 'active') : 'no'],
-            ['PROGRESS', `${progress ?? 0}%`, 'progress'],
+            // Not campaign progress: this is how far along the loaded objective
+            // chain the current objective sits. The campaign panel owns rungs.
+            ['OBJECTIVE CHAIN', `${progress ?? 0}%`, 'progress'],
             ['CLOCK', realtimeLabel],
         ]);
     }
@@ -2487,6 +2497,7 @@
         positionSamples: 0,
         uniquePositions: new Set(),
         lastPartyHp: null,
+        lastStance: null,
         whiteouts: 0,
         reloads: 0,
         historyWhiteouts: 0,
@@ -2772,11 +2783,11 @@
         return null;
     }
 
-    function severityFor(value, warnAt, critAt) {
+    function severityFor(value, warnAt, critAt, floor) {
         if (!Number.isFinite(value)) return 'idle';
         if (value >= critAt) return 'crit';
         if (value >= warnAt) return 'warn';
-        return 'good';
+        return floor || 'good';
     }
 
     /* -- run health ------------------------------------------------------ */
@@ -2802,16 +2813,31 @@
 
         const world = payload.world_state || {};
         const interaction = world.interaction || {};
-        if (String(interaction.source || '') === 'blocked_tile') {
-            healthState.blocked += 1;
-        }
+        const player = world.player || {};
+        const mapName = (world.map || {}).map_name || '?';
 
-        const position = (world.player || {}).position || {};
+        const position = player.position || {};
         const x = Number(position.x);
         const y = Number(position.y);
-        if (Number.isFinite(x) && Number.isFinite(y)) {
+        const placed = Number.isFinite(x) && Number.isFinite(y);
+
+        // `interaction.source === 'blocked_tile'` describes the tile the player
+        // faces, not a move that failed — standing anywhere beside a wall reports
+        // it, so on its own it sits near 100% for a healthy run. A rung of the
+        // ladder is only lost when the agent faces a wall AND has not moved or
+        // turned since the previous observation: that is being blocked.
+        const facingWall =
+            String(interaction.source || '') === 'blocked_tile'
+            || interaction.can_move_forward === false;
+        const stance = placed ? `${mapName}|${x},${y}|${player.facing || '?'}` : null;
+        if (facingWall && stance !== null && stance === healthState.lastStance) {
+            healthState.blocked += 1;
+        }
+        healthState.lastStance = stance;
+
+        if (placed) {
             healthState.positionSamples += 1;
-            healthState.uniquePositions.add(`${(world.map || {}).map_name || '?'}|${x},${y}`);
+            healthState.uniquePositions.add(`${mapName}|${x},${y}`);
         }
 
         const party = Array.isArray(world.party) ? world.party : [];
@@ -2872,20 +2898,28 @@
         );
         const reloads = pick(reloadServer, Math.max(healthState.reloads, healthState.historyReloads));
 
+        // `samples` is what the rate was computed from, so the pill can hold its
+        // verdict until there is enough of it. A server-scored value carries its
+        // own window, so it is taken as already sampled (null = no gate here).
+        const samples = (serverValue, local) => (serverValue !== null ? null : local);
+
         return {
             blocked: {
                 value: blocked,
                 text: formatRate(blocked),
-                note: note(blockedServer, `${formatInt(healthState.blocked)} of ${formatInt(healthState.observations)} obs`),
+                samples: samples(blockedServer, healthState.observations),
+                note: note(blockedServer, `${formatInt(healthState.blocked)} stuck of ${formatInt(healthState.observations)} obs`),
             },
             toolerr: {
                 value: toolErr,
                 text: formatRate(toolErr),
+                samples: samples(toolServer, tools.calls),
                 note: note(toolServer, `${formatInt(tools.errors)} of ${formatInt(tools.calls)} calls`),
             },
             revisit: {
                 value: revisit,
                 text: Number.isFinite(revisit) ? `${revisit.toFixed(2)}×` : '—',
+                samples: samples(revisitServer, healthState.positionSamples),
                 note: note(
                     revisitServer,
                     `${formatInt(healthState.positionSamples)} steps / ${formatInt(healthState.uniquePositions.size)} tiles`
@@ -2894,12 +2928,14 @@
             whiteouts: {
                 value: whiteouts,
                 text: formatInt(whiteouts),
-                note: note(whiteoutServer, 'party wiped'),
+                samples: null,
+                note: note(whiteoutServer, whiteouts ? 'party wiped' : 'no wipes'),
             },
             reloads: {
                 value: reloads,
                 text: formatInt(reloads),
-                note: note(reloadServer, 'save restored'),
+                samples: null,
+                note: note(reloadServer, reloads ? 'saves restored' : 'no restores'),
             },
         };
     }
@@ -3149,18 +3185,23 @@
             return;
         }
         const name = progressState.furthestLabel || RED_LADDER[furthest].label;
-        // The rail is positional; `count` is what the server actually confirmed.
-        // When they disagree the run passed a rung whose flag never read true,
-        // and the operator should see that rather than guess which number wins.
+        // One count, everywhere: `count` is what the server confirmed, and it is
+        // what the chip and the RUNGS card show too. The rail is positional, so
+        // when the furthest milestone sits further along the ladder than the
+        // confirmed count, an earlier rung's flag never read true. That gap is a
+        // footnote about the ladder, not a second score for the run.
+        const reached = rungsReached();
         const gap = Number.isFinite(progressState.count)
             ? (furthest + 1) - progressState.count
             : 0;
-        const unconfirmed = gap > 0
-            ? ` · <span class="hud-dim">${gap} unconfirmed</span>`
+        const note = gap > 0
+            ? ` · <span class="hud-dim" title="${escapeHtml(name)} sits at ladder position ${furthest + 1},`
+              + ` but only ${formatInt(reached)} of the rungs below it ever flagged true.">`
+              + `${gap} earlier rung${gap === 1 ? '' : 's'} never flagged</span>`
             : '';
         els.campaignHeadline.innerHTML =
-            `<em>${escapeHtml(name)}</em> · rung ${furthest + 1} of ${total} · ` +
-            `<b>${formatInt(progressState.presses)}</b> presses · ${nextText}${unconfirmed}`;
+            `<em>${escapeHtml(name)}</em> · <b>${formatInt(reached)}</b> of ${total} rungs · ` +
+            `<b>${formatInt(progressState.presses)}</b> presses · ${nextText}${note}`;
     }
 
     function renderCampaignStats() {
@@ -3224,6 +3265,26 @@
         if (!svg) return;
         svg.replaceChildren();
 
+        // Nothing priced means nothing to plot: a plot area holding two reference
+        // dots is a large blank box. Collapse to the two reference numbers as a
+        // line of text until the first rung is priced.
+        const pricedPoints = ledgerPoints();
+        if (!pricedPoints.length) {
+            // SVGElement has no `hidden` IDL property, so this is set as an attribute.
+            svg.setAttribute('hidden', '');
+            if (els.campaignChartCaption) {
+                els.campaignChartCaption.dataset.state = 'empty';
+                els.campaignChartCaption.textContent = progressState.available
+                    ? `No rung priced yet — the curve starts at the first rung this session reaches. `
+                      + `First gym reference: ${formatInt(REF_POKEAGENT_EFFICIENT)} presses efficient, `
+                      + `${formatInt(REF_POKEAGENT_BEST)} best.`
+                    : 'No press ledger yet — rungs get priced as the run reaches them.';
+            }
+            return;
+        }
+        svg.removeAttribute('hidden');
+        if (els.campaignChartCaption) delete els.campaignChartCaption.dataset.state;
+
         const WIDTH = 320;
         const HEIGHT = 96;   // must match the viewBox on #campaignChart
         const padLeft = 38;
@@ -3234,7 +3295,7 @@
         const plotH = HEIGHT - padTop - padBottom;
         const rungs = RED_LADDER.length;
 
-        const series = ledgerPoints().map((point) => ({ x: point.index, y: point.presses }));
+        const series = pricedPoints.map((point) => ({ x: point.index, y: point.presses }));
         const furthest = furthestIndex();
         const presses = progressState.presses;
         if (Number.isFinite(presses)) {
@@ -3243,14 +3304,6 @@
             if (!last || (presses >= last.y && liveX >= last.x)) {
                 series.push({ x: liveX, y: presses, live: true });
             }
-        }
-
-        if (!series.length) {
-            if (els.campaignChartCaption) {
-                els.campaignChartCaption.textContent =
-                    'No press ledger yet — rungs get priced as the run reaches them.';
-            }
-            return;
         }
 
         const gymRung = LADDER_BY_ID.get(FIRST_GYM_ID);
@@ -3341,10 +3394,10 @@
         svg.appendChild(last);
 
         if (els.campaignChartCaption) {
-            const priced = ledgerPoints().length;
-            els.campaignChartCaption.textContent = priced
-                ? `${formatInt(priced)} rungs priced · peak ${formatInt(yMax)} presses on the y-axis`
-                : 'Live position only — no rung has been priced during this session yet.';
+            const priced = pricedPoints.length;
+            els.campaignChartCaption.textContent =
+                `${formatInt(priced)} rung${priced === 1 ? '' : 's'} priced · `
+                + `peak ${formatInt(yMax)} presses on the y-axis`;
         }
     }
 
@@ -3423,13 +3476,23 @@
             const node = healthPills.get(spec.key);
             const reading = readings[spec.key];
             if (!node || !reading) return;
-            const level = severityFor(reading.value, spec.warn, spec.crit);
+            const collecting =
+                Number.isFinite(reading.samples) && reading.samples < HEALTH_MIN_SAMPLES;
+            const level = collecting
+                ? 'idle'
+                : severityFor(reading.value, spec.warn, spec.crit, spec.tally ? 'idle' : 'good');
             node.pill.dataset.sev = level;
-            node.pill.title = `${spec.label}: ${reading.text} — ${thresholdText(spec)}`;
+            node.pill.dataset.state = collecting ? 'collecting' : 'scored';
+            node.pill.title = collecting
+                ? `${spec.label}: collecting — a severity needs ${HEALTH_MIN_SAMPLES} ${spec.unit}, `
+                  + `${formatInt(reading.samples)} so far. Then: ${thresholdText(spec)}.`
+                : `${spec.label}: ${reading.text} — ${thresholdText(spec)}`;
             node.glyph.textContent = HEALTH_GLYPH[level];
-            node.value.textContent = reading.text;
-            node.note.textContent = reading.note;
-            const width = (Number.isFinite(reading.value) && spec.crit > 0)
+            node.value.textContent = collecting ? '—' : reading.text;
+            node.note.textContent = collecting
+                ? `collecting · ${formatInt(reading.samples)} of ${HEALTH_MIN_SAMPLES} ${spec.unit}`
+                : reading.note;
+            const width = (!collecting && Number.isFinite(reading.value) && spec.crit > 0)
                 ? Math.max(0, Math.min(100, (reading.value / spec.crit) * 100))
                 : 0;
             node.fill.style.width = `${width.toFixed(1)}%`;
@@ -3507,6 +3570,7 @@
         const rawArtifactUrl = preferLiveArtifacts
             ? (artifactUrls.live_frame || artifactUrls.latest_frame)
             : artifactUrls.latest_frame;
+        if (els.frameLiveTag) els.frameLiveTag.hidden = !preferLiveArtifacts;
 
         if (annotatedArtifactUrl) {
             schedulePreload(
@@ -3853,6 +3917,9 @@
         if (data.annotated_frame_url) {
             const url = withCacheBust(data.annotated_frame_url, data.frame_timestamp);
             schedulePreload('annotated', els.annotatedFrame, url);
+            if (els.frameLiveTag) {
+                els.frameLiveTag.hidden = !String(data.annotated_frame_url).includes('live_frame');
+            }
         }
         if (data.raw_frame_url) {
             const url = withCacheBust(data.raw_frame_url, data.frame_timestamp);

@@ -672,6 +672,268 @@ def progress_payload(summary: dict, presses: int) -> dict:
     }
 
 
+# ---------------------------------------------------------------------------
+# /gamedata
+#
+# 223 maps, 334 trainers, 59 encounter tables, 151 species and 165 moves sit
+# under ``pokemon_agent/data/game/``, and until these functions existed none of
+# it was reachable from the agent. Every answer is shaped to be *printed*: what
+# is in Pewter Gym should cost a few lines of context, not a JSON dump the model
+# then has to skim.
+# ---------------------------------------------------------------------------
+
+#: What ``GET /gamedata/<topic>`` accepts.
+GAMEDATA_TOPICS = ("trainers", "encounters", "species", "move", "items", "shops", "types")
+
+#: Rows returned when the caller does not say. No table in the game data is
+#: longer than a couple of dozen rows per map, so this only bites if the
+#: generator grows one; the answer still says how many rows were cut.
+GAMEDATA_LIMIT = 25
+GAMEDATA_MAX_LIMIT = 200
+
+
+def _gamedata_map_name(name: Optional[str]) -> str:
+    """Match *name* against the game's own map table, ignoring case."""
+    if not name or not str(name).strip():
+        raise CapabilityError("This lookup needs a map, for example ?map=Pewter Gym")
+    wanted = str(name).strip().lower()
+    for known in gamedata.world():
+        if known.lower() == wanted:
+            return known
+    near = [known for known in gamedata.world() if wanted in known.lower()][:5]
+    hint = f" Did you mean: {', '.join(near)}?" if near else ""
+    raise NotFound(f"No map called {name!r}. Names are the game's own, like 'Route 3'.{hint}")
+
+
+def _gamedata_limit(limit: Optional[int]) -> int:
+    if limit is None:
+        return GAMEDATA_LIMIT
+    try:
+        value = int(limit)
+    except (TypeError, ValueError):
+        raise CapabilityError(f"limit must be a number, not {limit!r}") from None
+    if value < 1:
+        raise CapabilityError("limit must be at least 1.")
+    return min(value, GAMEDATA_MAX_LIMIT)
+
+
+def _page(rows: Sequence[Any], limit: int) -> tuple[list, dict]:
+    """The first *limit* rows, plus the counts that say what was left out."""
+    kept = list(rows[:limit])
+    counts: dict[str, Any] = {"count": len(rows)}
+    if len(rows) > limit:
+        counts["shown"] = len(kept)
+        counts["truncated"] = True
+    return kept, counts
+
+
+def gamedata_trainers(map_name: Optional[str], limit: Optional[int] = None) -> dict:
+    """Who fights you on a map, where they stand, and with what."""
+    resolved = _gamedata_map_name(map_name)
+    rows = [
+        {
+            "class": entry.get("trainer_class"),
+            "at": [entry.get("x"), entry.get("y")],
+            "team": [f"{mon['species']} L{mon['level']}" for mon in entry.get("team") or ()],
+        }
+        for entry in gamedata.trainers(resolved)
+    ]
+    kept, counts = _page(rows, _gamedata_limit(limit))
+    return {"map": resolved, **counts, "trainers": kept}
+
+
+def _encounter_table(table: Optional[dict]) -> Optional[dict]:
+    """One encounter table, merged per species.
+
+    Route 3 has ten slots and three species. "Pidgey L6-8, 45%" is the fact
+    worth carrying; ten rows of the same three names is not.
+    """
+    if not table:
+        return None
+    merged: dict[str, dict] = {}
+    for slot in table.get("slots") or ():
+        row = merged.setdefault(slot["species"], {"levels": [], "chance": 0.0})
+        row["levels"].append(int(slot["level"]))
+        row["chance"] += float(slot.get("chance") or 0.0)
+    levels = [level for row in merged.values() for level in row["levels"]]
+    return {
+        "rate": table.get("rate"),
+        "levels": [min(levels), max(levels)] if levels else None,
+        "species": [
+            {
+                "species": species,
+                "levels": [min(row["levels"]), max(row["levels"])],
+                "chance": round(row["chance"], 3),
+            }
+            for species, row in sorted(merged.items(), key=lambda item: -item[1]["chance"])
+        ],
+    }
+
+
+def gamedata_encounters(map_name: Optional[str]) -> dict:
+    """What is in the grass and what is in the water."""
+    resolved = _gamedata_map_name(map_name)
+    table = gamedata.encounters(resolved) or {}
+    return {
+        "map": resolved,
+        "grass": _encounter_table(table.get("grass")),
+        "water": _encounter_table(table.get("water")),
+    }
+
+
+def _species_name(name: Optional[str]) -> str:
+    if not name or not str(name).strip():
+        raise CapabilityError("This lookup needs a name, for example ?name=Charmeleon")
+    wanted = str(name).strip().lower()
+    for known in gamedata.all_species():
+        if known.lower() == wanted:
+            return known
+    near = [known for known in gamedata.all_species() if known.lower().startswith(wanted[:3])][:5]
+    hint = f" Did you mean: {', '.join(near)}?" if near else ""
+    raise NotFound(f"No Pokemon called {name!r}.{hint}")
+
+
+def gamedata_species(name: Optional[str], full: bool = False) -> dict:
+    """One species, as the numbers that decide a fight.
+
+    The learnset is ``[level, move]`` pairs and the TM list is a count, so the
+    whole entry stays small enough to print next to a battle. ``full`` adds the
+    TM list and the growth rate back for the rare caller that wants them.
+    """
+    resolved = _species_name(name)
+    entry = gamedata.all_species()[resolved]
+    payload = {
+        "name": resolved,
+        "dex": entry.get("dex"),
+        "types": list(entry.get("types") or ()),
+        "base": entry.get("base"),
+        "catch_rate": entry.get("catch_rate"),
+        "base_exp": entry.get("base_exp"),
+        "evolves": [
+            f"{evolution['to']} by {evolution['method']} {evolution.get('param')}".strip()
+            for evolution in entry.get("evolutions") or ()
+        ],
+        "learnset": [[move["level"], move["move"]] for move in entry.get("learnset") or ()],
+    }
+    tm_hm = list(entry.get("tm_hm") or ())
+    if full:
+        payload["growth"] = entry.get("growth")
+        payload["tm_hm"] = tm_hm
+    else:
+        payload["tm_hm_count"] = len(tm_hm)
+    return payload
+
+
+def gamedata_move(name: Optional[str]) -> dict:
+    """One move: type, power, accuracy, PP, and which stat it attacks with."""
+    if not name or not str(name).strip():
+        raise CapabilityError("This lookup needs a name, for example ?name=Ember")
+    wanted = str(name).strip().lower()
+    resolved = next((known for known in gamedata.all_moves() if known.lower() == wanted), None)
+    if resolved is None:
+        near = [known for known in gamedata.all_moves() if known.lower().startswith(wanted[:3])][:5]
+        hint = f" Did you mean: {', '.join(near)}?" if near else ""
+        raise NotFound(f"No move called {name!r}.{hint}")
+    entry = gamedata.all_moves()[resolved]
+    move_type = entry.get("type")
+    return {
+        "name": resolved,
+        "type": move_type,
+        "power": entry.get("power"),
+        "accuracy": entry.get("accuracy"),
+        "pp": entry.get("pp"),
+        # Gen 1 splits by type, not by move: every Fire move is special and
+        # every Normal move is physical, and that decides which stat it reads.
+        "damage_class": "special" if move_type in gamedata.types()["special_types"] else "physical",
+        "effect": entry.get("effect"),
+    }
+
+
+def gamedata_items(map_name: Optional[str], limit: Optional[int] = None) -> dict:
+    """Item balls and hidden items on a map, with the tile to stand on."""
+    resolved = _gamedata_map_name(map_name)
+    rows = []
+    for entry in gamedata.items(resolved):
+        row = {"item": entry.get("item"), "at": [entry.get("x"), entry.get("y")]}
+        if entry.get("hidden"):
+            # Only worth saying when true: a hidden item needs ITEMFINDER and a
+            # press on the tile, a visible one is a ball you walk into.
+            row["hidden"] = True
+        rows.append(row)
+    kept, counts = _page(rows, _gamedata_limit(limit))
+    return {"map": resolved, **counts, "items": kept}
+
+
+def gamedata_shops(map_name: Optional[str]) -> dict:
+    """What a mart sells. Empty stock is not an error: most maps sell nothing."""
+    resolved = _gamedata_map_name(map_name)
+    shop = gamedata.shops(resolved)
+    return {"map": resolved, "items": list(shop.get("items") or ()) if shop else None}
+
+
+def gamedata_types(move_type: Optional[str] = None, against: Optional[str] = None) -> dict:
+    """The type chart, as the answer rather than as the table.
+
+    With nothing, the type names. With a move type, what it beats and what it
+    bounces off. With defending types too, the one multiplier.
+    """
+    chart = gamedata.types()
+    known_types = list(chart["types"])
+    if not move_type:
+        return {"types": known_types}
+    resolved = _one_type(move_type, known_types)
+    defenders = [part.strip() for part in str(against or "").split(",") if part.strip()]
+    if defenders:
+        canonical = [_one_type(part, known_types) for part in defenders]
+        return {
+            "type": resolved,
+            "against": canonical,
+            "multiplier": gamedata.effectiveness(resolved, canonical),
+        }
+    row = chart["chart"].get(resolved, {})
+    return {
+        "type": resolved,
+        "super_effective": sorted(name for name, value in row.items() if value > 1),
+        "not_very_effective": sorted(name for name, value in row.items() if 0 < value < 1),
+        "no_effect": sorted(name for name, value in row.items() if value == 0),
+    }
+
+
+def _one_type(name: str, known_types: Sequence[str]) -> str:
+    wanted = str(name).strip().lower()
+    for known in known_types:
+        if known.lower() == wanted:
+            return known
+    raise NotFound(f"No type called {name!r}. Types: {', '.join(known_types)}.")
+
+
+def gamedata_payload(
+    topic: str,
+    *,
+    map_name: Optional[str] = None,
+    name: Optional[str] = None,
+    limit: Optional[int] = None,
+    full: bool = False,
+    against: Optional[str] = None,
+) -> dict:
+    """Answer one ``/gamedata/<topic>`` request. The only entry point a route needs."""
+    if topic == "trainers":
+        return gamedata_trainers(map_name, limit)
+    if topic == "encounters":
+        return gamedata_encounters(map_name)
+    if topic == "items":
+        return gamedata_items(map_name, limit)
+    if topic == "shops":
+        return gamedata_shops(map_name)
+    if topic == "species":
+        return gamedata_species(name, full)
+    if topic == "move":
+        return gamedata_move(name)
+    if topic == "types":
+        return gamedata_types(name, against)
+    raise NotFound(f"No game data called {topic!r}. Topics: {', '.join(GAMEDATA_TOPICS)}.")
+
+
 __all__ = [
     "CapabilityError",
     "Conflict",
@@ -681,6 +943,15 @@ __all__ = [
     "canonical_map_name",
     "collision_from",
     "frontier_payload",
+    "GAMEDATA_TOPICS",
+    "gamedata_encounters",
+    "gamedata_items",
+    "gamedata_move",
+    "gamedata_payload",
+    "gamedata_shops",
+    "gamedata_species",
+    "gamedata_trainers",
+    "gamedata_types",
     "guide_outline",
     "guide_search",
     "guide_section",
