@@ -1,33 +1,134 @@
-"""Async Pi supervisor for turn-based session control and dashboard telemetry."""
+"""Async Pi supervisor driving a single long-lived ``pi --mode rpc`` process."""
 
 from __future__ import annotations
 
 import asyncio
+import base64
 import contextlib
 import json
 import os
 import re
 import shutil
+import time
+import uuid
 from collections import deque
+from copy import deepcopy
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
-from typing import Any, Awaitable, Callable, Optional
+from typing import Any, Awaitable, Callable, Optional, Union
 from urllib.parse import urlparse
 
 from pokemon_agent.agent_runtime import utc_now
-from pokemon_agent.harness.prompting import (
-    continue_supervisor_prompt,
-    default_supervisor_prompt,
-)
 
 JsonDict = dict[str, Any]
 EventSink = Callable[[JsonDict], Awaitable[None]]
 StreamSink = Callable[[JsonDict], Awaitable[None]]
+ObjectiveCheck = Callable[[], Union[bool, Awaitable[bool]]]
+ArtifactPathProvider = Callable[[], dict[str, Any]]
+CriticContextProvider = Callable[[], Union[dict[str, Any], Awaitable[dict[str, Any]]]]
 
-DEFAULT_TOOLS = ["read", "bash", "edit", "write", "grep", "find", "ls"]
-VISION_ATTACHMENT_FILES = ("latest_frame_annotated.png", "latest_frame.png")
-ANNOTATED_FRAME_NAME = "latest_frame_annotated.png"
-RAW_FRAME_NAME = "latest_frame.png"
+DEFAULT_TOOLS = ["read", "bash", "edit", "write"]
+FRAME_IMAGE_FILES = ("latest_frame_annotated.png", "latest_frame.png")
+STREAM_ENTRY_CAP = 5000
+
+# Text the operator can open in the dashboard is never silently shortened. Short
+# previews stay short - a headline has one line to work with - but every preview
+# ships beside the whole text in the same payload, so expanding always reaches all
+# of it. The ceilings below are only there so one runaway stdout cannot pin the
+# browser, and when one does bite, TRUNCATION_NOTE says how much is missing.
+STREAM_HEADLINE_LIMIT = 120
+STREAM_COMMENT_HEADLINE_LIMIT = 240
+#: Whole thinking / text / critique bodies on stream entries. The old 8k ceiling cut
+#: xhigh critic reasoning off part-way through, which is exactly the loss to avoid.
+STREAM_TEXT_LIMIT = 120_000
+#: Whole tool results, carried on ``result_full`` and expandable in the dashboard.
+TOOL_RESULT_LIMIT = 200_000
+#: Transcript entries keep a one-line ``preview`` and the whole thing in ``content``.
+TRANSCRIPT_TEXT_LIMIT = 120_000
+#: One stdout / stderr line. Unbounded at the source, so this cap has to stay; the
+#: marker makes the loss visible instead of silent.
+STDERR_LINE_LIMIT = 20_000
+#: Preview of an stderr line in ``stderr_tail``. The transcript holds it whole.
+STDERR_TAIL_PREVIEW = 400
+#: Error strings on the snapshot. An error is read closely, not skimmed, so this is
+#: generous: a truncated stack trace costs more to debug than it saves in bytes.
+ERROR_TEXT_LIMIT = 4_000
+#: Appended by :func:`_clip_text` when a ceiling bites, in place of a bare "...".
+TRUNCATION_NOTE = "\n\n…[truncated: {dropped:,} more characters not shown]"
+STREAM_ENTRY_EVENT = "pi_stream_entry"
+STREAM_DEFAULT_PAGE = 1000
+IMAGE_SUFFIXES = frozenset({".png", ".jpg", ".jpeg", ".gif", ".webp", ".bmp"})
+FILE_TOOL_NAMES = frozenset({"read", "write", "edit"})
+DEFAULT_ARTIFACT_FILES = {
+    "latest_frame": "latest_frame.png",
+    "latest_frame_annotated": "latest_frame_annotated.png",
+    "live_frame": "live_frame.png",
+    "live_frame_annotated": "live_frame_annotated.png",
+    "turn_context_json": "turn_context.json",
+}
+DEFAULT_TOKEN_BUDGET = 110_000
+DEFAULT_STATS_POLL_SECONDS = 30.0
+CONTINUE_MESSAGE = "continue"
+FALLBACK_GOAL = "Begin."
+
+# Where the goal for a session came from, most specific first. Reported on the
+# snapshot so the dashboard can say why the agent was told to do what it was told.
+GOAL_SOURCE_OPERATOR = "operator"
+GOAL_SOURCE_CRITIC = "critic"
+GOAL_SOURCE_OBJECTIVE = "objective"
+GOAL_SOURCE_FALLBACK = "fallback"
+_STATUS_STREAM_LEVELS = {"error": "error", "stuck": "warn"}
+STREAM_CHUNK_SIZE = 65536
+#: Marks the between-session critic's own narration in the shared stream log.
+CRITIC_STREAM_PREFIX = "[critic] "
+CRITIC_HEARTBEAT_SECONDS = 15.0
+ORPHAN_TOOL_RESULT_TEXT = (
+    "Tool call interrupted: the supervisor stopped Pi before this tool returned a result."
+)
+#: Longest operator message accepted by :meth:`PiSupervisor.send_operator_message`.
+#: A nudge, not an essay: anything longer is a new goal and belongs in a restart.
+OPERATOR_MESSAGE_LIMIT = 400
+#: How many recent operator messages ``state_snapshot`` reports to the dashboard.
+OPERATOR_MESSAGE_HISTORY = 20
+#: ``source`` marker on stream entries a human typed, as opposed to the harness.
+OPERATOR_STREAM_SOURCE = "operator"
+#: Statuses where a ``pi --mode rpc`` process is live enough to take a message.
+STEERABLE_STATUSES = frozenset({"starting", "running"})
+
+
+class NoLiveSessionError(RuntimeError):
+    """Raised when an operator message arrives with no live Pi session to carry it."""
+
+
+def _critic_module():
+    """Deferred import: ``pokemon_agent.critic`` imports this module for its parsers."""
+
+    from pokemon_agent import critic
+
+    return critic
+
+
+async def iter_stream_lines(stream: Any):
+    """Yield strict JSONL records: split on ``\\n`` only, tolerating a trailing ``\\r``."""
+
+    buffer = b""
+    while True:
+        chunk = await stream.read(STREAM_CHUNK_SIZE)
+        if not chunk:
+            break
+        buffer += chunk
+        while True:
+            index = buffer.find(b"\n")
+            if index == -1:
+                break
+            raw, buffer = buffer[:index], buffer[index + 1 :]
+            if raw.endswith(b"\r"):
+                raw = raw[:-1]
+            yield raw.decode("utf-8", errors="replace")
+    if buffer:
+        if buffer.endswith(b"\r"):
+            buffer = buffer[:-1]
+        yield buffer.decode("utf-8", errors="replace")
 
 
 def _repo_root() -> Path:
@@ -47,17 +148,26 @@ def _server_port(server_url: str) -> Optional[int]:
 
 
 def _truncate(value: str, limit: int = 320) -> str:
+    """A one-line preview. Only ever for a headline, label or summary field.
+
+    Never the sole copy of anything: whatever this shortens must also travel whole,
+    in the same payload, on a field the dashboard can expand.
+    """
+
     text = value.strip()
     if len(text) <= limit:
         return text
     return text[: limit - 1].rstrip() + "…"
 
 
-def _clip_text(value: str, limit: int = 6000) -> str:
+def _clip_text(value: str, limit: int = TRANSCRIPT_TEXT_LIMIT) -> str:
+    """The whole text, unless it is absurd - and then it says what it dropped."""
+
     text = value.strip()
     if len(text) <= limit:
         return text
-    return text[: limit - 16].rstrip() + "\n...[truncated]..."
+    kept = text[:limit].rstrip()
+    return kept + TRUNCATION_NOTE.format(dropped=len(text) - len(kept))
 
 
 def _utc_after(seconds: float) -> str:
@@ -117,13 +227,15 @@ def extract_message_thinking(message: Any) -> str:
         if not isinstance(item, dict):
             continue
         if item.get("type") == "thinking":
-            text = item.get("text") or item.get("content")
+            text = item.get("thinking") or item.get("text") or item.get("content")
             if isinstance(text, str) and text.strip():
                 thinking_parts.append(text.strip())
     return "\n".join(thinking_parts).strip()
 
 
 def preview_payload(value: Any, limit: int = 260) -> str:
+    """Headline-length preview of a payload. :func:`payload_text` carries it whole."""
+
     text = "\n".join(_collect_text(value)).strip()
     if not text:
         try:
@@ -133,7 +245,7 @@ def preview_payload(value: Any, limit: int = 260) -> str:
     return _truncate(text, limit)
 
 
-def payload_text(value: Any, limit: int = 20000) -> str:
+def payload_text(value: Any, limit: int = TOOL_RESULT_LIMIT) -> str:
     if value is None:
         return ""
     if isinstance(value, str):
@@ -193,7 +305,7 @@ def parse_model_limits_output(
 ) -> Optional[JsonDict]:
     requested_provider, requested_model = normalize_model_lookup(provider, model)
     rows: list[JsonDict] = []
-    for raw_line in output.splitlines():
+    for raw_line in output.split("\n"):
         line = raw_line.strip()
         if not line or line.lower().startswith("provider "):
             continue
@@ -231,6 +343,94 @@ def parse_model_limits_output(
     return rows[0]
 
 
+def extract_leading_comment(command: str) -> str:
+    """Join the ``#`` comment block the model writes above a bash command."""
+
+    lines = command.split("\n")
+    index = 0
+    while index < len(lines) and not lines[index].strip():
+        index += 1
+    if index < len(lines) and lines[index].lstrip().startswith("#!"):
+        index += 1
+    parts: list[str] = []
+    while index < len(lines):
+        stripped = lines[index].strip()
+        if not stripped.startswith("#"):
+            break
+        text = stripped.lstrip("#").strip()
+        if text:
+            parts.append(text)
+        index += 1
+    return " ".join(parts)
+
+
+def first_nonempty_line(text: str) -> str:
+    for raw in text.split("\n"):
+        line = raw.strip()
+        if line:
+            return line
+    return ""
+
+
+def command_headline(command: str) -> str:
+    comment = extract_leading_comment(command)
+    if comment:
+        return _truncate(comment, STREAM_COMMENT_HEADLINE_LIMIT)
+    return _truncate(first_nonempty_line(command), STREAM_HEADLINE_LIMIT)
+
+
+def format_byte_size(size: int) -> str:
+    if size < 1024:
+        return f"{size} B"
+    kilobytes = size / 1024
+    if kilobytes < 1024:
+        return f"{kilobytes:.1f} KB"
+    return f"{kilobytes / 1024:.1f} MB"
+
+
+def tool_output_text(value: Any) -> str:
+    """Best-effort plain text for a tool result, for line/JSON summarising."""
+
+    if value is None:
+        return ""
+    if isinstance(value, str):
+        return value
+    if isinstance(value, dict):
+        for key in ("output", "stdout", "text", "content"):
+            candidate = value.get(key)
+            if isinstance(candidate, str) and candidate.strip():
+                return candidate
+    collected = "\n".join(_collect_text(value)).strip()
+    if collected:
+        return collected
+    try:
+        return json.dumps(value, ensure_ascii=True, sort_keys=True)
+    except TypeError:
+        return repr(value)
+
+
+def summarize_position_json(text: str) -> Optional[str]:
+    """Turn an ``/action`` style JSON body into ``x=11 y=34 facing=up hp=15/30``."""
+
+    stripped = text.strip()
+    if not stripped.startswith("{"):
+        return None
+    try:
+        payload = json.loads(stripped)
+    except (json.JSONDecodeError, ValueError):
+        return None
+    if not isinstance(payload, dict):
+        return None
+    if not any(key in payload for key in ("x", "y", "facing")):
+        return None
+    parts = [
+        f"{key}={payload[key]}"
+        for key in ("x", "y", "facing", "hp")
+        if payload.get(key) is not None
+    ]
+    return " ".join(parts) or None
+
+
 def extract_file_hint(args: Any) -> Optional[str]:
     if not isinstance(args, dict):
         return None
@@ -255,14 +455,118 @@ def extract_turn_plan_candidate(args: Any) -> Optional[JsonDict]:
             try:
                 parsed = json.loads(raw)
             except json.JSONDecodeError:
-                return {"raw": _truncate(raw, 500)}
+                # Unparseable, so the operator has to read it: keep it whole.
+                return {"raw": _clip_text(raw, ERROR_TEXT_LIMIT)}
             if isinstance(parsed, dict):
                 return parsed
     return {"path": path}
 
 
+def iter_jsonl_records(text: str) -> list[JsonDict]:
+    """Split strict JSONL on ``\\n`` only, never on U+2028/U+2029/\\x0b/\\x0c."""
+
+    records: list[JsonDict] = []
+    for raw in text.split("\n"):
+        line = raw[:-1] if raw.endswith("\r") else raw
+        if not line.strip():
+            continue
+        try:
+            payload = json.loads(line)
+        except json.JSONDecodeError:
+            continue
+        if isinstance(payload, dict):
+            records.append(payload)
+    return records
+
+
+def find_orphaned_tool_calls(entries: list[JsonDict]) -> list[tuple[str, str]]:
+    """Return ``(tool_call_id, tool_name)`` pairs that never received a tool result."""
+
+    pending: dict[str, str] = {}
+    for entry in entries:
+        if entry.get("type") != "message":
+            continue
+        message = entry.get("message")
+        if not isinstance(message, dict):
+            continue
+        role = message.get("role")
+        if role == "assistant":
+            for block in message.get("content") or []:
+                if not isinstance(block, dict) or block.get("type") != "toolCall":
+                    continue
+                call_id = block.get("id")
+                if isinstance(call_id, str) and call_id:
+                    pending[call_id] = str(block.get("name") or "unknown")
+        elif role == "toolResult":
+            call_id = message.get("toolCallId")
+            if isinstance(call_id, str):
+                pending.pop(call_id, None)
+    return list(pending.items())
+
+
+def repair_orphaned_tool_calls(session_file: Path) -> list[str]:
+    """Append synthetic error tool results for tool calls that never got one.
+
+    Killing Pi mid-turn leaves assistant messages whose ``toolCall`` blocks have no
+    matching ``toolResult``. Replaying that history re-sends the malformed pair to the
+    provider on every later turn, so close the holes on disk before resuming.
+    """
+
+    try:
+        text = session_file.read_text(encoding="utf-8")
+    except (OSError, UnicodeDecodeError):
+        return []
+
+    entries = iter_jsonl_records(text)
+    orphans = find_orphaned_tool_calls(entries)
+    if not orphans:
+        return []
+
+    parent_id: Optional[str] = None
+    for entry in entries:
+        entry_id = entry.get("id")
+        if entry.get("type") != "session" and isinstance(entry_id, str):
+            parent_id = entry_id
+
+    now_iso = utc_now()
+    now_ms = int(datetime.now(timezone.utc).timestamp() * 1000)
+    appended: list[str] = []
+    lines: list[str] = []
+    for call_id, tool_name in orphans:
+        entry_id = uuid.uuid4().hex[:8]
+        lines.append(
+            json.dumps(
+                {
+                    "type": "message",
+                    "id": entry_id,
+                    "parentId": parent_id,
+                    "timestamp": now_iso,
+                    "message": {
+                        "role": "toolResult",
+                        "toolCallId": call_id,
+                        "toolName": tool_name,
+                        "content": [{"type": "text", "text": ORPHAN_TOOL_RESULT_TEXT}],
+                        "isError": True,
+                        "timestamp": now_ms,
+                    },
+                },
+                ensure_ascii=False,
+            )
+        )
+        parent_id = entry_id
+        appended.append(call_id)
+
+    prefix = "" if not text or text.endswith("\n") else "\n"
+    try:
+        with session_file.open("a", encoding="utf-8") as handle:
+            handle.write(prefix + "\n".join(lines) + "\n")
+    except OSError:
+        return []
+    return appended
+
+
 class PiSupervisor:
-    """Launches Pi turn-by-turn and exposes a dashboard-friendly state snapshot."""
+    """Drives one long-lived ``pi --mode rpc`` process and exposes dashboard telemetry."""
 
     def __init__(
         self,
@@ -273,11 +577,24 @@ class PiSupervisor:
         stream_sink: Optional[StreamSink] = None,
         repo_root: Optional[Path] = None,
         pi_binary: Optional[str] = None,
-        require_frame_reads: bool = False,
         max_idle_turns: int = 3,
+        token_budget: int = DEFAULT_TOKEN_BUDGET,
+        stats_poll_seconds: Optional[float] = DEFAULT_STATS_POLL_SECONDS,
+        objective_complete: Optional[ObjectiveCheck] = None,
+        artifact_paths: Optional[ArtifactPathProvider] = None,
+        critic_enabled: bool = True,
+        critic_context: Optional[CriticContextProvider] = None,
+        critic_timeout_seconds: Optional[float] = None,
+        critic_thinking: Optional[str] = None,
+        critic_retry_enabled: bool = True,
+        critic_retry_thinking: Optional[str] = None,
+        critic_heartbeat_seconds: float = CRITIC_HEARTBEAT_SECONDS,
     ) -> None:
-        self.require_frame_reads = bool(require_frame_reads)
         self.max_idle_turns = max_idle_turns if max_idle_turns and max_idle_turns > 0 else 0
+        self.token_budget = token_budget if token_budget and token_budget > 0 else 0
+        self.stats_poll_seconds = (
+            float(stats_poll_seconds) if stats_poll_seconds and stats_poll_seconds > 0 else 0.0
+        )
         self.workspace_dir = workspace_dir.expanduser().resolve()
         self.workspace_dir.mkdir(parents=True, exist_ok=True)
         self.server_url = server_url
@@ -286,8 +603,33 @@ class PiSupervisor:
         self.pi_binary = pi_binary or shutil.which("pi")
         self.event_sink = event_sink
         self.stream_sink = stream_sink
+        self.objective_complete = objective_complete
+        self.artifact_paths = artifact_paths
         self.session_dir = self.workspace_dir / "pi-session"
         self.session_dir.mkdir(parents=True, exist_ok=True)
+
+        critic = _critic_module()
+        self.critic_enabled = bool(critic_enabled)
+        self.critic_context = critic_context
+        self.critic_timeout_seconds = float(
+            critic_timeout_seconds
+            if critic_timeout_seconds and critic_timeout_seconds > 0
+            else critic.DEFAULT_CRITIC_TIMEOUT_SECONDS
+        )
+        self.critic_thinking = critic_thinking or critic.DEFAULT_CRITIC_THINKING
+        self.critic_retry_enabled = bool(critic_retry_enabled)
+        self.critic_retry_thinking = critic_retry_thinking or critic.DEFAULT_CRITIC_RETRY_THINKING
+        self.critic_heartbeat_seconds = max(0.0, float(critic_heartbeat_seconds or 0.0))
+        self.last_critique: Optional[str] = None
+        self.last_critique_at: Optional[str] = None
+        self.last_critique_seconds: Optional[float] = None
+        self.last_critique_error: Optional[str] = None
+        self.last_critique_tokens: Optional[int] = None
+        self.last_critique_stop_reason: Optional[str] = None
+        self.last_critique_usage: Optional[JsonDict] = None
+        self.last_critique_salvaged: bool = False
+        self.last_critique_raw_path: Optional[str] = None
+        self.last_critique_attempts: list[JsonDict] = []
 
         self.status = "idle"
         self.status_reason = "Pi supervisor is idle."
@@ -304,6 +646,12 @@ class PiSupervisor:
         self.continue_count = 0
         self.auto_continue = False
         self.goal = ""
+        #: What the operator handed to :meth:`start`, kept apart from the resolved
+        #: goal so a restart without one can fall back instead of re-pinning it.
+        self.operator_goal = ""
+        #: The forward-looking goal the last critique wrote, for the next session.
+        self.critic_next_goal = ""
+        self.goal_source = GOAL_SOURCE_FALLBACK
         self.continue_delay_seconds = 1.0
         self.max_turns: Optional[int] = None
         self.provider: Optional[str] = None
@@ -311,11 +659,7 @@ class PiSupervisor:
         self.thinking: Optional[str] = None
         self.current_prompt = ""
         self.last_prompt = ""
-        self.default_prompt = default_supervisor_prompt(
-            server_url=self.server_url,
-            workspace_dir=self.workspace_dir,
-            goal="",
-        )
+        self.default_prompt = FALLBACK_GOAL
         self.current_assistant_text = ""
         self.current_assistant_thinking = ""
         self.last_assistant_text = ""
@@ -326,35 +670,63 @@ class PiSupervisor:
         self.recent_events: deque[JsonDict] = deque(maxlen=120)
         self.stderr_tail: deque[str] = deque(maxlen=30)
         self.transcript: deque[JsonDict] = deque(maxlen=160)
+        self.stream_entries: list[JsonDict] = []
+        self.operator_messages: deque[JsonDict] = deque(maxlen=OPERATOR_MESSAGE_HISTORY)
         self.turn_plan_preview: Optional[JsonDict] = None
         self.next_auto_continue_at: Optional[str] = None
         self.session_usage: Optional[JsonDict] = None
         self.last_message_usage: Optional[JsonDict] = None
+        self.context_usage: Optional[JsonDict] = None
         self.model_limits: Optional[JsonDict] = None
         self.tool_call_count: int = 0
         self.thinking_block_count: int = 0
         self.assistant_message_count: int = 0
         self.user_message_count: int = 0
+        self.repaired_tool_calls: int = 0
         self.last_compaction_tokens_before: Optional[int] = None
         self.last_compaction_tokens_after: Optional[int] = None
         self.last_compaction_at: Optional[str] = None
         self._pending_thinking_in_message: bool = False
         self._model_limits_cache: dict[str, Optional[JsonDict]] = {}
-        self.current_turn_vision: JsonDict = self._new_turn_vision([])
-        self.last_turn_vision: JsonDict = self._new_turn_vision([])
-        self.vision_violation_count: int = 0
+        self._stream_seq: int = 0
+        self._stream_by_seq: dict[int, JsonDict] = {}
+        self._stream_text_buffers: dict[int, str] = {}
+        self._tool_stream_seq: dict[str, int] = {}
+        self._tool_started_monotonic: dict[str, float] = {}
+        self._active_thinking_seq: Optional[int] = None
+        self._active_text_seq: Optional[int] = None
+        self._message_saw_thinking_delta: bool = False
+        self._message_saw_text_delta: bool = False
 
         self._task: Optional[asyncio.Task[None]] = None
         self._process: Optional[asyncio.subprocess.Process] = None
+        self._reader_tasks: list[asyncio.Task[None]] = []
+        self._stats_task: Optional[asyncio.Task[None]] = None
+        self._pending_responses: dict[str, asyncio.Future[JsonDict]] = {}
+        self._request_counter = 0
+        self._settled_event = asyncio.Event()
+        self._exit_event = asyncio.Event()
         self._stop_requested = False
-        self._requested_process_shutdown = False
+        self._budget_stop_requested = False
         self._current_turn_completed = False
         self._current_cycle_has_tool_call = False
         self._consecutive_idle_turns = 0
+        self._session_start_context: JsonDict = {}
+        self._critic_process: Optional[asyncio.subprocess.Process] = None
+        self._critic_cancelled = False
+        self._critic_thinking_seq: Optional[int] = None
+        self._critic_text_seq: Optional[int] = None
+        self._critic_heartbeat_seq: Optional[int] = None
+        self._critic_heartbeat_task: Optional[asyncio.Task[None]] = None
 
     @property
     def is_running(self) -> bool:
         return self._task is not None and not self._task.done()
+
+    def set_objective_complete(self, callback: Optional[ObjectiveCheck]) -> None:
+        """Register the predicate the server uses to declare the objective finished."""
+
+        self.objective_complete = callback
 
     def _config_snapshot(self) -> JsonDict:
         return {
@@ -363,115 +735,1714 @@ class PiSupervisor:
             "thinking": self.thinking,
             "auto_continue": self.auto_continue,
             "goal": self.goal,
+            "goal_source": self.goal_source,
             "continue_delay_seconds": self.continue_delay_seconds,
             "max_turns": self.max_turns,
             "skill_path": str(self.skill_path),
             "session_dir": str(self.session_dir),
             "server_url": self.server_url,
             "tools": DEFAULT_TOOLS,
-            "require_frame_reads": self.require_frame_reads,
             "max_idle_turns": self.max_idle_turns,
+            "token_budget": self.token_budget,
+            "stats_poll_seconds": self.stats_poll_seconds,
+            "critic_enabled": self.critic_enabled,
+            "critic_timeout_seconds": self.critic_timeout_seconds,
+            "critic_thinking": self.critic_thinking,
+            "critic_retry_enabled": self.critic_retry_enabled,
+            "critic_retry_thinking": self.critic_retry_thinking,
         }
 
-    def _new_turn_vision(self, attachment_paths: list[Path]) -> JsonDict:
-        annotated_path = next(
-            (str(path) for path in attachment_paths if path.name == ANNOTATED_FRAME_NAME),
-            None,
-        )
-        raw_path = next(
-            (str(path) for path in attachment_paths if path.name == RAW_FRAME_NAME), None
-        )
+    def state_snapshot(self) -> JsonDict:
         return {
-            "annotated_path": annotated_path,
-            "annotated_available": annotated_path is not None,
-            "annotated_attached": annotated_path is not None,
-            "annotated_read": False,
-            "raw_path": raw_path,
-            "raw_available": raw_path is not None,
-            "raw_attached": raw_path is not None,
-            "raw_read": False,
-            "read_sequence": [],
-            "used_vision": False,
-            "compliant": None,
-            "violation_reason": "",
+            "available": self.available,
+            "pi_binary": self.pi_binary,
+            "status": self.status,
+            "status_reason": self.status_reason,
+            "provider": self.provider,
+            "model": self.model,
+            "thinking": self.thinking,
+            "last_error": self.last_error,
+            "started_at": self.started_at,
+            "last_event_at": self.last_event_at,
+            "last_turn_started_at": self.last_turn_started_at,
+            "last_turn_completed_at": self.last_turn_completed_at,
+            "session_id": self.session_id,
+            "session_file": str(self.session_file) if self.session_file else None,
+            "session_dir": str(self.session_dir),
+            "skill_path": str(self.skill_path),
+            "server_url": self.server_url,
+            "current_pid": self.current_pid,
+            "turns_completed": self.turns_completed,
+            "continue_count": self.continue_count,
+            "goal": self.goal,
+            "goal_source": self.goal_source,
+            "operator_goal": self.operator_goal,
+            "critic_next_goal": self.critic_next_goal,
+            "current_prompt": self.current_prompt,
+            "last_prompt": self.last_prompt,
+            "default_prompt": self.default_prompt,
+            "current_assistant_text": self.current_assistant_text,
+            "current_assistant_thinking": self.current_assistant_thinking,
+            "last_assistant_text": self.last_assistant_text,
+            "last_assistant_thinking": self.last_assistant_thinking,
+            "latest_turn_summary": self.latest_turn_summary,
+            "active_tools": list(self.current_tool_calls.values()),
+            "recent_tools": list(self.recent_tools),
+            "recent_events": list(self.recent_events),
+            "stderr_tail": list(self.stderr_tail),
+            "transcript": list(self.transcript),
+            "stream": list(self.stream_entries),
+            "operator_messages": list(self.operator_messages),
+            "turn_plan_preview": self.turn_plan_preview,
+            "next_auto_continue_at": self.next_auto_continue_at,
+            "session_usage": self.session_usage,
+            "last_message_usage": self.last_message_usage,
+            "context_usage": self.context_usage,
+            "model_limits": self.model_limits,
+            "counts": {
+                "tool_calls": self.tool_call_count,
+                "thinking_blocks": self.thinking_block_count,
+                "assistant_messages": self.assistant_message_count,
+                "user_messages": self.user_message_count,
+                "repaired_tool_calls": self.repaired_tool_calls,
+            },
+            "compaction": {
+                "tokens_before": self.last_compaction_tokens_before,
+                "tokens_after": self.last_compaction_tokens_after,
+                "at": self.last_compaction_at,
+            },
+            "critique": {
+                "enabled": self.critic_enabled,
+                "text": self.last_critique,
+                "at": self.last_critique_at,
+                "duration_seconds": self.last_critique_seconds,
+                "digest_tokens": self.last_critique_tokens,
+                "error": self.last_critique_error,
+                "stop_reason": self.last_critique_stop_reason,
+                "usage": self.last_critique_usage,
+                "salvaged": self.last_critique_salvaged,
+                "next_goal": self.critic_next_goal,
+                "raw_path": self.last_critique_raw_path,
+                "attempts": list(self.last_critique_attempts),
+                "handoff_path": str(_critic_module().handoff_path(self.workspace_dir)),
+            },
+            "config": self._config_snapshot(),
         }
 
-    def _record_turn_vision_read(self, path: str) -> None:
-        if not path:
+    # ------------------------------------------------------------------
+    # Ordered stream log
+    # ------------------------------------------------------------------
+
+    def stream_since(
+        self,
+        after: int = 0,
+        limit: int = STREAM_DEFAULT_PAGE,
+    ) -> JsonDict:
+        """Return stream entries newer than ``after``, oldest first."""
+
+        after = max(0, int(after))
+        limit = max(1, min(int(limit), STREAM_ENTRY_CAP))
+        entries = [entry for entry in self.stream_entries if entry["seq"] > after][:limit]
+        next_seq = entries[-1]["seq"] if entries else after
+        return {
+            "entries": deepcopy(entries),
+            "next_seq": next_seq,
+            "session_id": self.session_id,
+        }
+
+    def _reset_stream(self) -> None:
+        self.stream_entries.clear()
+        self._stream_by_seq.clear()
+        self._stream_text_buffers.clear()
+        self._tool_stream_seq.clear()
+        self._tool_started_monotonic.clear()
+        self._stream_seq = 0
+        self._active_thinking_seq = None
+        self._active_text_seq = None
+        self._critic_thinking_seq = None
+        self._critic_text_seq = None
+        self._critic_heartbeat_seq = None
+        self._message_saw_thinking_delta = False
+        self._message_saw_text_delta = False
+
+    def _new_stream_entry(
+        self,
+        kind: str,
+        *,
+        state: str = "ok",
+        text: str = "",
+        tool: Optional[JsonDict] = None,
+        system: Optional[JsonDict] = None,
+        source: str = "agent",
+    ) -> JsonDict:
+        self._stream_seq += 1
+        entry: JsonDict = {
+            "seq": self._stream_seq,
+            "ts": utc_now(),
+            "kind": kind,
+            "state": state,
+            "source": source,
+            "text": text,
+            "tool": tool,
+            "system": system,
+        }
+        self.stream_entries.append(entry)
+        self._stream_by_seq[entry["seq"]] = entry
+        overflow = len(self.stream_entries) - STREAM_ENTRY_CAP
+        if overflow > 0:
+            for dropped in self.stream_entries[:overflow]:
+                self._stream_by_seq.pop(dropped["seq"], None)
+                self._stream_text_buffers.pop(dropped["seq"], None)
+            del self.stream_entries[:overflow]
+        self.last_event_at = entry["ts"]
+        return entry
+
+    async def _emit_stream_entry(self, entry: Optional[JsonDict]) -> None:
+        if entry is None or self.stream_sink is None:
             return
-        filename = Path(path).name
-        if filename not in {ANNOTATED_FRAME_NAME, RAW_FRAME_NAME}:
-            return
-        sequence = self.current_turn_vision.setdefault("read_sequence", [])
-        if filename == ANNOTATED_FRAME_NAME and not self.current_turn_vision.get("annotated_read"):
-            self.current_turn_vision["annotated_read"] = True
-            sequence.append(path)
-        elif filename == RAW_FRAME_NAME and not self.current_turn_vision.get("raw_read"):
-            self.current_turn_vision["raw_read"] = True
-            sequence.append(path)
-        self.current_turn_vision["used_vision"] = bool(
-            self.current_turn_vision.get("annotated_read")
-            or self.current_turn_vision.get("raw_read")
+        await self.stream_sink({"type": STREAM_ENTRY_EVENT, "entry": deepcopy(entry)})
+
+    async def _push_stream_user(self, text: str, *, source: str = "agent") -> JsonDict:
+        entry = self._new_stream_entry(
+            "user",
+            state="ok",
+            text=_clip_text(text, STREAM_TEXT_LIMIT),
+            source=source,
         )
+        await self._emit_stream_entry(entry)
+        return entry
 
-    def _finalize_turn_vision(self) -> JsonDict:
-        vision = dict(self.current_turn_vision)
-        annotated_available = bool(vision.get("annotated_available"))
-        raw_available = bool(vision.get("raw_available"))
-        annotated_read = bool(vision.get("annotated_read"))
-        raw_read = bool(vision.get("raw_read"))
+    async def _push_stream_system(
+        self,
+        label: str,
+        *,
+        text: str = "",
+        level: str = "info",
+    ) -> JsonDict:
+        entry = self._new_stream_entry(
+            "system",
+            state="error" if level == "error" else "ok",
+            text=_clip_text(text or label, STREAM_TEXT_LIMIT),
+            system={"label": _truncate(label, 160), "level": level},
+        )
+        await self._emit_stream_entry(entry)
+        return entry
 
-        # A frame attached to the prompt is already in front of the model as an image;
-        # re-reading the same file with the read tool adds nothing. Only require the
-        # explicit read when the caller asked for it.
-        if self.require_frame_reads:
-            annotated_seen = annotated_read
-            raw_seen = raw_read
+    # -- artifact lookup ------------------------------------------------
+
+    def _artifact_path_map(self) -> dict[str, Path]:
+        raw: Any = None
+        provider = self.artifact_paths
+        if callable(provider):
+            try:
+                raw = provider()
+            except Exception:  # noqa: BLE001
+                raw = None
+        elif isinstance(provider, dict):
+            raw = provider
+        if not isinstance(raw, dict) or not raw:
+            raw = {
+                key: self.workspace_dir / filename
+                for key, filename in DEFAULT_ARTIFACT_FILES.items()
+            }
+        resolved: dict[str, Path] = {}
+        for key, value in raw.items():
+            if not isinstance(value, (str, Path)):
+                continue
+            with contextlib.suppress(OSError, RuntimeError, ValueError):
+                resolved[str(key)] = Path(value).expanduser().resolve()
+        return resolved
+
+    def _resolve_workspace_path(self, raw: str) -> Path:
+        path = Path(raw).expanduser()
+        if not path.is_absolute():
+            path = self.workspace_dir / path
+        try:
+            return path.resolve()
+        except (OSError, RuntimeError):
+            return path
+
+    def _artifact_key_for_path(self, path: Path) -> Optional[str]:
+        for key, candidate in self._artifact_path_map().items():
+            if candidate == path:
+                return key
+        return None
+
+    # -- tool payloads --------------------------------------------------
+
+    def _build_tool_payload(self, tool_name: Any, args: Any) -> JsonDict:
+        name = str(tool_name or "tool").strip() or "tool"
+        lowered = name.lower()
+        command = args.get("command") if isinstance(args, dict) else None
+        if not isinstance(command, str):
+            command = None
+        raw_path = extract_file_hint(args)
+        path: Optional[Path] = self._resolve_workspace_path(raw_path) if raw_path else None
+
+        if lowered == "bash" and command and command.strip():
+            headline = command_headline(command)
+        elif path is not None:
+            verb = lowered if lowered in FILE_TOOL_NAMES else name
+            headline = f"{verb} {path.name}"
+        elif command and command.strip():
+            headline = command_headline(command)
         else:
-            annotated_seen = annotated_read or bool(vision.get("annotated_attached"))
-            raw_seen = raw_read or bool(vision.get("raw_attached"))
-        vision["used_vision"] = annotated_seen or raw_seen
+            preview = preview_payload(args, STREAM_HEADLINE_LIMIT) if args else ""
+            headline = _truncate(f"{name} {preview}".strip(), STREAM_HEADLINE_LIMIT)
 
-        violation_reason = ""
-        if annotated_available and not annotated_seen:
-            violation_reason = f"{ANNOTATED_FRAME_NAME} was attached but never read"
-        elif not annotated_available and raw_available and not raw_seen:
-            violation_reason = f"{RAW_FRAME_NAME} was attached but no frame was read"
+        image_artifact: Optional[str] = None
+        if lowered == "read" and path is not None and path.suffix.lower() in IMAGE_SUFFIXES:
+            image_artifact = self._artifact_key_for_path(path)
 
-        vision["violation_reason"] = violation_reason
-        vision["compliant"] = not violation_reason
-        return vision
+        return {
+            "name": name,
+            "headline": headline,
+            "command": command,
+            "path": str(path) if path is not None else None,
+            "image_artifact": image_artifact,
+            "result_summary": "",
+            "result_full": "",
+            "duration_ms": None,
+        }
 
-    def _current_continue_prompt(self) -> str:
-        reason = ""
-        if self.last_turn_vision.get("compliant") is False:
-            reason = str(self.last_turn_vision.get("violation_reason") or "")
-        return continue_supervisor_prompt(vision_violation_reason=reason)
+    def _fill_tool_result(self, tool: JsonDict, result: Any, *, is_error: bool) -> None:
+        text = tool_output_text(result)
+        tool["result_full"] = payload_text(result)
+        if is_error:
+            tool["result_summary"] = (
+                _truncate(first_nonempty_line(text), STREAM_HEADLINE_LIMIT) or "Tool call failed."
+            )
+            return
+        name = str(tool.get("name") or "").lower()
+        raw_path = tool.get("path")
+        if name == "read" and isinstance(raw_path, str):
+            path = Path(raw_path)
+            if path.suffix.lower() in IMAGE_SUFFIXES:
+                size: Optional[int] = None
+                with contextlib.suppress(OSError):
+                    size = path.stat().st_size
+                tool["result_summary"] = (
+                    f"image {format_byte_size(size)}" if size is not None else "image"
+                )
+                return
+        if name == "bash":
+            position = summarize_position_json(text)
+            if position:
+                tool["result_summary"] = position
+                return
+        tool["result_summary"] = _truncate(first_nonempty_line(text), STREAM_HEADLINE_LIMIT)
 
-    def _reset_cycle_state(self, attachment_paths: Optional[list[Path]] = None) -> None:
-        self.current_turn_vision = self._new_turn_vision(
-            attachment_paths if attachment_paths is not None else self._vision_attachment_paths()
+    async def _start_tool_stream_entry(
+        self,
+        tool_call_id: Any,
+        tool_name: Any,
+        args: Any,
+    ) -> JsonDict:
+        entry = self._new_stream_entry(
+            "tool",
+            state="running",
+            tool=self._build_tool_payload(tool_name, args),
         )
-        self._current_turn_completed = False
-        self._current_cycle_has_tool_call = False
+        key = str(tool_call_id) if tool_call_id else f"anon-{entry['seq']}"
+        self._tool_stream_seq[key] = entry["seq"]
+        self._tool_started_monotonic[key] = time.monotonic()
+        await self._emit_stream_entry(entry)
+        return entry
+
+    async def _seal_active_narration(self) -> None:
+        """A tool call breaks the narration: later deltas start their own entry."""
+
+        for attribute in ("_active_thinking_seq", "_active_text_seq"):
+            seq = getattr(self, attribute)
+            setattr(self, attribute, None)
+            if seq is None:
+                continue
+            self._stream_text_buffers.pop(seq, None)
+            entry = self._stream_by_seq.get(seq)
+            if entry is None or entry.get("state") != "running":
+                continue
+            entry["state"] = "ok"
+            await self._emit_stream_entry(entry)
+
+    async def _finish_tool_stream_entry(
+        self,
+        tool_call_id: Any,
+        tool_name: Any,
+        result: Any,
+        *,
+        is_error: bool,
+    ) -> Optional[JsonDict]:
+        key = str(tool_call_id) if tool_call_id else None
+        seq = self._tool_stream_seq.pop(key, None) if key else None
+        started = self._tool_started_monotonic.pop(key, None) if key else None
+        entry = self._stream_by_seq.get(seq) if seq is not None else None
+        if entry is None:
+            entry = self._new_stream_entry(
+                "tool",
+                state="running",
+                tool=self._build_tool_payload(tool_name, None),
+            )
+        tool = entry.get("tool") or {}
+        self._fill_tool_result(tool, result, is_error=is_error)
+        if started is not None:
+            tool["duration_ms"] = int(max(0.0, time.monotonic() - started) * 1000)
+        entry["tool"] = tool
+        entry["state"] = "error" if is_error else "ok"
+        await self._emit_stream_entry(entry)
+        return entry
+
+    def _append_stream_text(self, seq: Optional[int], delta: str) -> Optional[JsonDict]:
+        if seq is None:
+            return None
+        entry = self._stream_by_seq.get(seq)
+        if entry is None:
+            return None
+        buffered = self._stream_text_buffers.get(seq, "") + delta
+        self._stream_text_buffers[seq] = buffered
+        entry["text"] = _clip_text(buffered, STREAM_TEXT_LIMIT)
+        return entry
+
+    async def _stream_delta(self, kind: str, delta: str) -> None:
+        attribute = "_active_thinking_seq" if kind == "thinking" else "_active_text_seq"
+        seen = "_message_saw_thinking_delta" if kind == "thinking" else "_message_saw_text_delta"
+        seq = getattr(self, attribute)
+        if seq is None or seq not in self._stream_by_seq:
+            entry = self._new_stream_entry(kind, state="running")
+            seq = entry["seq"]
+            setattr(self, attribute, seq)
+            self._stream_text_buffers[seq] = ""
+        setattr(self, seen, True)
+        await self._emit_stream_entry(self._append_stream_text(seq, delta))
+
+    async def _finalize_stream_text(self, kind: str, final_text: str) -> None:
+        attribute = "_active_thinking_seq" if kind == "thinking" else "_active_text_seq"
+        seen = "_message_saw_thinking_delta" if kind == "thinking" else "_message_saw_text_delta"
+        seq = getattr(self, attribute)
+        setattr(self, attribute, None)
+        saw_delta = getattr(self, seen)
+        setattr(self, seen, False)
+        if seq is not None:
+            entry = self._stream_by_seq.get(seq)
+            self._stream_text_buffers.pop(seq, None)
+            if entry is not None:
+                if final_text and not entry["text"]:
+                    entry["text"] = _clip_text(final_text, STREAM_TEXT_LIMIT)
+                entry["state"] = "ok"
+                await self._emit_stream_entry(entry)
+                return
+        if saw_delta or not final_text:
+            return
+        entry = self._new_stream_entry(
+            kind,
+            state="ok",
+            text=_clip_text(final_text, STREAM_TEXT_LIMIT),
+        )
+        await self._emit_stream_entry(entry)
+
+    async def _close_open_stream_entries(self) -> None:
+        """Mark anything still ``running`` when the process goes away."""
+
+        for key in list(self._tool_stream_seq):
+            seq = self._tool_stream_seq.pop(key)
+            started = self._tool_started_monotonic.pop(key, None)
+            entry = self._stream_by_seq.get(seq)
+            if entry is None or entry.get("state") != "running":
+                continue
+            tool = entry.get("tool") or {}
+            tool["result_summary"] = _truncate(ORPHAN_TOOL_RESULT_TEXT, STREAM_HEADLINE_LIMIT)
+            tool["result_full"] = ORPHAN_TOOL_RESULT_TEXT
+            if started is not None:
+                tool["duration_ms"] = int(max(0.0, time.monotonic() - started) * 1000)
+            entry["tool"] = tool
+            entry["state"] = "error"
+            await self._emit_stream_entry(entry)
+        for attribute in ("_active_thinking_seq", "_active_text_seq"):
+            seq = getattr(self, attribute)
+            setattr(self, attribute, None)
+            entry = self._stream_by_seq.get(seq) if seq is not None else None
+            if entry is not None and entry.get("state") == "running":
+                entry["state"] = "ok"
+                await self._emit_stream_entry(entry)
+        self._message_saw_thinking_delta = False
+        self._message_saw_text_delta = False
+
+    # ------------------------------------------------------------------
+    # Lifecycle
+    # ------------------------------------------------------------------
+
+    async def start(
+        self,
+        *,
+        goal: Optional[str] = None,
+        provider: Optional[str] = None,
+        model: Optional[str] = None,
+        thinking: Optional[str] = None,
+        auto_continue: bool = True,
+        max_turns: Optional[int] = None,
+        continue_delay_seconds: float = 1.0,
+        skill_path: Optional[str] = None,
+        token_budget: Optional[int] = None,
+    ) -> JsonDict:
+        if self.is_running:
+            raise ValueError("Pi supervisor is already running.")
+        if not self.available or not self.pi_binary:
+            raise ValueError("Pi executable was not found on PATH.")
+
+        chosen_skill = Path(skill_path).expanduser().resolve() if skill_path else self.skill_path
+        if not chosen_skill.exists():
+            raise ValueError(f"Pi system prompt not found: {chosen_skill}")
+
+        self.skill_path = chosen_skill
+        self.provider = provider or None
+        self.model = model or None
+        self.thinking = thinking or None
+        self.auto_continue = bool(auto_continue)
+        self.operator_goal = (goal or "").strip()
+        self.max_turns = max_turns if max_turns and max_turns > 0 else None
+        self.continue_delay_seconds = max(0.0, float(continue_delay_seconds))
+        if token_budget is not None:
+            self.token_budget = token_budget if token_budget > 0 else 0
+        self._stage_workspace_helpers()
+        self._session_start_context = await self._collect_critic_context()
+        self.goal, self.goal_source = self._resolve_goal(self.operator_goal)
+
+        initial_prompt = self._initial_message()
+        self.default_prompt = initial_prompt
+
+        self.status = "starting"
+        self.status_reason = "Starting a fresh Pi RPC session."
+        self.last_error = None
+        self.started_at = utc_now()
+        self.last_event_at = self.started_at
+        self.current_prompt = initial_prompt
+        self.last_prompt = initial_prompt
+        self.current_assistant_text = ""
+        self.current_assistant_thinking = ""
+        self.last_assistant_text = ""
+        self.last_assistant_thinking = ""
+        self.latest_turn_summary = ""
+        self.current_tool_calls.clear()
+        self.recent_tools.clear()
+        self.recent_events.clear()
+        self.stderr_tail.clear()
+        self.transcript.clear()
+        self.operator_messages.clear()
+        self._reset_stream()
+        self.turn_plan_preview = None
+        self.turns_completed = 0
+        self.continue_count = 0
+        self.session_id = str(uuid.uuid4())
+        self.session_file = None
+        self.current_pid = None
+        self.next_auto_continue_at = None
+        self.session_usage = None
+        self.last_message_usage = None
+        self.context_usage = None
+        self.model_limits = None
+        self.tool_call_count = 0
+        self.thinking_block_count = 0
+        self.assistant_message_count = 0
+        self.user_message_count = 0
+        self.repaired_tool_calls = 0
+        self.last_compaction_tokens_before = None
+        self.last_compaction_tokens_after = None
+        self.last_compaction_at = None
+        self._pending_thinking_in_message = False
+        self._consecutive_idle_turns = 0
+        self._stop_requested = False
+        self._budget_stop_requested = False
+        self._critic_cancelled = False
+        await self._refresh_model_limits()
+
+        await self._emit_major(
+            "pi_supervisor_status",
+            {
+                "status": self.status,
+                "summary": self.status_reason,
+                "config": self._config_snapshot(),
+            },
+        )
+        await self._push_stream_system(
+            "session start",
+            text=self.goal or FALLBACK_GOAL,
+        )
+        self._task = asyncio.create_task(self._run_loop(resume=False, force_single_turn=False))
+        return self.state_snapshot()
+
+    async def continue_once(self) -> JsonDict:
+        if self.is_running:
+            raise ValueError("Pi supervisor is already running.")
+        if not self.session_id:
+            raise ValueError("Pi supervisor has no previous session to continue.")
+        self.current_prompt = CONTINUE_MESSAGE
+        self.last_prompt = CONTINUE_MESSAGE
+        self.status = "starting"
+        self.status_reason = "Continuing the existing Pi session."
+        self.last_error = None
+        self.last_event_at = utc_now()
+        self.next_auto_continue_at = None
+        self.current_assistant_text = ""
+        self.current_assistant_thinking = ""
+        self.current_tool_calls.clear()
+        self._stop_requested = False
+        self._budget_stop_requested = False
+        self._critic_cancelled = False
+        self._stage_workspace_helpers()
+        await self._refresh_model_limits()
+        await self._emit_major(
+            "pi_supervisor_status",
+            {
+                "status": self.status,
+                "summary": self.status_reason,
+                "config": self._config_snapshot(),
+            },
+        )
+        self._task = asyncio.create_task(self._run_loop(resume=True, force_single_turn=True))
+        return self.state_snapshot()
+
+    async def stop(self) -> JsonDict:
+        self._stop_requested = True
+        # An operator stop must return promptly, so it also cancels the critic:
+        # a retrospective is worth minutes only when the watchdog is restarting.
+        self._critic_cancelled = True
+        await self._abort_critic()
+        if self.is_running:
+            self.status = "stopping"
+            self.status_reason = "Stop requested by operator."
+            await self._emit_major(
+                "pi_supervisor_status",
+                {
+                    "status": self.status,
+                    "summary": self.status_reason,
+                },
+            )
+        await self._shutdown_process()
+        task = self._task
+        if task is not None:
+            with contextlib.suppress(asyncio.CancelledError, asyncio.TimeoutError):
+                await asyncio.wait_for(asyncio.shield(task), timeout=6)
+        if self.status not in {"stopped", "completed", "error", "stuck"}:
+            self.status = "stopped"
+            self.status_reason = "Pi supervisor stopped."
+        self.current_pid = None
+        self.next_auto_continue_at = None
+        await self._push_stream_system("session stop", text=self.status_reason)
+        return self.state_snapshot()
+
+    def live_session_refusal(self) -> Optional[str]:
+        """Why an operator message cannot land right now, or ``None`` when it can."""
+
+        if self.status == "critiquing":
+            return (
+                "Pi is writing its between-session critique, not playing. "
+                "Start or continue a session before sending a message."
+            )
+        if self.status not in STEERABLE_STATUSES:
+            return (
+                f"Pi supervisor is {self.status}, so there is no live session to steer. "
+                "Start or continue a session first."
+            )
+        process = self._process
+        if process is None or process.returncode is not None:
+            return "The Pi RPC process is not running, so there is no live session to steer."
+        return None
+
+    async def _steering_behavior(self) -> str:
+        """``steer`` mid-turn, ``followUp`` when Pi is between turns.
+
+        A bare prompt is rejected by pi while the agent streams, so the choice is
+        never "no behavior": only whether the message cuts in at the next tool-call
+        boundary or waits for the turn to end. When ``get_state`` does not answer,
+        assume streaming, since ``steer`` is accepted in both states.
+        """
+
+        response = await self._send_command({"type": "get_state"}, timeout=10.0)
+        data = response.get("data") if isinstance(response, dict) else None
+        if isinstance(data, dict) and data.get("isStreaming") is False:
+            return "followUp"
+        return "steer"
+
+    async def send_operator_message(self, message: str) -> JsonDict:
+        """Inject a human-typed message into the live session.
+
+        Raises ``ValueError`` for input the game loop should not carry and
+        ``NoLiveSessionError`` when nothing is live to receive it.
+        """
+
+        text = (message or "").strip()
+        if not text:
+            raise ValueError("Operator message is empty.")
+        if len(text) > OPERATOR_MESSAGE_LIMIT:
+            raise ValueError(
+                f"Operator message is {len(text)} characters; "
+                f"the limit is {OPERATOR_MESSAGE_LIMIT}."
+            )
+        refusal = self.live_session_refusal()
+        if refusal:
+            raise NoLiveSessionError(refusal)
+
+        behavior = await self._steering_behavior()
+        command: JsonDict = {
+            "type": "prompt",
+            "message": text,
+            "streamingBehavior": behavior,
+        }
+        response = await self._send_command(command, timeout=30.0)
+        if isinstance(response, dict) and response.get("success") is False:
+            raise RuntimeError(f"Pi rejected the operator message: {response.get('error')}")
+
+        entry = await self._push_stream_user(text, source=OPERATOR_STREAM_SOURCE)
+        self._append_transcript(
+            direction="outbound",
+            role="user",
+            channel="operator",
+            content=text,
+            meta={"streaming_behavior": behavior},
+        )
+        self.user_message_count += 1
+        record: JsonDict = {
+            "seq": entry["seq"],
+            "ts": entry["ts"],
+            "text": entry["text"],
+            "streaming_behavior": behavior,
+        }
+        self.operator_messages.append(record)
+        return dict(record)
+
+    async def shutdown(self) -> None:
+        await self.stop()
+
+    async def wait_until_idle(self, timeout: float = 30.0) -> None:
+        task = self._task
+        if task is None:
+            return
+        await asyncio.wait_for(asyncio.shield(task), timeout=timeout)
+
+    # ------------------------------------------------------------------
+    # Run loop
+    # ------------------------------------------------------------------
+
+    async def _run_loop(self, *, resume: bool, force_single_turn: bool) -> None:
+        try:
+            if resume:
+                self._repair_session_file()
+            await self._launch_process()
+            await self._send_command({"type": "set_auto_compaction", "enabled": False})
+            await self._send_prompt(
+                CONTINUE_MESSAGE if resume else self._initial_message(),
+                with_images=not resume,
+                resume=resume,
+            )
+
+            while True:
+                if not await self._await_settle():
+                    self._apply_exit_status()
+                    break
+
+                await self._complete_turn(
+                    summary_text=self.current_assistant_text or self.last_assistant_text or None
+                )
+                await self._refresh_session_stats()
+
+                if self._budget_stop_requested:
+                    break
+                if self._stop_requested:
+                    self.status = "stopped"
+                    self.status_reason = "Pi supervisor stopped."
+                    break
+                if await self._objective_is_complete():
+                    self.status = "completed"
+                    self.status_reason = "Objective reported complete."
+                    await self._emit_major(
+                        "pi_objective_complete",
+                        {
+                            "summary": self.status_reason,
+                            "turns_completed": self.turns_completed,
+                        },
+                    )
+                    break
+                if force_single_turn:
+                    self.status = "completed"
+                    self.status_reason = "Pi completed one manual continue turn."
+                    break
+                if not self.auto_continue:
+                    self.status = "completed"
+                    self.status_reason = "Pi completed one turn."
+                    break
+                if self.max_turns is not None and self.turns_completed >= self.max_turns:
+                    self.status = "completed"
+                    self.status_reason = f"Reached max turns ({self.max_turns})."
+                    break
+                if self._token_budget_exhausted():
+                    await self._announce_token_budget_stop()
+                    break
+                if self._current_cycle_has_tool_call:
+                    self._consecutive_idle_turns = 0
+                else:
+                    self._consecutive_idle_turns += 1
+                if self.max_idle_turns and self._consecutive_idle_turns >= self.max_idle_turns:
+                    self.status = "stuck"
+                    self.status_reason = (
+                        f"Stopping auto-continue: {self._consecutive_idle_turns} turns in a row "
+                        "produced no tool calls."
+                    )
+                    await self._emit_major(
+                        "pi_supervisor_stuck",
+                        {
+                            "summary": self.status_reason,
+                            "idle_turns": self._consecutive_idle_turns,
+                            "turns_completed": self.turns_completed,
+                            "last_turn_summary": self.latest_turn_summary,
+                        },
+                    )
+                    await self._push_stream_system(
+                        "no tool calls",
+                        text=self.status_reason,
+                        level="warn",
+                    )
+                    break
+
+                self.continue_count += 1
+                self.next_auto_continue_at = _utc_after(self.continue_delay_seconds)
+                self.status = "running"
+                self.status_reason = (
+                    f"Auto-continue scheduled in {self.continue_delay_seconds:.1f}s."
+                )
+                await self._emit_major(
+                    "pi_auto_continue_scheduled",
+                    {
+                        "summary": self.status_reason,
+                        "goal": self.goal,
+                        "continue_delay_seconds": self.continue_delay_seconds,
+                        "next_auto_continue_at": self.next_auto_continue_at,
+                        "next_turn_index": self.turns_completed + 1,
+                    },
+                )
+                if self.continue_delay_seconds:
+                    await asyncio.sleep(self.continue_delay_seconds)
+                if self._budget_stop_requested:
+                    break
+                if self._stop_requested:
+                    self.status = "stopped"
+                    self.status_reason = "Pi supervisor stopped."
+                    break
+                await self._send_prompt(CONTINUE_MESSAGE, with_images=False, resume=True)
+        except asyncio.CancelledError:
+            self.status = "stopped"
+            self.status_reason = "Pi supervisor task was cancelled."
+            raise
+        except Exception as exc:  # noqa: BLE001
+            self.status = "error"
+            self.status_reason = "Pi supervisor encountered an error."
+            self.last_error = str(exc)
+            await self._emit_major("pi_supervisor_error", {"summary": str(exc)})
+            await self._push_stream_system("supervisor error", text=str(exc), level="error")
+        finally:
+            await self._shutdown_process()
+            self.current_pid = None
+            self.next_auto_continue_at = None
+            # The watchdog starts the next session the moment the status turns
+            # terminal, so the critique has to finish first, under `critiquing`.
+            terminal_status, terminal_reason = self.status, self.status_reason
+            await self._run_critic_pass(terminal_status, terminal_reason)
+            self.status, self.status_reason = terminal_status, terminal_reason
+            await self._emit_major(
+                "pi_supervisor_status",
+                {
+                    "status": self.status,
+                    "summary": self.status_reason,
+                    "last_error": self.last_error,
+                    "turns_completed": self.turns_completed,
+                },
+            )
+            await self._push_stream_system(
+                f"session {self.status}",
+                text=self.status_reason,
+                level=_STATUS_STREAM_LEVELS.get(self.status, "info"),
+            )
+            self._task = None
+
+    def _apply_exit_status(self) -> None:
+        process = self._process
+        returncode = process.returncode if process is not None else None
+        if self._budget_stop_requested:
+            # The poll already set the terminal status and asked the process to exit.
+            return
+        if self._stop_requested:
+            self.status = "stopped"
+            self.status_reason = "Pi supervisor stopped."
+            return
+        if returncode in (0, None):
+            self.status = "completed"
+            self.status_reason = "Pi exited after finishing the session."
+            return
+        stderr_preview = "\n".join(self.stderr_tail).strip()
+        raise RuntimeError(
+            f"Pi exited with status {returncode}."
+            + (f" stderr: {stderr_preview}" if stderr_preview else "")
+        )
+
+    async def _objective_is_complete(self) -> bool:
+        callback = self.objective_complete
+        if callback is None:
+            return False
+        try:
+            result = callback()
+            if asyncio.iscoroutine(result) or isinstance(result, asyncio.Future):
+                result = await result
+        except Exception as exc:  # noqa: BLE001
+            self._push_recent_event(
+                "pi_objective_check_failed", _truncate(str(exc), ERROR_TEXT_LIMIT)
+            )
+            return False
+        return bool(result)
+
+    def _token_budget_exhausted(self) -> bool:
+        if not self.token_budget:
+            return False
+        used = (self.context_usage or {}).get("tokens")
+        if not isinstance(used, (int, float)):
+            return False
+        return int(used) >= self.token_budget
+
+    # ------------------------------------------------------------------
+    # Process and RPC plumbing
+    # ------------------------------------------------------------------
+
+    def _resolve_goal(self, requested: str) -> tuple[str, str]:
+        """The goal for the session about to start, and where it came from.
+
+        Precedence, most specific first:
+
+        1. an explicit operator goal handed to :meth:`start`;
+        2. the ``NEXT GOAL`` line the last critique wrote;
+        3. the objective engine's current objective;
+        4. :data:`FALLBACK_GOAL`.
+
+        An operator goal is deliberately not sticky. The watchdog starts a fresh
+        session every time the budget trips, and a goal that survived those restarts
+        on its own outlived its own completion: the run kept being told to win a
+        badge it had already won. A restart that supplies no goal drops through to
+        the critic's, which is rewritten after every session and cannot go stale.
+        """
+
+        operator = (requested or "").strip()
+        if operator:
+            return operator, GOAL_SOURCE_OPERATOR
+        from_critic = (self.critic_next_goal or "").strip()
+        if from_critic:
+            return from_critic, GOAL_SOURCE_CRITIC
+        objective = str((self._session_start_context or {}).get("objective") or "").strip()
+        if objective:
+            return objective, GOAL_SOURCE_OBJECTIVE
+        return FALLBACK_GOAL, GOAL_SOURCE_FALLBACK
+
+    def _initial_message(self) -> str:
+        """Goal first, then last session's retrospective when the critic left one.
+
+        This is the user turn, never the system prompt: ``skill/SKILL.md`` is the
+        cached prefix and has to stay byte-identical across sessions.
+        """
+
+        critic = _critic_module()
+        goal = self.goal.strip() or FALLBACK_GOAL
+        handoff = critic.read_handoff(self.workspace_dir)
+        if not handoff:
+            return goal
+        return f"{goal}\n\n## {critic.HANDOFF_HEADING}\n\n{handoff}"
+
+    # ------------------------------------------------------------------
+    # Between-session critique
+    # ------------------------------------------------------------------
+
+    async def _collect_critic_context(self) -> JsonDict:
+        """Ask the server for the objective, game state and explored-map summary."""
+
+        provider = self.critic_context
+        if provider is None:
+            return {}
+        try:
+            result = provider()
+            if asyncio.iscoroutine(result) or isinstance(result, asyncio.Future):
+                result = await result
+        except Exception as exc:  # noqa: BLE001 — context is a nicety, never a blocker
+            self._push_recent_event(
+                "pi_critic_context_failed", _truncate(str(exc), ERROR_TEXT_LIMIT)
+            )
+            return {}
+        return result if isinstance(result, dict) else {}
+
+    def _build_critic_digest(self, end_context: JsonDict, status: str, reason: str) -> str:
+        critic = _critic_module()
+        start_context = self._session_start_context or {}
+        return critic.build_digest(
+            critic.DigestInput(
+                goal=self.goal,
+                objective=str(end_context.get("objective") or ""),
+                turns_completed=self.turns_completed,
+                status=status,
+                status_reason=reason,
+                session_tokens=(self.context_usage or {}).get("tokens"),
+                start_state=start_context.get("game_state"),
+                final_state=end_context.get("game_state"),
+                map_summary=end_context.get("map_summary"),
+                notes=critic.read_notes(self.workspace_dir),
+                calls=critic.tool_calls_from_stream(self.stream_entries),
+            )
+        )
+
+    async def _abort_critic(self) -> None:
+        process = self._critic_process
+        self._critic_process = None
+        if process is None or process.returncode is not None:
+            return
+        with contextlib.suppress(ProcessLookupError):
+            process.kill()
+
+    # -- the critic's own live narration --------------------------------
+
+    @staticmethod
+    def _critic_seq_attribute(kind: str) -> str:
+        return "_critic_thinking_seq" if kind == "thinking" else "_critic_text_seq"
+
+    async def _on_critic_event(self, event: JsonDict) -> None:
+        """Turn one critic event into a stream entry, as the critic emits it."""
+
+        kind = event.get("type")
+        if kind == "attempt_start":
+            # A retry starts its own entries, and never leaves the last ones running.
+            await self._close_critic_stream_entries()
+            if int(event.get("attempt") or 1) > 1:
+                await self._push_stream_system(
+                    f"critique retry · thinking {event.get('thinking')}",
+                    text="The first critic pass reached no answer. Retrying, briefly.",
+                    level="warn",
+                )
+            return
+        if kind in ("thinking_delta", "text_delta"):
+            await self._critic_stream_delta(kind.split("_")[0], str(event.get("delta") or ""))
+            return
+        if kind in ("thinking_end", "text_end"):
+            await self._critic_finalize_stream(kind.split("_")[0], str(event.get("text") or ""))
+
+    async def _critic_stream_delta(self, kind: str, delta: str) -> None:
+        if not delta:
+            return
+        attribute = self._critic_seq_attribute(kind)
+        seq = getattr(self, attribute)
+        if seq is None or seq not in self._stream_by_seq:
+            entry = self._new_stream_entry(
+                kind,
+                state="running",
+                text=CRITIC_STREAM_PREFIX,
+                source="critic",
+            )
+            seq = entry["seq"]
+            setattr(self, attribute, seq)
+            self._stream_text_buffers[seq] = CRITIC_STREAM_PREFIX
+        await self._emit_stream_entry(self._append_stream_text(seq, delta))
+
+    async def _critic_finalize_stream(self, kind: str, final_text: str) -> None:
+        attribute = self._critic_seq_attribute(kind)
+        seq = getattr(self, attribute)
+        setattr(self, attribute, None)
+        entry = self._stream_by_seq.get(seq) if seq is not None else None
+        if entry is not None:
+            self._stream_text_buffers.pop(seq, None)
+            if final_text:
+                entry["text"] = _clip_text(CRITIC_STREAM_PREFIX + final_text, STREAM_TEXT_LIMIT)
+            entry["state"] = "ok"
+            await self._emit_stream_entry(entry)
+            return
+        if not final_text:
+            return
+        entry = self._new_stream_entry(
+            kind,
+            text=_clip_text(CRITIC_STREAM_PREFIX + final_text, STREAM_TEXT_LIMIT),
+            source="critic",
+        )
+        await self._emit_stream_entry(entry)
+
+    async def _close_critic_stream_entries(self) -> None:
+        """Nothing the critic left half-written stays ``running`` after it exits."""
+
+        for kind in ("thinking", "text"):
+            attribute = self._critic_seq_attribute(kind)
+            seq = getattr(self, attribute)
+            setattr(self, attribute, None)
+            if seq is None:
+                continue
+            self._stream_text_buffers.pop(seq, None)
+            entry = self._stream_by_seq.get(seq)
+            if entry is not None and entry.get("state") == "running":
+                entry["state"] = "ok"
+                await self._emit_stream_entry(entry)
+
+    async def _critic_heartbeat_loop(self, started: float) -> None:
+        """One system entry, mutated in place, so a long critique never looks hung."""
+
+        interval = self.critic_heartbeat_seconds
+        if interval <= 0:
+            return
+        while True:
+            await asyncio.sleep(interval)
+            await self._tick_critic_heartbeat(started)
+
+    async def _tick_critic_heartbeat(self, started: float) -> None:
+        elapsed = int(max(0.0, time.monotonic() - started))
+        label = f"critique running · {elapsed}s"
+        text = f"The critic has been working for {elapsed}s."
+        seq = self._critic_heartbeat_seq
+        entry = self._stream_by_seq.get(seq) if seq is not None else None
+        if entry is None:
+            entry = self._new_stream_entry(
+                "system",
+                text=text,
+                system={"label": label, "level": "info"},
+                source="critic",
+            )
+            self._critic_heartbeat_seq = entry["seq"]
+        else:
+            entry["ts"] = utc_now()
+            entry["text"] = text
+            entry["system"] = {"label": label, "level": "info"}
+        await self._emit_stream_entry(entry)
+
+    async def _stop_critic_heartbeat(self, started: float) -> None:
+        task = self._critic_heartbeat_task
+        self._critic_heartbeat_task = None
+        if task is not None:
+            task.cancel()
+            with contextlib.suppress(asyncio.CancelledError, Exception):
+                await task
+        seq = self._critic_heartbeat_seq
+        self._critic_heartbeat_seq = None
+        entry = self._stream_by_seq.get(seq) if seq is not None else None
+        if entry is None:
+            return
+        elapsed = int(max(0.0, time.monotonic() - started))
+        entry["text"] = f"The critic ran for {elapsed}s."
+        entry["system"] = {"label": f"critique ran {elapsed}s", "level": "info"}
+        await self._emit_stream_entry(entry)
+
+    async def _run_critic_pass(self, terminal_status: str, terminal_reason: str) -> None:
+        """Review the finished session and leave a handoff. Never raises, never blocks."""
+
+        if not self.critic_enabled or self._critic_cancelled or not self.pi_binary:
+            return
+        critic = _critic_module()
+        self.status = "critiquing"
+        self.status_reason = "Reviewing the finished session for the next one."
+        await self._emit_major(
+            "pi_critique_start",
+            {"summary": self.status_reason, "status": self.status},
+        )
+        await self._push_stream_system("critique start", text=self.status_reason)
+
+        self.last_critique_error = None
+        self.last_critique_stop_reason = None
+        self.last_critique_usage = None
+        self.last_critique_salvaged = False
+        self.last_critique_raw_path = None
+        self.last_critique_attempts = []
+        self._critic_thinking_seq = None
+        self._critic_text_seq = None
+        self._critic_heartbeat_seq = None
+        started = time.monotonic()
+        self._critic_heartbeat_task = asyncio.create_task(self._critic_heartbeat_loop(started))
+        try:
+            end_context = await self._collect_critic_context()
+            result = await critic.run_critic(
+                pi_binary=self.pi_binary,
+                workspace_dir=self.workspace_dir,
+                digest=self._build_critic_digest(end_context, terminal_status, terminal_reason),
+                provider=self.provider,
+                model=self.model,
+                thinking=self.critic_thinking,
+                timeout_seconds=self.critic_timeout_seconds,
+                retry_enabled=self.critic_retry_enabled,
+                retry_thinking=self.critic_retry_thinking,
+                event_sink=self._on_critic_event,
+                process_sink=lambda process: setattr(self, "_critic_process", process),
+            )
+        except asyncio.CancelledError:
+            await self._abort_critic()
+            raise
+        except Exception as exc:  # noqa: BLE001 — a bad critique must not wedge the loop
+            self.last_critique_error = _truncate(str(exc), ERROR_TEXT_LIMIT)
+            await self._push_stream_system(
+                "critique failed",
+                text=self.last_critique_error,
+                level="warn",
+            )
+            return
+        finally:
+            self._critic_process = None
+            await self._stop_critic_heartbeat(started)
+            await self._close_critic_stream_entries()
+
+        self.last_critique_at = utc_now()
+        self.last_critique_seconds = result.duration_seconds
+        self.last_critique_tokens = result.digest_tokens
+        self.last_critique_stop_reason = result.stop_reason
+        self.last_critique_usage = result.usage
+        self.last_critique_raw_path = result.raw_path
+        self.last_critique_attempts = list(result.attempts)
+        self.last_critique_salvaged = bool(result.salvaged)
+        if not result.ok:
+            self.last_critique_error = _truncate(
+                result.error or "Critic produced nothing.", ERROR_TEXT_LIMIT
+            )
+            await self._emit_major(
+                "pi_critique_failed",
+                {
+                    "summary": self.last_critique_error,
+                    "duration_seconds": result.duration_seconds,
+                    "stop_reason": result.stop_reason,
+                    "usage": result.usage,
+                    "raw_path": result.raw_path,
+                },
+            )
+            await self._push_stream_system(
+                "critique failed",
+                text=f"{self.last_critique_error} Keeping the previous handoff.",
+                level="warn",
+            )
+            return
+
+        self.last_critique = result.text
+        # Replaced outright, never merged: a next goal from two sessions ago is as
+        # stale as the operator goal this precedence chain exists to retire.
+        self.critic_next_goal = (result.next_goal or "").strip()
+        self.last_critique_error = (
+            _truncate(result.error, ERROR_TEXT_LIMIT) if result.error else None
+        )
+        await self._emit_major(
+            "pi_critique_ready",
+            {
+                "summary": _truncate(result.text, 220),
+                "duration_seconds": result.duration_seconds,
+                "digest_tokens": result.digest_tokens,
+                "handoff_path": result.handoff_path,
+                "salvaged": result.salvaged,
+                "next_goal": self.critic_next_goal,
+                "stop_reason": result.stop_reason,
+                "usage": result.usage,
+                "raw_path": result.raw_path,
+            },
+        )
+        await self._push_stream_system(
+            "critique salvaged" if result.salvaged else "critique ready",
+            text=result.text,
+            level="warn" if result.salvaged else "info",
+        )
+        if self.critic_next_goal:
+            await self._push_stream_system(
+                "next goal",
+                text=self.critic_next_goal,
+            )
+
+    # `poke` exists because hand-built curl JSON was losing roughly 40% of the
+    # agent's actions to a single dropped closing quote. Bare arguments cannot be
+    # misquoted: the CLI has no JSON and no string literal to truncate.
+    WORKSPACE_HELPERS = {"poke": Path("pokemon_agent") / "agent_cli.py"}
+
+    #: Earlier helpers, removed. A workspace outlives a session, so a stale copy
+    #: would keep working and the quoting failure would come back with it.
+    STALE_WORKSPACE_HELPERS = ("agent_curl.sh", "act")
 
     def _stage_workspace_helpers(self) -> None:
-        source = self.repo_root / "scripts" / "agent_curl.sh"
-        if not source.is_file():
-            raise FileNotFoundError(f"Missing helper script: {source}")
-        destination = self.workspace_dir / "agent_curl.sh"
-        shutil.copy2(source, destination)
-        destination.chmod(0o755)
+        for name, relative_source in self.WORKSPACE_HELPERS.items():
+            source = self.repo_root / relative_source
+            if not source.is_file():
+                raise FileNotFoundError(f"Missing helper script: {source}")
+            destination = self.workspace_dir / name
+            shutil.copy2(source, destination)
+            destination.chmod(0o755)
+        for stale in self.STALE_WORKSPACE_HELPERS:
+            (self.workspace_dir / stale).unlink(missing_ok=True)
 
-    async def _request_process_shutdown_after_turn(self) -> None:
-        if self._requested_process_shutdown:
+    def _build_command(self) -> list[str]:
+        assert self.pi_binary is not None
+        assert self.session_id is not None
+        command = [
+            self.pi_binary,
+            "--mode",
+            "rpc",
+            "--system-prompt",
+            str(self.skill_path),
+            "--tools",
+            ",".join(DEFAULT_TOOLS),
+            "--session-id",
+            self.session_id,
+            "--session-dir",
+            str(self.session_dir),
+            "-ne",
+            "-ns",
+            "-nc",
+            "-np",
+            "--no-themes",
+            "--offline",
+        ]
+        if self.provider:
+            command.extend(["--provider", self.provider])
+        if self.model:
+            command.extend(["--model", self.model])
+        if self.thinking:
+            command.extend(["--thinking", self.thinking])
+        return command
+
+    async def _launch_process(self) -> None:
+        command = self._build_command()
+        self._settled_event = asyncio.Event()
+        self._exit_event = asyncio.Event()
+        self._pending_responses.clear()
+        self.status = "running"
+        self.status_reason = "Pi RPC session is live."
+        self.next_auto_continue_at = None
+        await self._emit_major(
+            "pi_session_launch",
+            {
+                "summary": f"Launching Pi RPC session {self.session_id}.",
+                "command_preview": command,
+                "session_id": self.session_id,
+            },
+        )
+
+        process = await asyncio.create_subprocess_exec(
+            *command,
+            cwd=str(self.workspace_dir),
+            stdin=asyncio.subprocess.PIPE,
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.PIPE,
+            env={
+                **os.environ,
+                **(
+                    {"PORT": str(port)}
+                    if (port := _server_port(self.server_url)) is not None
+                    else {}
+                ),
+            },
+        )
+        self._process = process
+        self.current_pid = process.pid
+        self.session_file = self._resolve_session_file()
+        self._reader_tasks = [
+            asyncio.create_task(self._read_stdout(process)),
+            asyncio.create_task(self._read_stderr(process)),
+            asyncio.create_task(self._watch_exit(process)),
+        ]
+        self._stats_task = self._start_stats_poll(process)
+        self._push_recent_event(
+            "pi_session",
+            f"Session {self.session_id or 'unknown'} started (pid {process.pid}).",
+        )
+
+    async def _watch_exit(self, process: asyncio.subprocess.Process) -> None:
+        await process.wait()
+        self._exit_event.set()
+        for future in self._pending_responses.values():
+            if not future.done():
+                future.set_exception(RuntimeError("Pi exited before responding."))
+        self._pending_responses.clear()
+
+    async def _terminate_process(self) -> None:
+        """Close stdin and, if needed, signal the RPC process until it exits."""
+
+        process = self._process
+        if process is None:
             return
+        if process.returncode is None and process.stdin is not None:
+            with contextlib.suppress(Exception):
+                process.stdin.close()
+        if process.returncode is None:
+            with contextlib.suppress(asyncio.TimeoutError):
+                await asyncio.wait_for(process.wait(), timeout=4)
+        if process.returncode is None:
+            with contextlib.suppress(ProcessLookupError):
+                process.terminate()
+            with contextlib.suppress(asyncio.TimeoutError):
+                await asyncio.wait_for(process.wait(), timeout=3)
+        if process.returncode is None:
+            with contextlib.suppress(ProcessLookupError):
+                process.kill()
+            with contextlib.suppress(asyncio.TimeoutError):
+                await asyncio.wait_for(process.wait(), timeout=2)
+
+    async def _shutdown_process(self) -> None:
+        await self._close_open_stream_entries()
+        await self._cancel_stats_poll()
+        await self._terminate_process()
+        for task in self._reader_tasks:
+            task.cancel()
+        for task in self._reader_tasks:
+            with contextlib.suppress(asyncio.CancelledError, Exception):
+                await task
+        self._reader_tasks = []
+        self._process = None
+        self.current_pid = None
+        self._repair_session_file()
+
+    def _repair_session_file(self) -> None:
+        session_file = self._resolve_session_file()
+        if session_file is None:
+            return
+        repaired = repair_orphaned_tool_calls(session_file)
+        if not repaired:
+            return
+        self.repaired_tool_calls += len(repaired)
+        self._push_recent_event(
+            "pi_tool_calls_repaired",
+            f"Wrote {len(repaired)} synthetic tool results for interrupted tool calls.",
+            {"tool_call_ids": repaired},
+        )
+
+    def _resolve_session_file(self) -> Optional[Path]:
+        if self.session_file is not None and self.session_file.is_file():
+            return self.session_file
+        if not self.session_id:
+            return None
+        try:
+            candidates = sorted(
+                self.session_dir.glob("*.jsonl"),
+                key=lambda path: path.stat().st_mtime,
+                reverse=True,
+            )
+        except OSError:
+            return None
+        for candidate in candidates:
+            try:
+                with candidate.open("r", encoding="utf-8") as handle:
+                    header = json.loads(handle.readline())
+            except (OSError, UnicodeDecodeError, json.JSONDecodeError):
+                continue
+            if header.get("type") == "session" and header.get("id") == self.session_id:
+                self.session_file = candidate.resolve()
+                return self.session_file
+        return None
+
+    def _next_request_id(self) -> str:
+        self._request_counter += 1
+        return f"req-{self._request_counter}"
+
+    async def _send_command(
+        self,
+        command: JsonDict,
+        *,
+        timeout: float = 30.0,
+    ) -> Optional[JsonDict]:
+        process = self._process
+        if process is None or process.stdin is None or process.returncode is not None:
+            raise RuntimeError("Pi RPC process is not running.")
+        request_id = self._next_request_id()
+        payload = {"id": request_id, **command}
+        future: asyncio.Future[JsonDict] = asyncio.get_running_loop().create_future()
+        self._pending_responses[request_id] = future
+        line = json.dumps(payload, ensure_ascii=False) + "\n"
+        try:
+            process.stdin.write(line.encode("utf-8"))
+            await process.stdin.drain()
+        except (BrokenPipeError, ConnectionResetError, RuntimeError) as exc:
+            self._pending_responses.pop(request_id, None)
+            raise RuntimeError(f"Failed to write RPC command: {exc}") from exc
+        try:
+            return await asyncio.wait_for(future, timeout=timeout)
+        except (asyncio.TimeoutError, RuntimeError):
+            return None
+        finally:
+            self._pending_responses.pop(request_id, None)
+            if future.done() and not future.cancelled():
+                # Consume any exception so a cancelled caller never leaves it
+                # to surface as an unretrieved-future error on the event loop.
+                future.exception()
+
+    async def _send_prompt(self, message: str, *, with_images: bool, resume: bool) -> None:
+        attachment_paths = self._frame_paths() if with_images else []
+        images = [self._encode_image(path) for path in attachment_paths]
+
+        self.current_prompt = message
+        self.last_prompt = message
+        self.current_assistant_text = ""
+        self.current_assistant_thinking = ""
+        self.current_tool_calls.clear()
+        self._current_turn_completed = False
+        self._current_cycle_has_tool_call = False
+        self._active_thinking_seq = None
+        self._active_text_seq = None
+        self._message_saw_thinking_delta = False
+        self._message_saw_text_delta = False
+        self._settled_event.clear()
+        self.last_turn_started_at = utc_now()
+        self.last_event_at = self.last_turn_started_at
+
+        prompt_entry = self._append_transcript(
+            direction="outbound",
+            role="user",
+            channel="prompt",
+            content=message,
+            meta={
+                "resume": resume,
+                "attachments": [str(path) for path in attachment_paths],
+            },
+        )
+        await self._emit_stream(
+            "pi_prompt_sent",
+            {
+                "prompt": prompt_entry["content"],
+                "attachments": prompt_entry["meta"]["attachments"],
+                "images": len(images),
+                "resume": resume,
+                "session_id": self.session_id,
+            },
+        )
+        await self._emit_stream("pi_transcript", {"entry": prompt_entry})
+        await self._push_stream_system(
+            f"{'continue' if resume else 'goal'} \u00b7 turn {self.turns_completed + 1}",
+            text=message,
+        )
+        await self._push_stream_user(message)
+
+        command: JsonDict = {"type": "prompt", "message": message}
+        if images:
+            command["images"] = images
+        response = await self._send_command(command, timeout=60.0)
+        if response is not None and response.get("success") is False:
+            raise RuntimeError(f"Pi rejected the prompt: {response.get('error')}")
+
+    def _frame_paths(self) -> list[Path]:
+        paths: list[Path] = []
+        for filename in FRAME_IMAGE_FILES:
+            candidate = self.workspace_dir / filename
+            if candidate.is_file():
+                paths.append(candidate)
+        return paths
+
+    @staticmethod
+    def _encode_image(path: Path) -> JsonDict:
+        return {
+            "type": "image",
+            "data": base64.b64encode(path.read_bytes()).decode("ascii"),
+            "mimeType": "image/png",
+        }
+
+    async def _await_settle(self) -> bool:
+        settle_task = asyncio.create_task(self._settled_event.wait())
+        exit_task = asyncio.create_task(self._exit_event.wait())
+        try:
+            await asyncio.wait({settle_task, exit_task}, return_when=asyncio.FIRST_COMPLETED)
+        finally:
+            for task in (settle_task, exit_task):
+                task.cancel()
+                with contextlib.suppress(asyncio.CancelledError):
+                    await task
+        if self._settled_event.is_set():
+            self._settled_event.clear()
+            return True
+        return False
+
+    async def _refresh_session_stats(self) -> None:
         process = self._process
         if process is None or process.returncode is not None:
             return
-        self._requested_process_shutdown = True
-        with contextlib.suppress(ProcessLookupError):
-            process.terminate()
+        try:
+            response = await self._send_command({"type": "get_session_stats"}, timeout=15.0)
+        except RuntimeError:
+            return
+        if not isinstance(response, dict) or response.get("success") is not True:
+            return
+        data = response.get("data")
+        if not isinstance(data, dict):
+            return
+        tokens = data.get("tokens")
+        if isinstance(tokens, dict):
+            total = tokens.get("total", tokens.get("totalTokens"))
+            self.session_usage = {
+                "input": tokens.get("input"),
+                "output": tokens.get("output"),
+                "cacheRead": tokens.get("cacheRead"),
+                "cacheWrite": tokens.get("cacheWrite"),
+                "totalTokens": int(total) if isinstance(total, (int, float)) else None,
+                "updated_at": utc_now(),
+            }
+        context_usage = data.get("contextUsage")
+        if isinstance(context_usage, dict):
+            self.context_usage = {**context_usage, "updated_at": utc_now()}
+            used = context_usage.get("tokens")
+            if isinstance(used, (int, float)):
+                self.session_usage = {
+                    **(self.session_usage or {}),
+                    "totalTokens": int(used),
+                    "updated_at": utc_now(),
+                }
+
+    def _start_stats_poll(
+        self, process: asyncio.subprocess.Process
+    ) -> Optional[asyncio.Task[None]]:
+        interval = self.stats_poll_seconds
+        if not interval:
+            return None
+        return asyncio.create_task(self._stats_poll_loop(process, interval))
+
+    async def _cancel_stats_poll(self) -> None:
+        task = self._stats_task
+        self._stats_task = None
+        if task is None or task.done():
+            return
+        if task is asyncio.current_task():
+            # The poll never tears itself down; leave it to unwind on its own.
+            return
+        task.cancel()
+        with contextlib.suppress(asyncio.CancelledError, Exception):
+            await task
+
+    async def _stats_poll_loop(
+        self,
+        process: asyncio.subprocess.Process,
+        interval: float,
+    ) -> None:
+        """Sample session stats on a timer so telemetry survives an hour-long turn."""
+
+        try:
+            while True:
+                await asyncio.sleep(interval)
+                if self._stop_requested or self._budget_stop_requested:
+                    return
+                if self._process is not process or process.returncode is not None:
+                    return
+                await self._refresh_session_stats()
+                await self._emit_stream(
+                    "pi_session_stats",
+                    {
+                        "source": "poll",
+                        "session_usage": self.session_usage,
+                        "context_usage": self.context_usage,
+                        "token_budget": self.token_budget,
+                    },
+                )
+                if self._token_budget_exhausted():
+                    await self._stop_for_token_budget()
+                    return
+        except asyncio.CancelledError:
+            raise
+        except Exception as exc:  # noqa: BLE001
+            self._push_recent_event("pi_stats_poll_failed", _truncate(str(exc), ERROR_TEXT_LIMIT))
+
+    async def _announce_token_budget_stop(self) -> None:
+        used = (self.context_usage or {}).get("tokens")
+        self.status = "completed"
+        self.status_reason = f"Token budget reached ({used}/{self.token_budget} context tokens)."
+        await self._emit_major(
+            "pi_token_budget_reached",
+            {
+                "summary": self.status_reason,
+                "token_budget": self.token_budget,
+                "context_usage": self.context_usage,
+            },
+        )
+        await self._push_stream_system(
+            "token budget reached",
+            text=self.status_reason,
+            level="warn",
+        )
+
+    async def _stop_for_token_budget(self) -> None:
+        """End the run from the poll, mid-turn, without waiting for a settle."""
+
+        self._budget_stop_requested = True
+        await self._announce_token_budget_stop()
+        # Only the process is torn down here: the run loop wakes on the exit event
+        # and its own teardown cancels this task and repairs orphaned tool calls.
+        await self._terminate_process()
+
+    # ------------------------------------------------------------------
+    # Stream readers
+    # ------------------------------------------------------------------
+
+    async def _read_stdout(self, process: asyncio.subprocess.Process) -> None:
+        assert process.stdout is not None
+        async for line in self._iter_lines(process.stdout):
+            raw_line = line.strip()
+            if not raw_line:
+                continue
+            try:
+                payload = json.loads(raw_line)
+            except json.JSONDecodeError:
+                clipped = _clip_text(raw_line, STDERR_LINE_LIMIT)
+                self.stderr_tail.append(_truncate(clipped, STDERR_TAIL_PREVIEW))
+                entry = self._append_transcript(
+                    direction="system",
+                    role="system",
+                    channel="stdout_parse_error",
+                    content=clipped,
+                )
+                await self._emit_stream("pi_stdout_parse_error", {"line": entry["content"]})
+                await self._emit_stream("pi_transcript", {"entry": entry})
+                await self._push_stream_system(
+                    "stdout parse error",
+                    text=entry["content"],
+                    level="error",
+                )
+                continue
+            if not isinstance(payload, dict):
+                continue
+            if payload.get("type") == "response":
+                self._resolve_response(payload)
+                continue
+            await self._handle_event(payload)
+
+    async def _read_stderr(self, process: asyncio.subprocess.Process) -> None:
+        assert process.stderr is not None
+        async for line in self._iter_lines(process.stderr):
+            text = line.strip()
+            if not text:
+                continue
+            clipped = _clip_text(text, STDERR_LINE_LIMIT)
+            self.stderr_tail.append(_truncate(clipped, STDERR_TAIL_PREVIEW))
+            entry = self._append_transcript(
+                direction="system",
+                role="system",
+                channel="stderr",
+                content=clipped,
+            )
+            await self._emit_stream("pi_stderr", {"text": entry["content"]})
+            await self._emit_stream("pi_transcript", {"entry": entry})
+            await self._push_stream_system("stderr", text=entry["content"], level="warn")
+
+    @staticmethod
+    def _iter_lines(stream: asyncio.StreamReader):
+        return iter_stream_lines(stream)
+
+    def _resolve_response(self, payload: JsonDict) -> None:
+        request_id = payload.get("id")
+        future = self._pending_responses.pop(request_id, None) if request_id else None
+        if future is not None and not future.done():
+            future.set_result(payload)
+        if payload.get("success") is False:
+            self._push_recent_event(
+                "pi_rpc_error",
+                _truncate(f"{payload.get('command')}: {payload.get('error')}", 200),
+                payload,
+            )
+
+    # ------------------------------------------------------------------
+    # Telemetry helpers
+    # ------------------------------------------------------------------
+
+    def _refresh_turn_plan_preview_from_workspace(self) -> None:
+        path = self.workspace_dir / "turn_plan.json"
+        if not path.is_file():
+            return
+        try:
+            payload = json.loads(path.read_text(encoding="utf-8"))
+        except (OSError, UnicodeDecodeError, json.JSONDecodeError):
+            return
+        if not isinstance(payload, dict):
+            return
+        self.turn_plan_preview = {
+            "source": "workspace_turn_plan",
+            "updated_at": utc_now(),
+            "payload": payload,
+        }
 
     async def _refresh_model_limits(self) -> None:
         chosen_provider, chosen_model = normalize_model_lookup(self.provider, self.model)
@@ -514,550 +2485,6 @@ class PiSupervisor:
         )
         self._model_limits_cache[cache_key] = parsed
         self.model_limits = dict(parsed) if isinstance(parsed, dict) else None
-
-    def state_snapshot(self) -> JsonDict:
-        return {
-            "available": self.available,
-            "pi_binary": self.pi_binary,
-            "status": self.status,
-            "status_reason": self.status_reason,
-            "provider": self.provider,
-            "model": self.model,
-            "thinking": self.thinking,
-            "last_error": self.last_error,
-            "started_at": self.started_at,
-            "last_event_at": self.last_event_at,
-            "last_turn_started_at": self.last_turn_started_at,
-            "last_turn_completed_at": self.last_turn_completed_at,
-            "session_id": self.session_id,
-            "session_file": str(self.session_file) if self.session_file else None,
-            "session_dir": str(self.session_dir),
-            "skill_path": str(self.skill_path),
-            "server_url": self.server_url,
-            "current_pid": self.current_pid,
-            "turns_completed": self.turns_completed,
-            "continue_count": self.continue_count,
-            "goal": self.goal,
-            "current_prompt": self.current_prompt,
-            "last_prompt": self.last_prompt,
-            "default_prompt": self.default_prompt,
-            "current_assistant_text": self.current_assistant_text,
-            "current_assistant_thinking": self.current_assistant_thinking,
-            "last_assistant_text": self.last_assistant_text,
-            "last_assistant_thinking": self.last_assistant_thinking,
-            "latest_turn_summary": self.latest_turn_summary,
-            "active_tools": list(self.current_tool_calls.values()),
-            "recent_tools": list(self.recent_tools),
-            "recent_events": list(self.recent_events),
-            "stderr_tail": list(self.stderr_tail),
-            "transcript": list(self.transcript),
-            "turn_plan_preview": self.turn_plan_preview,
-            "next_auto_continue_at": self.next_auto_continue_at,
-            "session_usage": self.session_usage,
-            "last_message_usage": self.last_message_usage,
-            "model_limits": self.model_limits,
-            "counts": {
-                "tool_calls": self.tool_call_count,
-                "thinking_blocks": self.thinking_block_count,
-                "assistant_messages": self.assistant_message_count,
-                "user_messages": self.user_message_count,
-            },
-            "compaction": {
-                "tokens_before": self.last_compaction_tokens_before,
-                "tokens_after": self.last_compaction_tokens_after,
-                "at": self.last_compaction_at,
-            },
-            "vision": {
-                "current_turn": self.current_turn_vision,
-                "last_turn": self.last_turn_vision,
-                "violations": self.vision_violation_count,
-            },
-            "config": self._config_snapshot(),
-        }
-
-    async def start(
-        self,
-        *,
-        goal: Optional[str] = None,
-        provider: Optional[str] = None,
-        model: Optional[str] = None,
-        thinking: Optional[str] = None,
-        auto_continue: bool = True,
-        max_turns: Optional[int] = None,
-        continue_delay_seconds: float = 1.0,
-        skill_path: Optional[str] = None,
-    ) -> JsonDict:
-        if self.is_running:
-            raise ValueError("Pi supervisor is already running.")
-        if not self.available or not self.pi_binary:
-            raise ValueError("Pi executable was not found on PATH.")
-
-        chosen_skill = Path(skill_path).expanduser().resolve() if skill_path else self.skill_path
-        if not chosen_skill.exists():
-            raise ValueError(f"Pi skill not found: {chosen_skill}")
-
-        self.skill_path = chosen_skill
-        self.provider = provider or None
-        self.model = model or None
-        self.thinking = thinking or None
-        self.auto_continue = bool(auto_continue)
-        self.goal = (goal or "").strip()
-        self.max_turns = max_turns if max_turns and max_turns > 0 else None
-        self.continue_delay_seconds = max(0.0, float(continue_delay_seconds))
-        self._stage_workspace_helpers()
-        self.default_prompt = default_supervisor_prompt(
-            server_url=self.server_url,
-            workspace_dir=self.workspace_dir,
-            goal=self.goal,
-        )
-        initial_prompt = self.default_prompt
-
-        self.status = "starting"
-        self.status_reason = "Starting a fresh Pi session."
-        self.last_error = None
-        self.started_at = utc_now()
-        self.last_event_at = self.started_at
-        self.current_prompt = initial_prompt
-        self.last_prompt = initial_prompt
-        self.current_assistant_text = ""
-        self.current_assistant_thinking = ""
-        self.last_assistant_text = ""
-        self.last_assistant_thinking = ""
-        self.latest_turn_summary = ""
-        self.current_tool_calls.clear()
-        self.recent_tools.clear()
-        self.recent_events.clear()
-        self.stderr_tail.clear()
-        self.transcript.clear()
-        self.turn_plan_preview = None
-        self.turns_completed = 0
-        self.continue_count = 0
-        self.session_id = None
-        self.session_file = None
-        self.current_pid = None
-        self.next_auto_continue_at = None
-        self.session_usage = None
-        self.last_message_usage = None
-        self.model_limits = None
-        self.tool_call_count = 0
-        self.thinking_block_count = 0
-        self.assistant_message_count = 0
-        self.user_message_count = 0
-        self.last_compaction_tokens_before = None
-        self.last_compaction_tokens_after = None
-        self.last_compaction_at = None
-        self._pending_thinking_in_message = False
-        self._reset_cycle_state([])
-        self.last_turn_vision = self._new_turn_vision([])
-        self.vision_violation_count = 0
-        self._consecutive_idle_turns = 0
-        self._stop_requested = False
-        self._requested_process_shutdown = False
-        await self._refresh_model_limits()
-
-        await self._emit_major(
-            "pi_supervisor_status",
-            {
-                "status": self.status,
-                "summary": self.status_reason,
-                "config": self._config_snapshot(),
-            },
-        )
-        self._task = asyncio.create_task(
-            self._run_loop(initial_prompt=initial_prompt, resume=False)
-        )
-        return self.state_snapshot()
-
-    async def continue_once(self) -> JsonDict:
-        if self.is_running:
-            raise ValueError("Pi supervisor is already running.")
-        if not self.session_id:
-            raise ValueError("Pi supervisor has no previous session to continue.")
-        self.current_prompt = self._current_continue_prompt()
-        self.last_prompt = self.current_prompt
-        self.status = "starting"
-        self.status_reason = "Continuing the existing Pi session."
-        self.last_error = None
-        self.last_event_at = utc_now()
-        self.next_auto_continue_at = None
-        self.current_assistant_text = ""
-        self.current_assistant_thinking = ""
-        self.current_tool_calls.clear()
-        self._reset_cycle_state(self._vision_attachment_paths())
-        self._requested_process_shutdown = False
-        self._stage_workspace_helpers()
-        await self._refresh_model_limits()
-        await self._emit_major(
-            "pi_supervisor_status",
-            {
-                "status": self.status,
-                "summary": self.status_reason,
-                "config": self._config_snapshot(),
-            },
-        )
-        self._task = asyncio.create_task(
-            self._run_loop(initial_prompt=self.current_prompt, resume=True, force_single_turn=True)
-        )
-        return self.state_snapshot()
-
-    async def stop(self) -> JsonDict:
-        self._stop_requested = True
-        if self.is_running:
-            self.status = "stopping"
-            self.status_reason = "Stop requested by operator."
-            await self._emit_major(
-                "pi_supervisor_status",
-                {
-                    "status": self.status,
-                    "summary": self.status_reason,
-                },
-            )
-        process = self._process
-        if process and process.returncode is None:
-            process.terminate()
-            with contextlib.suppress(asyncio.TimeoutError):
-                await asyncio.wait_for(process.wait(), timeout=4)
-            if process.returncode is None:
-                process.kill()
-                with contextlib.suppress(asyncio.TimeoutError):
-                    await asyncio.wait_for(process.wait(), timeout=2)
-        task = self._task
-        if task is not None:
-            with contextlib.suppress(asyncio.CancelledError):
-                await asyncio.wait_for(asyncio.shield(task), timeout=6)
-        if self.status not in {"stopped", "completed", "error"}:
-            self.status = "stopped"
-            self.status_reason = "Pi supervisor stopped."
-        self.current_pid = None
-        self.next_auto_continue_at = None
-        return self.state_snapshot()
-
-    async def shutdown(self) -> None:
-        await self.stop()
-
-    async def wait_until_idle(self, timeout: float = 30.0) -> None:
-        task = self._task
-        if task is None:
-            return
-        await asyncio.wait_for(asyncio.shield(task), timeout=timeout)
-
-    async def _run_loop(
-        self,
-        *,
-        initial_prompt: str,
-        resume: bool,
-        force_single_turn: bool = False,
-    ) -> None:
-        current_prompt = initial_prompt
-        use_continue = resume
-        try:
-            while True:
-                await self._run_turn(prompt=current_prompt, resume=use_continue)
-                if self._stop_requested:
-                    self.status = "stopped"
-                    self.status_reason = "Pi supervisor stopped."
-                    break
-                if force_single_turn:
-                    self.status = "completed"
-                    self.status_reason = "Pi completed one manual continue turn."
-                    break
-                if not self.auto_continue:
-                    self.status = "completed"
-                    self.status_reason = "Pi completed one turn."
-                    break
-                if self.max_turns is not None and self.turns_completed >= self.max_turns:
-                    self.status = "completed"
-                    self.status_reason = f"Reached max turns ({self.max_turns})."
-                    break
-                if self._current_cycle_has_tool_call:
-                    self._consecutive_idle_turns = 0
-                else:
-                    self._consecutive_idle_turns += 1
-                if self.max_idle_turns and self._consecutive_idle_turns >= self.max_idle_turns:
-                    self.status = "stuck"
-                    self.status_reason = (
-                        f"Stopping auto-continue: {self._consecutive_idle_turns} turns in a row "
-                        "produced no tool calls."
-                    )
-                    await self._emit_major(
-                        "pi_supervisor_stuck",
-                        {
-                            "summary": self.status_reason,
-                            "idle_turns": self._consecutive_idle_turns,
-                            "turns_completed": self.turns_completed,
-                            "last_turn_summary": self.latest_turn_summary,
-                        },
-                    )
-                    break
-                self.continue_count += 1
-                current_prompt = self._current_continue_prompt()
-                use_continue = True
-                self.next_auto_continue_at = _utc_after(self.continue_delay_seconds)
-                self.status = "running"
-                self.status_reason = (
-                    f"Auto-continue scheduled in {self.continue_delay_seconds:.1f}s."
-                )
-                await self._emit_major(
-                    "pi_auto_continue_scheduled",
-                    {
-                        "summary": self.status_reason,
-                        "goal": self.goal,
-                        "continue_delay_seconds": self.continue_delay_seconds,
-                        "next_auto_continue_at": self.next_auto_continue_at,
-                        "next_turn_index": self.turns_completed + 1,
-                    },
-                )
-                await asyncio.sleep(self.continue_delay_seconds)
-        except asyncio.CancelledError:
-            self.status = "stopped"
-            self.status_reason = "Pi supervisor task was cancelled."
-            raise
-        except Exception as exc:  # noqa: BLE001
-            self.status = "error"
-            self.status_reason = "Pi supervisor encountered an error."
-            self.last_error = str(exc)
-            await self._emit_major(
-                "pi_supervisor_error",
-                {
-                    "summary": str(exc),
-                },
-            )
-        finally:
-            self.current_pid = None
-            self._process = None
-            self.next_auto_continue_at = None
-            await self._emit_major(
-                "pi_supervisor_status",
-                {
-                    "status": self.status,
-                    "summary": self.status_reason,
-                    "last_error": self.last_error,
-                    "turns_completed": self.turns_completed,
-                },
-            )
-            self._task = None
-
-    async def _run_turn(self, *, prompt: str, resume: bool) -> None:
-        attachment_paths = self._vision_attachment_paths()
-        session_file = self._resolve_session_file() if resume else None
-        command = self._build_command(
-            prompt=prompt,
-            resume=resume,
-            attachment_paths=attachment_paths,
-            session_file=session_file,
-        )
-        self.status = "running"
-        self.status_reason = "Pi is processing a turn."
-        self.next_auto_continue_at = None
-        self._requested_process_shutdown = False
-        self.current_assistant_text = ""
-        self.current_assistant_thinking = ""
-        self.current_tool_calls.clear()
-        self._reset_cycle_state(attachment_paths)
-        self.last_event_at = utc_now()
-        prompt_entry = self._append_transcript(
-            direction="outbound",
-            role="user",
-            channel="prompt",
-            content=prompt,
-            meta={
-                "resume": resume,
-                "attachments": [str(path) for path in attachment_paths],
-            },
-        )
-        await self._emit_stream(
-            "pi_prompt_sent",
-            {
-                "prompt": prompt_entry["content"],
-                "attachments": prompt_entry["meta"]["attachments"],
-                "resume": resume,
-                "session_id": self.session_id,
-            },
-        )
-        await self._emit_stream("pi_transcript", {"entry": prompt_entry})
-        await self._emit_major(
-            "pi_turn_launch",
-            {
-                "summary": f"Launching Pi turn with prompt: {_truncate(prompt, 140)}",
-                "command_preview": command,
-                "resume": resume,
-            },
-        )
-
-        process = await asyncio.create_subprocess_exec(
-            *command,
-            cwd=str(self.workspace_dir),
-            stdout=asyncio.subprocess.PIPE,
-            stderr=asyncio.subprocess.PIPE,
-            env={
-                **os.environ,
-                **(
-                    {"PORT": str(port)}
-                    if (port := _server_port(self.server_url)) is not None
-                    else {}
-                ),
-            },
-        )
-        self._process = process
-        self.current_pid = process.pid
-
-        stdout_task = asyncio.create_task(self._read_stdout(process))
-        stderr_task = asyncio.create_task(self._read_stderr(process))
-        returncode = await process.wait()
-        await stdout_task
-        await stderr_task
-        if returncode == 0 and not self._stop_requested and not self._current_turn_completed:
-            await self._complete_turn(
-                summary_text=self.current_assistant_text or self.last_assistant_text or None,
-                tool_result_count=0,
-                synthetic=True,
-            )
-        self.current_pid = None
-        self._process = None
-        if returncode != 0 and not self._stop_requested and not self._requested_process_shutdown:
-            stderr_preview = "\n".join(self.stderr_tail).strip()
-            raise RuntimeError(
-                f"Pi exited with status {returncode}."
-                + (f" stderr: {stderr_preview}" if stderr_preview else "")
-            )
-
-    def _vision_attachment_paths(self) -> list[Path]:
-        attachment_paths: list[Path] = []
-        for filename in VISION_ATTACHMENT_FILES:
-            candidate = self.workspace_dir / filename
-            if candidate.is_file():
-                attachment_paths.append(candidate)
-        return attachment_paths
-
-    def _refresh_turn_plan_preview_from_workspace(self) -> None:
-        path = self.workspace_dir / "turn_plan.json"
-        if not path.is_file():
-            return
-        try:
-            payload = json.loads(path.read_text(encoding="utf-8"))
-        except (OSError, UnicodeDecodeError, json.JSONDecodeError):
-            return
-        if not isinstance(payload, dict):
-            return
-        self.turn_plan_preview = {
-            "source": "workspace_turn_plan",
-            "updated_at": utc_now(),
-            "payload": payload,
-        }
-
-    def _resolve_session_file(self) -> Optional[Path]:
-        if self.session_file is not None and self.session_file.is_file():
-            return self.session_file
-        if not self.session_id:
-            return None
-        try:
-            candidates = sorted(
-                self.session_dir.glob("*.jsonl"),
-                key=lambda path: path.stat().st_mtime,
-                reverse=True,
-            )
-        except OSError:
-            return None
-        for candidate in candidates:
-            try:
-                header = json.loads(candidate.read_text(encoding="utf-8").splitlines()[0])
-            except (IndexError, OSError, UnicodeDecodeError, json.JSONDecodeError):
-                continue
-            if header.get("type") == "session" and header.get("id") == self.session_id:
-                self.session_file = candidate.resolve()
-                return self.session_file
-        return None
-
-    def _build_command(
-        self,
-        *,
-        prompt: str,
-        resume: bool,
-        attachment_paths: Optional[list[Path]] = None,
-        session_file: Optional[Path] = None,
-    ) -> list[str]:
-        assert self.pi_binary is not None
-        command = [
-            self.pi_binary,
-            "--mode",
-            "json",
-            "--print",
-            "--session-dir",
-            str(self.session_dir),
-            "--skill",
-            str(self.skill_path),
-            "--tools",
-            ",".join(DEFAULT_TOOLS),
-        ]
-        if session_file is not None:
-            command.extend(["--session", str(session_file)])
-        elif resume:
-            command.append("--continue")
-        if self.provider:
-            command.extend(["--provider", self.provider])
-        if self.model:
-            command.extend(["--model", self.model])
-        if self.thinking:
-            command.extend(["--thinking", self.thinking])
-        for path in attachment_paths or []:
-            command.append(f"@{path}")
-        command.append(prompt)
-        return command
-
-    async def _read_stdout(self, process: asyncio.subprocess.Process) -> None:
-        assert process.stdout is not None
-        while True:
-            line = await process.stdout.readline()
-            if not line:
-                break
-            raw_line = line.decode("utf-8", errors="replace").strip()
-            if not raw_line:
-                continue
-            try:
-                payload = json.loads(raw_line)
-            except json.JSONDecodeError:
-                clipped = _clip_text(raw_line, 1200)
-                self.stderr_tail.append(_truncate(clipped, 240))
-                entry = self._append_transcript(
-                    direction="system",
-                    role="system",
-                    channel="stdout_parse_error",
-                    content=clipped,
-                )
-                await self._emit_stream(
-                    "pi_stdout_parse_error",
-                    {
-                        "line": entry["content"],
-                    },
-                )
-                await self._emit_stream("pi_transcript", {"entry": entry})
-                continue
-            await self._handle_event(payload)
-
-    async def _read_stderr(self, process: asyncio.subprocess.Process) -> None:
-        assert process.stderr is not None
-        while True:
-            line = await process.stderr.readline()
-            if not line:
-                break
-            text = line.decode("utf-8", errors="replace").strip()
-            if not text:
-                continue
-            clipped = _clip_text(text, 1200)
-            self.stderr_tail.append(_truncate(clipped, 240))
-            entry = self._append_transcript(
-                direction="system",
-                role="system",
-                channel="stderr",
-                content=clipped,
-            )
-            await self._emit_stream(
-                "pi_stderr",
-                {
-                    "text": entry["content"],
-                },
-            )
-            await self._emit_stream("pi_transcript", {"entry": entry})
 
     def _push_recent_event(
         self,
@@ -1110,7 +2537,8 @@ class PiSupervisor:
             "direction": direction,
             "role": role,
             "channel": channel,
-            "content": _clip_text(content),
+            # `preview` is for a collapsed row; `content` is what the operator opens.
+            "content": _clip_text(content, TRANSCRIPT_TEXT_LIMIT),
             "preview": _truncate(content, 220),
             "status": status,
             "meta": meta or {},
@@ -1124,7 +2552,6 @@ class PiSupervisor:
         *,
         summary_text: Optional[str],
         tool_result_count: int = 0,
-        synthetic: bool = False,
     ) -> None:
         if self._current_turn_completed:
             return
@@ -1132,48 +2559,27 @@ class PiSupervisor:
         self.turns_completed += 1
         self.last_turn_completed_at = utc_now()
         self.latest_turn_summary = _truncate(summary_text or "Pi completed a turn.", 220)
-        vision = self._finalize_turn_vision()
-        self.last_turn_vision = vision
-        if not vision.get("compliant"):
-            self.vision_violation_count += 1
-            self.latest_turn_summary = _truncate(
-                f"{self.latest_turn_summary} Vision policy violated: {vision['violation_reason']}.",
-                220,
-            )
-        payload: JsonDict = {
-            "summary": self.latest_turn_summary,
-            "turns_completed": self.turns_completed,
-            "tool_result_count": tool_result_count,
-            "vision": vision,
-        }
-        if synthetic:
-            payload["synthetic"] = True
-            payload["summary"] = _truncate(
-                self.latest_turn_summary + " (turn_end missing from Pi event stream)",
-                260,
-            )
-        await self._emit_major("pi_turn_end", payload)
-        if not vision.get("compliant"):
-            await self._emit_major(
-                "pi_turn_vision_violation",
-                {
-                    "summary": vision["violation_reason"],
-                    "vision": vision,
-                    "turns_completed": self.turns_completed,
-                },
-            )
+        await self._emit_major(
+            "pi_turn_end",
+            {
+                "summary": self.latest_turn_summary,
+                "turns_completed": self.turns_completed,
+                "tool_result_count": tool_result_count,
+                "had_tool_calls": self._current_cycle_has_tool_call,
+            },
+        )
+        await self._push_stream_system(
+            f"turn {self.turns_completed} complete",
+            text=self.latest_turn_summary,
+        )
+
+    # ------------------------------------------------------------------
+    # Event handling
+    # ------------------------------------------------------------------
 
     async def _handle_event(self, event: JsonDict) -> None:
         event_type = event.get("type")
         self.last_event_at = utc_now()
-        if event_type == "session":
-            self.session_id = event.get("id")
-            self.session_file = self._resolve_session_file()
-            self._push_recent_event(
-                "pi_session",
-                f"Session {self.session_id or 'unknown'} started.",
-            )
-            return
 
         if event_type == "model_change":
             self.provider = event.get("provider") or self.provider
@@ -1199,7 +2605,7 @@ class PiSupervisor:
             return
 
         if event_type == "agent_start":
-            await self._emit_major("pi_agent_start", {"summary": "Pi agent turn started."})
+            await self._emit_major("pi_agent_start", {"summary": "Pi agent run started."})
             return
 
         if event_type == "agent_end":
@@ -1207,9 +2613,20 @@ class PiSupervisor:
                 self.current_assistant_text
                 or self.last_assistant_text
                 or self.latest_turn_summary
-                or "Pi agent turn ended."
+                or "Pi agent run ended."
             )
-            await self._emit_major("pi_agent_end", {"summary": summary})
+            await self._emit_major(
+                "pi_agent_end",
+                {
+                    "summary": summary,
+                    "will_retry": bool(event.get("willRetry")),
+                },
+            )
+            return
+
+        if event_type == "agent_settled":
+            await self._emit_major("pi_agent_settled", {"summary": "Pi agent run settled."})
+            self._settled_event.set()
             return
 
         if event_type == "turn_start":
@@ -1235,6 +2652,10 @@ class PiSupervisor:
                 self.current_assistant_thinking = ""
                 self.assistant_message_count += 1
                 self._pending_thinking_in_message = False
+                self._active_thinking_seq = None
+                self._active_text_seq = None
+                self._message_saw_thinking_delta = False
+                self._message_saw_text_delta = False
             elif role == "user":
                 self.user_message_count += 1
             return
@@ -1257,6 +2678,7 @@ class PiSupervisor:
                         "text": _clip_text(self.current_assistant_text, 4000),
                     },
                 )
+                await self._stream_delta("text", delta)
             elif assistant_type == "thinking_delta" and isinstance(delta, str):
                 if not self._pending_thinking_in_message:
                     self.thinking_block_count += 1
@@ -1274,6 +2696,7 @@ class PiSupervisor:
                         "thinking": _clip_text(self.current_assistant_thinking, 4000),
                     },
                 )
+                await self._stream_delta("thinking", delta)
             else:
                 summary = assistant_type or "message_update"
                 self._push_recent_event("pi_message_update", summary, assistant_event)
@@ -1291,16 +2714,6 @@ class PiSupervisor:
             usage = message.get("usage")
             if isinstance(usage, dict):
                 self.last_message_usage = usage
-                total_tokens = usage.get("totalTokens")
-                if isinstance(total_tokens, (int, float)):
-                    self.session_usage = {
-                        "input": usage.get("input"),
-                        "output": usage.get("output"),
-                        "cacheRead": usage.get("cacheRead"),
-                        "cacheWrite": usage.get("cacheWrite"),
-                        "totalTokens": int(total_tokens),
-                        "updated_at": utc_now(),
-                    }
             if final_text:
                 self.last_assistant_text = final_text
                 self.current_assistant_text = final_text
@@ -1321,6 +2734,8 @@ class PiSupervisor:
                     content=final_thinking,
                 )
                 await self._emit_stream("pi_transcript", {"entry": thinking_entry})
+            await self._finalize_stream_text("thinking", final_thinking)
+            await self._finalize_stream_text("text", final_text)
             self._refresh_turn_plan_preview_from_workspace()
             await self._emit_major(
                 "pi_message_end",
@@ -1329,13 +2744,6 @@ class PiSupervisor:
                     "usage": self.last_message_usage,
                 },
             )
-            if (
-                final_text
-                and not self._current_cycle_has_tool_call
-                and not self._current_turn_completed
-            ):
-                await self._complete_turn(summary_text=final_text, tool_result_count=0)
-                await self._request_process_shutdown_after_turn()
             return
 
         if event_type == "tool_execution_start":
@@ -1359,6 +2767,13 @@ class PiSupervisor:
             self._current_cycle_has_tool_call = True
             self.current_tool_calls[event.get("toolCallId", summary)] = entry
             self.tool_call_count += 1
+            await self._seal_active_narration()
+            stream_entry = await self._start_tool_stream_entry(
+                event.get("toolCallId"),
+                event.get("toolName"),
+                args,
+            )
+            entry["stream_seq"] = stream_entry["seq"]
             turn_plan = extract_turn_plan_candidate(args)
             if turn_plan is not None:
                 self.turn_plan_preview = {
@@ -1408,15 +2823,19 @@ class PiSupervisor:
             entry["finished_at"] = utc_now()
             entry["result"] = payload_text(event.get("result"))
             entry["result_preview"] = preview_payload(event.get("result"))
-            if entry["status"] == "completed" and entry.get("tool_name") == "read":
-                file_hint = entry.get("file_hint")
-                if isinstance(file_hint, str):
-                    self._record_turn_vision_read(file_hint)
             self.recent_tools.append(entry)
             self._refresh_turn_plan_preview_from_workspace()
             summary = entry["summary"]
             if entry["status"] == "error":
                 summary = f"{summary} failed"
+            stream_entry = await self._finish_tool_stream_entry(
+                tool_call_id,
+                event.get("toolName") or entry.get("tool_name"),
+                event.get("result"),
+                is_error=bool(event.get("isError")),
+            )
+            if stream_entry is not None:
+                entry["stream_seq"] = stream_entry["seq"]
             await self._emit_major(
                 "pi_tool_end",
                 {
@@ -1426,20 +2845,6 @@ class PiSupervisor:
                     "result_preview": entry["result_preview"],
                 },
             )
-            if entry["status"] == "completed" and entry.get("tool_name") == "read":
-                file_hint = entry.get("file_hint")
-                if isinstance(file_hint, str) and Path(file_hint).name in {
-                    ANNOTATED_FRAME_NAME,
-                    RAW_FRAME_NAME,
-                }:
-                    await self._emit_major(
-                        "pi_vision_read",
-                        {
-                            "summary": f"Vision read: {Path(file_hint).name}",
-                            "path": file_hint,
-                            "vision": dict(self.current_turn_vision),
-                        },
-                    )
             return
 
         if event_type == "queue_update":
@@ -1465,17 +2870,22 @@ class PiSupervisor:
                     "tokens_before": self.last_compaction_tokens_before,
                 },
             )
+            await self._push_stream_system(
+                "compaction start",
+                text=f"Compaction started ({event.get('reason', 'unknown')}).",
+            )
             return
 
         if event_type == "compaction_end":
             summary = f"Compaction finished ({event.get('reason', 'unknown')})."
             if event.get("aborted"):
                 summary = f"Compaction aborted ({event.get('reason', 'unknown')})."
+            result = event.get("result")
             tokens_after = event.get("tokensAfter")
+            if tokens_after is None and isinstance(result, dict):
+                tokens_after = result.get("estimatedTokensAfter")
             if isinstance(tokens_after, (int, float)):
                 self.last_compaction_tokens_after = int(tokens_after)
-                if self.session_usage is None:
-                    self.session_usage = {}
                 self.session_usage = {
                     **(self.session_usage or {}),
                     "totalTokens": int(tokens_after),
@@ -1490,33 +2900,34 @@ class PiSupervisor:
                     "tokens_after": self.last_compaction_tokens_after,
                 },
             )
+            await self._push_stream_system("compaction end", text=summary)
             return
 
         if event_type == "auto_retry_start":
-            await self._emit_major(
-                "pi_auto_retry_start",
-                {
-                    "summary": (
-                        f"Auto-retry {event.get('attempt')}/{event.get('maxAttempts')} "
-                        f"after error: {_truncate(str(event.get('errorMessage', 'unknown')), 180)}"
-                    ),
-                },
+            retry_summary = (
+                f"Auto-retry {event.get('attempt')}/{event.get('maxAttempts')} "
+                f"after error: {_truncate(str(event.get('errorMessage', 'unknown')), 180)}"
+            )
+            await self._emit_major("pi_auto_retry_start", {"summary": retry_summary})
+            await self._push_stream_system(
+                f"auto-retry {event.get('attempt')}/{event.get('maxAttempts')}",
+                text=retry_summary,
+                level="warn",
             )
             return
 
         if event_type == "auto_retry_end":
-            await self._emit_major(
-                "pi_auto_retry_end",
-                {
-                    "summary": (
-                        "Auto-retry succeeded."
-                        if event.get("success")
-                        else _truncate(
-                            f"Auto-retry failed: {event.get('finalError', 'unknown')}",
-                            220,
-                        )
-                    ),
-                },
+            succeeded = bool(event.get("success"))
+            retry_summary = (
+                "Auto-retry succeeded."
+                if succeeded
+                else _truncate(f"Auto-retry failed: {event.get('finalError', 'unknown')}", 220)
+            )
+            await self._emit_major("pi_auto_retry_end", {"summary": retry_summary})
+            await self._push_stream_system(
+                "auto-retry done" if succeeded else "auto-retry failed",
+                text=retry_summary,
+                level="info" if succeeded else "error",
             )
             return
 

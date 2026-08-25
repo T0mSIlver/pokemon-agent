@@ -8,7 +8,6 @@ from __future__ import annotations
 
 import os
 from abc import ABC, abstractmethod
-from collections import deque
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
@@ -16,7 +15,6 @@ from pokemon_agent.navigation import (
     MAP_COORDINATE_NOTE,
     MAP_COORDINATE_SYSTEM,
     LiveNavigationSnapshot,
-    NavigationPath,
     tile_pair_allows,
 )
 
@@ -308,12 +306,6 @@ class Emulator(ABC):
 
     def get_navigation_snapshot(self, reader: Any) -> LiveNavigationSnapshot:
         """Return a live navigation snapshot for the current frame."""
-        raise NotImplementedError(
-            f"{self.__class__.__name__} does not provide navigation primitives."
-        )
-
-    def plan_screen_path(self, reader: Any, target_x: int, target_y: int) -> NavigationPath:
-        """Plan a route to a visible on-screen target."""
         raise NotImplementedError(
             f"{self.__class__.__name__} does not provide navigation primitives."
         )
@@ -661,173 +653,6 @@ class PyBoyEmulator(Emulator):
             dialog_active=components["dialog_active"],
         )
         return snapshot
-
-    def plan_screen_path(self, reader: Any, target_x: int, target_y: int) -> NavigationPath:
-        components = self._movement_components(reader)
-        coords = components["coords"]
-        snapshot = LiveNavigationSnapshot(
-            map_id=components["map_info"]["map_id"],
-            map_name=components["map_info"]["map_name"],
-            player_position=coords,
-            facing=components["facing"],
-            tileset=components["tileset"],
-            window_top_left=(coords[0] - 4, coords[1] - 4),
-            terrain=components["terrain"],
-            sprite_positions=[
-                (coords[0] - 4 + local_x, coords[1] - 4 + local_y)
-                for local_x, local_y in sorted(components["sprites_local"])
-            ],
-            valid_moves=self._compute_valid_moves(
-                terrain=components["terrain"],
-                tilemap=components["tilemap"],
-                tileset=components["tileset"],
-                sprites_local=components["sprites_local"],
-                player_coords=coords,
-                warps=components["warps"],
-            ),
-            warps=components["warps"],
-            signs=components["signs"],
-            map_dimensions=components["map_dimensions"],
-            tile_ids=self._tile_ids_for_window(coords, components["tilemap"]),
-        )
-
-        local_target = snapshot.absolute_to_local(target_x, target_y)
-        if local_target is None:
-            return NavigationPath(
-                mode="screen",
-                target=(target_x, target_y),
-                reached=False,
-                status="Target is not visible in the current collision window.",
-                final_position=coords,
-                visible_target=False,
-            )
-
-        terrain = components["terrain"]
-        tilemap = components["tilemap"]
-        sprites_local = components["sprites_local"]
-        start = (4, 4)
-
-        def traversable(local_coord: tuple[int, int]) -> bool:
-            x, y = local_coord
-            if not (0 <= x < 10 and 0 <= y < 9):
-                return False
-            if local_coord != start and local_coord in sprites_local:
-                return False
-            return bool(terrain[y][x])
-
-        candidate_goals: List[tuple[int, int]] = []
-        interaction_target = False
-        if traversable(local_target):
-            candidate_goals.append(local_target)
-        else:
-            interaction_target = True
-            for dx, dy in ((0, -1), (0, 1), (-1, 0), (1, 0)):
-                neighbor = (local_target[0] + dx, local_target[1] + dy)
-                if traversable(neighbor):
-                    candidate_goals.append(neighbor)
-
-        queue = deque([start])
-        parents: Dict[tuple[int, int], tuple[tuple[int, int], str]] = {}
-        distances: Dict[tuple[int, int], int] = {start: 0}
-
-        while queue:
-            current = queue.popleft()
-            if current in candidate_goals:
-                break
-            current_tile = self._tile_id_at_local(tilemap, current)
-            for direction, (dx, dy) in (
-                ("up", (0, -1)),
-                ("down", (0, 1)),
-                ("left", (-1, 0)),
-                ("right", (1, 0)),
-            ):
-                neighbor = (current[0] + dx, current[1] + dy)
-                if neighbor in distances or not traversable(neighbor):
-                    continue
-                neighbor_tile = self._tile_id_at_local(tilemap, neighbor)
-                if not tile_pair_allows(snapshot.tileset, current_tile, neighbor_tile):
-                    continue
-                parents[neighbor] = (current, direction)
-                distances[neighbor] = distances[current] + 1
-                queue.append(neighbor)
-
-        reachable_candidates = [
-            local_coord for local_coord in candidate_goals if local_coord in distances
-        ]
-        if reachable_candidates:
-            final_local = min(reachable_candidates, key=lambda coord: distances[coord])
-            directions: List[str] = []
-            current = final_local
-            while current in parents:
-                current, direction = parents[current]
-                directions.append(direction)
-            directions.reverse()
-
-            final_absolute = snapshot.local_to_absolute(final_local[0], final_local[1])
-            reached = final_local == local_target
-            if reached:
-                status = "Found a visible on-screen path to the target tile."
-            elif interaction_target:
-                status = (
-                    "Target tile is blocked or occupied; "
-                    "routed to the closest visible adjacent tile."
-                )
-            else:
-                status = (
-                    "Target tile is not currently traversable; "
-                    "routed to the closest visible adjacent tile."
-                )
-
-            return NavigationPath(
-                mode="screen",
-                target=(target_x, target_y),
-                reached=reached,
-                status=status,
-                directions=directions,
-                final_position=final_absolute,
-                partial=not reached,
-                visible_target=True,
-            )
-
-        if distances:
-            best_local = min(
-                distances,
-                key=lambda coord: (
-                    abs(coord[0] - local_target[0]) + abs(coord[1] - local_target[1]),
-                    distances[coord],
-                    coord[1],
-                    coord[0],
-                ),
-            )
-            if best_local != start:
-                directions = []
-                current = best_local
-                while current in parents:
-                    current, direction = parents[current]
-                    directions.append(direction)
-                directions.reverse()
-                return NavigationPath(
-                    mode="screen",
-                    target=(target_x, target_y),
-                    reached=False,
-                    status=(
-                        "No exact visible route was found; "
-                        "routed to the closest visible reachable tile."
-                    ),
-                    directions=directions,
-                    final_position=snapshot.local_to_absolute(best_local[0], best_local[1]),
-                    partial=True,
-                    visible_target=True,
-                )
-
-        return NavigationPath(
-            mode="screen",
-            target=(target_x, target_y),
-            reached=False,
-            status="No visible route is available to the requested target.",
-            final_position=coords,
-            visible_target=True,
-        )
 
 
 # ---------------------------------------------------------------------------

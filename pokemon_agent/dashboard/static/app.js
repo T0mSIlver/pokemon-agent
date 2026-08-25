@@ -3,7 +3,12 @@
 
     const POLL_INTERVAL = 3000;
     const HISTORY_LIMIT = 180;
-    const TRANSCRIPT_LIMIT = 160;
+    const STREAM_DOM_WINDOW = 500;
+    const STREAM_WINDOW_STEP = 250;
+    const STREAM_MEMORY_LIMIT = 5000;
+    const STREAM_FETCH_LIMIT = 1000;
+    const STREAM_FETCH_PAGES = 12;
+    const STREAM_THINKING_LINES = 2;
     const WS_RECONNECT_BASE = 1000;
     const WS_RECONNECT_MAX = 30000;
 
@@ -35,15 +40,24 @@
         piStartButton: $('piStartButton'),
         piContinueButton: $('piContinueButton'),
         piStopButton: $('piStopButton'),
+        piSteerInput: $('piSteerInput'),
+        piSteerButton: $('piSteerButton'),
+        piSteerStatus: $('piSteerStatus'),
         piControlStatus: $('piControlStatus'),
         piTurnPlanPreview: $('piTurnPlanPreview'),
-        piToolFeed: $('piToolFeed'),
-        piToolSearch: $('piToolSearch'),
-        piToolFilters: $('piToolFilters'),
-        piCurrentThinking: $('piCurrentThinking'),
-        piCurrentOutput: $('piCurrentOutput'),
-        piTranscript: $('piTranscript'),
-        piRecentEvents: $('piRecentEvents'),
+        critiqueStateChip: $('critiqueStateChip'),
+        critiqueMetaChip: $('critiqueMetaChip'),
+        critiqueActiveGoal: $('critiqueActiveGoal'),
+        critiqueGoalSource: $('critiqueGoalSource'),
+        critiqueNextGoal: $('critiqueNextGoal'),
+        critiqueError: $('critiqueError'),
+        critiqueText: $('critiqueText'),
+        piStream: $('piStream'),
+        piStreamList: $('piStreamList'),
+        piStreamOlder: $('piStreamOlder'),
+        piStreamJump: $('piStreamJump'),
+        piStreamSearch: $('piStreamSearch'),
+        piStreamFilters: $('piStreamFilters'),
         piStderr: $('piStderr'),
         objectiveTitle: $('objectiveTitle'),
         objectiveProgress: $('objectiveProgress'),
@@ -101,15 +115,13 @@
     let refreshTimer = null;
     let refreshInFlight = null;
     let controlSeeded = false;
+    let steerLive = null;
     let latestRecovery = {};
     let latestSaves = [];
     let latestTimelineEvents = [];
     let sessionOriginMs = null;
-    const transcriptKeys = new Set();
     const autoScrollState = {
-        transcript: true,
-        thinking: true,
-        output: true,
+        stream: true,
     };
     const timelineFilters = new Set(['all']);
     const EVENT_CATEGORIES = [
@@ -137,21 +149,22 @@
         screenshot: 'var(--hud-muted)',
     };
 
-    const TOOL_TYPE_FILTERS = [
-        { key: 'all',       label: 'ALL' },
-        { key: 'read',      label: 'READ' },
-        { key: 'bash',      label: 'BASH' },
-        { key: 'edit',      label: 'EDIT' },
-        { key: 'write',     label: 'WRITE' },
-        { key: 'grep',      label: 'GREP' },
-        { key: 'find',      label: 'FIND' },
-        { key: 'ls',        label: 'LS' },
-        { key: 'running',   label: 'LIVE' },
-        { key: 'error',     label: 'ERROR' },
+    const STREAM_KINDS = new Set(['tool', 'thinking', 'text', 'user', 'system']);
+    // Supervisor statuses where an operator message has a live session to land in.
+    const STEERABLE_PI_STATUSES = new Set(['starting', 'running']);
+    const STREAM_SYSTEM_LEVELS = new Set(['info', 'warn', 'error']);
+    const STREAM_KIND_FILTERS = [
+        { key: 'all',           label: 'ALL' },
+        { key: 'kind:tool',     label: 'TOOL' },
+        { key: 'kind:thinking', label: 'THINK' },
+        { key: 'kind:text',     label: 'SAID' },
+        { key: 'kind:user',     label: 'PROMPT' },
+        { key: 'kind:system',   label: 'SYSTEM' },
+        { key: 'state:error',   label: 'ERRORS' },
     ];
-    const toolTypeFilter = new Set(['all']);
-    let toolSearchQuery = '';
-    let latestToolFeed = [];
+    const STREAM_TOOL_CHIP_LIMIT = 8;
+    const streamFilters = new Set(['all']);
+    let streamSearchQuery = '';
 
     function api(path) {
         return `${window.location.protocol}//${window.location.host}${path}`;
@@ -372,18 +385,6 @@
         node.dataset.autoscroll = autoScrollState[name] ? 'true' : 'false';
     }
 
-    function initAutoScroll(name, node) {
-        if (!node) return;
-        syncAutoScrollState(name, node);
-        node.addEventListener(
-            'scroll',
-            () => {
-                syncAutoScrollState(name, node);
-            },
-            { passive: true }
-        );
-    }
-
     function scrollNodeToBottom(node, name, force = false) {
         if (!node) return;
         if (!force && !shouldAutoScroll(name, node)) return;
@@ -519,33 +520,6 @@
         });
     }
 
-    function toolKey(item) {
-        return (
-            item?.tool_call_id ||
-            [
-                item?.tool_name || '',
-                item?.summary || '',
-                item?.started_at || '',
-                item?.finished_at || '',
-                item?.status || '',
-            ].join('::')
-        );
-    }
-
-    function toolStatusLabel(status) {
-        const normalized = String(status || 'completed').toLowerCase();
-        if (normalized === 'running') return 'LIVE';
-        if (normalized === 'completed') return 'DONE';
-        return normalized.toUpperCase();
-    }
-
-    function toolTimeLabel(item) {
-        const stamp = item?.finished_at || item?.started_at || '';
-        const abs = timeLabel(stamp);
-        const rel = sessionOriginMs ? relTime(stamp, sessionOriginMs) : '';
-        return rel || abs;
-    }
-
     function toolText(value, fallback) {
         const text = String(value ?? '').trim();
         return text || fallback;
@@ -594,54 +568,6 @@
         } catch (_) {
             return String(decoded);
         }
-    }
-
-    function toolPayloadPreview(value, fallback = 'No preview available.') {
-        const decoded = decodeToolPayloadValue(value);
-        if (decoded === null || decoded === undefined || decoded === '') {
-            return fallback;
-        }
-        if (typeof decoded === 'string') {
-            return truncate(decoded.replace(/\s+/g, ' ').trim(), 180) || fallback;
-        }
-        if (Array.isArray(decoded)) {
-            if (!decoded.length) return '[]';
-            return truncate(
-                decoded
-                    .slice(0, 3)
-                    .map((item, index) => {
-                        const child = decodeToolPayloadValue(item, 1);
-                        if (isStructuredToolPayload(child)) {
-                            const size = Array.isArray(child) ? child.length : Object.keys(child).length;
-                            return `[${index}]: ${Array.isArray(child) ? `${size} items` : `${size} fields`}`;
-                        }
-                        return `[${index}]: ${formatToolScalar(child)}`;
-                    })
-                    .join(' • '),
-                180
-            );
-        }
-        if (decoded && typeof decoded === 'object') {
-            const entries = Object.entries(decoded);
-            if (!entries.length) return '{}';
-            return truncate(
-                entries
-                    .slice(0, 3)
-                    .map(([key, child]) => {
-                        const normalized = decodeToolPayloadValue(child, 1);
-                        if (isStructuredToolPayload(normalized)) {
-                            const size = Array.isArray(normalized)
-                                ? normalized.length
-                                : Object.keys(normalized).length;
-                            return `${key}: ${Array.isArray(normalized) ? `${size} items` : `${size} fields`}`;
-                        }
-                        return `${key}: ${formatToolScalar(normalized)}`;
-                    })
-                    .join(' • '),
-                180
-            );
-        }
-        return truncate(String(decoded), 180) || fallback;
     }
 
     function createToolPayloadText(text, muted = false) {
@@ -713,186 +639,6 @@
             return;
         }
         node.replaceChildren(createToolPayloadText(formatToolScalar(decoded)));
-    }
-
-    function setToolCardExpanded(card, expanded) {
-        if (!card) return;
-        const next = Boolean(expanded);
-        const toggle = card.querySelector('.hud-tool-card-toggle');
-        const body = card.querySelector('.hud-tool-body');
-        card.dataset.expanded = next ? 'true' : 'false';
-        if (toggle) {
-            toggle.setAttribute('aria-expanded', next ? 'true' : 'false');
-        }
-        if (body) {
-            body.hidden = !next;
-        }
-    }
-
-    function createToolCard(item) {
-        const card = document.createElement('article');
-        card.className = 'hud-tool-card';
-        card.dataset.expanded = 'false';
-
-        const toggle = document.createElement('button');
-        toggle.type = 'button';
-        toggle.className = 'hud-tool-card-toggle';
-        toggle.setAttribute('aria-expanded', 'false');
-        toggle.addEventListener('click', () => {
-            setToolCardExpanded(card, card.dataset.expanded !== 'true');
-        });
-
-        const summaryBody = document.createElement('div');
-        summaryBody.className = 'hud-tool-summary';
-
-        const title = document.createElement('strong');
-        title.className = 'hud-tool-title';
-        title.dataset.slot = 'title';
-
-        const preview = document.createElement('p');
-        preview.className = 'hud-tool-preview';
-        preview.dataset.slot = 'preview';
-
-        summaryBody.appendChild(title);
-        summaryBody.appendChild(preview);
-
-        const meta = document.createElement('div');
-        meta.className = 'hud-tool-meta';
-
-        const status = document.createElement('span');
-        status.className = 'hud-chip hud-chip--tiny';
-        status.dataset.slot = 'status';
-
-        const time = document.createElement('span');
-        time.className = 'hud-chat-time';
-        time.dataset.slot = 'time';
-
-        meta.appendChild(status);
-        meta.appendChild(time);
-
-        toggle.appendChild(summaryBody);
-        toggle.appendChild(meta);
-
-        const body = document.createElement('div');
-        body.className = 'hud-tool-body';
-        body.hidden = true;
-
-        const argsBlock = document.createElement('div');
-        argsBlock.className = 'hud-tool-block';
-        const argsLabel = document.createElement('span');
-        argsLabel.className = 'hud-tool-block-label';
-        argsLabel.textContent = 'Arguments';
-        const argsPayload = document.createElement('div');
-        argsPayload.className = 'hud-tool-payload';
-        argsPayload.dataset.slot = 'args';
-        argsBlock.appendChild(argsLabel);
-        argsBlock.appendChild(argsPayload);
-
-        const resultBlock = document.createElement('div');
-        resultBlock.className = 'hud-tool-block';
-        const resultLabel = document.createElement('span');
-        resultLabel.className = 'hud-tool-block-label';
-        resultLabel.textContent = 'Output';
-        const resultPayload = document.createElement('div');
-        resultPayload.className = 'hud-tool-payload';
-        resultPayload.dataset.slot = 'result';
-        resultBlock.appendChild(resultLabel);
-        resultBlock.appendChild(resultPayload);
-
-        body.appendChild(argsBlock);
-        body.appendChild(resultBlock);
-
-        card.appendChild(toggle);
-        card.appendChild(body);
-        updateToolCard(card, item);
-        return card;
-    }
-
-    function updateToolCard(card, item) {
-        if (!card) return;
-        const key = toolKey(item);
-        const status = String(item?.status || 'completed').toLowerCase();
-        const title = card.querySelector('[data-slot="title"]');
-        const preview = card.querySelector('[data-slot="preview"]');
-        const statusChip = card.querySelector('[data-slot="status"]');
-        const time = card.querySelector('[data-slot="time"]');
-        const args = card.querySelector('[data-slot="args"]');
-        const result = card.querySelector('[data-slot="result"]');
-
-        card.dataset.toolKey = key;
-        card.dataset.status = status;
-        if (item?.tool_name) card.dataset.toolName = item.tool_name;
-
-        if (title) {
-            title.textContent = truncate(item.summary || item.tool_name || 'tool', 120);
-        }
-        if (preview) {
-            preview.textContent = toolPayloadPreview(
-                item.result || item.args || item.result_preview || item.args_preview,
-                'No preview available.'
-            );
-        }
-        if (statusChip) {
-            statusChip.textContent = toolStatusLabel(status);
-        }
-        if (time) {
-            time.textContent = toolTimeLabel(item);
-            time.title = item?.finished_at
-                ? `Finished ${timeLabel(item.finished_at)}`
-                : `Started ${timeLabel(item?.started_at)}`;
-        }
-        if (args) {
-            renderToolPayload(args, item?.args, 'No arguments captured.');
-        }
-        if (result) {
-            renderToolPayload(
-                result,
-                item?.result,
-                status === 'running' ? 'Waiting for tool output…' : 'No output captured.'
-            );
-        }
-    }
-
-    function renderToolList(node, items, fallback) {
-        if (!node) return;
-        const list = Array.isArray(items) ? items : [];
-        if (!list.length) {
-            const empty = document.createElement('p');
-            empty.className = 'hud-empty';
-            empty.textContent = fallback;
-            node.replaceChildren(empty);
-            return;
-        }
-
-        const empty = node.querySelector('.hud-empty');
-        if (empty) empty.remove();
-
-        const existingCards = Array.from(node.querySelectorAll('.hud-tool-card'));
-        const existingByKey = new Map(
-            existingCards.map((card) => [card.dataset.toolKey || '', card])
-        );
-        const nextKeys = new Set();
-
-        list.forEach((item, index) => {
-            const key = toolKey(item);
-            nextKeys.add(key);
-            let card = existingByKey.get(key);
-            if (!card) {
-                card = createToolCard(item);
-            } else {
-                updateToolCard(card, item);
-            }
-            const currentChild = node.children[index];
-            if (currentChild !== card) {
-                node.insertBefore(card, currentChild || null);
-            }
-        });
-
-        Array.from(node.querySelectorAll('.hud-tool-card')).forEach((card) => {
-            if (!nextKeys.has(card.dataset.toolKey || '')) {
-                card.remove();
-            }
-        });
     }
 
     function buildRecoveryMap(recovery) {
@@ -978,168 +724,1013 @@
         }
     }
 
-    function transcriptKey(entry) {
-        const meta = entry?.meta ? JSON.stringify(entry.meta) : '';
+    /* ------------------------------------------------------------------ */
+    /* Merged live stream                                                  */
+    /* ------------------------------------------------------------------ */
+
+    const streamEntries = [];
+    const streamBySeq = new Map();
+    const streamOpenState = new Map();
+    const streamDirtySeqs = new Set();
+    let streamSessionId = null;
+    let streamNextSeq = 0;
+    let streamRenderLimit = STREAM_DOM_WINDOW;
+    let streamPendingNew = 0;
+    let streamRenderPending = false;
+    let streamFlushPending = false;
+    let streamChromeTimer = null;
+    let streamSyncInFlight = null;
+    let streamUnavailable = false;
+    let streamExpanding = false;
+
+    function streamOpen(seq) {
+        let state = streamOpenState.get(seq);
+        if (!state) {
+            state = { cmd: false, res: false, more: false, touched: false };
+            streamOpenState.set(seq, state);
+        }
+        return state;
+    }
+
+    function streamEntryKind(entry) {
+        const kind = String(entry?.kind || 'text').toLowerCase();
+        return STREAM_KINDS.has(kind) ? kind : 'text';
+    }
+
+    function streamEntryState(entry) {
+        const state = String(entry?.state || 'ok').toLowerCase();
+        if (state === 'running' || state === 'error') return state;
+        return 'ok';
+    }
+
+    function streamToolName(entry) {
+        return String(entry?.tool?.name || '').toLowerCase();
+    }
+
+    function streamEntryText(entry) {
+        return typeof entry?.text === 'string' ? entry.text : '';
+    }
+
+    function streamHeadline(entry) {
+        const tool = entry?.tool || {};
+        const headline = String(tool.headline || '').trim();
+        if (headline) return headline;
+        const text = streamEntryText(entry).trim();
+        if (text) return text;
+        return String(tool.name || 'tool call');
+    }
+
+    function streamHaystack(entry) {
+        const tool = entry?.tool || {};
         return [
-            entry?.timestamp || '',
-            entry?.direction || '',
-            entry?.role || '',
-            entry?.channel || '',
-            entry?.content || '',
-            meta,
-        ].join('::');
+            entry?.kind || '',
+            entry?.state || '',
+            entry?.text || '',
+            tool.name || '',
+            tool.headline || '',
+            tool.command || '',
+            tool.path || '',
+            tool.result_summary || '',
+            tool.result_full || '',
+            entry?.system?.label || '',
+        ]
+            .join(' ')
+            .toLowerCase();
     }
 
-    function transcriptRole(entry) {
-        return entry?.role || (entry?.direction === 'outbound' ? 'user' : entry?.direction === 'inbound' ? 'assistant' : 'system');
+    function streamStateLabel(state) {
+        if (state === 'running') return 'LIVE';
+        if (state === 'error') return 'ERR';
+        return 'OK';
     }
 
-    function transcriptRoleLabel(role) {
-        if (role === 'assistant_thinking') return 'assistant thinking';
-        return role || 'system';
+    function streamDurationLabel(ms) {
+        if (typeof ms !== 'number' || !Number.isFinite(ms) || ms < 0) return '';
+        if (ms < 1000) return `${Math.round(ms)}ms`;
+        if (ms < 60000) return `${(ms / 1000).toFixed(1)}s`;
+        const minutes = Math.floor(ms / 60000);
+        const seconds = Math.round((ms % 60000) / 1000);
+        return `${minutes}m${String(seconds).padStart(2, '0')}s`;
     }
 
-    function createTranscriptCard(entry) {
+    function streamClockLabel(ts) {
+        const t = parseTs(ts);
+        if (Number.isNaN(t)) return '--:--:--';
+        return new Date(t).toLocaleTimeString([], { hour12: false });
+    }
+
+    function buildStreamPredicate() {
+        const query = streamSearchQuery.toLowerCase().trim();
+        const showAll = streamFilters.has('all') || streamFilters.size === 0;
+        const kinds = new Set();
+        const names = new Set();
+        let errorsOnly = false;
+        if (!showAll) {
+            streamFilters.forEach((key) => {
+                if (key === 'state:error') errorsOnly = true;
+                else if (key.startsWith('kind:')) kinds.add(key.slice(5));
+                else if (key.startsWith('tool:')) names.add(key.slice(5));
+            });
+        }
+        return (entry) => {
+            if (!showAll) {
+                if (errorsOnly && streamEntryState(entry) !== 'error') return false;
+                if (kinds.size || names.size) {
+                    const kindOk = kinds.size ? kinds.has(streamEntryKind(entry)) : false;
+                    const nameOk = names.size ? names.has(streamToolName(entry)) : false;
+                    if (!kindOk && !nameOk) return false;
+                }
+            }
+            if (query && !streamHaystack(entry).includes(query)) return false;
+            return true;
+        };
+    }
+
+    function streamFilterCounts() {
+        const counts = { all: streamEntries.length, 'state:error': 0 };
+        const tools = new Map();
+        streamEntries.forEach((entry) => {
+            const kindKey = `kind:${streamEntryKind(entry)}`;
+            counts[kindKey] = (counts[kindKey] || 0) + 1;
+            if (streamEntryState(entry) === 'error') counts['state:error'] += 1;
+            const name = streamToolName(entry);
+            if (name) {
+                counts[`tool:${name}`] = (counts[`tool:${name}`] || 0) + 1;
+                tools.set(name, (tools.get(name) || 0) + 1);
+            }
+        });
+        const toolKeys = Array.from(tools.entries())
+            .sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0]))
+            .slice(0, STREAM_TOOL_CHIP_LIMIT)
+            .map(([name]) => name);
+        return { counts, toolKeys };
+    }
+
+    function renderStreamFilters() {
+        if (!els.piStreamFilters) return;
+        const { counts, toolKeys } = streamFilterCounts();
+        const chips = STREAM_KIND_FILTERS.slice();
+        toolKeys.forEach((name) => {
+            chips.push({ key: `tool:${name}`, label: name });
+        });
+        streamFilters.forEach((key) => {
+            if (key.startsWith('tool:') && !chips.some((chip) => chip.key === key)) {
+                chips.push({ key, label: key.slice(5) });
+            }
+        });
+
+        const fragment = document.createDocumentFragment();
+        chips.forEach(({ key, label }) => {
+            const chip = document.createElement('button');
+            chip.type = 'button';
+            chip.className = 'hud-tool-filter-chip';
+            const active = streamFilters.has(key) || (streamFilters.size === 0 && key === 'all');
+            chip.dataset.active = active ? 'true' : 'false';
+            chip.dataset.filter = key;
+            chip.innerHTML = `${escapeHtml(label)}<span class="hud-tool-filter-count">${counts[key] || 0}</span>`;
+            chip.addEventListener('click', () => toggleStreamFilter(key));
+            fragment.appendChild(chip);
+        });
+        els.piStreamFilters.replaceChildren(fragment);
+    }
+
+    function toggleStreamFilter(key) {
+        if (key === 'all') {
+            streamFilters.clear();
+            streamFilters.add('all');
+        } else {
+            streamFilters.delete('all');
+            if (streamFilters.has(key)) {
+                streamFilters.delete(key);
+            } else {
+                streamFilters.add(key);
+            }
+            if (!streamFilters.size) streamFilters.add('all');
+        }
+        streamRenderLimit = STREAM_DOM_WINDOW;
+        renderStream();
+    }
+
+    function streamMetaNode() {
+        const meta = document.createElement('span');
+        meta.className = 'hud-stream-meta';
+
+        const tool = document.createElement('span');
+        tool.className = 'hud-stream-tool';
+        tool.dataset.slot = 'tool';
+        tool.hidden = true;
+
+        const duration = document.createElement('span');
+        duration.className = 'hud-stream-dur';
+        duration.dataset.slot = 'dur';
+        duration.hidden = true;
+
+        const state = document.createElement('span');
+        state.className = 'hud-chip hud-chip--tiny hud-stream-state';
+        state.dataset.slot = 'state';
+
+        meta.append(tool, duration, state);
+        return meta;
+    }
+
+    function buildStreamToolBody(main, seq) {
+        const head = document.createElement('div');
+        head.className = 'hud-stream-head';
+        const headline = document.createElement('span');
+        headline.className = 'hud-stream-headline';
+        headline.dataset.slot = 'headline';
+        head.append(headline, streamMetaNode());
+
+        const figure = document.createElement('div');
+        figure.className = 'hud-frame-view hud-stream-shot';
+        figure.dataset.slot = 'figure';
+        figure.dataset.frameLabel = 'frame read';
+        figure.dataset.fullscreen = 'false';
+        figure.setAttribute('role', 'button');
+        figure.tabIndex = 0;
+        figure.title = 'Click to toggle fullscreen';
+        figure.setAttribute('aria-label', 'Toggle fullscreen frame view');
+        figure.hidden = true;
+        const shot = document.createElement('img');
+        shot.dataset.slot = 'shot';
+        shot.alt = 'Frame read';
+        shot.loading = 'lazy';
+        const shotTag = document.createElement('span');
+        shotTag.className = 'hud-frame-label hud-frame-label--tr';
+        shotTag.dataset.slot = 'shotTag';
+        figure.append(shot, shotTag);
+        figure.addEventListener('click', onFrameViewportClick);
+        figure.addEventListener('keydown', onFrameViewportKeydown);
+
+        const fold = document.createElement('details');
+        fold.className = 'hud-details hud-stream-fold';
+        fold.dataset.slot = 'cmdFold';
+        fold.hidden = true;
+        const summary = document.createElement('summary');
+        const glyph = document.createElement('span');
+        glyph.className = 'hud-details-glyph';
+        glyph.textContent = '▸';
+        const summaryLabel = document.createElement('span');
+        summaryLabel.dataset.slot = 'cmdLabel';
+        summaryLabel.textContent = 'command';
+        summary.append(glyph, summaryLabel);
+        const command = document.createElement('pre');
+        command.className = 'hud-stream-code';
+        command.dataset.slot = 'command';
+        fold.append(summary, command);
+        fold.addEventListener('toggle', () => {
+            streamOpen(seq).cmd = fold.open;
+        });
+
+        const result = document.createElement('div');
+        result.className = 'hud-stream-result';
+        result.dataset.slot = 'resWrap';
+        result.hidden = true;
+        const resultToggle = document.createElement('button');
+        resultToggle.type = 'button';
+        resultToggle.className = 'hud-stream-result-line';
+        resultToggle.dataset.slot = 'resToggle';
+        resultToggle.setAttribute('aria-expanded', 'false');
+        const arrow = document.createElement('span');
+        arrow.className = 'hud-stream-arrow';
+        arrow.textContent = '→';
+        const resultSummary = document.createElement('span');
+        resultSummary.dataset.slot = 'resSummary';
+        resultToggle.append(arrow, resultSummary);
+        const resultFull = document.createElement('div');
+        resultFull.className = 'hud-tool-payload hud-stream-payload';
+        resultFull.dataset.slot = 'resFull';
+        resultFull.hidden = true;
+        resultToggle.addEventListener('click', () => {
+            const state = streamOpen(seq);
+            state.res = !state.res;
+            state.touched = true;
+            applyStreamResultOpen(main, state.res);
+        });
+        result.append(resultToggle, resultFull);
+
+        main.append(head, figure, fold, result);
+    }
+
+    function applyStreamResultOpen(scope, open) {
+        const toggle = scope.querySelector('[data-slot="resToggle"]');
+        const full = scope.querySelector('[data-slot="resFull"]');
+        const expanded = Boolean(open) && Boolean(full?.dataset.has);
+        if (toggle) toggle.setAttribute('aria-expanded', expanded ? 'true' : 'false');
+        if (full) full.hidden = !expanded;
+    }
+
+    function streamEntrySource(entry) {
+        const source = String(entry?.source || 'agent').toLowerCase();
+        return source || 'agent';
+    }
+
+    function buildStreamProseBody(main, seq, kind) {
+        const head = document.createElement('div');
+        head.className = 'hud-stream-head';
+        const kicker = document.createElement('span');
+        kicker.className = 'hud-stream-kicker';
+        kicker.textContent = kind === 'thinking' ? 'thinking' : kind === 'user' ? 'prompt' : 'said';
+        kicker.dataset.slot = 'kicker';
+        head.append(kicker, streamMetaNode());
+
+        const body = document.createElement('pre');
+        body.className = kind === 'thinking' ? 'hud-stream-think' : 'hud-stream-say';
+        const text = document.createElement('span');
+        text.dataset.slot = 'text';
+        body.appendChild(text);
+        if (kind !== 'user') {
+            const caret = document.createElement('span');
+            caret.className = 'hud-cursor';
+            caret.setAttribute('aria-hidden', 'true');
+            body.appendChild(caret);
+        }
+
+        main.append(head, body);
+
+        if (kind === 'thinking') {
+            const more = document.createElement('button');
+            more.type = 'button';
+            more.className = 'hud-stream-more';
+            more.dataset.slot = 'more';
+            more.setAttribute('aria-expanded', 'false');
+            more.hidden = true;
+            more.addEventListener('click', () => {
+                const state = streamOpen(seq);
+                state.more = !state.more;
+                const entry = streamBySeq.get(seq);
+                const node = main.parentElement;
+                if (entry && node) updateStreamNode(node, entry);
+            });
+            main.appendChild(more);
+        }
+    }
+
+    // A system entry is not only its label: 'critique ready' carries the whole
+    // retrospective in its text, and that used to be rendered nowhere at all.
+    function buildStreamSystemBody(main, seq) {
+        const divider = document.createElement('div');
+        divider.className = 'hud-stream-divider';
+        divider.dataset.slot = 'divider';
+        divider.dataset.level = 'info';
+        const label = document.createElement('span');
+        label.className = 'hud-stream-divider-label';
+        label.dataset.slot = 'label';
+        divider.appendChild(label);
+        main.appendChild(divider);
+
+        const body = document.createElement('pre');
+        body.className = 'hud-stream-say hud-stream-system-text';
+        body.dataset.slot = 'sysText';
+        body.hidden = true;
+        main.appendChild(body);
+
+        const more = document.createElement('button');
+        more.type = 'button';
+        more.className = 'hud-stream-more';
+        more.dataset.slot = 'sysMore';
+        more.setAttribute('aria-expanded', 'false');
+        more.hidden = true;
+        more.addEventListener('click', () => {
+            const state = streamOpen(seq);
+            state.more = !state.more;
+            const entry = streamBySeq.get(seq);
+            const node = main.parentElement;
+            if (entry && node) updateStreamNode(node, entry);
+        });
+        main.appendChild(more);
+    }
+
+    function createStreamNode(entry) {
+        const kind = streamEntryKind(entry);
+        const seq = Number(entry.seq);
+
         const article = document.createElement('article');
-        article.className = 'hud-chat-card';
+        article.className = 'hud-stream-entry';
+        article.dataset.kind = kind;
+        article.dataset.seq = String(seq);
 
-        const meta = document.createElement('div');
-        meta.className = 'hud-chat-meta';
-
-        const chipWrap = document.createElement('div');
-        chipWrap.className = 'hud-chat-chips';
-
-        const roleChip = document.createElement('span');
-        roleChip.className = 'hud-chat-chip';
-        roleChip.dataset.slot = 'role';
-
-        const channelChip = document.createElement('span');
-        channelChip.className = 'hud-chat-chip';
-        channelChip.dataset.slot = 'channel';
-
-        const time = document.createElement('span');
+        const gutter = document.createElement('div');
+        gutter.className = 'hud-stream-gutter';
+        const time = document.createElement('time');
         time.className = 'hud-chat-time';
         time.dataset.slot = 'time';
+        gutter.appendChild(time);
 
-        chipWrap.appendChild(roleChip);
-        chipWrap.appendChild(channelChip);
+        const main = document.createElement('div');
+        main.className = 'hud-stream-main';
 
-        meta.appendChild(chipWrap);
-        meta.appendChild(time);
+        if (kind === 'tool') {
+            buildStreamToolBody(main, seq);
+        } else if (kind === 'system') {
+            buildStreamSystemBody(main, seq);
+        } else {
+            buildStreamProseBody(main, seq, kind);
+        }
 
-        const pre = document.createElement('pre');
-        pre.dataset.slot = 'content';
-
-        article.appendChild(meta);
-        article.appendChild(pre);
-        updateTranscriptCard(article, entry);
+        article.append(gutter, main);
+        updateStreamNode(article, entry);
         return article;
     }
 
-    function updateTranscriptCard(article, entry) {
-        if (!article) return;
-        const role = transcriptRole(entry);
-        const key = transcriptKey(entry);
-        const roleChip = article.querySelector('[data-slot="role"]');
-        const channelChip = article.querySelector('[data-slot="channel"]');
-        const time = article.querySelector('[data-slot="time"]');
-        const pre = article.querySelector('[data-slot="content"]');
+    function updateStreamNode(node, entry) {
+        if (!node || !entry) return;
+        const kind = streamEntryKind(entry);
+        const state = streamEntryState(entry);
+        const seq = Number(entry.seq);
+        node.dataset.state = state;
 
-        article.dataset.role = role;
-        article.dataset.transcriptKey = key;
+        node.dataset.source = streamEntrySource(entry);
+        const kicker = node.querySelector('[data-slot="kicker"]');
+        if (kicker && kind === 'user') {
+            kicker.textContent = node.dataset.source === 'operator' ? 'operator' : 'prompt';
+        }
 
-        if (roleChip) {
-            roleChip.dataset.role = role;
-            roleChip.textContent = transcriptRoleLabel(role).toUpperCase();
-        }
-        if (channelChip) {
-            channelChip.dataset.channel = entry.channel || 'message';
-            channelChip.dataset.direction = entry.direction || 'system';
-            channelChip.textContent = (entry.channel || 'message').toUpperCase();
-        }
+        const time = node.querySelector('[data-slot="time"]');
         if (time) {
-            const abs = timeLabel(entry.timestamp);
-            const rel = sessionOriginMs ? relTime(entry.timestamp, sessionOriginMs) : '';
-            time.textContent = rel || abs;
-            time.title = abs;
+            time.textContent = streamClockLabel(entry.ts);
+            time.dateTime = entry.ts || '';
+            time.title = timeLabel(entry.ts);
         }
-        if (pre) {
-            pre.textContent = entry.content || '';
+
+        const stateChip = node.querySelector('[data-slot="state"]');
+        if (stateChip) {
+            stateChip.hidden = kind !== 'tool' && state === 'ok';
+            stateChip.textContent = streamStateLabel(state);
+            stateChip.dataset.status = state;
+        }
+
+        const duration = node.querySelector('[data-slot="dur"]');
+        if (duration) {
+            const label = streamDurationLabel(entry?.tool?.duration_ms);
+            duration.textContent = label;
+            duration.hidden = !label;
+        }
+
+        const toolTag = node.querySelector('[data-slot="tool"]');
+        if (toolTag) {
+            const name = String(entry?.tool?.name || '');
+            toolTag.textContent = name;
+            toolTag.hidden = !name;
+        }
+
+        if (kind === 'tool') {
+            updateStreamToolNode(node, entry, state, seq);
+        } else if (kind === 'system') {
+            updateStreamSystemNode(node, entry, seq);
+        } else {
+            updateStreamProseNode(node, entry, kind === 'thinking', seq);
         }
     }
 
-    function scrollTranscriptToBottom(force = false) {
-        scrollNodeToBottom(els.piTranscript, 'transcript', force);
+    function updateStreamToolNode(node, entry, state, seq) {
+        const tool = entry.tool || {};
+        node.dataset.tool = streamToolName(entry);
+
+        const headline = node.querySelector('[data-slot="headline"]');
+        if (headline) headline.textContent = streamHeadline(entry);
+
+        const figure = node.querySelector('[data-slot="figure"]');
+        const shot = node.querySelector('[data-slot="shot"]');
+        const artifact = String(tool.image_artifact || '').trim();
+        if (figure && shot) {
+            if (artifact) {
+                const url = withCacheBust(
+                    `/artifacts/${encodeURIComponent(artifact)}`,
+                    `${entry.seq}-${entry.ts || ''}`
+                );
+                if (shot.dataset.url !== url) {
+                    shot.dataset.url = url;
+                    shot.src = url;
+                }
+                const shotTag = node.querySelector('[data-slot="shotTag"]');
+                if (shotTag) shotTag.textContent = artifact.replace(/_/g, ' ').toUpperCase();
+                figure.dataset.frameLabel = `${artifact.replace(/_/g, ' ')} frame`;
+                figure.hidden = false;
+            } else {
+                figure.hidden = true;
+            }
+        }
+
+        const fold = node.querySelector('[data-slot="cmdFold"]');
+        const command = node.querySelector('[data-slot="command"]');
+        const commandText = String(tool.command || '').trim();
+        const pathText = String(tool.path || '').trim();
+        const foldText = commandText || pathText;
+        if (fold && command) {
+            if (foldText) {
+                if (command.textContent !== foldText) command.textContent = foldText;
+                const label = node.querySelector('[data-slot="cmdLabel"]');
+                if (label) label.textContent = commandText ? 'command' : 'path';
+                fold.hidden = false;
+            } else {
+                fold.hidden = true;
+            }
+        }
+
+        const open = streamOpen(seq);
+        const resultWrap = node.querySelector('[data-slot="resWrap"]');
+        const resultSummary = node.querySelector('[data-slot="resSummary"]');
+        const resultFull = node.querySelector('[data-slot="resFull"]');
+        const summaryText = String(tool.result_summary || '').trim();
+        const fullText = tool.result_full;
+        const hasFull = fullText !== undefined && fullText !== null && String(fullText).trim() !== '';
+
+        if (resultWrap && resultSummary && resultFull) {
+            const fallback = state === 'running'
+                ? 'waiting for output…'
+                : hasFull
+                    ? 'output captured'
+                    : '';
+            const line = summaryText || fallback;
+            if (line || hasFull) {
+                resultSummary.textContent = truncate(line.replace(/\s+/g, ' ').trim(), 200) || 'output';
+                resultWrap.hidden = false;
+            } else {
+                resultWrap.hidden = true;
+            }
+
+            if (hasFull) {
+                const signature = `${String(fullText).length}:${state}`;
+                if (resultFull.dataset.signature !== signature) {
+                    resultFull.dataset.signature = signature;
+                    renderToolPayload(resultFull, fullText, 'No output captured.');
+                }
+                resultFull.dataset.has = '1';
+            } else {
+                delete resultFull.dataset.has;
+                delete resultFull.dataset.signature;
+                resultFull.replaceChildren();
+            }
+
+            if (state === 'error' && !open.touched) {
+                open.res = hasFull;
+                open.cmd = Boolean(foldText);
+            }
+            applyStreamResultOpen(node, open.res);
+        }
+
+        if (fold && !fold.hidden && fold.open !== Boolean(open.cmd)) {
+            fold.open = Boolean(open.cmd);
+        }
     }
 
-    function renderTranscript(entries) {
-        if (!els.piTranscript) return;
-        const list = (Array.isArray(entries) ? entries : []).slice(-TRANSCRIPT_LIMIT);
-        const nextKeys = new Set();
-        const follow = shouldAutoScroll('transcript', els.piTranscript);
+    // Two lines collapsed, every character when expanded. The pre that holds the
+    // text takes data-expanded so CSS can give it its own scroll instead of letting
+    // a long critique stretch the panel.
+    function applyExpandableText(slot, more, text, expanded) {
+        if (!slot) return;
+        const head = text.split('\n').slice(0, STREAM_THINKING_LINES).join('\n');
+        const hiddenChars = Math.max(0, text.length - head.length);
+        const open = Boolean(expanded) && hiddenChars > 0;
+        const shown = open || hiddenChars === 0 ? text : head;
+        if (slot.textContent !== shown) slot.textContent = shown;
+        const box = slot.closest('pre') || slot;
+        box.dataset.expanded = open ? 'true' : 'false';
+        if (!more) return;
+        if (hiddenChars > 0) {
+            more.hidden = false;
+            more.textContent = open
+                ? '▾ collapse'
+                : `▸ ${hiddenChars.toLocaleString()} more character${hiddenChars === 1 ? '' : 's'}`;
+            more.setAttribute('aria-expanded', open ? 'true' : 'false');
+        } else {
+            more.hidden = true;
+        }
+    }
 
-        transcriptKeys.clear();
-        if (!list.length) {
-            const empty = document.createElement('p');
-            empty.className = 'hud-empty';
-            empty.textContent = '— awaiting comms —';
-            els.piTranscript.replaceChildren(empty);
-            scrollTranscriptToBottom(follow);
+    function updateStreamProseNode(node, entry, collapsible, seq) {
+        const text = streamEntryText(entry);
+        const slot = node.querySelector('[data-slot="text"]');
+        const more = node.querySelector('[data-slot="more"]');
+        if (!slot) return;
+
+        if (!collapsible) {
+            if (slot.textContent !== text) slot.textContent = text;
+            if (more) more.hidden = true;
             return;
         }
 
-        const empty = els.piTranscript.querySelector('.hud-empty');
-        if (empty) empty.remove();
-
-        const existingCards = Array.from(els.piTranscript.querySelectorAll('.hud-chat-card'));
-        const existingByKey = new Map(
-            existingCards.map((card) => [card.dataset.transcriptKey || '', card])
-        );
-
-        list.forEach((entry, index) => {
-            const key = transcriptKey(entry);
-            nextKeys.add(key);
-            transcriptKeys.add(key);
-            let card = existingByKey.get(key);
-            if (!card) {
-                card = createTranscriptCard(entry);
-            } else {
-                updateTranscriptCard(card, entry);
-            }
-            const currentChild = els.piTranscript.children[index];
-            if (currentChild !== card) {
-                els.piTranscript.insertBefore(card, currentChild || null);
-            }
-        });
-
-        Array.from(els.piTranscript.querySelectorAll('.hud-chat-card')).forEach((card) => {
-            if (!nextKeys.has(card.dataset.transcriptKey || '')) {
-                card.remove();
-            }
-        });
-
-        scrollTranscriptToBottom(follow);
+        applyExpandableText(slot, more, text, streamOpen(seq).more);
     }
 
-    function appendTranscriptEntry(entry) {
-        if (!entry || !els.piTranscript) return;
-        const follow = shouldAutoScroll('transcript', els.piTranscript);
-        const empty = els.piTranscript.querySelector('.hud-empty');
-        if (empty) empty.remove();
-        const key = transcriptKey(entry);
-        if (transcriptKeys.has(key)) return;
-        transcriptKeys.add(key);
-        while (els.piTranscript.children.length >= TRANSCRIPT_LIMIT) {
-            const first = els.piTranscript.firstElementChild;
-            if (!first) break;
-            const firstKey = first.dataset.transcriptKey || '';
-            if (firstKey) {
-                transcriptKeys.delete(firstKey);
-            }
-            els.piTranscript.removeChild(first);
+    function updateStreamSystemNode(node, entry, seq) {
+        const system = entry.system || {};
+        const level = String(system.level || 'info').toLowerCase();
+        const divider = node.querySelector('[data-slot="divider"]');
+        const label = node.querySelector('[data-slot="label"]');
+        const labelText = String(system.label || streamEntryText(entry) || 'event').trim();
+        if (divider) {
+            divider.dataset.level = STREAM_SYSTEM_LEVELS.has(level) ? level : 'info';
         }
-        els.piTranscript.appendChild(createTranscriptCard(entry));
-        scrollTranscriptToBottom(follow);
+        if (label) {
+            label.textContent = `▶ ${labelText}`;
+        }
+
+        const body = node.querySelector('[data-slot="sysText"]');
+        const more = node.querySelector('[data-slot="sysMore"]');
+        const text = streamEntryText(entry).trim();
+        // The label is often the whole story; only show a body when it is not.
+        const hasBody = Boolean(text) && text !== labelText;
+        if (body) body.hidden = !hasBody;
+        if (!hasBody) {
+            if (more) more.hidden = true;
+            return;
+        }
+        applyExpandableText(body, more, text, streamOpen(seq).more);
+    }
+
+    function streamInsertIndex(seq) {
+        let lo = 0;
+        let hi = streamEntries.length;
+        while (lo < hi) {
+            const mid = (lo + hi) >> 1;
+            if (Number(streamEntries[mid].seq) < seq) lo = mid + 1;
+            else hi = mid;
+        }
+        return lo;
+    }
+
+    function ingestStreamEntry(raw) {
+        if (!raw || typeof raw !== 'object') return null;
+        const seq = Number(raw.seq);
+        if (!Number.isFinite(seq)) return null;
+        if (seq + 1 > streamNextSeq) streamNextSeq = seq + 1;
+
+        const existing = streamBySeq.get(seq);
+        if (existing) {
+            Object.keys(existing).forEach((key) => {
+                if (!(key in raw)) delete existing[key];
+            });
+            Object.assign(existing, raw);
+            return { entry: existing, isNew: false };
+        }
+
+        const entry = { ...raw };
+        const last = streamEntries[streamEntries.length - 1];
+        if (!last || Number(last.seq) < seq) {
+            streamEntries.push(entry);
+        } else {
+            streamEntries.splice(streamInsertIndex(seq), 0, entry);
+        }
+        streamBySeq.set(seq, entry);
+
+        while (streamEntries.length > STREAM_MEMORY_LIMIT) {
+            const dropped = streamEntries.shift();
+            streamBySeq.delete(Number(dropped.seq));
+            streamOpenState.delete(Number(dropped.seq));
+        }
+        return { entry, isNew: true };
+    }
+
+    function resetStream() {
+        streamEntries.length = 0;
+        streamBySeq.clear();
+        streamOpenState.clear();
+        streamDirtySeqs.clear();
+        streamNextSeq = 0;
+        streamPendingNew = 0;
+        streamRenderLimit = STREAM_DOM_WINDOW;
+        autoScrollState.stream = true;
+        if (els.piStreamList) els.piStreamList.replaceChildren();
+    }
+
+    function streamNodeFor(seq) {
+        if (!els.piStreamList) return null;
+        return els.piStreamList.querySelector(`[data-seq="${seq}"]`);
+    }
+
+    function scrollStreamToBottom() {
+        scrollNodeToBottom(els.piStream, 'stream', true);
+    }
+
+    function captureStreamAnchor() {
+        const viewport = els.piStream;
+        const list = els.piStreamList;
+        if (!viewport || !list || autoScrollState.stream) return null;
+        const top = viewport.scrollTop;
+        for (const child of list.children) {
+            if (child.offsetTop + child.offsetHeight >= top) {
+                return { seq: child.dataset.seq, offset: child.offsetTop - top };
+            }
+        }
+        return null;
+    }
+
+    function restoreStreamAnchor(anchor) {
+        const viewport = els.piStream;
+        if (!anchor || !viewport) return;
+        const node = streamNodeFor(anchor.seq);
+        if (!node) return;
+        viewport.scrollTop = node.offsetTop - anchor.offset;
+    }
+
+    function updateStreamJump() {
+        const button = els.piStreamJump;
+        if (!button) return;
+        const following = autoScrollState.stream;
+        button.hidden = following;
+        if (following) return;
+        button.textContent = streamPendingNew > 0
+            ? `↓ ${streamPendingNew.toLocaleString()} new ${streamPendingNew === 1 ? 'entry' : 'entries'} · jump to live`
+            : '↓ jump to live';
+    }
+
+    function refreshStreamChrome(visibleCount) {
+        const count = typeof visibleCount === 'number'
+            ? visibleCount
+            : streamEntries.filter(buildStreamPredicate()).length;
+        const hidden = Math.max(0, count - streamRenderLimit);
+        if (els.piStreamOlder) {
+            els.piStreamOlder.hidden = hidden === 0;
+            if (hidden > 0) {
+                els.piStreamOlder.textContent =
+                    `▲ ${hidden.toLocaleString()} older ${hidden === 1 ? 'entry' : 'entries'} · load more`;
+            }
+        }
+        renderStreamFilters();
+        updateStreamJump();
+    }
+
+    function scheduleStreamChrome() {
+        if (streamChromeTimer) return;
+        streamChromeTimer = window.setTimeout(() => {
+            streamChromeTimer = null;
+            refreshStreamChrome();
+        }, 500);
+    }
+
+    function scheduleStreamRender() {
+        if (streamRenderPending) return;
+        streamRenderPending = true;
+        requestAnimationFrame(() => {
+            streamRenderPending = false;
+            renderStream();
+        });
+    }
+
+    function renderStreamEmpty(message) {
+        const empty = document.createElement('p');
+        empty.className = 'hud-empty';
+        empty.textContent = message;
+        els.piStreamList.replaceChildren(empty);
+    }
+
+    function renderStream() {
+        const list = els.piStreamList;
+        const viewport = els.piStream;
+        if (!list || !viewport) return;
+
+        const follow = autoScrollState.stream;
+        const anchor = captureStreamAnchor();
+        const visible = streamEntries.filter(buildStreamPredicate());
+
+        if (!visible.length) {
+            renderStreamEmpty(
+                streamEntries.length
+                    ? '[ NO MATCHING ENTRIES ]'
+                    : streamUnavailable
+                        ? '[ STREAM UNAVAILABLE ]'
+                        : 'AWAITING TRANSMISSION…'
+            );
+            refreshStreamChrome(0);
+            return;
+        }
+
+        const hidden = Math.max(0, visible.length - streamRenderLimit);
+        const windowEntries = hidden ? visible.slice(hidden) : visible;
+
+        const emptyNode = list.querySelector('.hud-empty');
+        if (emptyNode) emptyNode.remove();
+
+        const existing = new Map();
+        Array.from(list.children).forEach((child) => {
+            existing.set(child.dataset.seq || '', child);
+        });
+        const keep = new Set();
+
+        windowEntries.forEach((entry, index) => {
+            const key = String(entry.seq);
+            keep.add(key);
+            let node = existing.get(key);
+            if (!node) {
+                node = createStreamNode(entry);
+            } else {
+                updateStreamNode(node, entry);
+            }
+            const currentChild = list.children[index];
+            if (currentChild !== node) {
+                list.insertBefore(node, currentChild || null);
+            }
+        });
+
+        Array.from(list.children).forEach((child) => {
+            if (!keep.has(child.dataset.seq || '')) child.remove();
+        });
+
+        refreshStreamChrome(visible.length);
+        if (follow) scrollStreamToBottom();
+        else restoreStreamAnchor(anchor);
+    }
+
+    function appendStreamNode(entry) {
+        const list = els.piStreamList;
+        if (!list) return false;
+        const emptyNode = list.querySelector('.hud-empty');
+        if (emptyNode) emptyNode.remove();
+
+        const anchor = captureStreamAnchor();
+        const node = createStreamNode(entry);
+        node.classList.add('hud-stream-entry--enter');
+        window.setTimeout(() => node.classList.remove('hud-stream-entry--enter'), 400);
+        list.appendChild(node);
+
+        while (list.children.length > streamRenderLimit) {
+            const first = list.firstElementChild;
+            if (!first || first === node) break;
+            first.remove();
+        }
+        restoreStreamAnchor(anchor);
+        return true;
+    }
+
+    function flushStreamUpdates() {
+        streamFlushPending = false;
+        let touched = false;
+        streamDirtySeqs.forEach((seq) => {
+            const entry = streamBySeq.get(seq);
+            const node = streamNodeFor(seq);
+            if (!entry || !node) return;
+            updateStreamNode(node, entry);
+            touched = true;
+        });
+        streamDirtySeqs.clear();
+        if (touched && autoScrollState.stream) scrollStreamToBottom();
+    }
+
+    function scheduleStreamFlush() {
+        if (streamFlushPending) return;
+        streamFlushPending = true;
+        requestAnimationFrame(flushStreamUpdates);
+    }
+
+    function onStreamEntry(raw) {
+        const result = ingestStreamEntry(raw);
+        if (!result) return;
+        const { entry, isNew } = result;
+        const seq = Number(entry.seq);
+        const matches = buildStreamPredicate()(entry);
+
+        if (!isNew) {
+            const node = streamNodeFor(seq);
+            if (node) {
+                if (matches) {
+                    streamDirtySeqs.add(seq);
+                    scheduleStreamFlush();
+                } else {
+                    node.remove();
+                }
+            } else if (matches) {
+                scheduleStreamRender();
+            }
+            scheduleStreamChrome();
+            return;
+        }
+
+        if (!matches) {
+            scheduleStreamChrome();
+            return;
+        }
+        if (!autoScrollState.stream) {
+            streamPendingNew += 1;
+            updateStreamJump();
+        }
+        if (appendStreamNode(entry)) {
+            if (autoScrollState.stream) scrollStreamToBottom();
+            scheduleStreamChrome();
+        } else {
+            scheduleStreamRender();
+        }
+    }
+
+    function jumpStreamToLive() {
+        streamPendingNew = 0;
+        autoScrollState.stream = true;
+        if (streamRenderLimit !== STREAM_DOM_WINDOW) {
+            streamRenderLimit = STREAM_DOM_WINDOW;
+            renderStream();
+            return;
+        }
+        scrollStreamToBottom();
+        updateStreamJump();
+    }
+
+    function expandStreamWindow() {
+        if (streamExpanding || !els.piStream) return;
+        if (!els.piStreamOlder || els.piStreamOlder.hidden) return;
+        streamExpanding = true;
+        streamRenderLimit += STREAM_WINDOW_STEP;
+        renderStream();
+        streamExpanding = false;
+    }
+
+    function onStreamScroll() {
+        const viewport = els.piStream;
+        if (!viewport || streamExpanding) return;
+        const wasFollowing = autoScrollState.stream;
+        syncAutoScrollState('stream', viewport);
+        if (autoScrollState.stream) {
+            streamPendingNew = 0;
+            if (!wasFollowing && streamRenderLimit !== STREAM_DOM_WINDOW) {
+                streamRenderLimit = STREAM_DOM_WINDOW;
+                scheduleStreamRender();
+            }
+        }
+        updateStreamJump();
+    }
+
+    function initStreamControls() {
+        const viewport = els.piStream;
+        if (viewport) {
+            syncAutoScrollState('stream', viewport);
+            viewport.addEventListener('scroll', onStreamScroll, { passive: true });
+        }
+        if (els.piStreamJump) {
+            els.piStreamJump.addEventListener('click', jumpStreamToLive);
+        }
+        if (els.piStreamOlder) {
+            els.piStreamOlder.addEventListener('click', expandStreamWindow);
+            if (viewport && typeof IntersectionObserver === 'function') {
+                const observer = new IntersectionObserver(
+                    (records) => {
+                        if (records.some((record) => record.isIntersecting)) expandStreamWindow();
+                    },
+                    { root: viewport, rootMargin: '150px 0px 0px 0px' }
+                );
+                observer.observe(els.piStreamOlder);
+            }
+        }
+        if (els.piStreamSearch) {
+            let debounce = null;
+            els.piStreamSearch.addEventListener('input', () => {
+                clearTimeout(debounce);
+                debounce = setTimeout(() => {
+                    streamSearchQuery = els.piStreamSearch.value;
+                    streamRenderLimit = STREAM_DOM_WINDOW;
+                    renderStream();
+                }, 180);
+            });
+        }
+        renderStreamFilters();
+    }
+
+    async function fetchStreamPage(after, limit) {
+        const params = new URLSearchParams();
+        if (Number.isFinite(after) && after >= 0) params.set('after', String(after));
+        params.set('limit', String(limit));
+        const response = await fetch(api(`/supervisor/stream?${params.toString()}`));
+        if (!response.ok) {
+            throw new Error(`HTTP ${response.status}`);
+        }
+        return response.json();
+    }
+
+    function syncStream({ full = false } = {}) {
+        if (streamSyncInFlight) return streamSyncInFlight;
+        streamSyncInFlight = (async () => {
+            let pendingReset = full;
+            let after = full ? NaN : streamNextSeq - 1;
+            for (let page = 0; page < STREAM_FETCH_PAGES; page += 1) {
+                const payload = await fetchStreamPage(after, STREAM_FETCH_LIMIT);
+                const sessionId = payload?.session_id || null;
+                const sessionChanged = Boolean(
+                    sessionId && streamSessionId && sessionId !== streamSessionId
+                );
+                if (pendingReset || sessionChanged) {
+                    resetStream();
+                    pendingReset = false;
+                    after = NaN;
+                }
+                streamSessionId = sessionId || streamSessionId;
+                const entries = Array.isArray(payload?.entries) ? payload.entries : [];
+                entries.forEach((entry) => ingestStreamEntry(entry));
+                if (Number.isFinite(payload?.next_seq)) {
+                    streamNextSeq = Math.max(streamNextSeq, Number(payload.next_seq));
+                }
+                streamUnavailable = false;
+                if (entries.length < STREAM_FETCH_LIMIT) break;
+                after = streamNextSeq - 1;
+            }
+            renderStream();
+        })()
+            .catch(() => {
+                streamUnavailable = true;
+                if (!streamEntries.length) renderStream();
+            })
+            .finally(() => {
+                streamSyncInFlight = null;
+            });
+        return streamSyncInFlight;
     }
 
     function renderWorldStats(worldState, progress, serverRuntime) {
@@ -1646,106 +2237,9 @@
         controlSeeded = true;
     }
 
-    function renderToolTypeFilters(typeCounts) {
-        if (!els.piToolFilters) return;
-        els.piToolFilters.innerHTML = '';
-        TOOL_TYPE_FILTERS.forEach(({ key, label }) => {
-            const count = key === 'all'
-                ? latestToolFeed.length
-                : (typeCounts[key] || 0);
-            const chip = document.createElement('button');
-            chip.type = 'button';
-            chip.className = 'hud-tool-filter-chip';
-            const active = toolTypeFilter.has(key) || (toolTypeFilter.size === 0 && key === 'all');
-            chip.dataset.active = active ? 'true' : 'false';
-            chip.dataset.filter = key;
-            chip.innerHTML = `${escapeHtml(label)}<span class="hud-tool-filter-count">${count}</span>`;
-            chip.addEventListener('click', () => toggleToolTypeFilter(key));
-            els.piToolFilters.appendChild(chip);
-        });
-    }
-
-    function toggleToolTypeFilter(key) {
-        if (key === 'all') {
-            toolTypeFilter.clear();
-            toolTypeFilter.add('all');
-        } else {
-            toolTypeFilter.delete('all');
-            if (toolTypeFilter.has(key)) {
-                toolTypeFilter.delete(key);
-            } else {
-                toolTypeFilter.add(key);
-            }
-            if (toolTypeFilter.size === 0) {
-                toolTypeFilter.add('all');
-            }
-        }
-        applyToolFilters();
-    }
-
-    function applyToolFilters() {
-        const showAll = toolTypeFilter.has('all');
-        const query = toolSearchQuery.toLowerCase().trim();
-        const statusFilters = new Set();
-        const nameFilters = new Set();
-        if (!showAll) {
-            toolTypeFilter.forEach((key) => {
-                if (key === 'running' || key === 'error') {
-                    statusFilters.add(key);
-                } else {
-                    nameFilters.add(key);
-                }
-            });
-        }
-        const filtered = latestToolFeed.filter((item) => {
-            if (!showAll) {
-                const status = String(item?.status || 'completed').toLowerCase();
-                const toolName = String(item?.tool_name || '').toLowerCase();
-                const matchesName = nameFilters.size === 0 || nameFilters.has(toolName);
-                const matchesStatus = statusFilters.size === 0 || statusFilters.has(status);
-                if (!matchesName || !matchesStatus) return false;
-            }
-            if (query) {
-                const haystack = [
-                    item?.tool_name || '',
-                    item?.summary || '',
-                    item?.args_preview || '',
-                    item?.args || '',
-                    item?.result_preview || '',
-                    item?.result || '',
-                ].join(' ').toLowerCase();
-                return haystack.includes(query);
-            }
-            return true;
-        });
-        const typeCounts = {};
-        latestToolFeed.forEach((item) => {
-            const name = String(item?.tool_name || '').toLowerCase();
-            const status = String(item?.status || 'completed').toLowerCase();
-            typeCounts[name] = (typeCounts[name] || 0) + 1;
-            typeCounts[status] = (typeCounts[status] || 0) + 1;
-        });
-        renderToolTypeFilters(typeCounts);
-        renderToolList(els.piToolFeed, filtered, query ? 'No tools match your search.' : 'No Pi tool calls yet.');
-    }
-
-    function initToolSearch() {
-        if (!els.piToolSearch) return;
-        let debounce = null;
-        els.piToolSearch.addEventListener('input', () => {
-            clearTimeout(debounce);
-            debounce = setTimeout(() => {
-                toolSearchQuery = els.piToolSearch.value;
-                applyToolFilters();
-            }, 180);
-        });
-    }
-
     function renderSupervisor(supervisor) {
         const config = supervisor.config || {};
         seedSupervisorControls(supervisor);
-        const isTurnActive = supervisor.status === 'starting' || supervisor.status === 'running';
-
         // capture session origin for relative-time labels
         const started = parseTs(supervisor.started_at);
         if (!Number.isNaN(started) && started) {
@@ -1803,38 +2297,44 @@
             ? formatJSON(turnPlanPreview)
             : 'No Pi-authored turn plan captured yet.';
 
-        const toolFeed = [
-            ...(supervisor.active_tools || []),
-            ...(supervisor.recent_tools || []).slice().reverse(),
-        ];
-        latestToolFeed = toolFeed;
-        applyToolFilters();
-        renderTranscript(supervisor.transcript || []);
-        renderList(
-            els.piRecentEvents,
-            (supervisor.recent_events || []).slice().reverse().map((event) => {
-                return `${timeLabel(event.timestamp)} | ${event.type} | ${truncate(event.summary, 140)}`;
-            }),
-            'No recent Pi events.'
-        );
-        const followThinking = shouldAutoScroll('thinking', els.piCurrentThinking);
-        if (els.piCurrentThinking.dataset.streaming !== 'true') {
-            els.piCurrentThinking.textContent =
-                supervisor.current_assistant_thinking ||
-                (isTurnActive ? '' : supervisor.last_assistant_thinking) ||
-                (isTurnActive ? '— waiting for comms —' : '— silent —');
-            scrollNodeToBottom(els.piCurrentThinking, 'thinking', followThinking);
-        }
-        const followOutput = shouldAutoScroll('output', els.piCurrentOutput);
-        if (els.piCurrentOutput.dataset.streaming !== 'true') {
-            els.piCurrentOutput.textContent =
-                supervisor.current_assistant_text ||
-                (isTurnActive ? '' : supervisor.last_assistant_text) ||
-                (isTurnActive ? '— waiting for comms —' : '— silent —');
-            scrollNodeToBottom(els.piCurrentOutput, 'output', followOutput);
-        }
+        applySteerAvailability(supervisor);
+
         els.piStderr.textContent = (supervisor.stderr_tail || []).join('\n') || 'No stderr output.';
         els.rawSupervisor.textContent = formatJSON(supervisor);
+        renderCritique(supervisor);
+    }
+
+    function critiqueStateLabel(critique) {
+        if (!critique.enabled) return 'DISABLED';
+        if (critique.salvaged) return 'SALVAGED';
+        if (critique.text) return 'READY';
+        if (critique.error) return 'FAILED';
+        return 'NONE';
+    }
+
+    // The whole retrospective, scrollable and never elided: this text is the most
+    // valuable thing the run produces and the operator reads it end to end.
+    function renderCritique(supervisor) {
+        const critique = supervisor.critique || {};
+        const state = critiqueStateLabel(critique);
+        els.critiqueStateChip.textContent = state;
+        els.critiqueStateChip.dataset.status = state.toLowerCase();
+
+        const meta = [];
+        if (critique.at) meta.push(timeLabel(critique.at));
+        if (critique.duration_seconds) meta.push(`${Math.round(critique.duration_seconds)}s`);
+        if (critique.digest_tokens) meta.push(`${formatCompactNumber(critique.digest_tokens)} tok`);
+        els.critiqueMetaChip.textContent = meta.join(' · ') || '—';
+
+        const source = String(supervisor.goal_source || '').toUpperCase();
+        els.critiqueActiveGoal.textContent = supervisor.goal || 'No goal set.';
+        els.critiqueGoalSource.textContent = `SOURCE: ${source || '—'}`;
+        els.critiqueNextGoal.textContent =
+            critique.next_goal || supervisor.critic_next_goal || 'None proposed yet.';
+
+        els.critiqueError.textContent = critique.error ? `► ${critique.error}` : '';
+        els.critiqueError.hidden = !critique.error;
+        els.critiqueText.textContent = critique.text || 'No retrospective yet.';
     }
 
     function renderDashboardState(payload) {
@@ -2038,8 +2538,7 @@
             thinking: els.piThinkingSelect.value || null,
             auto_continue: els.piAutoContinueInput.checked,
         };
-        resetLiveStreamView();
-        scrollTranscriptToBottom(true);
+        jumpStreamToLive();
         els.piControlStatus.textContent = '► STARTING PI…';
         try {
             await postJson('/supervisor/start', body);
@@ -2051,8 +2550,7 @@
     }
 
     async function continueSupervisor() {
-        resetLiveStreamView();
-        scrollTranscriptToBottom(true);
+        jumpStreamToLive();
         els.piControlStatus.textContent = '► CONTINUING PI…';
         try {
             await postJson('/supervisor/continue', {});
@@ -2072,6 +2570,61 @@
         } catch (error) {
             els.piControlStatus.textContent = `► ${String(error.message || error)}`;
         }
+    }
+
+    function setSteerStatus(text, state = 'idle') {
+        els.piSteerStatus.textContent = text;
+        els.piSteerStatus.dataset.state = state;
+    }
+
+    function applySteerAvailability(supervisor) {
+        const live = STEERABLE_PI_STATUSES.has(String(supervisor.status || '').toLowerCase());
+        els.piSteerInput.disabled = !live;
+        els.piSteerButton.disabled = !live;
+        // Only rewrite the hint when liveness flips, so a rejection stays readable.
+        if (live === steerLive) return;
+        steerLive = live;
+        setSteerStatus(
+            live
+                ? 'Delivered at the next tool-call boundary.'
+                : 'No live session \u2014 start or continue Pi to send a message.',
+        );
+    }
+
+    async function sendSteer() {
+        const message = els.piSteerInput.value.trim();
+        if (!message) {
+            setSteerStatus('Type a message first.', 'error');
+            return;
+        }
+        els.piSteerButton.disabled = true;
+        setSteerStatus('Sending\u2026');
+        try {
+            const payload = await postJson('/supervisor/steer', { message });
+            // Nothing is inserted into the log here: the entry arrives over the
+            // stream, so what you read is what Pi was actually handed.
+            els.piSteerInput.value = '';
+            jumpStreamToLive();
+            const behavior = payload.entry?.streaming_behavior || 'steer';
+            setSteerStatus(
+                behavior === 'followUp'
+                    ? 'Queued \u2014 Pi takes it when the turn ends.'
+                    : 'Steered \u2014 Pi takes it at the next tool-call boundary.',
+                'sent',
+            );
+            await refreshAll();
+        } catch (error) {
+            // Keep the text: a rejected message must not vanish from the box.
+            setSteerStatus(String(error.message || error), 'error');
+        } finally {
+            els.piSteerButton.disabled = !steerLive;
+        }
+    }
+
+    function onSteerKeydown(event) {
+        if (event.key !== 'Enter' || event.shiftKey) return;
+        event.preventDefault();
+        sendSteer();
     }
 
     async function saveNow() {
@@ -2164,65 +2717,6 @@
         }
     }
 
-    const streamBuffers = { output: '', thinking: '' };
-    const streamPendingReset = { output: false, thinking: false };
-    let streamRafPending = false;
-
-    function resetLiveStreamView(placeholder = '— waiting for comms —') {
-        streamBuffers.output = '';
-        streamBuffers.thinking = '';
-        streamPendingReset.output = false;
-        streamPendingReset.thinking = false;
-        autoScrollState.thinking = true;
-        autoScrollState.output = true;
-        els.piCurrentThinking.textContent = placeholder;
-        els.piCurrentThinking.dataset.streaming = 'false';
-        els.piCurrentOutput.textContent = placeholder;
-        els.piCurrentOutput.dataset.streaming = 'false';
-    }
-
-    function flushStreamBuffers() {
-        streamRafPending = false;
-        const followOutput = shouldAutoScroll('output', els.piCurrentOutput);
-        const followThinking = shouldAutoScroll('thinking', els.piCurrentThinking);
-
-        if (streamPendingReset.output) {
-            els.piCurrentOutput.textContent = '';
-            streamPendingReset.output = false;
-        }
-        if (streamBuffers.output) {
-            const last = els.piCurrentOutput.lastChild;
-            if (last && last.nodeType === Node.TEXT_NODE) {
-                last.textContent += streamBuffers.output;
-            } else {
-                els.piCurrentOutput.appendChild(document.createTextNode(streamBuffers.output));
-            }
-            streamBuffers.output = '';
-            scrollNodeToBottom(els.piCurrentOutput, 'output', followOutput);
-        }
-
-        if (streamPendingReset.thinking) {
-            els.piCurrentThinking.textContent = '';
-            streamPendingReset.thinking = false;
-        }
-        if (streamBuffers.thinking) {
-            const last = els.piCurrentThinking.lastChild;
-            if (last && last.nodeType === Node.TEXT_NODE) {
-                last.textContent += streamBuffers.thinking;
-            } else {
-                els.piCurrentThinking.appendChild(document.createTextNode(streamBuffers.thinking));
-            }
-            streamBuffers.thinking = '';
-            scrollNodeToBottom(els.piCurrentThinking, 'thinking', followThinking);
-        }
-    }
-
-    function scheduleStreamFlush() {
-        if (streamRafPending) return;
-        streamRafPending = true;
-        requestAnimationFrame(flushStreamBuffers);
-    }
-
     function handleWsEvent(event) {
         if (!event || typeof event !== 'object') return;
 
@@ -2236,49 +2730,25 @@
             return;
         }
 
+        if (event.type === 'pi_stream_entry') {
+            onStreamEntry(event.entry);
+            return;
+        }
+
         if (event.type === 'pi_prompt_sent') {
-            resetLiveStreamView();
-            scrollTranscriptToBottom();
             els.piControlStatus.textContent = event.resume
                 ? 'Sent auto-continue prompt to Pi.'
                 : 'Sent launch prompt to Pi.';
+            syncStream();
             return;
         }
 
-        if (event.type === 'pi_transcript') {
-            appendTranscriptEntry(event.entry);
-            return;
-        }
-
-        if (event.type === 'pi_text_delta') {
-            if (typeof event.delta === 'string' && event.delta) {
-                if (els.piCurrentOutput.dataset.streaming !== 'true') {
-                    streamPendingReset.output = true;
-                }
-                streamBuffers.output += event.delta;
-                els.piCurrentOutput.dataset.streaming = 'true';
-            } else if (typeof event.text === 'string' && event.text) {
-                streamPendingReset.output = true;
-                streamBuffers.output = event.text;
-                els.piCurrentOutput.dataset.streaming = 'true';
-            }
-            scheduleStreamFlush();
-            return;
-        }
-
-        if (event.type === 'pi_thinking_delta') {
-            if (typeof event.delta === 'string' && event.delta) {
-                if (els.piCurrentThinking.dataset.streaming !== 'true') {
-                    streamPendingReset.thinking = true;
-                }
-                streamBuffers.thinking += event.delta;
-                els.piCurrentThinking.dataset.streaming = 'true';
-            } else if (typeof event.thinking === 'string' && event.thinking) {
-                streamPendingReset.thinking = true;
-                streamBuffers.thinking = event.thinking;
-                els.piCurrentThinking.dataset.streaming = 'true';
-            }
-            scheduleStreamFlush();
+        // Thinking, text and transcript now arrive as pi_stream_entry updates.
+        if (
+            event.type === 'pi_transcript' ||
+            event.type === 'pi_text_delta' ||
+            event.type === 'pi_thinking_delta'
+        ) {
             return;
         }
 
@@ -2291,9 +2761,8 @@
         }
 
         if (event.type === 'pi_turn_launch' || event.type === 'pi_turn_start') {
-            resetLiveStreamView();
-            scrollTranscriptToBottom();
             els.piControlStatus.textContent = `► ${truncate(event.summary || 'Pi turn launched.', 220)}`;
+            syncStream();
             scheduleRefresh(150);
             return;
         }
@@ -2344,6 +2813,7 @@
             wsReconnectDelay = WS_RECONNECT_BASE;
             setStatus(true, 'Connected');
             refreshAll().catch(() => {});
+            syncStream({ full: !streamEntries.length });
         };
 
         ws.onmessage = (messageEvent) => {
@@ -2371,14 +2841,13 @@
         setPiStatus('idle', 'PI IDLE');
         sessionOriginMs = Date.now();
         renderTimelineFilters({});
-        initToolSearch();
-        renderToolTypeFilters({});
-        initAutoScroll('transcript', els.piTranscript);
-        initAutoScroll('thinking', els.piCurrentThinking);
-        initAutoScroll('output', els.piCurrentOutput);
+        initStreamControls();
         els.piStartButton.addEventListener('click', startSupervisor);
         els.piContinueButton.addEventListener('click', continueSupervisor);
         els.piStopButton.addEventListener('click', stopSupervisor);
+        els.piSteerButton.addEventListener('click', sendSteer);
+        els.piSteerInput.addEventListener('keydown', onSteerKeydown);
+        applySteerAvailability({});
         els.manualSaveButton.addEventListener('click', saveNow);
         els.loadSaveButton.addEventListener('click', loadSelectedSave);
         els.loadRecommendedButton.addEventListener('click', loadRecommendedSave);
@@ -2404,9 +2873,11 @@
             });
         }
         refreshAll().catch(() => {});
+        syncStream({ full: true });
         connectWS();
         pollTimer = window.setInterval(() => {
             refreshAll().catch(() => {});
+            syncStream();
         }, POLL_INTERVAL);
         window.addEventListener('beforeunload', () => {
             if (pollTimer) window.clearInterval(pollTimer);

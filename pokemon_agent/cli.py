@@ -2,7 +2,8 @@
 Pokemon Agent — CLI entry point.
 
 Usage:
-    pokemon-agent serve --rom path/to/rom.gba [--port 8765] [--data-dir ~/.pokemon-agent]
+    pokemon-agent serve --rom path/to/rom.gba [--host 0.0.0.0] [--port 8765]
+                        [--data-dir ~/.pokemon-agent]
     pokemon-agent info  --rom path/to/rom.gba
     pokemon-agent --version
 """
@@ -55,6 +56,7 @@ def cmd_serve(args):
     print(BANNER.format(version=__version__))
     print(f"  ROM:       {rom}")
     print(f"  Game type: {game_type}")
+    print(f"  Host:      {args.host}")
     print(f"  Port:      {args.port}")
     print(f"  Data dir:  {data_dir}")
     print(f"  Workspace: {workspace_dir}")
@@ -79,7 +81,7 @@ def cmd_serve(args):
 
     import uvicorn
 
-    uvicorn.run(app, host="0.0.0.0", port=args.port, log_level="info")
+    uvicorn.run(app, host=args.host, port=args.port, log_level="info")
 
 
 def cmd_info(args):
@@ -117,6 +119,14 @@ def main():
     # --- serve ---
     serve_p = sub.add_parser("serve", help="Start the game server")
     serve_p.add_argument("--rom", required=True, help="Path to Pokemon ROM file")
+    serve_p.add_argument(
+        "--host",
+        default="0.0.0.0",
+        help=(
+            "Interface to bind (default: 0.0.0.0). Use 127.0.0.1 to keep the server "
+            "off the LAN and reach it over the SSH tunnel in docs/remote-access.md."
+        ),
+    )
     serve_p.add_argument("--port", type=int, default=8765, help="Server port (default: 8765)")
     serve_p.add_argument(
         "--data-dir",
@@ -137,8 +147,8 @@ def main():
         "--agent-workspace-dir",
         default=None,
         help=(
-            "Directory for Pi workspace artifacts like screenshots, observation files, "
-            "turn_plan.json, and recovery metadata (default: <data-dir>/agent_workspace)"
+            "Directory for Pi workspace artifacts: the raw and annotated frames, "
+            "turn_context.json, and the run log (default: <data-dir>/agent_workspace)"
         ),
     )
     serve_p.add_argument(

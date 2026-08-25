@@ -1,17 +1,20 @@
 # What this fork changes
 
-This is a fork of [NousResearch/pokemon-agent](https://github.com/NousResearch/pokemon-agent) that extends the stock harness with a stricter, more observable agent runtime and a richer operator UI. Highlights relative to upstream:
+A fork of [NousResearch/pokemon-agent](https://github.com/NousResearch/pokemon-agent). Upstream ships a game server and expects you to bring your own agent. This fork adds the agent side: a supervisor that runs a Pi model against the server, an annotated frame the model can actually navigate from, and an operator dashboard to watch it.
 
-- **Vision-first Pi supervisor** (`pokemon_agent/pi_supervisor.py`) — supervises a Claude Code–style Pi subprocess, enforces vision policy on every turn, tracks tool calls / thinking / stderr, and handles auto-continue for text-only replies.
-- **Strict turn-plan harness with typed contracts** (`pokemon_agent/harness/`) — `contracts.py`, `context_builder.py`, `planning.py`, and `prompting.py` define a typed per-turn plan/context pipeline so weaker local models get deterministic inputs and validated outputs.
-- **Deterministic navigation + route guidance** (`pokemon_agent/navigation.py`, `navigation_maps.json`, `pokemon_agent/data/red_objectives*.json`) — frontiers, landmarks, distance maps, route cards, avoidances, and NPC-aware objective guidance for Pokémon Red.
-- **Durable semantic memory** — append-only event memory, session brief, and per-map failed-attempt tracking in `pokemon_agent/agent_runtime.py` and `pokemon_agent/memory/red.py`, so loops and resumes keep context.
-- **Expanded dashboard** (`pokemon_agent/dashboard/`) — Pi chat transcript (prompts, assistant replies, thinking, tool calls, stderr, auto-continue), fullscreen frame viewports, improved tool-call payload rendering, and live Pi telemetry.
-- **Server + emulator upgrades** (`pokemon_agent/server.py`, `pokemon_agent/emulator.py`) — larger REST surface for the supervisor workflow, overlay coordinate fixes, and movement/timing corrections.
-- **Test coverage** — `test_agent_runtime.py`, `test_navigation.py`, `test_pi_supervisor.py` cover the new runtime, navigation, and supervisor paths.
-- **Ops scripts** — `scripts/start_pokemon_server.sh`, `scripts/stop_pokemon_server.sh`, `scripts/agent_curl.sh` for running the stack and poking it from the shell.
+The harness used to be much bigger. It enforced a typed per-turn plan contract, ran a deterministic route planner, and kept a semantic memory store, all so that a weak local model could produce something valid. Strong agentic models do not need any of it, and it cost more in prompt tokens and failure modes than it bought. It is gone. What is left:
 
-OCR has been removed; the agent relies on Claude's vision capabilities instead.
+- **Pi supervisor** (`pokemon_agent/pi_supervisor.py`) drives one long-lived `pi --mode rpc` process. `skill/SKILL.md` is passed as the system prompt, the two frames are attached to the first message, and every turn after that is the word `continue`. The model chooses its own actions.
+- **Annotated frames** (`pokemon_agent/agent_runtime.py`) draw a tile grid over the 160x144 screen: walkable vs blocked, warp tiles, NPC/object blockers, the tile the player is facing, and a header with map name, position, facing, valid moves, and current objective. This is the model's main input.
+- **Collision and warp data from RAM** (`pokemon_agent/navigation.py`, `pokemon_agent/emulator.py`) reads the engine's own collision pointer rather than a hand-transcribed tileset table, and models ledge tile-pairs and sprite blocking. It feeds the overlay; there is no route-planner endpoint.
+- **Objective tracking** (`pokemon_agent/data/red_objectives*.json`) gives the overlay header a current objective and the dashboard a progress readout.
+- **Operator dashboard** (`pokemon_agent/dashboard/`) shows the frames, the Pi chat transcript with prompts, replies, thinking, tool calls and stderr, plus save controls and live telemetry.
+- **Emulator fixes** — Gen 1 movement timing, overlay coordinate correctness, mono-type dedupe in the Red memory reader.
+- **Ops scripts** — `scripts/start_pokemon_server.sh`, `scripts/stop_pokemon_server.sh`, `scripts/start_pi_run.sh`, `scripts/tunnel.sh`.
+
+The model's own memory is a `NOTES.md` file in its workspace that it writes and reads itself. Nothing on the harness side summarises the run for it.
+
+OCR has been removed; the agent reads the screen with vision.
 
 We do **not** track upstream `main` — it has diverged in incompatible directions. See
 [`docs/upstream.md`](docs/upstream.md) for what upstream has, what we rejected and why, and
@@ -50,10 +53,9 @@ Let any AI agent — [Hermes Agent](https://github.com/NousResearch/hermes-agent
 - **🌐 REST API** — `GET /state`, `POST /action`, `GET /screenshot` — control the game over HTTP.
 - **📡 WebSocket** — Real-time event streaming for live monitoring.
 - **🧠 Structured game state** — RAM is parsed into clean JSON: party, bag, badges, map, battle, dialog.
-- **🎨 Live dashboard** — Operator console with annotated frames, objectives, recovery, and Pi supervisor telemetry.
-- **🧭 Deterministic route guidance** — Frontiers, landmarks, distance maps, route cards, and avoidances narrow choices for weaker local models.
-- **🗂️ Durable semantic memory** — Append-only event memory, a session brief, and per-map failed-attempt tracking survive loops and resumes.
-- **💬 Pi chat transcript** — See prompts, assistant replies, thinking, tool calls, stderr, and auto-continue scheduling in one place.
+- **🖼️ Annotated frames** — Tile grid, walkability, warp markers, sprite blockers, and an objective header drawn over the raw screen.
+- **🎨 Live dashboard** — Operator console with both frames, objective state, and Pi supervisor telemetry.
+- **💬 Pi chat transcript** — Prompts, assistant replies, thinking, tool calls, and stderr in one place.
 - **🎮 Multi-game** — Supports Game Boy (Pokémon Red/Blue) via PyBoy, GBA (FireRed) via PyGBA.
 - **🤖 Agent-agnostic** — Works with any AI agent, RL framework, or custom script.
 
@@ -119,23 +121,22 @@ uv run pokemon-agent serve \
   WebSocket:  ws://localhost:8765/ws
 ```
 
-The server is meant to be started by you in a terminal first. After it is running, open the dashboard and launch Pi from there.
+Start the server yourself in a terminal first. Once it is running, open the dashboard and launch Pi from there.
 
 ### Start Pi From The Server Dashboard
 
 1. Open [http://localhost:8765/dashboard](http://localhost:8765/dashboard).
 2. Confirm the server is healthy and the latest frame is visible.
-3. Use the Pi Supervisor panel to choose the goal/model settings.
+3. Use the Pi Supervisor panel to choose the goal and model settings.
 4. Click `Start Pi`.
 
 The dashboard will then show:
 
 - annotated and raw frames
-- current objective and turn plan
+- current objective
 - Pi chat transcript with explicit message roles
 - streamed assistant output and thinking
 - tool calls, stderr, and recent events
-- stuck/recovery signals
 - a manual `Save Now` button
 
 Or start a run from the shell — this waits for the model endpoint to answer first,
@@ -162,7 +163,7 @@ troubleshooting.
 
 ### Play from Any Agent
 
-The Pi supervisor flow above is the preferred path. The lower-level HTTP API is still available for custom agents and scripts:
+The whole model-facing API is `POST /action` to act and the frames to see. Everything else is for operators.
 
 ```bash
 # Get game state
@@ -171,7 +172,7 @@ curl http://localhost:8765/state | python -m json.tool
 # Take a screenshot
 curl http://localhost:8765/screenshot -o screen.png
 
-# Send actions
+# Send actions — the response is a compact state summary
 curl -X POST http://localhost:8765/action \
   -H "Content-Type: application/json" \
   -d '{"actions": ["walk_up", "walk_up", "press_a"]}'
@@ -181,50 +182,16 @@ curl -X POST http://localhost:8765/save -d '{"name": "before_brock"}'
 curl -X POST http://localhost:8765/load -d '{"name": "before_brock"}'
 ```
 
-For vision-first agents, prefer:
+`POST /action` also refreshes two PNGs in the agent workspace:
 
-```bash
-curl -s -X POST http://localhost:8765/agent/observe | python3 -m json.tool
-```
+- `latest_frame_annotated.png` — the grid overlay with warps, blockers, and the objective header
+- `latest_frame.png` — the raw 160x144 screen
 
-Then read the curated workspace files in `.agent-workspace/`:
+An agent reads those files to see the game. `turn_context.json` is written alongside them for
+the dashboard and for debugging; it is not part of any agent contract.
 
-- `latest_frame_annotated.png`
-- `latest_frame.png`
-- `turn_context.json`
-- `turn_plan.json`
-- `recovery_saves.json` when the harness says the run is risky or stuck
-
-Ignore `.agent-workspace/debug/`. It is operator-facing debug output, not part of the model contract.
-
-`turn_context.json` includes a compact `planning` section with the exact `observation_id`,
-`objective_id`, allowed branch shapes, and valid measurable `expected_outcome` fields.
-
-Submit plans and actions through the strict loop:
-
-```bash
-# Validate and persist one plan for the latest observation
-curl -s -X POST http://localhost:8765/agent/plan \
-  -H "Content-Type: application/json" \
-  -d '{
-        "observation_id": "copy from turn_context.json",
-        "objective_id": "copy from turn_context.json",
-        "intent": "Probe one tile north.",
-        "mode": "overworld",
-        "primary_branch": {"kind": "raw_actions", "actions": ["walk_up"]},
-        "expected_outcome": {
-          "summary": "Move one tile north.",
-          "position_delta": {"dx": 0, "dy": -1}
-        }
-      }' | python3 -m json.tool
-
-# Execute exactly one validated batch, then re-observe
-curl -s -X POST http://localhost:8765/agent/act | python3 -m json.tool
-```
-
-If you launch Pi from the dashboard supervisor, the current `latest_frame_annotated.png` and
-`latest_frame.png` are also attached to each turn as image inputs, so Pi can visually inspect
-buildings, doors, NPCs, and other scene details instead of relying on text alone.
+`skill/SKILL.md` is the system prompt the supervisor gives Pi. It documents the overlay, the
+warp rule, and the action set, and it is the right starting point for writing your own agent.
 
 ### Game State (JSON)
 
@@ -263,17 +230,17 @@ buildings, doors, NPCs, and other scene details instead of relying on text alone
 
 | Action | Description |
 |--------|-------------|
-| `press_a` | Press A button (10 frames press + 20 wait) |
+| `press_a` | Press A button (8 frames press + 12 wait) |
 | `press_b` | Press B button |
 | `press_start` | Press Start button |
 | `press_select` | Press Select button |
-| `walk_up` | Walk one tile up (16 frames + 8 wait) |
+| `walk_up` | Walk one tile up |
 | `walk_down` | Walk one tile down |
 | `walk_left` | Walk one tile left |
 | `walk_right` | Walk one tile right |
 | `hold_a_30` | Hold A for 30 frames |
 | `wait_60` | Wait 60 frames (~1 second) |
-| `a_until_dialog_end` | Press A repeatedly until dialog closes |
+| `a_until_dialog_end` | Press A repeatedly until dialog closes (max 10 presses) |
 
 ## Dashboard
 
@@ -286,12 +253,12 @@ pip install pokemon-agent[dashboard]
 Then open `http://localhost:8765/dashboard` in your browser.
 
 The dashboard shows:
-- **Annotated and raw frames** — The same images Pi is expected to inspect
+- **Annotated and raw frames** — The same images the agent is looking at
 - **Pi supervisor controls** — Start, continue, stop, and auto-continue configuration
 - **Chat transcript** — Explicit `user`, `assistant`, `assistant thinking`, and `system` message roles
 - **Tool and stderr streams** — Live visibility into what Pi is calling and what fails
-- **Objective / plan / recovery state** — What the harness thinks Pi is trying to do and whether it is stuck
-- **Save controls** — Create manual saves and load named or recommended recovery saves from the UI
+- **Objective state** — Where the run is in the Red objective chain
+- **Save controls** — Create manual saves and load named saves from the UI
 
 ## Supported Games
 
@@ -305,14 +272,7 @@ The dashboard shows:
 
 ## Use with Hermes Agent
 
-[Hermes Agent](https://github.com/NousResearch/hermes-agent) has a built-in `pokemon-player` skill:
-
-```
-You: "Play Pokémon Red"
-Hermes: *installs pokemon-agent, starts server, begins playing*
-```
-
-The skill teaches Hermes battle strategy, exploration patterns, team management, and how to use its persistent memory for tracking objectives across sessions.
+[Hermes Agent](https://github.com/NousResearch/hermes-agent) ships its own `pokemon-player` skill that installs upstream pokemon-agent, starts the server, and plays. It is a separate agent from the Pi supervisor here.
 
 ## API Reference
 
@@ -322,19 +282,11 @@ The skill teaches Hermes battle strategy, exploration patterns, team management,
 | `/state` | GET | Full game state JSON |
 | `/screenshot` | GET | Current frame (PNG) |
 | `/screenshot/base64` | GET | Current frame (base64 JSON) |
-| `/agent/observe` | POST | Refresh the curated turn context and frame artifacts |
-| `/agent/plan` | POST | Validate and persist one strict turn plan |
-| `/agent/act` | POST | Execute the validated primary or fallback plan branch |
-| `/agent/navigator` | GET | Return the best deterministic route card and alternatives |
-| `/action` | POST | Execute game actions |
+| `/action` | POST | Execute game actions, refresh the frames, return compact state |
 | `/save` | POST | Save emulator state |
 | `/load` | POST | Load emulator state |
 | `/saves` | GET | List saved states |
-| `/minimap` | GET | ASCII minimap |
-| `/navigation/map` | GET | Current live and explored navigation maps |
-| `/navigation/path` | POST | Plan a route without executing it |
-| `/navigation/navigate` | POST | Plan and execute a route |
-| `/artifacts/{artifact}` | GET | Serve curated workspace artifacts such as frames and turn context |
+| `/artifacts/{artifact}` | GET | Serve workspace artifacts such as the live and latest frames |
 | `/dashboard/state` | GET | Aggregated dashboard state |
 | `/dashboard/history` | GET | Structured recent event history |
 | `/supervisor/state` | GET | Pi supervisor snapshot |
@@ -379,11 +331,15 @@ image.save("screenshot.png")
 
 ```
 pokemon_agent/
-├── __init__.py          # Package version
 ├── cli.py               # CLI entry point (pokemon-agent command)
 ├── server.py            # FastAPI game server (REST + WebSocket)
 ├── emulator.py          # PyBoy/PyGBA wrapper (headless)
-├── pathfinding.py       # A* grid navigation
+├── agent_runtime.py     # Workspace artifacts, frame overlay, objective engine
+├── pi_supervisor.py     # Long-lived Pi process, frame attachments, continue loop
+├── navigation.py        # Collision / warp / sprite snapshot from RAM
+├── pathfinding.py       # Direction constants and action mapping
+├── harness/             # Prompt builders
+├── data/                # Pokémon Red objective chains
 ├── memory/
 │   ├── reader.py        # Abstract game memory reader
 │   ├── red.py           # Pokémon Red/Blue RAM parser
@@ -392,11 +348,7 @@ pokemon_agent/
 │   └── builder.py       # Structured state builder
 └── dashboard/           # Optional [dashboard] extra
     ├── mount.py         # FastAPI static mount
-    ├── history.py       # JSONL event logger
-    └── static/
-        ├── index.html   # Dashboard page
-        ├── style.css    # Dark cyberpunk theme
-        └── app.js       # WebSocket client
+    └── static/          # Dashboard page, styles, WebSocket client
 ```
 
 ## Contributing
@@ -406,7 +358,7 @@ Contributions welcome! Areas where help is needed:
 - **Pokémon Gold/Silver/Crystal** memory reader (`memory/gold.py`)
 - **Pokémon FireRed** full memory reader with decryption (`memory/firered.py`)
 - **Pokémon Emerald** memory reader (`memory/emerald.py`)
-- **Battle AI** improvements and type matchup optimization
+- **Run-scoped sessions** so two playthroughs can run side by side (see `docs/upstream.md`)
 - **Dashboard** enhancements (progress tracking, key moments, replay)
 - **Tests** for memory readers and state builders
 

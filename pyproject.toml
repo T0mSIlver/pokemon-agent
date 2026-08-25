@@ -26,6 +26,7 @@ classifiers = [
     "Programming Language :: Python :: 3.11",
     "Programming Language :: Python :: 3.12",
     "Programming Language :: Python :: 3.13",
+    "Programming Language :: Python :: 3.14",
     "Topic :: Games/Entertainment",
     "Topic :: Scientific/Engineering :: Artificial Intelligence",
 ]
@@ -33,7 +34,8 @@ dependencies = [
     "fastapi>=0.104.0",
     "uvicorn[standard]>=0.24.0",
     "Pillow>=10.0.0",
-    "pydantic>=2.0.0",
+    # fastapi 0.141 (the version this project resolves) requires pydantic>=2.9.
+    "pydantic>=2.9.0",
 ]
 
 [project.optional-dependencies]
@@ -41,9 +43,10 @@ pyboy = ["pyboy>=2.0.0"]
 pygba = ["pygba>=0.1.0"]
 dashboard = ["aiofiles>=23.0.0"]
 dev = [
-    "pytest>=7.0",
-    "pytest-asyncio>=0.21",
-    "httpx>=0.25.0",
+    # pytest-asyncio 1.x requires pytest>=8.4; pytest 9 rejects pytest-asyncio 0.x.
+    "pytest>=8.4",
+    "pytest-asyncio>=1.0",
+    "httpx>=0.27.0",
     "ruff>=0.1.0",
 ]
 all = [
@@ -58,6 +61,7 @@ Upstream = "https://github.com/NousResearch/pokemon-agent"
 
 [project.scripts]
 pokemon-agent = "pokemon_agent.cli:main"
+poke = "pokemon_agent.agent_cli:main"
 
 [tool.setuptools.packages.find]
 include = ["pokemon_agent*"]

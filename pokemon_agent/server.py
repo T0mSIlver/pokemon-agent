@@ -3,29 +3,40 @@ Pokemon Agent — FastAPI Game Server
 
 Provides HTTP + WebSocket API for controlling a Game Boy / GBA emulator
 running a Pokemon ROM, reading game state, and broadcasting events.
+
+`POST /action` is the model-facing endpoint: it executes buttons, rewrites the
+workspace frames the model looks at, and answers with a handful of fields.
+Everything richer than that belongs to the dashboard endpoints.
 """
 
 import asyncio
 import base64
+import contextlib
 import io
 import json
 import mimetypes
-import re
 import time
+from collections import deque
+from collections.abc import AsyncIterator
+from contextlib import asynccontextmanager
 from functools import partial
 from pathlib import Path
-from typing import Literal, Optional, Set
+from typing import Optional, Set
 
 from fastapi import FastAPI, HTTPException, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, JSONResponse, Response
 from pydantic import BaseModel
+from starlette.routing import Mount
 
 from pokemon_agent.agent_runtime import AgentRuntime
-from pokemon_agent.harness.contracts import TurnPlanInput
-from pokemon_agent.pi_supervisor import PiSupervisor
+from pokemon_agent.explored_map import ExploredMaps
+from pokemon_agent.memory.red import MAP_NAMES, MOVE_NAMES
+from pokemon_agent.pi_supervisor import NoLiveSessionError, PiSupervisor
 
 __version__ = "0.1.0"
+
+SCREEN_TEXT_LIMIT = 160
 
 
 def _guess_content_type(path: Path) -> str:
@@ -65,18 +76,10 @@ class SaveRequest(BaseModel):
     name: str
 
 
-class NavigationRequest(BaseModel):
-    """Body for POST /navigation/path and POST /navigation/navigate."""
+class BattleFightRequest(BaseModel):
+    """Body for POST /battle/fight."""
 
-    x: int
-    y: int
-    mode: str = "auto"  # "auto", "screen", or "persistent"
-
-
-class ObserveRequest(BaseModel):
-    """Body for POST /agent/observe."""
-
-    reason: str = "manual_observe"
+    move: str
 
 
 class PiSupervisorStartRequest(BaseModel):
@@ -98,10 +101,10 @@ class PiSupervisorContinueRequest(BaseModel):
     pass
 
 
-class AgentActRequest(BaseModel):
-    """Body for POST /agent/act."""
+class PiSupervisorSteerRequest(BaseModel):
+    """Body for POST /supervisor/steer."""
 
-    branch: Literal["primary", "fallback"] = "primary"
+    message: str
 
 
 # ---------------------------------------------------------------------------
@@ -111,7 +114,6 @@ class AgentActRequest(BaseModel):
 _config: Optional[GameConfig] = None
 _emulator = None  # Emulator instance
 _reader = None  # GameMemoryReader subclass instance
-_navigation_store = None  # NavigationStore instance
 _runtime: Optional[AgentRuntime] = None
 _supervisor: Optional[PiSupervisor] = None
 _start_time: float = 0.0
@@ -127,6 +129,15 @@ _live_artifact_task: Optional[asyncio.Task] = None
 _live_artifact_frames_per_second: int = 10
 _live_artifact_last_sync_at: Optional[float] = None
 
+# Persistent explored-map memory. Every navigation snapshot is folded into it;
+# the agent reads it back on demand from GET /map. Writing it out on every
+# snapshot would mean a disk write per emulated frame, hence the throttle.
+_explored_maps: Optional[ExploredMaps] = None
+EXPLORED_SAVE_INTERVAL_SECONDS = 10.0
+EXPLORED_SAVE_EVERY_RECORDS = 50
+_explored_last_save_at: float = 0.0
+_explored_records_since_save: int = 0
+
 # WebSocket clients
 _ws_clients: Set[WebSocket] = set()
 
@@ -134,10 +145,21 @@ _ws_clients: Set[WebSocket] = set()
 # FastAPI app
 # ---------------------------------------------------------------------------
 
+
+@asynccontextmanager
+async def _lifespan(_app: FastAPI) -> AsyncIterator[None]:
+    await _startup()
+    try:
+        yield
+    finally:
+        await _shutdown()
+
+
 app = FastAPI(
     title="Pokemon Agent Server",
     version=__version__,
     description="HTTP + WebSocket API for Pokemon emulator control",
+    lifespan=_lifespan,
 )
 
 # CORS — allow everything for local dev
@@ -169,6 +191,13 @@ def _ensure_emulator():
     """Raise 503 if the emulator isn't ready."""
     if _emulator is None:
         raise HTTPException(status_code=503, detail="Emulator not initialised")
+
+
+def _ensure_runtime() -> AgentRuntime:
+    """Return the agent runtime, or raise 503 if it isn't ready."""
+    if _runtime is None:
+        raise HTTPException(status_code=503, detail="Agent runtime is not initialised")
+    return _runtime
 
 
 async def _run_sync(func, *args, **kwargs):
@@ -219,6 +248,9 @@ def _get_state_dict() -> dict:
     state = build_game_state(_reader, frame_count=getattr(_emulator, "frame_count", None))
     dialog = state.get("dialog")
     state["dialog_active"] = bool(isinstance(dialog, dict) and dialog.get("active"))
+    battle_menu = _battle_menu_sync(state)
+    if battle_menu is not None:
+        state["battle_menu"] = battle_menu
     try:
         snapshot = _emulator.get_navigation_snapshot(_reader)
     except NotImplementedError:
@@ -229,66 +261,21 @@ def _get_state_dict() -> dict:
     return state
 
 
-def _dialog_is_active(state: dict) -> bool:
-    if "dialog_active" in state:
-        return bool(state.get("dialog_active"))
-    dialog = state.get("dialog")
-    return bool(isinstance(dialog, dict) and dialog.get("active"))
+def _battle_menu_sync(state: dict) -> Optional[dict]:
+    """Which battle menu is open and what the cursor is on, or None outside battle.
 
-
-def _summarize_navigation_execution(
-    snapshot_before,
-    snapshot_after,
-    plan,
-    target: tuple[int, int],
-) -> dict:
-    start = snapshot_before.player_position
-    end = snapshot_after.player_position
-    moved = end != start
-    reached_target = end == target
-    matched_planned_final_position = plan.final_position is not None and end == plan.final_position
-    started_at_target = start == target
-    success = (
-        reached_target
-        or (plan.partial and matched_planned_final_position)
-        or (started_at_target and not plan.actions)
-    )
-
-    before_distance = abs(start[0] - target[0]) + abs(start[1] - target[1])
-    after_distance = abs(end[0] - target[0]) + abs(end[1] - target[1])
-
-    if reached_target:
-        status = "Reached the requested navigation target."
-    elif plan.partial and matched_planned_final_position:
-        status = "Reached the planned partial navigation destination."
-    elif started_at_target and not plan.actions:
-        status = "Already at the requested navigation target."
-    elif plan.actions and not moved:
-        status = "Executed the navigation plan but the player did not move."
-    elif plan.actions and after_distance < before_distance:
-        status = "Moved toward the target but did not reach the planned destination."
-    elif not plan.actions:
-        status = "No navigation actions were executed."
-    else:
-        status = "Navigation actions executed, but the final position did not match the plan."
-
-    return {
-        "success": success,
-        "moved": moved,
-        "started_at_target": started_at_target,
-        "reached_target": reached_target,
-        "matched_planned_final_position": matched_planned_final_position,
-        "planned_final_position": (
-            {"x": plan.final_position[0], "y": plan.final_position[1]}
-            if plan.final_position is not None
-            else None
-        ),
-        "actual_position": {"x": end[0], "y": end[1]},
-        "target": {"x": target[0], "y": target[1]},
-        "remaining_distance_before": before_distance,
-        "remaining_distance_after": after_distance,
-        "status": status,
-    }
+    A menu the agent cannot see is a menu it presses A into blindly. This is the
+    one fact the frame shows and the payload used to hide.
+    """
+    if not ((state.get("battle") or {}).get("in_battle")):
+        return None
+    read = getattr(_reader, "read_battle_menu", None)
+    if read is None:
+        return None
+    try:
+        return read()
+    except Exception:  # noqa: BLE001 — perception must never fail a state read
+        return None
 
 
 def _get_screenshot_bytes() -> bytes:
@@ -385,80 +372,6 @@ def _server_runtime_snapshot() -> dict:
     }
 
 
-def _compact_objective_status(objective: Optional[dict]) -> Optional[dict]:
-    if not objective:
-        return None
-    return {
-        "id": objective.get("id"),
-        "pack_id": objective.get("pack_id"),
-        "title": objective.get("title"),
-        "summary": objective.get("summary"),
-        "progress_percent": objective.get("progress_percent"),
-        "status": objective.get("status"),
-        "route_hint": objective.get("route_hint"),
-        "completion_predicate": objective.get("completion_predicate"),
-        "preferred_landmark_types": objective.get("preferred_landmark_types"),
-    }
-
-
-def _compact_state_snapshot(state: Optional[dict]) -> dict:
-    state = state or {}
-    player = state.get("player") or {}
-    battle = state.get("battle") or {}
-    dialog = state.get("dialog") or {}
-    flags = state.get("flags") or {}
-    position = player.get("position") or {}
-    return {
-        "map_name": (state.get("map") or {}).get("map_name"),
-        "map_id": (state.get("map") or {}).get("map_id"),
-        "position": {
-            "x": position.get("x"),
-            "y": position.get("y"),
-        },
-        "facing": player.get("facing"),
-        "dialog_active": bool(state.get("dialog_active") or dialog.get("active")),
-        "battle_active": bool(battle.get("in_battle")),
-        "battle_type": battle.get("type"),
-        "has_pokedex": bool(flags.get("has_pokedex")),
-        "has_oaks_parcel": bool(flags.get("has_oaks_parcel")),
-        "badge_count": player.get("badge_count", flags.get("badge_count", 0)),
-    }
-
-
-def _compact_navigation_snapshot(
-    navigation: Optional[dict],
-    navigation_guidance: Optional[dict] = None,
-) -> dict:
-    navigation = navigation or {}
-    navigation_guidance = navigation_guidance or {}
-    snapshot = navigation.get("snapshot") or {}
-    location_map = navigation.get("location_map") or {}
-    return {
-        "coordinate_system": snapshot.get("coordinate_system"),
-        "coordinate_note": snapshot.get("coordinate_note") or location_map.get("coordinate_note"),
-        "valid_moves": snapshot.get("valid_moves", []),
-        "interaction": snapshot.get("interaction"),
-        "live_ascii": snapshot.get("ascii"),
-        "explored_ascii": location_map.get("ascii"),
-        "distance_ascii": _truncate_text(navigation_guidance.get("distance_ascii"), 1800),
-        "frontiers": (navigation_guidance.get("frontiers") or [])[:8],
-        "landmarks": (navigation_guidance.get("landmarks") or [])[:8],
-        "route_cards": (navigation_guidance.get("route_cards") or [])[:5],
-        "avoidances": (navigation_guidance.get("avoidances") or [])[:5],
-        "window_top_left": snapshot.get("window_top_left"),
-        "window_size": snapshot.get("window_size"),
-        "bounds": location_map.get("bounds"),
-    }
-
-
-def _compact_recovery_summary(recovery: Optional[dict]) -> dict:
-    recovery = recovery or {}
-    return {
-        "current_recommendation": recovery.get("current_recommendation"),
-        "candidate_count": len(recovery.get("candidates") or []),
-    }
-
-
 def _compact_supervisor_status(snapshot: Optional[dict]) -> Optional[dict]:
     if not snapshot:
         return None
@@ -476,6 +389,78 @@ def _compact_supervisor_status(snapshot: Optional[dict]) -> Optional[dict]:
     }
 
 
+def _runtime_artifact_paths() -> dict:
+    """Absolute path per served artifact key, for the supervisor's stream log."""
+    if _runtime is None:
+        return {}
+    return {key: str(path) for key, path in _runtime.artifacts.items()}
+
+
+async def _critic_context() -> dict:
+    """Objective, game state and explored-map summary for the between-session critic.
+
+    Called once when a session starts and once when it ends, so the retrospective
+    can show progress rather than just a final position. Never raises.
+    """
+    payload: dict = {}
+    if _runtime is not None:
+        with contextlib.suppress(Exception):
+            bundle = _runtime.live_bundle or _runtime.latest_bundle or {}
+            current = ((bundle.get("objective") or {}).get("current")) or {}
+            summary = current.get("summary")
+            if summary:
+                payload["objective"] = str(summary)
+    if _emulator is not None and _reader is not None:
+        with contextlib.suppress(Exception):
+            payload["game_state"] = await _run_emulator_sync(_get_state_dict)
+    if _explored_maps is not None:
+        with contextlib.suppress(Exception):
+            target = _explored_maps.current_map_id
+            if target is not None and _explored_maps.knows(target):
+                payload["map_summary"] = _explored_maps.summary(target)
+    return payload
+
+
+#: The whole-map picture. It is served like a frame but the map store writes
+#: it, not the frame writer, so it is not in AgentRuntime.artifacts.
+MAP_ARTIFACT_KEY = "latest_map"
+MAP_ARTIFACT_FILENAME = "latest_map.png"
+
+#: (map id, store revision) of whatever latest_map.png currently shows.
+_map_image_state: Optional[tuple] = None
+
+
+def _map_artifact_path() -> Optional[Path]:
+    if _runtime is None:
+        return None
+    return _runtime.workspace_dir / MAP_ARTIFACT_FILENAME
+
+
+def _refresh_map_image(map_id: Optional[int] = None) -> Optional[Path]:
+    """Redraw latest_map.png, but only when the store has learned something."""
+    global _map_image_state
+    if _explored_maps is None:
+        return None
+    path = _map_artifact_path()
+    if path is None:
+        return None
+    target = map_id if map_id is not None else _explored_maps.current_map_id
+    if target is None or not _explored_maps.knows(target):
+        return None
+    state = (target, _explored_maps.revision)
+    if state == _map_image_state and path.exists():
+        return path
+    try:
+        written = _explored_maps.write_image(target, path)
+    except Exception as exc:  # noqa: BLE001 — a picture must never fail a request
+        print(f"[server] WARNING: map image render failed: {exc}")
+        return None
+    if written is None:
+        return None
+    _map_image_state = state
+    return written
+
+
 def _artifact_urls_from_paths(artifacts: Optional[dict]) -> dict:
     urls: dict[str, str] = {}
     for key in artifacts or {}:
@@ -490,8 +475,6 @@ def _public_artifact_paths(artifacts: Optional[dict]) -> dict:
         "live_frame",
         "live_frame_annotated",
         "turn_context_json",
-        "turn_plan_json",
-        "recovery_saves_json",
     )
     return {
         key: value
@@ -500,199 +483,158 @@ def _public_artifact_paths(artifacts: Optional[dict]) -> dict:
     }
 
 
-def _truncate_text(value: Optional[str], limit: int = 600) -> str:
-    text = str(value or "").strip()
-    if len(text) <= limit:
-        return text
-    return text[: limit - 16].rstrip() + "\n...[truncated]..."
+def _warp_step_direction(coord: dict, dimensions: dict) -> Optional[str]:
+    """Which way to walk to trigger a warp on the map boundary.
+
+    Boundary warps are the ones that strand an agent: the tile beyond is off-map,
+    so the overlay paints it blocked and the model concludes the exit is a wall.
+    Interior doors are ambiguous from coordinates alone, so they get no hint.
+    """
+    x, y = coord.get("x"), coord.get("y")
+    width, height = dimensions.get("width"), dimensions.get("height")
+    if y == 0:
+        return "up"
+    if height and y == height - 1:
+        return "down"
+    if x == 0:
+        return "left"
+    if width and x == width - 1:
+        return "right"
+    return None
 
 
-def _compact_screen_text(screen_text: Optional[dict]) -> Optional[dict]:
-    if not screen_text:
-        return None
-    return {
-        "text": _truncate_text(screen_text.get("text"), 420),
-        "source": screen_text.get("source"),
-        "ui_mode": screen_text.get("ui_mode"),
-        "dialog_active": screen_text.get("dialog_active"),
+def _observation_summary(bundle: Optional[dict]) -> dict:
+    """Where the player is and what it may do next — the whole model-facing payload.
+
+    Everything else the model needs is in the two workspace frames that the
+    runtime refresh has just rewritten.
+    """
+    bundle = bundle or {}
+    state = bundle.get("state") or {}
+    player = state.get("player") or {}
+    position = player.get("position") or {}
+    battle = state.get("battle") or {}
+    snapshot = (bundle.get("navigation") or {}).get("snapshot") or {}
+    screen_text = bundle.get("screen_text") or {}
+    summary = {
+        "map": (state.get("map") or {}).get("map_name"),
+        "x": position.get("x"),
+        "y": position.get("y"),
+        "facing": player.get("facing"),
+        "moves": list(snapshot.get("valid_moves") or []),
+        "mode": screen_text.get("ui_mode"),
+        "dialog": bool(state.get("dialog_active") or (state.get("dialog") or {}).get("active")),
+        "battle": bool(battle.get("in_battle")),
     }
+    # Lead Pokemon HP. Without it the model has to spend a /state call to find out
+    # it is about to faint, which it will not do unprompted.
+    party = state.get("party") or []
+    if party:
+        lead = party[0] or {}
+        if lead.get("max_hp"):
+            summary["hp"] = f"{lead.get('hp')}/{lead.get('max_hp')}"
+
+    # What press_a would hit. "object" is an NPC or item ball, "sign" is readable.
+    # Anything else is scenery and not worth a button.
+    interaction = snapshot.get("interaction") or state.get("interaction") or {}
+    if interaction.get("kind") in ("object", "sign"):
+        summary["faces"] = interaction["kind"]
+
+    # Standing on a warp is the one board state where the next step changes maps.
+    # Say where it leads and which way to step: at a map edge the destination tile
+    # renders as blocked, so "walk into the wall" is unguessable without being told.
+    position_pair = (position.get("x"), position.get("y"))
+    for warp in snapshot.get("warps") or []:
+        coord = warp.get("coord") or warp
+        if (coord.get("x"), coord.get("y")) != position_pair:
+            continue
+        summary["on_warp"] = True
+        hint = {}
+        target = MAP_NAMES.get(warp.get("target_map_id"))
+        if target and target != "???":
+            hint["to"] = target
+        step = _warp_step_direction(coord, snapshot.get("map_dimensions") or {})
+        if step:
+            hint["step"] = step
+        if hint:
+            summary["warp"] = hint
+        break
+
+    # A battle screen has no position, no facing and no legal walk directions, and
+    # reporting empty ones reads as "nothing is possible". Report the fight instead:
+    # who you are fighting and what you can hit them with.
+    if summary["battle"]:
+        for key in ("x", "y", "facing", "moves", "on_warp", "warp", "faces"):
+            summary.pop(key, None)
+        enemy = (battle.get("enemy") or {}) if isinstance(battle, dict) else {}
+        if enemy.get("species"):
+            types = "/".join(enemy.get("types") or [])
+            summary["enemy"] = (
+                f"{enemy['species']} L{enemy.get('level')} "
+                f"{enemy.get('hp')}/{enemy.get('max_hp')}" + (f" ({types})" if types else "")
+            )
+        if party:
+            lead = party[0] or {}
+            raw_moves = lead.get("moves") or []
+            move_names = [m["name"] for m in raw_moves if isinstance(m, dict) and m.get("name")]
+            move_names = move_names or [m for m in raw_moves if isinstance(m, str)]
+            if move_names:
+                summary["your_moves"] = move_names
+
+        # Which menu is open and which entry A would fire. Perception, not advice:
+        # the move cursor remembers where it was last turn and wraps at both ends,
+        # so "the cursor starts on the first move" is simply not true.
+        menu = state.get("battle_menu") or {}
+        if menu.get("menu"):
+            summary["menu"] = menu["menu"]
+        if menu.get("highlighted"):
+            summary["highlighted"] = menu["highlighted"]
+
+    text = str(screen_text.get("text") or "").strip()
+    if text:
+        summary["screen_text"] = text[:SCREEN_TEXT_LIMIT]
+    return summary
 
 
-def _compact_feedback(feedback: Optional[dict]) -> Optional[dict]:
-    if not feedback:
-        return None
-    return {
-        "source": feedback.get("source"),
-        "summary": feedback.get("summary"),
-        "notes": (feedback.get("notes") or [])[:4],
-        "tags": feedback.get("tags"),
-    }
+#: Two visits is a corridor you walked back down. Three is a loop.
+HERE_BEFORE_THRESHOLD = 3
 
 
-def _compact_state_delta_summary(state_delta: Optional[dict]) -> Optional[dict]:
-    if not state_delta:
-        return None
-    return {
-        "changed": state_delta.get("changed"),
-        "summary": (state_delta.get("summary") or [])[:4],
-        "movement": state_delta.get("movement"),
-    }
+def _annotate_batch_outcome(summary: dict, outcome: Optional[dict]) -> None:
+    """Report what the batch achieved, not just where it ended.
+
+    Without this the agent cannot tell a 16-step walk from one step and fifteen
+    presses of its face against a tree.
+    """
+    if not outcome or summary.get("battle"):
+        return
+    moved = outcome.get("moved")
+    if moved is None:  # no walk actions in the batch — nothing to report
+        return
+    summary["moved"] = moved
+    if outcome.get("blocked_after") is not None:
+        summary["blocked_after"] = outcome["blocked_after"]
 
 
-def _compact_memory_snapshot(memory: Optional[dict]) -> Optional[dict]:
-    if not memory:
-        return None
-    return {
-        "recent_facts": (memory.get("recent_facts") or [])[:8],
-        "current_hypotheses": (memory.get("current_hypotheses") or [])[:4],
-        "failed_attempts": (memory.get("failed_attempts") or [])[:5],
-        "session_brief_path": memory.get("session_brief_path"),
-    }
+def _annotate_explored_map(summary: dict, bundle: Optional[dict]) -> None:
+    """The one thing the frame cannot show: you have stood here before.
 
-
-def _compact_dialog_guidance(dialog: Optional[dict]) -> Optional[dict]:
-    if not dialog:
-        return None
-    return {
-        "transcript_recent": (dialog.get("transcript_recent") or [])[:4],
-        "should_continue": dialog.get("should_continue"),
-        "last_change_at": dialog.get("last_change_at"),
-        "printing": dialog.get("printing"),
-        "waiting_for_input": dialog.get("waiting_for_input"),
-    }
-
-
-def _compact_battle_guidance(battle: Optional[dict]) -> Optional[dict]:
-    if not battle:
-        return None
-    return {
-        "recommended_mode": battle.get("recommended_mode"),
-        "recommended_move": battle.get("recommended_move"),
-        "reason": battle.get("reason"),
-        "safe_short_actions": (battle.get("safe_short_actions") or [])[:4],
-    }
-
-
-def _compact_movement_guidance(movement_guidance: Optional[dict]) -> Optional[dict]:
-    if not movement_guidance:
-        return None
-    candidate_route = movement_guidance.get("candidate_route") or {}
-    compact_route = None
-    if candidate_route:
-        compact_route = {
-            "direction": candidate_route.get("direction"),
-            "target": candidate_route.get("target"),
-            "steps": candidate_route.get("steps"),
-            "actions": (candidate_route.get("actions") or [])[:6],
-        }
-    return {
-        "summary": movement_guidance.get("summary"),
-        "notes": (movement_guidance.get("notes") or [])[:4],
-        "preferred_direction": movement_guidance.get("preferred_direction"),
-        "candidate_route": compact_route,
-    }
-
-
-def _compact_turn_plan(turn_plan: Optional[dict]) -> Optional[dict]:
-    if not turn_plan:
-        return None
-    return {
-        "objective_id": turn_plan.get("objective_id"),
-        "summary": turn_plan.get("summary"),
-        "planned_actions": (turn_plan.get("planned_actions") or [])[:6],
-        "fallback_actions": (turn_plan.get("fallback_actions") or [])[:6],
-        "notes": _truncate_text(turn_plan.get("notes"), 280),
-        "updated_at": turn_plan.get("updated_at"),
-        "status": turn_plan.get("status") or {},
-        "mode": turn_plan.get("mode"),
-        "observation_id": turn_plan.get("observation_id"),
-    }
-
-
-def _compact_plan_status(plan_status: Optional[dict]) -> Optional[dict]:
-    if not plan_status:
-        return None
-    return {
-        "state": plan_status.get("state"),
-        "observation_id": plan_status.get("observation_id"),
-        "validated_at": plan_status.get("validated_at"),
-        "executed_at": plan_status.get("executed_at"),
-        "outcome_checked_at": plan_status.get("outcome_checked_at"),
-        "branch_executed": plan_status.get("branch_executed"),
-        "reason": _truncate_text(plan_status.get("reason"), 220),
-        "last_error": _truncate_text(plan_status.get("last_error"), 220),
-    }
-
-
-def _observe_contract_response(bundle: Optional[dict]) -> dict:
-    if not bundle:
-        return {}
-    artifacts = _public_artifact_paths(bundle.get("artifacts") or {})
-    return {
-        "observation_id": bundle.get("observation_id"),
-        "generated_at": bundle.get("generated_at"),
-        "reason": bundle.get("reason"),
-        "source": bundle.get("source"),
-        "plan_status": _compact_plan_status(bundle.get("plan_status")),
-        "artifacts": artifacts,
-        "artifact_urls": _artifact_urls_from_paths(artifacts),
-    }
-
-
-def _compact_bundle_response(bundle: Optional[dict]) -> dict:
-    if not bundle:
-        return {}
-    artifacts = _public_artifact_paths(bundle.get("artifacts") or {})
-    objective = (bundle.get("objective") or {}).get("current") or {}
-    return {
-        "observation_id": bundle.get("observation_id"),
-        "generated_at": bundle.get("generated_at"),
-        "reason": bundle.get("reason"),
-        "source": bundle.get("source"),
-        "objective": _compact_objective_status(objective),
-        "state": _compact_state_snapshot(bundle.get("state")),
-        "screen_text": _compact_screen_text(bundle.get("screen_text")),
-        "recent_action": _compact_feedback(bundle.get("recent_action")),
-        "state_delta": _compact_state_delta_summary(bundle.get("state_delta")),
-        "movement_guidance": _compact_movement_guidance(bundle.get("movement_guidance")),
-        "navigation": _compact_navigation_snapshot(
-            bundle.get("navigation"),
-            bundle.get("navigation_guidance"),
-        ),
-        "memory": _compact_memory_snapshot(bundle.get("memory")),
-        "dialog": _compact_dialog_guidance(bundle.get("dialog_guidance")),
-        "battle": _compact_battle_guidance(bundle.get("battle_guidance")),
-        "turn_plan": _compact_turn_plan(bundle.get("turn_plan")),
-        "plan_status": _compact_plan_status(bundle.get("plan_status")),
-        "turn_context": bundle.get("turn_context"),
-        "stuck": bundle.get("stuck"),
-        "recovery": _compact_recovery_summary(bundle.get("recovery")),
-        "artifacts": artifacts,
-        "artifact_urls": _artifact_urls_from_paths(artifacts),
-    }
-
-
-def _get_navigation_payload_sync(goal: Optional[tuple[int, int]] = None) -> Optional[dict]:
+    Nothing that steers goes in here. Where to go next is the agent's job; the
+    harness gives it perception — the frame, and `GET /map` when it asks.
+    """
+    if _explored_maps is None or summary.get("battle"):
+        return
+    snapshot = ((bundle or {}).get("navigation") or {}).get("snapshot") or {}
+    position = snapshot.get("player_position") or {}
+    map_id, x, y = snapshot.get("map_id"), position.get("x"), position.get("y")
+    if map_id is None or x is None or y is None:
+        return
     try:
-        snapshot, location_map = _refresh_navigation_state_sync()
-    except NotImplementedError:
-        return None
-    except Exception:
-        return None
-    return _serialize_navigation(snapshot, location_map, goal=goal)
-
-
-def _get_live_navigation_payload_sync(goal: Optional[tuple[int, int]] = None) -> Optional[dict]:
-    try:
-        snapshot = _emulator.get_navigation_snapshot(_reader)
-    except NotImplementedError:
-        return None
-    except Exception:
-        return None
-    location_map = None
-    if _navigation_store is not None:
-        location_map = _navigation_store.get(snapshot.key)
-    return _serialize_navigation(snapshot, location_map, goal=goal)
+        visits = _explored_maps.visit_count(int(map_id), int(x), int(y))
+        if visits >= HERE_BEFORE_THRESHOLD:
+            summary["here_before"] = visits - 1
+    except Exception as exc:  # noqa: BLE001 — hints must never fail an action
+        print(f"[server] WARNING: explored-map hints failed: {exc}")
 
 
 def _make_runtime_save_event(name: str, path: Path, source: str, reason: str) -> dict:
@@ -705,11 +647,41 @@ def _make_runtime_save_event(name: str, path: Path, source: str, reason: str) ->
     }
 
 
-def _current_supervisor_goal_override() -> Optional[str]:
-    if _supervisor is None:
+def _navigation_payload_sync() -> Optional[dict]:
+    """Serialize the live collision window that the annotated frame overlay draws."""
+    if _emulator is None:
         return None
-    goal = str(getattr(_supervisor, "goal", "") or "").strip()
-    return goal or None
+    try:
+        snapshot = _emulator.get_navigation_snapshot(_reader)
+    except NotImplementedError:
+        return None
+    except Exception:
+        return None
+    payload = snapshot.to_dict()
+    _record_explored_map(payload)
+    return {"snapshot": payload}
+
+
+def _record_explored_map(snapshot: dict) -> None:
+    """Fold one snapshot into the persistent map. Never breaks the caller."""
+    global _explored_last_save_at, _explored_records_since_save
+    if _explored_maps is None:
+        return
+    try:
+        _explored_maps.record(snapshot)
+        _explored_records_since_save += 1
+        now = time.monotonic()
+        due = (
+            _explored_records_since_save >= EXPLORED_SAVE_EVERY_RECORDS
+            or now - _explored_last_save_at >= EXPLORED_SAVE_INTERVAL_SECONDS
+        )
+        if due:
+            _explored_maps.save()
+            _explored_last_save_at = now
+            _explored_records_since_save = 0
+        _refresh_map_image()
+    except Exception as exc:  # noqa: BLE001 — map memory must never fail a request
+        print(f"[server] WARNING: explored-map update failed: {exc}")
 
 
 def _refresh_agent_bundle_sync(
@@ -717,50 +689,17 @@ def _refresh_agent_bundle_sync(
     reason: str,
     source: str,
     requested_actions: Optional[list[str]] = None,
-    navigation_plan: Optional[dict] = None,
-    navigation_execution: Optional[dict] = None,
     explicit_save: Optional[dict] = None,
 ) -> Optional[dict]:
     if _runtime is None:
         return None
-    state = _get_state_dict()
-    goal = None
-    if navigation_execution and navigation_execution.get("target"):
-        target = navigation_execution["target"]
-        if target.get("x") is not None and target.get("y") is not None:
-            goal = (int(target["x"]), int(target["y"]))
-    navigation = _get_navigation_payload_sync(goal=goal)
     return _runtime.refresh(
         emulator=_emulator,
-        state=state,
-        navigation=navigation,
-        navigation_store=_navigation_store,
+        state=_get_state_dict(),
+        navigation=_navigation_payload_sync(),
         reason=reason,
         source=source,
         requested_actions=requested_actions,
-        navigation_plan=navigation_plan,
-        navigation_execution=navigation_execution,
-        explicit_save=explicit_save,
-        goal_override=_current_supervisor_goal_override(),
-    )
-
-
-async def _refresh_agent_bundle(
-    *,
-    reason: str,
-    source: str,
-    requested_actions: Optional[list[str]] = None,
-    navigation_plan: Optional[dict] = None,
-    navigation_execution: Optional[dict] = None,
-    explicit_save: Optional[dict] = None,
-) -> Optional[dict]:
-    return await _run_emulator_sync(
-        _refresh_agent_bundle_sync,
-        reason=reason,
-        source=source,
-        requested_actions=requested_actions,
-        navigation_plan=navigation_plan,
-        navigation_execution=navigation_execution,
         explicit_save=explicit_save,
     )
 
@@ -768,13 +707,10 @@ async def _refresh_agent_bundle(
 def _sync_live_artifacts_sync() -> Optional[dict]:
     if _runtime is None or _emulator is None:
         return None
-    state = _get_state_dict()
-    navigation = _get_live_navigation_payload_sync()
     return _runtime.sync_live_view(
         emulator=_emulator,
-        state=state,
-        navigation=navigation,
-        navigation_store=_navigation_store,
+        state=_get_state_dict(),
+        navigation=_navigation_payload_sync(),
     )
 
 
@@ -803,131 +739,115 @@ async def _broadcast_runtime_refresh(result: Optional[dict]) -> None:
         )
 
 
-def _navigation_not_supported(exc: Exception) -> HTTPException:
-    return HTTPException(status_code=501, detail=f"Navigation unavailable: {exc}")
+async def _refresh_and_broadcast(
+    *,
+    reason: str,
+    source: str,
+    requested_actions: Optional[list[str]] = None,
+    explicit_save: Optional[dict] = None,
+) -> dict:
+    """Rewrite the workspace frames, emit the resulting events, return the bundle."""
+    result = await _run_emulator_sync(
+        _refresh_agent_bundle_sync,
+        reason=reason,
+        source=source,
+        requested_actions=requested_actions,
+        explicit_save=explicit_save,
+    )
+    await _broadcast_runtime_refresh(result)
+    return (result or {}).get("bundle") or {}
 
 
-def _refresh_navigation_state_sync():
-    """Read the current live navigation snapshot and merge it into the store."""
-    snapshot = _emulator.get_navigation_snapshot(_reader)
-    location_map = _navigation_store.update(snapshot)
-    return snapshot, location_map
+# A runaway agent-written loop can drive /action thousands of times a minute.
+# Normal play sends a couple of batches per minute, so this cap only ever bites
+# a loop that is not looking at its own results.
+ACTION_RATE_WINDOW_SECONDS = 60.0
+ACTION_RATE_MAX_CALLS = 60
+_action_call_times: deque[float] = deque(maxlen=ACTION_RATE_MAX_CALLS * 2)
 
 
-def _plan_navigation_sync(target_x: int, target_y: int, mode: str):
-    """Plan a navigation route using either the live or persistent map."""
-    snapshot, location_map = _refresh_navigation_state_sync()
-    normalized_mode = mode.lower().strip()
-    if normalized_mode not in {"auto", "screen", "persistent"}:
-        raise ValueError(f"Unknown navigation mode: {mode}")
-
-    target_visible = snapshot.absolute_to_local(target_x, target_y) is not None
-    if normalized_mode == "screen" or (normalized_mode == "auto" and target_visible):
-        plan = _emulator.plan_screen_path(_reader, target_x, target_y)
-        plan.visible_target = target_visible
-
-        if normalized_mode == "auto" and target_visible and not plan.reached:
-            local_target = snapshot.absolute_to_local(target_x, target_y)
-            target_is_walkable = False
-            if local_target is not None:
-                local_x, local_y = local_target
-                target_is_walkable = (
-                    bool(snapshot.terrain[local_y][local_x])
-                    and (target_x, target_y) not in snapshot.sprite_set
-                )
-
-            if target_is_walkable:
-                persistent_plan = location_map.plan_route(
-                    start=snapshot.player_position,
-                    goal=(target_x, target_y),
-                    extra_blockers=snapshot.sprite_set,
-                )
-                persistent_plan.visible_target = True
-
-                if persistent_plan.reached:
-                    persistent_plan.status = (
-                        "Visible target requires leaving the current screen; "
-                        + persistent_plan.status
-                    )
-                    plan = persistent_plan
-                elif not plan.actions and persistent_plan.actions:
-                    persistent_plan.status = (
-                        "Visible target was not routable on-screen; " + persistent_plan.status
-                    )
-                    plan = persistent_plan
-                elif (
-                    plan.final_position is not None
-                    and persistent_plan.final_position is not None
-                    and persistent_plan.actions
-                ):
-                    screen_remaining = abs(plan.final_position[0] - target_x) + abs(
-                        plan.final_position[1] - target_y
-                    )
-                    persistent_remaining = abs(persistent_plan.final_position[0] - target_x) + abs(
-                        persistent_plan.final_position[1] - target_y
-                    )
-                    if persistent_remaining < screen_remaining:
-                        persistent_plan.status = (
-                            "Visible target has a better explored off-screen route; "
-                            + persistent_plan.status
-                        )
-                        plan = persistent_plan
-    else:
-        plan = location_map.plan_route(
-            start=snapshot.player_position,
-            goal=(target_x, target_y),
-            extra_blockers=snapshot.sprite_set,
+def _check_action_rate() -> None:
+    now = time.monotonic()
+    while _action_call_times and now - _action_call_times[0] > ACTION_RATE_WINDOW_SECONDS:
+        _action_call_times.popleft()
+    if len(_action_call_times) >= ACTION_RATE_MAX_CALLS:
+        raise HTTPException(
+            status_code=429,
+            detail=(
+                f"More than {ACTION_RATE_MAX_CALLS} action batches in "
+                f"{int(ACTION_RATE_WINDOW_SECONDS)}s. You are almost certainly in a loop that "
+                "never checks whether the player moved. A blocked move returns the same "
+                "position, so a 'walk until position changes' loop never ends. Stop, read a "
+                "frame, and pick a different direction."
+            ),
         )
-        plan.visible_target = target_visible
-    return snapshot, location_map, plan
+    _action_call_times.append(now)
 
 
-def _serialize_navigation(snapshot, location_map, goal: Optional[tuple[int, int]] = None) -> dict:
-    """Convert navigation objects into JSON-safe response data."""
-    if location_map is None:
-        location_map_payload = {
-            "location_key": snapshot.key,
-            "map_id": snapshot.map_id,
-            "map_name": snapshot.map_name,
-            "tileset": snapshot.tileset,
-            "updates": 0,
-            "known_tiles": 0,
-            "known_tile_ids": 0,
-            "passable_tiles": 0,
-            "blocked_tiles": 0,
-            "bounds": None,
-            "ascii": "(no explored map data)",
-            "ascii_legend": {
-                "P": "player",
-                "G": "goal",
-                "S": "visible sprite blocker",
-                ".": "explored passable tile",
-                "#": "known blocked tile",
-                "?": "unexplored or unknown tile",
-            },
-        }
-    else:
-        distances = location_map.distance_map(
-            snapshot.player_position,
-            extra_blockers=snapshot.sprite_set,
-        )
-        location_map_payload = location_map.to_dict(
-            player=snapshot.player_position,
-            goal=goal,
-            sprites=snapshot.sprite_positions,
-            distances=distances,
-        )
-    return {
-        "snapshot": snapshot.to_dict(goal=goal),
-        "location_map": location_map_payload,
-    }
+def _reject_unsafe_battle_actions(actions: list[str]) -> None:
+    """A battle menu reads as an active dialog, so A-mashing confirms menu entries.
+
+    Pressing A until "the dialog" clears moves through FIGHT -> ITEM -> the bag and
+    picks whatever is highlighted, which is indistinguishable from the agent trying
+    to use an item on purpose. Make it a refusal with an explanation instead.
+    """
+    if "a_until_dialog_end" not in actions:
+        return
+    state = _get_state_dict()
+    if not ((state.get("battle") or {}).get("in_battle")):
+        return
+    raise HTTPException(
+        status_code=400,
+        detail=(
+            "a_until_dialog_end is unsafe in battle: the battle menu counts as an open "
+            "dialog, so this confirms menu entries and opens the bag. Press A once to "
+            "advance battle text, or attack by name with POST /battle/fight — the move "
+            "cursor remembers where it was left last turn and wraps, so two A presses "
+            "are not 'use my first move'."
+        ),
+    )
+
+
+async def _run_actions(actions: list[str], *, source: str, reason: str) -> dict:
+    """Execute one batch of actions with the standard before/after bookkeeping.
+
+    Returns the executed count plus the observation bundle produced afterwards.
+    """
+    _check_action_rate()
+    await _run_emulator_sync(_reject_unsafe_battle_actions, actions)
+    state_before = await _run_emulator_sync(_get_state_dict)
+    await _record_and_broadcast(
+        "action",
+        {"actions": actions, "source": source, "state_before": state_before},
+    )
+    outcome = await _run_emulator_sync(_execute_action_batch_sync, actions)
+    executed = outcome["executed"]
+    bundle = await _refresh_and_broadcast(
+        reason=reason,
+        source=source,
+        requested_actions=actions,
+    )
+    state_after = bundle.get("state") or await _run_emulator_sync(_get_state_dict)
+    await _record_and_broadcast(
+        "action_result",
+        {
+            "actions": actions,
+            "actions_executed": executed,
+            "source": source,
+            "state_after": state_after,
+            "feedback": bundle.get("recent_action"),
+            "state_delta": bundle.get("state_delta"),
+            "objective_status": (bundle.get("objective") or {}).get("current"),
+            "stuck_signal": bundle.get("stuck"),
+            "screen_text": bundle.get("screen_text"),
+        },
+    )
+    return {"actions_executed": executed, "bundle": bundle, "outcome": outcome}
 
 
 # ---------------------------------------------------------------------------
 # Action parser
 # ---------------------------------------------------------------------------
-
-_ACTION_RE = re.compile(r"^(?P<kind>press|walk|hold|wait|a_until_dialog_end)(?:_(?P<rest>.+))?$")
 
 
 def _execute_action_sync(action_str: str) -> None:
@@ -993,12 +913,302 @@ def _execute_action_sync(action_str: str) -> None:
     raise ValueError(f"Unknown action format: {action_str}")
 
 
-def _execute_action_batch_sync(actions: list[str]) -> int:
+#: Walking is the only action whose success or failure is invisible on screen.
+#: A blocked step still "succeeds" — the game just puts you back where you were.
+WALK_DIRECTIONS = ("up", "down", "left", "right")
+
+#: Beyond this a position change is a warp or a cutscene, not a step taken.
+MAP_TRANSITION_TILES = 4
+
+
+def _is_walk_action(action_str: str) -> bool:
+    parts = action_str.strip().lower().split("_")
+    return len(parts) >= 2 and parts[0] == "walk" and parts[1] in WALK_DIRECTIONS
+
+
+def _player_tile_sync() -> Optional[tuple[int, int]]:
+    """Read just the player's tile. One RAM read, not a whole game state."""
+    if _reader is None:
+        return None
+    try:
+        position = (_reader.read_player() or {}).get("position") or {}
+        x, y = position.get("x"), position.get("y")
+    except Exception:  # noqa: BLE001 — sampling must never fail a batch
+        return None
+    if x is None or y is None:
+        return None
+    return int(x), int(y)
+
+
+def _execute_action_batch_sync(actions: list[str]) -> dict:
+    """Run a batch, sampling the player's tile around every walk action.
+
+    A blocked move in Gen 1 returns the same position rather than an error, so
+    `walk_left` x16 into a tree burns fifteen buttons in silence. Sampling
+    between actions is the only way to say which one stopped mattering — and it
+    has to be between actions, because a batch that walks right then left nets
+    zero movement without ever having been blocked.
+    """
     executed = 0
-    for action_str in actions:
+    moved = 0
+    blocked_after: Optional[int] = None
+    walked_at_all = False
+    tile = _player_tile_sync() if any(_is_walk_action(item) for item in actions) else None
+
+    for index, action_str in enumerate(actions, start=1):
+        is_walk = _is_walk_action(action_str)
         _execute_action_sync(action_str)
         executed += 1
-    return executed
+        if not is_walk or tile is None:
+            continue
+        walked_at_all = True
+        after = _player_tile_sync()
+        if after is None:
+            continue
+        steps = abs(after[0] - tile[0]) + abs(after[1] - tile[1])
+        tile = after
+        if steps == 0:
+            if blocked_after is None and index < len(actions):
+                blocked_after = index
+            continue
+        moved += 1 if steps > MAP_TRANSITION_TILES else steps
+
+    return {
+        "executed": executed,
+        "moved": moved if walked_at_all else None,
+        "blocked_after": blocked_after,
+    }
+
+
+# ---------------------------------------------------------------------------
+# Battle sequencing
+# ---------------------------------------------------------------------------
+
+#: Normalising the 2x2 top menu onto FIGHT. Safe from any of the four entries
+#: because that menu does not wrap: Up on the top row stays on the top row, Left
+#: in the left column stays in the left column. Verified from a cursor on RUN.
+BATTLE_MENU_NORMALISE = ("press_up", "press_up", "press_left", "press_left")
+
+#: B presses to spend getting back to the top battle menu. A whole battle intro
+#: from a cold save takes ten, so this cap only bites when the screen is showing
+#: something the command cannot drive at all.
+BATTLE_NORMALISE_MAX_PRESSES = 24
+
+#: A presses to spend letting the turn play out before answering.
+BATTLE_SETTLE_MAX_PRESSES = 8
+
+
+def battle_fight_keys(target_index: int, current_index: int, move_count: int) -> list[str]:
+    """The exact buttons that select move ``target_index`` and confirm it.
+
+    ``current_index`` is where the move cursor will open — the game remembers it
+    from last turn — and the list *wraps at both ends*, so there is no direction
+    you can hold to reach a known entry. Down alone therefore covers the whole
+    list, and the step count is the only thing that has to be right.
+    """
+    if move_count <= 0:
+        raise ValueError("no moves to choose from")
+    if not 0 <= target_index < move_count:
+        raise ValueError(f"move index {target_index} is outside 0..{move_count - 1}")
+    steps = (target_index - current_index) % move_count
+    return [
+        *BATTLE_MENU_NORMALISE,  # onto FIGHT, wherever the cursor was
+        "press_a",  # open the move list
+        *["press_down"] * steps,  # walk it to the move we asked for
+        "press_a",  # confirm
+    ]
+
+
+def battle_run_keys() -> list[str]:
+    """The exact buttons that flee, from any of the four top-menu entries."""
+    return ["press_down", "press_down", "press_right", "press_right", "press_a"]
+
+
+def _battle_state_sync() -> dict:
+    return (_reader.read_battle() if _reader is not None else None) or {}
+
+
+def _require_battle_sync() -> dict:
+    battle = _battle_state_sync()
+    if not battle.get("in_battle"):
+        raise HTTPException(
+            status_code=400,
+            detail="Not in a battle. Nothing to attack and nothing to run from.",
+        )
+    return battle
+
+
+def _move_name(move_id: int) -> str:
+    return MOVE_NAMES.get(move_id, f"???({move_id})")
+
+
+def _normalise_to_battle_menu_sync() -> int:
+    """Press B until the top battle menu is up. Returns the presses spent.
+
+    Two traps are buried here, both of which cost a session to find:
+
+    * ``read_dialog()["active"]`` is **not** a proxy for "the game is waiting for
+      my turn". During the battle intro it goes true, then *false* for about a
+      second while the sprites slide in, then true again on "Wild X appeared!".
+      A loop that waits on the dialog flag exits into the middle of that
+      animation, and every button pressed after it is eaten. Watch the menu
+      signature instead — that is what ``at_battle_top_menu`` is for.
+    * Some ``battle-entry`` save states read ``in_battle: True`` while actually
+      sitting in *post*-victory dialogue with a stale ``wIsInBattle``. "In a
+      battle" and "the battle menu is up" are two different questions; ask both.
+
+    B is inert on the top battle menu itself, so over-running this loop costs
+    nothing: it only advances text and backs out of submenus.
+    """
+    for pressed in range(BATTLE_NORMALISE_MAX_PRESSES):
+        if _reader.at_battle_top_menu():
+            return pressed
+        _execute_action_sync("press_b")
+        _emulator.tick(30)
+    if _reader.at_battle_top_menu():
+        return BATTLE_NORMALISE_MAX_PRESSES
+    raise HTTPException(
+        status_code=409,
+        detail=(
+            f"The battle menu never appeared after {BATTLE_NORMALISE_MAX_PRESSES} B presses, "
+            "though the game still reports a battle. Usually that means the fight is already "
+            "over and this is the text that follows it — the in-battle flag lags behind the "
+            "screen. Press A to clear it, or read the frame."
+        ),
+    )
+
+
+def _settle_battle_sync() -> None:
+    """Let the turn play out far enough that the answer describes a real screen.
+
+    Stops the moment the top battle menu comes back, so it never presses A on a
+    menu — which is the bug this whole endpoint exists to prevent.
+    """
+    for _ in range(BATTLE_SETTLE_MAX_PRESSES):
+        _emulator.tick(30)
+        if _reader.at_battle_top_menu():
+            return
+        if not _battle_state_sync().get("in_battle"):
+            return
+        _execute_action_sync("press_a")
+
+
+def resolve_move_name(name: str, moves: list[dict]) -> int:
+    """Index of the move called ``name``: exact match first, then unique prefix."""
+    known = ", ".join(str(move.get("name")) for move in moves) or "nothing"
+    wanted = name.strip().lower()
+    if not wanted:
+        raise HTTPException(status_code=400, detail=f"No move named. Known moves: {known}.")
+    names = [str(move.get("name") or "").lower() for move in moves]
+    if wanted in names:
+        return names.index(wanted)
+    hits = [index for index, candidate in enumerate(names) if candidate.startswith(wanted)]
+    if len(hits) == 1:
+        return hits[0]
+    if len(hits) > 1:
+        matched = ", ".join(str(moves[index].get("name")) for index in hits)
+        raise HTTPException(
+            status_code=400,
+            detail=f"{name!r} matches more than one move: {matched}. Spell out more of it.",
+        )
+    raise HTTPException(status_code=400, detail=f"No move called {name!r}. Known moves: {known}.")
+
+
+def _battle_fight_sync(name: str) -> dict:
+    """Select a move by name and confirm it, then check it really was that move."""
+    _require_battle_sync()
+    moves = _reader.read_battle_moves()
+    if not moves:
+        raise HTTPException(
+            status_code=409,
+            detail="No moves are readable yet — the battle is not far enough along to attack.",
+        )
+    index = resolve_move_name(name, moves)
+    move = moves[index]
+    if move.get("pp") == 0:
+        listing = ", ".join(f"{other['name']} {other['pp']}PP" for other in moves)
+        raise HTTPException(
+            status_code=400,
+            detail=f"{move['name']} has no PP left. Known moves: {listing}.",
+        )
+
+    # Check the cursor *before* confirming: a wrong cursor here costs nothing to
+    # fix, whereas a wrong cursor after A has already spent the turn. Hence one
+    # retry before the confirming press, and none after it.
+    retried = False
+    _normalise_to_battle_menu_sync()
+    keys = battle_fight_keys(index, _reader.remembered_move_index(), len(moves))
+    for key in keys[:-1]:
+        _execute_action_sync(key)
+    if _reader.selected_move_id() != move["id"]:
+        retried = True
+        _normalise_to_battle_menu_sync()
+        keys = battle_fight_keys(index, _reader.remembered_move_index(), len(moves))
+        for key in keys[:-1]:
+            _execute_action_sync(key)
+        landed = _reader.selected_move_id()
+        if landed != move["id"]:
+            raise HTTPException(
+                status_code=409,
+                detail=(
+                    f"Could not put the cursor on {move['name']}: it is sitting on "
+                    f"{_move_name(landed)} instead. Nothing was confirmed, so no turn "
+                    "was spent. Read the frame."
+                ),
+            )
+
+    _execute_action_sync(keys[-1])
+    confirmed = _reader.selected_move_id()
+    if confirmed != move["id"]:
+        raise HTTPException(
+            status_code=409,
+            detail=(
+                f"Asked for {move['name']} but the game confirmed {_move_name(confirmed)}. "
+                "The turn has already been spent — read the frame before acting again."
+            ),
+        )
+    _settle_battle_sync()
+    return {"used": move["name"], "actions": keys, "retried": retried}
+
+
+def _battle_run_sync() -> dict:
+    """Move the cursor to RUN from wherever it is, confirm, and say whether it worked."""
+    _require_battle_sync()
+    _normalise_to_battle_menu_sync()
+    keys = battle_run_keys()
+    for key in keys:
+        _execute_action_sync(key)
+    _settle_battle_sync()
+    return {"actions": keys, "fled": not _battle_state_sync().get("in_battle")}
+
+
+async def _run_battle_sequence(intent: dict, func, *args) -> dict:
+    """One battle command, with the bookkeeping an /action batch would get."""
+    _check_action_rate()
+    state_before = await _run_emulator_sync(_get_state_dict)
+    await _record_and_broadcast(
+        "action",
+        {"actions": [], "source": "battle", "intent": intent, "state_before": state_before},
+    )
+    outcome = await _run_emulator_sync(func, *args)
+    bundle = await _refresh_and_broadcast(
+        reason="battle_command",
+        source="battle",
+        requested_actions=outcome["actions"],
+    )
+    state_after = bundle.get("state") or await _run_emulator_sync(_get_state_dict)
+    await _record_and_broadcast(
+        "action_result",
+        {
+            "actions": outcome["actions"],
+            "actions_executed": len(outcome["actions"]),
+            "source": "battle",
+            "intent": intent,
+            "state_after": state_after,
+            "screen_text": bundle.get("screen_text"),
+        },
+    )
+    return {"outcome": outcome, "bundle": bundle}
 
 
 # ---------------------------------------------------------------------------
@@ -1012,12 +1222,36 @@ def configure(config: GameConfig):
     _config = config
 
 
-@app.on_event("startup")
+def _endpoint_banner_lines() -> list[str]:
+    """One line per registered route, read off the router so it cannot drift."""
+    lines: list[str] = []
+    seen: set[tuple[str, str]] = set()
+    hidden = {"/openapi.json", "/docs", "/docs/oauth2-redirect", "/redoc"}
+    for route in app.routes:
+        path = getattr(route, "path", None)
+        if not path or path in hidden:
+            continue
+        if isinstance(route, Mount):
+            verbs = ["GET"]
+        elif getattr(route, "methods", None):
+            verbs = sorted(set(route.methods) - {"HEAD", "OPTIONS"})
+        else:
+            verbs = ["WS"]
+        text = (getattr(route, "summary", None) or getattr(route, "description", "") or "").strip()
+        summary = text.splitlines()[0] if text else ""
+        for verb in verbs:
+            key = (verb, path)
+            if key in seen:
+                continue
+            seen.add(key)
+            lines.append(f"[server]   {verb:<4} {path:<24} {summary}".rstrip())
+    return lines
+
+
 async def _startup():
     global \
         _emulator, \
         _reader, \
-        _navigation_store, \
         _runtime, \
         _supervisor, \
         _start_time, \
@@ -1032,13 +1266,19 @@ async def _startup():
         _realtime_last_tick_at, \
         _live_artifact_task, \
         _live_artifact_frames_per_second, \
-        _live_artifact_last_sync_at
+        _live_artifact_last_sync_at, \
+        _explored_maps, \
+        _map_image_state, \
+        _explored_last_save_at, \
+        _explored_records_since_save
     _loop = asyncio.get_running_loop()
     _start_time = time.time()
     _emulator_lock = asyncio.Lock()
     _realtime_ticks = 0
     _realtime_last_tick_at = None
     _live_artifact_last_sync_at = None
+    _explored_last_save_at = time.monotonic()
+    _explored_records_since_save = 0
 
     if _config is None:
         # Config can be injected via environment or set beforehand
@@ -1080,20 +1320,31 @@ async def _startup():
     # Create data directories
     data_dir = Path(_config.data_dir).expanduser().resolve()
     (data_dir / "saves").mkdir(parents=True, exist_ok=True)
-    from pokemon_agent.navigation import NavigationStore
-
-    _navigation_store = NavigationStore(data_dir / "navigation_maps.json")
     workspace_dir = (
         Path(_config.agent_workspace_dir).expanduser().resolve()
         if _config.agent_workspace_dir
         else (data_dir / "agent_workspace").resolve()
     )
-    _runtime = AgentRuntime(data_dir=data_dir, workspace_dir=workspace_dir)
+    # Lives in data_dir, not the workspace, so it outlives both a server restart
+    # and the fresh Pi sessions the watchdog starts every ~110k tokens.
+    _explored_maps = ExploredMaps(data_dir / "explored_maps.json")
+    print(f"[server] Explored maps: {len(_explored_maps.map_ids())} known — {_explored_maps.path}")
+    _map_image_state = None
+    _runtime = AgentRuntime(
+        data_dir=data_dir,
+        workspace_dir=workspace_dir,
+        # Lets the annotated frame shade the ground already walked.
+        visited_lookup=_explored_maps.visited,
+    )
+    # SEAM: the annotated frame insets a mini-map drawn from these tile sets.
+    _runtime.map_grid_lookup = _explored_maps.grid
     _supervisor = PiSupervisor(
         workspace_dir=workspace_dir,
         server_url=f"http://127.0.0.1:{_config.port}",
         event_sink=_record_existing_event_and_broadcast,
         stream_sink=broadcast,
+        artifact_paths=_runtime_artifact_paths,
+        critic_context=_critic_context,
     )
     _realtime_frames_per_second = max(1, int(_config.realtime_fps))
     _realtime_enabled = bool(_config.realtime)
@@ -1135,17 +1386,8 @@ async def _startup():
         else:
             print(f"[server] WARNING: Save state not found: {state_path}")
 
-    # Seed navigation data when available.
     try:
-        _refresh_navigation_state_sync()
-    except NotImplementedError:
-        pass
-    except Exception as e:
-        print(f"[server] WARNING: Initial navigation snapshot failed: {e}")
-
-    try:
-        result = await _refresh_agent_bundle(reason="startup_refresh", source="observe")
-        await _broadcast_runtime_refresh(result)
+        await _refresh_and_broadcast(reason="startup_refresh", source="observe")
     except Exception as e:
         print(f"[server] WARNING: Initial agent workspace refresh failed: {e}")
 
@@ -1162,31 +1404,10 @@ async def _startup():
     print(f"[server] Ready — listening on port {_config.port}")
     print(f"[server] Agent workspace: {workspace_dir}")
     print("[server] Endpoints:")
-    print("[server]   GET  /          — server info")
-    print("[server]   GET  /state     — game state")
-    print("[server]   GET  /screenshot — current frame (PNG)")
-    print("[server]   POST /agent/observe — refresh the curated turn context")
-    print("[server]   POST /agent/plan — validate and persist one turn plan")
-    print("[server]   POST /agent/act — execute the validated plan branch")
-    print("[server]   POST /action    — execute actions")
-    print("[server]   POST /save      — save state")
-    print("[server]   POST /load      — load state")
-    print("[server]   GET  /saves     — list saves")
-    print("[server]   GET  /minimap   — ASCII minimap")
-    print("[server]   GET  /navigation/map      — explored navigation map")
-    print("[server]   POST /navigation/path     — plan a navigation route")
-    print("[server]   POST /navigation/navigate — execute a navigation route")
-    print("[server]   GET  /dashboard/state  — aggregated telemetry state")
-    print("[server]   GET  /dashboard/history — structured event timeline")
-    print("[server]   GET  /supervisor/state — Pi supervisor snapshot")
-    print("[server]   POST /supervisor/start — launch a supervised Pi session")
-    print("[server]   POST /supervisor/continue — run one more Pi turn")
-    print("[server]   POST /supervisor/stop — stop the Pi supervisor")
-    print("[server]   GET  /health    — health check")
-    print("[server]   WS   /ws        — live events")
+    for line in _endpoint_banner_lines():
+        print(line)
 
 
-@app.on_event("shutdown")
 async def _shutdown():
     global _supervisor, _realtime_task, _live_artifact_task
     if _live_artifact_task is not None:
@@ -1208,6 +1429,8 @@ async def _shutdown():
             await _supervisor.shutdown()
         elif hasattr(_supervisor, "stop"):
             await _supervisor.stop()
+    if _explored_maps is not None:
+        _explored_maps.save()
 
 
 # ---------------------------------------------------------------------------
@@ -1263,9 +1486,10 @@ async def dashboard_index():
 @app.get("/artifacts/{artifact_key}")
 async def get_workspace_artifact(artifact_key: str):
     """Serve a whitelisted workspace artifact file."""
-    if _runtime is None:
-        raise HTTPException(status_code=503, detail="Agent runtime is not initialised")
-    path = _runtime.artifacts.get(artifact_key)
+    runtime = _ensure_runtime()
+    path = runtime.artifacts.get(artifact_key)
+    if path is None and artifact_key == MAP_ARTIFACT_KEY:
+        path = _refresh_map_image() or _map_artifact_path()
     if path is None:
         raise HTTPException(status_code=404, detail=f"Unknown artifact: {artifact_key}")
     if not path.exists():
@@ -1278,9 +1502,8 @@ async def get_workspace_artifact(artifact_key: str):
 @app.get("/dashboard/state")
 async def dashboard_state():
     """Aggregated dashboard state for the operator console."""
-    if _runtime is None:
-        raise HTTPException(status_code=503, detail="Agent runtime is not initialised")
-    payload = _runtime.dashboard_state()
+    runtime = _ensure_runtime()
+    payload = runtime.dashboard_state()
     artifacts = _public_artifact_paths(payload.get("artifacts") or {})
     payload["artifacts"] = artifacts
     payload["artifact_urls"] = _artifact_urls_from_paths(artifacts)
@@ -1292,10 +1515,9 @@ async def dashboard_state():
 @app.get("/dashboard/history")
 async def dashboard_history(limit: int = 200):
     """Structured recent dashboard/agent events."""
-    if _runtime is None:
-        raise HTTPException(status_code=503, detail="Agent runtime is not initialised")
+    runtime = _ensure_runtime()
     limit = max(1, min(limit, 1000))
-    return {"events": _runtime.history(limit)}
+    return {"events": runtime.history(limit)}
 
 
 @app.get("/supervisor/state")
@@ -1304,6 +1526,14 @@ async def supervisor_state():
     if _supervisor is None:
         raise HTTPException(status_code=503, detail="Pi supervisor is not initialised")
     return JSONResponse(content=_compact_supervisor_status(_supervisor.state_snapshot()))
+
+
+@app.get("/supervisor/stream")
+async def supervisor_stream(after: int = 0, limit: int = 1000):
+    """Ordered model-time log: tools, thinking, text, prompts and harness events."""
+    if _supervisor is None:
+        raise HTTPException(status_code=503, detail="Pi supervisor is not initialised")
+    return JSONResponse(content=_supervisor.stream_since(after=after, limit=limit))
 
 
 @app.post("/supervisor/start")
@@ -1343,6 +1573,32 @@ async def supervisor_continue(req: PiSupervisorContinueRequest):
         raise HTTPException(status_code=500, detail=f"Supervisor continue error: {exc}")
 
 
+@app.post("/supervisor/steer")
+async def supervisor_steer(req: PiSupervisorSteerRequest):
+    """Inject an operator message into the live Pi session.
+
+    400 when the message is empty or over the length cap, 409 when no session is
+    live to receive it, 503 when the supervisor was never initialised.
+    """
+    if _supervisor is None:
+        raise HTTPException(status_code=503, detail="Pi supervisor is not initialised")
+    try:
+        entry = await _supervisor.send_operator_message(req.message)
+    except HTTPException:
+        raise
+    except NoLiveSessionError as exc:
+        raise HTTPException(status_code=409, detail=str(exc))
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=f"Supervisor steer error: {exc}")
+    return {
+        "success": True,
+        "entry": entry,
+        "supervisor": _compact_supervisor_status(_supervisor.state_snapshot()),
+    }
+
+
 @app.post("/supervisor/stop")
 async def supervisor_stop():
     """Stop Pi if it is currently running."""
@@ -1355,221 +1611,6 @@ async def supervisor_stop():
         raise HTTPException(status_code=500, detail=f"Supervisor stop error: {exc}")
 
 
-@app.post("/agent/observe")
-async def agent_observe(req: Optional[ObserveRequest] = None):
-    """Refresh the vision-first workspace bundle and return artifact paths."""
-    _ensure_emulator()
-    if _runtime is None:
-        raise HTTPException(status_code=503, detail="Agent runtime is not initialised")
-    request = req or ObserveRequest()
-    try:
-        result = await _refresh_agent_bundle(reason=request.reason, source="observe")
-        await _broadcast_runtime_refresh(result)
-        if not result:
-            raise HTTPException(
-                status_code=500, detail="Agent observation refresh returned no data"
-            )
-        return _observe_contract_response(result["bundle"])
-    except HTTPException:
-        raise
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Agent observe error: {e}")
-
-
-@app.get("/agent/observe")
-async def agent_observe_get():
-    """GET alias for agent_observe to match simple curl refreshes."""
-    return await agent_observe(None)
-
-
-@app.post("/agent/plan")
-async def agent_plan(req: TurnPlanInput):
-    """Validate and persist one strict turn plan for the latest observation."""
-    if _runtime is None:
-        raise HTTPException(status_code=503, detail="Agent runtime is not initialised")
-    try:
-        plan = _runtime.validate_and_store_turn_plan(req.model_dump(mode="json"))
-        await _record_and_broadcast(
-            "turn_plan_validated",
-            {
-                "observation_id": plan.observation_id,
-                "objective_id": plan.objective_id,
-                "intent": plan.intent,
-                "mode": plan.mode,
-                "status": plan.status.model_dump(mode="json"),
-            },
-        )
-        return {
-            "success": True,
-            "turn_plan": _compact_turn_plan(_runtime.load_turn_plan()),
-            "plan_status": _compact_plan_status(plan.status.model_dump(mode="json")),
-            "artifacts": _public_artifact_paths(_runtime._artifact_payload()),
-        }
-    except ValueError as exc:
-        raise HTTPException(status_code=400, detail=str(exc))
-    except Exception as exc:  # noqa: BLE001
-        raise HTTPException(status_code=500, detail=f"Agent plan error: {exc}")
-
-
-@app.post("/agent/act")
-async def agent_act(req: Optional[AgentActRequest] = None):
-    """Execute the validated primary or fallback branch from turn_plan.json."""
-    _ensure_emulator()
-    if _runtime is None:
-        raise HTTPException(status_code=503, detail="Agent runtime is not initialised")
-    request = req or AgentActRequest()
-    try:
-        plan = _runtime.load_turn_plan_model()
-        if plan.status.state != "validated":
-            raise HTTPException(
-                status_code=400,
-                detail="No validated turn plan is ready to execute",
-            )
-
-        context = _runtime.load_turn_context()
-        if not context or plan.observation_id != context.get("observation_id"):
-            _runtime.invalidate_turn_plan(
-                "A newer observation exists; the validated plan is now stale.",
-                state="stale",
-            )
-            raise HTTPException(status_code=400, detail="Validated turn plan is stale")
-
-        branch = plan.primary_branch if request.branch == "primary" else plan.fallback_branch
-        if branch is None:
-            raise HTTPException(
-                status_code=400,
-                detail=f"No {request.branch} branch is available",
-            )
-
-        state_before = await _run_emulator_sync(_get_state_dict)
-        baseline_map_name = (state_before.get("map") or {}).get("map_name")
-        baseline_position = (state_before.get("player") or {}).get("position")
-
-        if branch.kind == "raw_actions":
-            requested_actions = list(branch.actions)
-            await _record_and_broadcast(
-                "action",
-                {
-                    "actions": requested_actions,
-                    "source": "agent_act",
-                    "branch": request.branch,
-                    "plan_observation_id": plan.observation_id,
-                },
-            )
-            executed = await _run_emulator_sync(_execute_action_batch_sync, requested_actions)
-            state_after = await _run_emulator_sync(_get_state_dict)
-            navigation_after = await _run_emulator_sync(_get_navigation_payload_sync)
-            updated_plan = _runtime.mark_turn_plan_executed(
-                branch=request.branch,
-                branch_kind=branch.kind,
-                requested_actions=requested_actions,
-                executed_actions=executed,
-                baseline_map_name=baseline_map_name,
-                baseline_position=baseline_position,
-                summary=f"Executed {executed} raw action(s).",
-            )
-            await _record_and_broadcast(
-                "action_result",
-                {
-                    "actions": requested_actions,
-                    "actions_executed": executed,
-                    "source": "agent_act",
-                    "branch": request.branch,
-                    "state_after": state_after,
-                    "navigation_after": navigation_after,
-                    "plan_status": updated_plan.status.model_dump(mode="json"),
-                },
-            )
-            return {
-                "success": True,
-                "branch": request.branch,
-                "actions_requested": requested_actions,
-                "actions_executed": executed,
-                "requires_observe": True,
-                "state_after": _compact_state_snapshot(state_after),
-                "plan_status": _compact_plan_status(updated_plan.status.model_dump(mode="json")),
-            }
-
-        target = (branch.target.x, branch.target.y)
-        snapshot_before, location_map_before, nav_plan = await _run_emulator_sync(
-            _plan_navigation_sync,
-            branch.target.x,
-            branch.target.y,
-            branch.mode,
-        )
-        if _dialog_is_active(state_before):
-            _runtime.invalidate_turn_plan(
-                "Navigation plan became invalid because a dialog or prompt is open.",
-            )
-            raise HTTPException(
-                status_code=400,
-                detail="Navigation plan cannot execute while a dialog or prompt is open",
-            )
-
-        executed = await _run_emulator_sync(_execute_action_batch_sync, nav_plan.actions)
-        state_after = await _run_emulator_sync(_get_state_dict)
-        snapshot_after, location_map_after = await _run_emulator_sync(
-            _refresh_navigation_state_sync
-        )
-        navigation_after = _serialize_navigation(snapshot_after, location_map_after, goal=target)
-        execution = _summarize_navigation_execution(
-            snapshot_before,
-            snapshot_after,
-            nav_plan,
-            target,
-        )
-        updated_plan = _runtime.mark_turn_plan_executed(
-            branch=request.branch,
-            branch_kind=branch.kind,
-            requested_actions=list(nav_plan.actions),
-            executed_actions=executed,
-            baseline_map_name=baseline_map_name,
-            baseline_position=baseline_position,
-            summary=execution["status"],
-        )
-        await _record_and_broadcast(
-            "navigation",
-            {
-                "target": {"x": branch.target.x, "y": branch.target.y},
-                "mode": branch.mode,
-                "plan": nav_plan.to_dict(),
-                "execution": execution,
-                "source": "agent_act",
-                "branch": request.branch,
-                "state_after": state_after,
-                "navigation_after": navigation_after,
-                "plan_status": updated_plan.status.model_dump(mode="json"),
-            },
-        )
-        return {
-            "success": True,
-            "branch": request.branch,
-            "actions_requested": list(nav_plan.actions),
-            "actions_executed": executed,
-            "requires_observe": True,
-            "navigation_execution": execution,
-            "state_after": _compact_state_snapshot(state_after),
-            "plan_status": _compact_plan_status(updated_plan.status.model_dump(mode="json")),
-        }
-    except HTTPException:
-        raise
-    except ValueError as exc:
-        raise HTTPException(status_code=400, detail=str(exc))
-    except Exception as exc:  # noqa: BLE001
-        raise HTTPException(status_code=500, detail=f"Agent act error: {exc}")
-
-
-@app.get("/agent/navigator")
-async def agent_navigator():
-    """Return a strict JSON navigator view over the latest deterministic guidance."""
-    if _runtime is None:
-        raise HTTPException(status_code=503, detail="Agent runtime is not initialised")
-    try:
-        return JSONResponse(content=_runtime.navigator_payload())
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Agent navigator error: {e}")
-
-
 @app.get("/state")
 async def get_state():
     """Full game state JSON."""
@@ -1579,6 +1620,36 @@ async def get_state():
         return JSONResponse(content=state)
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Error reading state: {e}")
+
+
+@app.get("/map")
+async def get_map(map_id: Optional[int] = None):
+    """Shape and coverage of a whole map, plus a PNG of it to look at.
+
+    A pull tool for when you are lost: it is never pushed into /action. The
+    picture carries the spatial shape; this payload stays small enough to ask
+    for often.
+    """
+    if _explored_maps is None:
+        raise HTTPException(status_code=503, detail="Explored-map memory not initialised")
+    target = map_id if map_id is not None else _explored_maps.current_map_id
+    if target is None:
+        raise HTTPException(
+            status_code=404,
+            detail="No map recorded yet — take an action, then ask again.",
+        )
+    if not _explored_maps.knows(target):
+        known = ", ".join(str(known_id) for known_id in _explored_maps.map_ids()) or "none"
+        raise HTTPException(
+            status_code=404,
+            detail=f"Map {target} has never been visited. Maps recorded so far: {known}.",
+        )
+    payload = _explored_maps.summary(target)
+    image_path = _refresh_map_image(target)
+    if image_path is not None:
+        payload["image"] = f"/artifacts/{MAP_ARTIFACT_KEY}"
+        payload["image_path"] = str(image_path)
+    return payload
 
 
 @app.get("/screenshot")
@@ -1606,60 +1677,57 @@ async def screenshot_base64():
 
 @app.post("/action")
 async def execute_actions(req: ActionRequest):
-    """Execute a sequence of game actions."""
+    """Execute game actions, rewrite the workspace frames, report the new position."""
     _ensure_emulator()
     try:
-        if _runtime is not None:
-            _runtime.invalidate_turn_plan(
-                "Manual /action invalidated the previously validated plan."
-            )
-        state_before = await _run_emulator_sync(_get_state_dict)
-        await _record_and_broadcast(
-            "action",
-            {
-                "actions": req.actions,
-                "state_before": state_before,
-            },
-        )
-        executed = await _run_emulator_sync(_execute_action_batch_sync, req.actions)
-
-        refresh = await _refresh_agent_bundle(
-            reason="actions_executed",
-            source="action",
-            requested_actions=req.actions,
-        )
-        await _broadcast_runtime_refresh(refresh)
-        bundle = (refresh or {}).get("bundle", {})
-        state_after = bundle.get("state") or await _run_emulator_sync(_get_state_dict)
-        navigation_after = bundle.get("navigation") or await _run_emulator_sync(
-            _get_navigation_payload_sync
-        )
-
-        await _record_and_broadcast(
-            "action_result",
-            {
-                "actions": req.actions,
-                "actions_executed": executed,
-                "state_after": state_after,
-                "navigation_after": navigation_after,
-                "feedback": bundle.get("recent_action"),
-                "state_delta": bundle.get("state_delta"),
-                "objective_status": (bundle.get("objective") or {}).get("current"),
-                "stuck_signal": bundle.get("stuck"),
-                "screen_text": bundle.get("screen_text"),
-            },
-        )
-
-        return {
-            "success": True,
-            "actions_requested": req.actions,
-            "actions_executed": executed,
-            **_compact_bundle_response(bundle),
-        }
+        result = await _run_actions(req.actions, source="action", reason="actions_executed")
+        summary = _observation_summary(result["bundle"])
+        _annotate_batch_outcome(summary, result.get("outcome"))
+        _annotate_explored_map(summary, result["bundle"])
+        return {"actions_executed": result["actions_executed"], **summary}
+    except HTTPException:
+        raise
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Action error: {e}")
+
+
+@app.post("/battle/fight")
+async def battle_fight(req: BattleFightRequest):
+    """Attack with a named move, whatever the menu cursor was left on."""
+    _ensure_emulator()
+    try:
+        result = await _run_battle_sequence({"fight": req.move}, _battle_fight_sync, req.move)
+        outcome = result["outcome"]
+        payload = {"used": outcome["used"], **_observation_summary(result["bundle"])}
+        if outcome["retried"]:
+            payload["retried"] = True
+        return payload
+    except HTTPException:
+        raise
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Battle error: {e}")
+
+
+@app.post("/battle/run")
+async def battle_run():
+    """Flee, whatever the menu cursor was left on."""
+    _ensure_emulator()
+    try:
+        result = await _run_battle_sequence({"run": True}, _battle_run_sync)
+        return {
+            "fled": result["outcome"]["fled"],
+            **_observation_summary(result["bundle"]),
+        }
+    except HTTPException:
+        raise
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Battle error: {e}")
 
 
 @app.post("/save")
@@ -1673,23 +1741,20 @@ async def save_state(req: SaveRequest):
         saves_dir.mkdir(parents=True, exist_ok=True)
         save_path = saves_dir / f"{req.name}.state"
         await _run_emulator_sync(_emulator.save_state, str(save_path))
-        save_event = _make_runtime_save_event(
-            req.name,
-            save_path,
-            source="manual",
-            reason="manual_save",
-        )
-        refresh = await _refresh_agent_bundle(
+        bundle = await _refresh_and_broadcast(
             reason=f"manual_save:{req.name}",
             source="save",
-            explicit_save=save_event,
+            explicit_save=_make_runtime_save_event(
+                req.name,
+                save_path,
+                source="manual",
+                reason="manual_save",
+            ),
         )
-        await _broadcast_runtime_refresh(refresh)
-        bundle = (refresh or {}).get("bundle", {})
         return {
             "success": True,
             "save": {"name": req.name, "path": str(save_path)},
-            **_compact_bundle_response(bundle),
+            **_observation_summary(bundle),
         }
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Save error: {e}")
@@ -1706,33 +1771,18 @@ async def load_state(req: SaveRequest):
         save_path = saves_dir / f"{req.name}.state"
         if not save_path.exists():
             raise HTTPException(status_code=404, detail=f"Save not found: {req.name}")
-        if _runtime is not None:
-            _runtime.invalidate_turn_plan("Loading a save invalidated the current plan.")
         await _run_emulator_sync(_emulator.load_state, str(save_path))
-        refresh = await _refresh_agent_bundle(
+        bundle = await _refresh_and_broadcast(
             reason=f"manual_load:{req.name}",
             source="load",
         )
-        await _broadcast_runtime_refresh(refresh)
-        bundle = (refresh or {}).get("bundle", {})
         state_after = bundle.get("state") or await _run_emulator_sync(_get_state_dict)
-        navigation_after = bundle.get("navigation") or await _run_emulator_sync(
-            _get_navigation_payload_sync
-        )
         await _record_and_broadcast("load", {"name": req.name, "path": str(save_path)})
-        await broadcast(
-            {
-                "type": "state_update",
-                "reason": "load",
-                "state": state_after,
-                "navigation_after": navigation_after,
-            }
-        )
-
+        await broadcast({"type": "state_update", "reason": "load", "state": state_after})
         return {
             "success": True,
             "save": {"name": req.name, "path": str(save_path)},
-            **_compact_bundle_response(bundle),
+            **_observation_summary(bundle),
         }
     except HTTPException:
         raise
@@ -1762,222 +1812,6 @@ async def list_saves():
         return {"saves": saves}
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Error listing saves: {e}")
-
-
-@app.get("/minimap")
-async def minimap():
-    """ASCII explored navigation map for the current location."""
-    _ensure_emulator()
-    try:
-        snapshot, location_map = await _run_emulator_sync(_refresh_navigation_state_sync)
-        distances = location_map.distance_map(
-            snapshot.player_position,
-            extra_blockers=snapshot.sprite_set,
-        )
-        lines = [
-            f"=== {snapshot.map_name} ===",
-            f"Player position: {snapshot.player_position}",
-            f"Tileset: {snapshot.tileset}",
-            "",
-            location_map.render_ascii(
-                player=snapshot.player_position,
-                sprites=snapshot.sprite_positions,
-                distances=distances,
-            ),
-        ]
-        return Response(content="\n".join(lines), media_type="text/plain")
-    except NotImplementedError as e:
-        raise _navigation_not_supported(e)
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Minimap error: {e}")
-
-
-@app.get("/navigation/map")
-async def navigation_map():
-    """Return the current live navigation window and explored map."""
-    _ensure_emulator()
-    try:
-        snapshot, location_map = await _run_emulator_sync(_refresh_navigation_state_sync)
-        return _compact_navigation_snapshot(_serialize_navigation(snapshot, location_map))
-    except NotImplementedError as e:
-        raise _navigation_not_supported(e)
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Navigation map error: {e}")
-
-
-@app.post("/navigation/path")
-async def navigation_path(req: NavigationRequest):
-    """Plan a navigation route without executing it."""
-    _ensure_emulator()
-    try:
-        snapshot, location_map, plan = await _run_emulator_sync(
-            _plan_navigation_sync,
-            req.x,
-            req.y,
-            req.mode,
-        )
-        payload = _serialize_navigation(snapshot, location_map, goal=(req.x, req.y))
-        return {
-            "target": {"x": req.x, "y": req.y},
-            "plan": plan.to_dict(),
-            "navigation": _compact_navigation_snapshot(payload),
-        }
-    except NotImplementedError as e:
-        raise _navigation_not_supported(e)
-    except ValueError as e:
-        raise HTTPException(status_code=400, detail=str(e))
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Navigation path error: {e}")
-
-
-@app.post("/navigation/navigate")
-async def navigation_navigate(req: NavigationRequest):
-    """Plan and execute a navigation route."""
-    _ensure_emulator()
-    try:
-        if _runtime is not None:
-            _runtime.invalidate_turn_plan(
-                "Manual /navigation/navigate invalidated the previously validated plan."
-            )
-        snapshot_before, location_map_before, plan = await _run_emulator_sync(
-            _plan_navigation_sync,
-            req.x,
-            req.y,
-            req.mode,
-        )
-        state_before = await _run_emulator_sync(_get_state_dict)
-        navigation_before = _serialize_navigation(
-            snapshot_before,
-            location_map_before,
-            goal=(req.x, req.y),
-        )
-
-        if _dialog_is_active(state_before):
-            execution = {
-                "success": False,
-                "moved": False,
-                "started_at_target": snapshot_before.player_position == (req.x, req.y),
-                "reached_target": snapshot_before.player_position == (req.x, req.y),
-                "matched_planned_final_position": False,
-                "planned_final_position": (
-                    {"x": plan.final_position[0], "y": plan.final_position[1]}
-                    if plan.final_position is not None
-                    else None
-                ),
-                "actual_position": {
-                    "x": snapshot_before.player_position[0],
-                    "y": snapshot_before.player_position[1],
-                },
-                "target": {"x": req.x, "y": req.y},
-                "remaining_distance_before": (
-                    abs(snapshot_before.player_position[0] - req.x)
-                    + abs(snapshot_before.player_position[1] - req.y)
-                ),
-                "remaining_distance_after": (
-                    abs(snapshot_before.player_position[0] - req.x)
-                    + abs(snapshot_before.player_position[1] - req.y)
-                ),
-                "status": "Navigation did not start because a dialog or prompt is open.",
-                "blocked_by_dialog": True,
-                "suggested_actions": ["press_a"],
-            }
-            refresh = await _refresh_agent_bundle(
-                reason="navigation_blocked_by_dialog",
-                source="navigation",
-                requested_actions=[],
-                navigation_plan=plan.to_dict(),
-                navigation_execution=execution,
-            )
-            await _broadcast_runtime_refresh(refresh)
-            bundle = (refresh or {}).get("bundle", {})
-            await _record_and_broadcast(
-                "navigation",
-                {
-                    "target": {"x": req.x, "y": req.y},
-                    "plan": plan.to_dict(),
-                    "execution": execution,
-                    "state_after": bundle.get("state") or state_before,
-                    "navigation_after": bundle.get("navigation") or navigation_before,
-                },
-            )
-            return {
-                "success": False,
-                "actions_executed": 0,
-                "plan": plan.to_dict(),
-                "execution": execution,
-                "actions_requested": plan.actions,
-                **_compact_bundle_response(bundle),
-            }
-
-        executed = await _run_emulator_sync(_execute_action_batch_sync, plan.actions)
-
-        state_after = await _run_emulator_sync(_get_state_dict)
-        snapshot_after, location_map_after = await _run_emulator_sync(
-            _refresh_navigation_state_sync
-        )
-        navigation_after = _serialize_navigation(
-            snapshot_after,
-            location_map_after,
-            goal=(req.x, req.y),
-        )
-        execution = _summarize_navigation_execution(
-            snapshot_before,
-            snapshot_after,
-            plan,
-            (req.x, req.y),
-        )
-        refresh = await _refresh_agent_bundle(
-            reason="navigation_executed",
-            source="navigation",
-            requested_actions=plan.actions,
-            navigation_plan=plan.to_dict(),
-            navigation_execution=execution,
-        )
-        await _broadcast_runtime_refresh(refresh)
-        bundle = (refresh or {}).get("bundle", {})
-        state_after = bundle.get("state") or state_after
-        navigation_after = bundle.get("navigation") or navigation_after
-
-        await _record_and_broadcast(
-            "navigation",
-            {
-                "target": {"x": req.x, "y": req.y},
-                "plan": plan.to_dict(),
-                "execution": execution,
-                "actions_executed": executed,
-                "state_after": state_after,
-                "navigation_after": navigation_after,
-            },
-        )
-        await _record_and_broadcast(
-            "action_result",
-            {
-                "actions": plan.actions,
-                "actions_executed": executed,
-                "state_after": state_after,
-                "navigation_after": navigation_after,
-                "feedback": bundle.get("recent_action"),
-                "state_delta": bundle.get("state_delta"),
-                "objective_status": (bundle.get("objective") or {}).get("current"),
-                "stuck_signal": bundle.get("stuck"),
-                "screen_text": bundle.get("screen_text"),
-            },
-        )
-
-        return {
-            "success": execution["success"],
-            "actions_requested": plan.actions,
-            "actions_executed": executed,
-            "plan": plan.to_dict(),
-            "execution": execution,
-            **_compact_bundle_response(bundle),
-        }
-    except NotImplementedError as e:
-        raise _navigation_not_supported(e)
-    except ValueError as e:
-        raise HTTPException(status_code=400, detail=str(e))
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Navigation execute error: {e}")
 
 
 # ---------------------------------------------------------------------------

@@ -1,14 +1,6 @@
-from pathlib import Path
-
-import pokemon_agent.server as server
 from pokemon_agent.emulator import _build_interaction_probe
 from pokemon_agent.memory.red import ADDR_MAP_HEIGHT, ADDR_MAP_WIDTH, PokemonRedReader
-from pokemon_agent.navigation import (
-    LiveNavigationSnapshot,
-    LocationNavigationMap,
-    NavigationPath,
-    NavigationStore,
-)
+from pokemon_agent.navigation import LiveNavigationSnapshot
 
 
 def make_snapshot() -> LiveNavigationSnapshot:
@@ -42,43 +34,6 @@ def make_snapshot() -> LiveNavigationSnapshot:
     )
 
 
-def test_location_map_updates_and_routes_to_known_tile():
-    snapshot = make_snapshot()
-    location_map = LocationNavigationMap(map_id=1, map_name="TEST MAP")
-    location_map.update_from_snapshot(snapshot)
-
-    plan = location_map.plan_route(start=(10, 10), goal=(10, 9))
-
-    assert plan.reached is True
-    assert plan.partial is False
-    assert plan.directions == ["up"]
-    assert plan.actions == ["walk_up"]
-    assert plan.final_position == (10, 9)
-
-
-def test_location_map_routes_adjacent_to_blocked_goal():
-    snapshot = make_snapshot()
-    location_map = LocationNavigationMap(map_id=1, map_name="TEST MAP")
-    location_map.update_from_snapshot(snapshot)
-
-    plan = location_map.plan_route(start=(10, 10), goal=(8, 11))
-
-    assert plan.reached is False
-    assert plan.partial is True
-    assert plan.final_position in {(8, 10), (9, 11)}
-    assert len(plan.actions) == 2
-
-
-def test_location_map_marks_player_tile_passable_even_if_snapshot_disagrees():
-    snapshot = make_snapshot()
-    snapshot.terrain[1][2] = 0
-    location_map = LocationNavigationMap(map_id=1, map_name="TEST MAP")
-
-    location_map.update_from_snapshot(snapshot)
-
-    assert location_map.tiles[(10, 10)] is True
-
-
 def test_render_window_ascii_marks_warp_tiles_with_W():
     snapshot = make_snapshot()
     snapshot.warps = [{"x": 9, "y": 11, "target_map_id": 5}]
@@ -91,44 +46,15 @@ def test_render_window_ascii_marks_warp_tiles_with_W():
     assert "step ONTO" in legend["W"].lower() or "warp" in legend["W"].lower()
 
 
-def test_ascii_maps_use_symbols_not_distance_digits():
+def test_live_window_ascii_uses_symbols_not_distance_digits():
     snapshot = make_interaction_snapshot(valid_moves=["up", "left", "right"])
-    location_map = LocationNavigationMap(map_id=1, map_name="TEST MAP")
-    location_map.update_from_snapshot(snapshot)
-    distances = location_map.distance_map(
-        snapshot.player_position,
-        extra_blockers=snapshot.sprite_set,
-    )
 
     live_ascii = snapshot.render_window_ascii()
-    explored_ascii = location_map.render_ascii(
-        player=snapshot.player_position,
-        sprites=snapshot.sprite_positions,
-        distances=distances,
-    )
 
     assert live_ascii.splitlines()[0].strip().isdigit()
-    assert explored_ascii.splitlines()[0].strip().isdigit()
     assert "P" in live_ascii
-    assert "P" in explored_ascii
-    rendered_rows = [line.split(maxsplit=1)[1] for line in explored_ascii.splitlines()[1:]]
+    rendered_rows = [line.split(maxsplit=1)[1] for line in live_ascii.splitlines()[1:]]
     assert not any(char.isdigit() for row in rendered_rows for char in row)
-
-
-def test_navigation_store_round_trip(tmp_path: Path):
-    store_path = tmp_path / "navigation_maps.json"
-    store = NavigationStore(store_path)
-    snapshot = make_snapshot()
-    store.update(snapshot)
-
-    reloaded = NavigationStore(store_path)
-    location_map = reloaded.get(snapshot.key)
-
-    assert location_map is not None
-    assert location_map.tileset == "OVERWORLD"
-    assert location_map.tiles[(10, 10)] is True
-    assert location_map.tiles[(8, 11)] is False
-    assert location_map.tile_ids[(10, 10)] == 23
 
 
 def make_interaction_snapshot(sprite_positions=None, valid_moves=None) -> LiveNavigationSnapshot:
@@ -209,44 +135,6 @@ def test_interaction_probe_detects_object_over_counter():
     assert probe["target_coord"] == {"x": 10, "y": 8}
 
 
-def test_location_map_respects_tile_pair_blockers():
-    snapshot = LiveNavigationSnapshot(
-        map_id=2,
-        map_name="FOREST TEST",
-        player_position=(10, 10),
-        facing="up",
-        tileset="FOREST",
-        window_top_left=(9, 9),
-        terrain=[
-            [1, 1, 1],
-            [1, 1, 1],
-            [1, 1, 1],
-        ],
-        sprite_positions=[],
-        valid_moves=["left", "right", "down"],
-        warps=[],
-        tile_ids={
-            (9, 9): 1,
-            (10, 9): 304,
-            (11, 9): 1,
-            (9, 10): 1,
-            (10, 10): 302,
-            (11, 10): 1,
-            (9, 11): 1,
-            (10, 11): 1,
-            (11, 11): 1,
-        },
-    )
-    location_map = LocationNavigationMap(map_id=2, map_name="FOREST TEST")
-    location_map.update_from_snapshot(snapshot)
-
-    plan = location_map.plan_route(start=(10, 10), goal=(10, 9))
-
-    assert plan.reached is True
-    assert plan.directions != ["up"]
-    assert len(plan.directions) > 1
-
-
 def test_compute_valid_moves_respects_tile_pair_blockers():
     from pokemon_agent.emulator import PyBoyEmulator
 
@@ -291,57 +179,6 @@ def test_compute_valid_moves_on_warp_tile_includes_all_directions():
     )
 
     assert set(moves) == {"up", "down", "left", "right"}
-
-
-def test_auto_mode_falls_back_to_persistent_for_visible_offscreen_route(monkeypatch):
-    snapshot = make_interaction_snapshot(valid_moves=["down", "left", "right", "up"])
-    target = (10, 9)
-
-    class FakeLocationMap:
-        def plan_route(self, start, goal, extra_blockers=None):
-            assert start == snapshot.player_position
-            assert goal == target
-            assert extra_blockers == snapshot.sprite_set
-            return NavigationPath(
-                mode="persistent",
-                target=goal,
-                reached=True,
-                status="Found a route to the explored target tile.",
-                directions=["left", "up", "right"],
-                final_position=goal,
-            )
-
-    class FakeEmulator:
-        def plan_screen_path(self, reader, target_x, target_y):
-            assert (target_x, target_y) == target
-            return NavigationPath(
-                mode="screen",
-                target=target,
-                reached=False,
-                status=(
-                    "No exact visible route was found; "
-                    "routed to the closest visible reachable tile."
-                ),
-                directions=["left"],
-                final_position=(9, 10),
-                partial=True,
-                visible_target=True,
-            )
-
-    monkeypatch.setattr(
-        server,
-        "_refresh_navigation_state_sync",
-        lambda: (snapshot, FakeLocationMap()),
-    )
-    monkeypatch.setattr(server, "_emulator", FakeEmulator())
-    monkeypatch.setattr(server, "_reader", object())
-
-    _snapshot, _location_map, plan = server._plan_navigation_sync(target[0], target[1], "auto")
-
-    assert plan.mode == "persistent"
-    assert plan.reached is True
-    assert plan.visible_target is True
-    assert "leaving the current screen" in plan.status
 
 
 class FakeMemoryEmulator:
@@ -411,31 +248,6 @@ def test_read_dialog_inactive_when_window_hidden():
 
     assert dialog["active"] is False
     assert dialog["window_visible"] is False
-
-
-def test_navigation_execution_summary_detects_no_movement():
-    before = make_snapshot()
-    after = make_snapshot()
-    plan = NavigationPath(
-        mode="persistent",
-        target=(10, 9),
-        reached=True,
-        status="Found a route to the explored target tile.",
-        directions=["up"],
-        final_position=(10, 9),
-    )
-
-    execution = server._summarize_navigation_execution(
-        before,
-        after,
-        plan,
-        (10, 9),
-    )
-
-    assert execution["success"] is False
-    assert execution["moved"] is False
-    assert execution["reached_target"] is False
-    assert "did not move" in execution["status"]
 
 
 def test_read_battle_uses_enemy_battle_struct_offsets():

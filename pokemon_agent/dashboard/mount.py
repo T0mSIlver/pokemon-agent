@@ -33,25 +33,3 @@ def mount_dashboard(app):
         name="dashboard",
     )
     logger.info("Dashboard mounted at /dashboard")
-
-
-def get_dashboard_routes(app):
-    """Register additional dashboard API routes if needed.
-
-    Args:
-        app: FastAPI application instance.
-    """
-    try:
-        from fastapi import APIRouter
-        from fastapi.responses import RedirectResponse
-    except ImportError:
-        return
-
-    router = APIRouter()
-
-    @router.get("/")
-    async def root_redirect():
-        """Redirect root to dashboard."""
-        return RedirectResponse(url="/dashboard")
-
-    app.include_router(router)

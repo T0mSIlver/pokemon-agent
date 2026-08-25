@@ -60,6 +60,33 @@ ADDR_ENEMY_SPECIES = 0xD89D
 ADDR_ENEMY_DATA = 0xD8A4  # 44 bytes per mon (party struct)
 ADDR_ENEMY_MON = 0xCFE5  # active enemy battle mon (live HP/stats)
 
+# -- Battle menus --
+# Every address and every literal in this block was read off a running battle and
+# then checked against a screenshot of the same frame — a wild Weedle fight and a
+# trainer Onix fight, three-move and four-move leads. Do not "correct" them from a
+# disassembly listing without re-running that check; a wrong constant here silently
+# fires the wrong attack, which is exactly the bug this block exists to kill.
+ADDR_TOP_MENU_ITEM_Y = 0xCC24  # wTopMenuItemY — menu row anchor, identifies the menu
+ADDR_TOP_MENU_ITEM_X = 0xCC25  # wTopMenuItemX — battle-menu column: 9 left, 15 right
+ADDR_CURRENT_MENU_ITEM = 0xCC26  # wCurrentMenuItem — row (top menu) / 1-based entry (moves)
+ADDR_MAX_MENU_ITEM = 0xCC28  # wMaxMenuItem
+ADDR_PLAYER_MOVE_LIST_INDEX = 0xCC2E  # wPlayerMoveListIndex — 0-based, survives the menu closing
+ADDR_PLAYER_SELECTED_MOVE = 0xCCDC  # wPlayerSelectedMove — the move id the turn will actually use
+ADDR_BATTLE_MON_MOVES = 0xD01C  # wBattleMonMoves — the *active* battler, not party slot 0
+ADDR_BATTLE_MON_PP = 0xD02D  # wBattleMonPP, low 6 bits are the counter
+
+#: Both battle menus report this text-box id; the row anchor is what tells them apart.
+BATTLE_MENU_TEXT_BOX_ID = 11
+#: FIGHT/PKMN over ITEM/RUN. Row lives in wCurrentMenuItem, column in wTopMenuItemX.
+TOP_MENU_ITEM_Y = 14
+TOP_MENU_COLUMN_X = (9, 15)
+TOP_MENU_MAX_ITEM = 1
+TOP_MENU_ENTRIES = (("FIGHT", "PKMN"), ("ITEM", "RUN"))
+#: The move list. wCurrentMenuItem is 1-based here and covers only the real moves,
+#: so it reads 1..4 and wraps at both ends.
+MOVE_MENU_ITEM_Y = 12
+MOVE_MENU_ITEM_X = 5
+
 # -- Dialog --
 ADDR_TEXT_BOX_ID = 0xD125  # wTextBoxID
 ADDR_JOY_IGNORE = 0xD730  # bit 5 = joypad disabled (in dialogue)
@@ -660,21 +687,26 @@ MOVE_NAMES: Dict[int, str] = {
 }
 
 TYPE_NAMES: Dict[int, str] = {
+    # Gen 1 type ids. 6 is BIRD, a cut type that no obtainable species uses, and
+    # leaving it out shifted Bug and Ghost down one: a wild Weedle (Bug/Poison)
+    # was being reported as Ghost/Poison, which inverts every matchup the agent
+    # reasons about. Psychic/Ice were transposed in the upper block for the same
+    # reason.
     0: "Normal",
     1: "Fighting",
     2: "Flying",
     3: "Poison",
     4: "Ground",
     5: "Rock",
-    6: "Bug",
-    7: "Ghost",
-    # 8 unused
+    6: "Bird",
+    7: "Bug",
+    8: "Ghost",
     20: "Fire",
     21: "Water",
     22: "Grass",
     23: "Electric",
-    24: "Ice",
-    25: "Psychic",
+    24: "Psychic",
+    25: "Ice",
     26: "Dragon",
 }
 
@@ -821,147 +853,311 @@ ITEM_NAMES: Dict[int, str] = {
 }
 
 # fmt: off
+# ---------------------------------------------------------------------------
+# Map id -> display name.
+#
+# Regenerated wholesale from the pret/pokered decompilation, which is the source
+# of truth for this table:
+#   https://raw.githubusercontent.com/pret/pokered/master/constants/map_constants.asm
+#
+# Ids are POSITIONAL. Every `map_const` line in that file consumes the next id,
+# counting from PALLET_TOWN = 0 to AGATHAS_ROOM = 0xF7 = 247, so a single missing
+# entry silently shifts every map after it. That is exactly how this table
+# drifted twice: Viridian Forest reported itself as "Pewter Museum 1F" (884 saves
+# misfiled), and a Poke Center reported itself as "Mt Moon 1F". The UNUSED_MAP_xx
+# placeholders below are therefore load-bearing -- never drop one to tidy up.
+#
+# Names are produced from the constant by a mechanical rule:
+#   * underscores become spaces and each word is Title Case
+#   * floor suffixes keep their casing (1F, 2F, B1F, B2F)
+#   * SS -> "S.S.", MT -> "Mt", MR -> "Mr", CO -> "Co"
+#   * "of" / "the" / "and" stay lower case unless they lead the name
+#   * possessive plurals regain their apostrophe (REDS_HOUSE_1F -> "Red's House 1F")
+#   * UNUSED_MAP_xx -> "Unused Map xx"
+# plus the overrides in MAP_NAME_OVERRIDES.
+#
+# Checked in as a literal rather than computed at import: a running emulator must
+# not depend on network access, and the diff has to be reviewable.
+# ---------------------------------------------------------------------------
+
+# The only places where the mechanical rule is overridden, recorded here so the
+# table can be regenerated. Keep it short -- each entry is a name someone has to
+# maintain by hand forever.
+MAP_NAME_OVERRIDES: Dict[str, str] = {
+    # Terse constants: "MUSEUM"/"BIKE_SHOP" say nothing about which town they are
+    # in, and both the agent and the objective packs select maps by name.
+    "MUSEUM_1F": "Pewter Museum 1F",
+    "MUSEUM_2F": "Pewter Museum 2F",
+    "BIKE_SHOP": "Cerulean Bike Shop",
+    # Shorter labels this project already used, confirmed on the emulator.
+    "VIRIDIAN_SCHOOL_HOUSE": "Viridian School",
+    "VIRIDIAN_NICKNAME_HOUSE": "Viridian House",
+    # CELADON_MART_* is the six-floor department store, not a Poke Mart; the
+    # existing label keeps it distinct from the real marts in other towns.
+    "CELADON_MART_1F": "Celadon Dept Store 1F",
+    "CELADON_MART_2F": "Celadon Dept Store 2F",
+    "CELADON_MART_3F": "Celadon Dept Store 3F",
+    "CELADON_MART_4F": "Celadon Dept Store 4F",
+    "CELADON_MART_5F": "Celadon Dept Store 5F",
+    "CELADON_MART_ROOF": "Celadon Dept Store Roof",
+    "CELADON_MART_ELEVATOR": "Celadon Dept Store Elevator",
+}
+
+# Ids confirmed empirically on the emulator (load a save, read the frame):
+#   0 Pallet Town, 1 Viridian City, 2 Pewter City, 12 Route 1, 13 Route 2,
+#   37-44 the Pallet/Viridian interiors, 51 Viridian Forest (wild Kakuna seen),
+#   56 Pewter Mart (shelves + clerk), 58 Pewter Pokecenter (counter + plants).
+# tests/test_map_names.py pins those, the no-gaps invariant, and the fact that
+# every map name an objective pack selects on actually exists here.
 MAP_NAMES: Dict[int, str] = {
-    0: "Pallet Town", 1: "Viridian City", 2: "Pewter City",
-    3: "Cerulean City", 4: "Lavender Town", 5: "Vermilion City",
-    6: "Celadon City", 7: "Fuchsia City", 8: "Cinnabar Island",
-    9: "Indigo Plateau", 10: "Saffron City", 11: "???",
-    12: "Route 1", 13: "Route 2", 14: "Route 3", 15: "Route 4",
-    16: "Route 5", 17: "Route 6", 18: "Route 7", 19: "Route 8",
-    20: "Route 9", 21: "Route 10", 22: "Route 11", 23: "Route 12",
-    24: "Route 13", 25: "Route 14", 26: "Route 15", 27: "Route 16",
-    28: "Route 17", 29: "Route 18", 30: "Route 19", 31: "Route 20",
-    32: "Route 21", 33: "Route 22", 34: "Route 23", 35: "Route 24",
-    36: "Route 25",
-    37: "Red's House 1F", 38: "Red's House 2F",
-    39: "Blue's House", 40: "Oak's Lab",
-    41: "Viridian Pokecenter", 42: "Viridian Mart",
-    43: "Viridian School", 44: "Viridian House",
-    45: "Viridian Gym",
-    46: "Digletts Cave (Route 2)", 47: "Viridian Forest Gate (S)",
-    48: "Route 2 Trade House", 49: "Route 2 Gate (N)",
-    50: "Viridian Forest",
-    51: "Pewter Museum 1F", 52: "Pewter Museum 2F",
-    53: "Pewter Gym", 54: "Pewter House", 55: "Pewter Mart",
-    56: "Pewter Pokecenter",
-    57: "Mt Moon 1F", 58: "Mt Moon B1F", 59: "Mt Moon B2F",
-    60: "Cerulean House (trashed)", 61: "Cerulean House 2",
-    62: "Cerulean Pokecenter", 63: "Cerulean Gym",
-    64: "Cerulean Bike Shop", 65: "Cerulean Mart",
-    66: "Mt Moon Pokecenter",
-    67: "???", 68: "Route 5 Gate", 69: "Underground Path (5-6) Entrance",
-    70: "Daycare",
-    71: "Route 6 Gate", 72: "Underground Path (5-6) Exit",
-    73: "???", 74: "Route 7 Gate",
-    75: "Underground Path (7-8) Entrance",
-    76: "???",
-    77: "Route 8 Gate", 78: "Underground Path (7-8) Exit",
-    79: "Rock Tunnel Pokecenter",
-    80: "Rock Tunnel 1F", 81: "Power Plant",
-    82: "Route 11 Gate 1F", 83: "Digletts Cave (Route 11)",
-    84: "Route 11 Gate 2F",
-    85: "Route 12 Gate 1F", 86: "Bill's House",
-    87: "Vermilion Pokecenter", 88: "Pokemon Fan Club",
-    89: "Vermilion Mart", 90: "Vermilion Gym",
-    91: "Vermilion House (old rod)", 92: "Vermilion Dock",
-    93: "S.S. Anne Exterior", 94: "S.S. Anne 1F Rooms",
-    95: "S.S. Anne 2F", 96: "S.S. Anne 2F Rooms",
-    97: "S.S. Anne B1F Rooms", 98: "S.S. Anne Bow",
-    99: "S.S. Anne Kitchen",  100: "S.S. Anne Captains Room",
-    101: "S.S. Anne 1F", 102: "S.S. Anne B1F",
-    103: "???",
-    104: "???",
-    105: "???",
-    106: "???",
-    107: "???",
-    108: "Lavender Pokecenter", 109: "Pokemon Tower 1F",
-    110: "Pokemon Tower 2F", 111: "Pokemon Tower 3F",
-    112: "Pokemon Tower 4F", 113: "Pokemon Tower 5F",
-    114: "Pokemon Tower 6F", 115: "Pokemon Tower 7F",
-    116: "Lavender House 1", 117: "Lavender Mart",
-    118: "Lavender House 2",
-    119: "Celadon Dept Store 1F", 120: "Celadon Dept Store 2F",
-    121: "Celadon Dept Store 3F", 122: "Celadon Dept Store 4F",
-    123: "Celadon Dept Store Roof", 124: "Celadon Dept Store Elevator",
-    125: "Celadon Mansion 1F", 126: "Celadon Mansion 2F",
-    127: "Celadon Mansion 3F", 128: "Celadon Mansion Roof",
-    129: "Celadon Pokecenter", 130: "Celadon Gym",
-    131: "Game Corner", 132: "Celadon Dept Store 5F",
-    133: "Game Corner Prize Room",
-    134: "Celadon Diner", 135: "Celadon House",
-    136: "Celadon Hotel",
-    137: "Fuchsia Pokecenter", 138: "Fuchsia Mart",
-    139: "Fuchsia House 1", 140: "Fuchsia House 2",
-    141: "Safari Zone Gate", 142: "Fuchsia Gym",
-    143: "Fuchsia Meeting Room",
-    144: "Seafoam Islands B1F", 145: "Seafoam Islands B2F",
-    146: "Seafoam Islands B3F", 147: "Seafoam Islands B4F",
-    148: "Vermilion House 2 (good rod)",
-    149: "Fuchsia House 3 (good rod)", 150: "Mansion 1F",
-    151: "Cinnabar Gym", 152: "Cinnabar Lab",
-    153: "Cinnabar Lab Trade Room", 154: "Cinnabar Lab Metronome Room",
-    155: "Cinnabar Lab Fossil Room",
-    156: "Cinnabar Pokecenter", 157: "Cinnabar Mart",
-    158: "???",
-    159: "Indigo Plateau Lobby", 160: "Copycats House 1F",
-    161: "Copycats House 2F",
-    162: "Fighting Dojo", 163: "Saffron Gym",
-    164: "Saffron House", 165: "Saffron Mart",
-    166: "Silph Co 1F", 167: "Silph Co 2F", 168: "Silph Co 3F",
-    169: "Silph Co 4F", 170: "Silph Co 5F", 171: "Silph Co 6F",
-    172: "Silph Co 7F", 173: "Silph Co 8F", 174: "Silph Co 9F",
-    175: "Silph Co 10F", 176: "Silph Co 11F",
-    177: "Saffron Pokecenter",
-    178: "Mr Psychics House",
-    179: "Route 15 Gate 1F", 180: "Route 15 Gate 2F",
-    181: "Route 16 Gate 1F", 182: "Route 16 Gate 2F",
-    183: "Route 16 Fly House",
-    184: "Route 12 House (super rod)",
-    185: "Route 18 Gate 1F", 186: "Route 18 Gate 2F",
-    187: "Seafoam Islands 1F",
-    188: "Route 22 Gate",
-    189: "Victory Road 1F",
-    190: "Route 12 Gate 2F",
-    191: "Vermilion House 3 (diary)",
-    192: "Digletts Cave",
-    193: "Victory Road 2F",
-    194: "Rocket Hideout B1F", 195: "Rocket Hideout B2F",
-    196: "Rocket Hideout B3F", 197: "Rocket Hideout B4F",
-    198: "Rocket Hideout Elevator",
-    199: "???", 200: "???", 201: "???",
-    202: "Silph Co Elevator",
-    203: "???", 204: "???",
-    205: "Trade Center", 206: "Colosseum",
-    207: "???", 208: "???",
-    209: "Lorelei Room", 210: "Bruno Room",
-    211: "Agatha Room", 212: "Lance Room",
-    213: "Hall of Fame",
-    214: "Underground Path (N-S)", 215: "Champions Room",
-    216: "Underground Path (W-E)",
-    217: "Cerulean Cave 1F", 218: "Cerulean Cave 2F",
-    219: "Cerulean Cave B1F",
-    220: "Name Raters House",
-    221: "Cerulean House 3",
-    222: "???",
-    223: "Rock Tunnel B1F",
-    224: "Safari Zone East", 225: "Safari Zone North",
-    226: "Safari Zone West", 227: "Safari Zone Center",
-    228: "Safari Zone Rest House 1", 229: "Safari Zone Secret House",
-    230: "Safari Zone Rest House 2", 231: "Safari Zone Rest House 3",
-    232: "Safari Zone Rest House 4",
-    233: "Unknown Dungeon 2",  # alternate ID
-    234: "Unknown Dungeon 3",
-    235: "???",
-    236: "Pokemon Mansion 2F", 237: "Pokemon Mansion 3F",
-    238: "Pokemon Mansion B1F",
-    239: "Safari Zone Gate 2",
-    240: "Victory Road 3F",
-    241: "???",
-    242: "???",
-    243: "Fighting Dojo 2",
-    244: "Indigo Plateau 2",
-    245: "???", 246: "???", 247: "???",
-    248: "Cerulean Cave 3F",
+    0: "Pallet Town",  # PALLET_TOWN
+    1: "Viridian City",  # VIRIDIAN_CITY
+    2: "Pewter City",  # PEWTER_CITY
+    3: "Cerulean City",  # CERULEAN_CITY
+    4: "Lavender Town",  # LAVENDER_TOWN
+    5: "Vermilion City",  # VERMILION_CITY
+    6: "Celadon City",  # CELADON_CITY
+    7: "Fuchsia City",  # FUCHSIA_CITY
+    8: "Cinnabar Island",  # CINNABAR_ISLAND
+    9: "Indigo Plateau",  # INDIGO_PLATEAU
+    10: "Saffron City",  # SAFFRON_CITY
+    11: "Unused Map 0B",  # UNUSED_MAP_0B
+    12: "Route 1",  # ROUTE_1
+    13: "Route 2",  # ROUTE_2
+    14: "Route 3",  # ROUTE_3
+    15: "Route 4",  # ROUTE_4
+    16: "Route 5",  # ROUTE_5
+    17: "Route 6",  # ROUTE_6
+    18: "Route 7",  # ROUTE_7
+    19: "Route 8",  # ROUTE_8
+    20: "Route 9",  # ROUTE_9
+    21: "Route 10",  # ROUTE_10
+    22: "Route 11",  # ROUTE_11
+    23: "Route 12",  # ROUTE_12
+    24: "Route 13",  # ROUTE_13
+    25: "Route 14",  # ROUTE_14
+    26: "Route 15",  # ROUTE_15
+    27: "Route 16",  # ROUTE_16
+    28: "Route 17",  # ROUTE_17
+    29: "Route 18",  # ROUTE_18
+    30: "Route 19",  # ROUTE_19
+    31: "Route 20",  # ROUTE_20
+    32: "Route 21",  # ROUTE_21
+    33: "Route 22",  # ROUTE_22
+    34: "Route 23",  # ROUTE_23
+    35: "Route 24",  # ROUTE_24
+    36: "Route 25",  # ROUTE_25
+    37: "Red's House 1F",  # REDS_HOUSE_1F
+    38: "Red's House 2F",  # REDS_HOUSE_2F
+    39: "Blue's House",  # BLUES_HOUSE
+    40: "Oak's Lab",  # OAKS_LAB
+    41: "Viridian Pokecenter",  # VIRIDIAN_POKECENTER
+    42: "Viridian Mart",  # VIRIDIAN_MART
+    43: "Viridian School",  # VIRIDIAN_SCHOOL_HOUSE
+    44: "Viridian House",  # VIRIDIAN_NICKNAME_HOUSE
+    45: "Viridian Gym",  # VIRIDIAN_GYM
+    46: "Diglett's Cave Route 2",  # DIGLETTS_CAVE_ROUTE_2
+    47: "Viridian Forest North Gate",  # VIRIDIAN_FOREST_NORTH_GATE
+    48: "Route 2 Trade House",  # ROUTE_2_TRADE_HOUSE
+    49: "Route 2 Gate",  # ROUTE_2_GATE
+    50: "Viridian Forest South Gate",  # VIRIDIAN_FOREST_SOUTH_GATE
+    51: "Viridian Forest",  # VIRIDIAN_FOREST
+    52: "Pewter Museum 1F",  # MUSEUM_1F
+    53: "Pewter Museum 2F",  # MUSEUM_2F
+    54: "Pewter Gym",  # PEWTER_GYM
+    55: "Pewter Nidoran House",  # PEWTER_NIDORAN_HOUSE
+    56: "Pewter Mart",  # PEWTER_MART
+    57: "Pewter Speech House",  # PEWTER_SPEECH_HOUSE
+    58: "Pewter Pokecenter",  # PEWTER_POKECENTER
+    59: "Mt Moon 1F",  # MT_MOON_1F
+    60: "Mt Moon B1F",  # MT_MOON_B1F
+    61: "Mt Moon B2F",  # MT_MOON_B2F
+    62: "Cerulean Trashed House",  # CERULEAN_TRASHED_HOUSE
+    63: "Cerulean Trade House",  # CERULEAN_TRADE_HOUSE
+    64: "Cerulean Pokecenter",  # CERULEAN_POKECENTER
+    65: "Cerulean Gym",  # CERULEAN_GYM
+    66: "Cerulean Bike Shop",  # BIKE_SHOP
+    67: "Cerulean Mart",  # CERULEAN_MART
+    68: "Mt Moon Pokecenter",  # MT_MOON_POKECENTER
+    69: "Cerulean Trashed House Copy",  # CERULEAN_TRASHED_HOUSE_COPY
+    70: "Route 5 Gate",  # ROUTE_5_GATE
+    71: "Underground Path Route 5",  # UNDERGROUND_PATH_ROUTE_5
+    72: "Daycare",  # DAYCARE
+    73: "Route 6 Gate",  # ROUTE_6_GATE
+    74: "Underground Path Route 6",  # UNDERGROUND_PATH_ROUTE_6
+    75: "Underground Path Route 6 Copy",  # UNDERGROUND_PATH_ROUTE_6_COPY
+    76: "Route 7 Gate",  # ROUTE_7_GATE
+    77: "Underground Path Route 7",  # UNDERGROUND_PATH_ROUTE_7
+    78: "Underground Path Route 7 Copy",  # UNDERGROUND_PATH_ROUTE_7_COPY
+    79: "Route 8 Gate",  # ROUTE_8_GATE
+    80: "Underground Path Route 8",  # UNDERGROUND_PATH_ROUTE_8
+    81: "Rock Tunnel Pokecenter",  # ROCK_TUNNEL_POKECENTER
+    82: "Rock Tunnel 1F",  # ROCK_TUNNEL_1F
+    83: "Power Plant",  # POWER_PLANT
+    84: "Route 11 Gate 1F",  # ROUTE_11_GATE_1F
+    85: "Diglett's Cave Route 11",  # DIGLETTS_CAVE_ROUTE_11
+    86: "Route 11 Gate 2F",  # ROUTE_11_GATE_2F
+    87: "Route 12 Gate 1F",  # ROUTE_12_GATE_1F
+    88: "Bill's House",  # BILLS_HOUSE
+    89: "Vermilion Pokecenter",  # VERMILION_POKECENTER
+    90: "Pokemon Fan Club",  # POKEMON_FAN_CLUB
+    91: "Vermilion Mart",  # VERMILION_MART
+    92: "Vermilion Gym",  # VERMILION_GYM
+    93: "Vermilion Pidgey House",  # VERMILION_PIDGEY_HOUSE
+    94: "Vermilion Dock",  # VERMILION_DOCK
+    95: "S.S. Anne 1F",  # SS_ANNE_1F
+    96: "S.S. Anne 2F",  # SS_ANNE_2F
+    97: "S.S. Anne 3F",  # SS_ANNE_3F
+    98: "S.S. Anne B1F",  # SS_ANNE_B1F
+    99: "S.S. Anne Bow",  # SS_ANNE_BOW
+    100: "S.S. Anne Kitchen",  # SS_ANNE_KITCHEN
+    101: "S.S. Anne Captain's Room",  # SS_ANNE_CAPTAINS_ROOM
+    102: "S.S. Anne 1F Rooms",  # SS_ANNE_1F_ROOMS
+    103: "S.S. Anne 2F Rooms",  # SS_ANNE_2F_ROOMS
+    104: "S.S. Anne B1F Rooms",  # SS_ANNE_B1F_ROOMS
+    105: "Unused Map 69",  # UNUSED_MAP_69
+    106: "Unused Map 6A",  # UNUSED_MAP_6A
+    107: "Unused Map 6B",  # UNUSED_MAP_6B
+    108: "Victory Road 1F",  # VICTORY_ROAD_1F
+    109: "Unused Map 6D",  # UNUSED_MAP_6D
+    110: "Unused Map 6E",  # UNUSED_MAP_6E
+    111: "Unused Map 6F",  # UNUSED_MAP_6F
+    112: "Unused Map 70",  # UNUSED_MAP_70
+    113: "Lance's Room",  # LANCES_ROOM
+    114: "Unused Map 72",  # UNUSED_MAP_72
+    115: "Unused Map 73",  # UNUSED_MAP_73
+    116: "Unused Map 74",  # UNUSED_MAP_74
+    117: "Unused Map 75",  # UNUSED_MAP_75
+    118: "Hall of Fame",  # HALL_OF_FAME
+    119: "Underground Path North South",  # UNDERGROUND_PATH_NORTH_SOUTH
+    120: "Champion's Room",  # CHAMPIONS_ROOM
+    121: "Underground Path West East",  # UNDERGROUND_PATH_WEST_EAST
+    122: "Celadon Dept Store 1F",  # CELADON_MART_1F
+    123: "Celadon Dept Store 2F",  # CELADON_MART_2F
+    124: "Celadon Dept Store 3F",  # CELADON_MART_3F
+    125: "Celadon Dept Store 4F",  # CELADON_MART_4F
+    126: "Celadon Dept Store Roof",  # CELADON_MART_ROOF
+    127: "Celadon Dept Store Elevator",  # CELADON_MART_ELEVATOR
+    128: "Celadon Mansion 1F",  # CELADON_MANSION_1F
+    129: "Celadon Mansion 2F",  # CELADON_MANSION_2F
+    130: "Celadon Mansion 3F",  # CELADON_MANSION_3F
+    131: "Celadon Mansion Roof",  # CELADON_MANSION_ROOF
+    132: "Celadon Mansion Roof House",  # CELADON_MANSION_ROOF_HOUSE
+    133: "Celadon Pokecenter",  # CELADON_POKECENTER
+    134: "Celadon Gym",  # CELADON_GYM
+    135: "Game Corner",  # GAME_CORNER
+    136: "Celadon Dept Store 5F",  # CELADON_MART_5F
+    137: "Game Corner Prize Room",  # GAME_CORNER_PRIZE_ROOM
+    138: "Celadon Diner",  # CELADON_DINER
+    139: "Celadon Chief House",  # CELADON_CHIEF_HOUSE
+    140: "Celadon Hotel",  # CELADON_HOTEL
+    141: "Lavender Pokecenter",  # LAVENDER_POKECENTER
+    142: "Pokemon Tower 1F",  # POKEMON_TOWER_1F
+    143: "Pokemon Tower 2F",  # POKEMON_TOWER_2F
+    144: "Pokemon Tower 3F",  # POKEMON_TOWER_3F
+    145: "Pokemon Tower 4F",  # POKEMON_TOWER_4F
+    146: "Pokemon Tower 5F",  # POKEMON_TOWER_5F
+    147: "Pokemon Tower 6F",  # POKEMON_TOWER_6F
+    148: "Pokemon Tower 7F",  # POKEMON_TOWER_7F
+    149: "Mr Fuji's House",  # MR_FUJIS_HOUSE
+    150: "Lavender Mart",  # LAVENDER_MART
+    151: "Lavender Cubone House",  # LAVENDER_CUBONE_HOUSE
+    152: "Fuchsia Mart",  # FUCHSIA_MART
+    153: "Fuchsia Bill's Grandpa's House",  # FUCHSIA_BILLS_GRANDPAS_HOUSE
+    154: "Fuchsia Pokecenter",  # FUCHSIA_POKECENTER
+    155: "Warden's House",  # WARDENS_HOUSE
+    156: "Safari Zone Gate",  # SAFARI_ZONE_GATE
+    157: "Fuchsia Gym",  # FUCHSIA_GYM
+    158: "Fuchsia Meeting Room",  # FUCHSIA_MEETING_ROOM
+    159: "Seafoam Islands B1F",  # SEAFOAM_ISLANDS_B1F
+    160: "Seafoam Islands B2F",  # SEAFOAM_ISLANDS_B2F
+    161: "Seafoam Islands B3F",  # SEAFOAM_ISLANDS_B3F
+    162: "Seafoam Islands B4F",  # SEAFOAM_ISLANDS_B4F
+    163: "Vermilion Old Rod House",  # VERMILION_OLD_ROD_HOUSE
+    164: "Fuchsia Good Rod House",  # FUCHSIA_GOOD_ROD_HOUSE
+    165: "Pokemon Mansion 1F",  # POKEMON_MANSION_1F
+    166: "Cinnabar Gym",  # CINNABAR_GYM
+    167: "Cinnabar Lab",  # CINNABAR_LAB
+    168: "Cinnabar Lab Trade Room",  # CINNABAR_LAB_TRADE_ROOM
+    169: "Cinnabar Lab Metronome Room",  # CINNABAR_LAB_METRONOME_ROOM
+    170: "Cinnabar Lab Fossil Room",  # CINNABAR_LAB_FOSSIL_ROOM
+    171: "Cinnabar Pokecenter",  # CINNABAR_POKECENTER
+    172: "Cinnabar Mart",  # CINNABAR_MART
+    173: "Cinnabar Mart Copy",  # CINNABAR_MART_COPY
+    174: "Indigo Plateau Lobby",  # INDIGO_PLATEAU_LOBBY
+    175: "Copycat's House 1F",  # COPYCATS_HOUSE_1F
+    176: "Copycat's House 2F",  # COPYCATS_HOUSE_2F
+    177: "Fighting Dojo",  # FIGHTING_DOJO
+    178: "Saffron Gym",  # SAFFRON_GYM
+    179: "Saffron Pidgey House",  # SAFFRON_PIDGEY_HOUSE
+    180: "Saffron Mart",  # SAFFRON_MART
+    181: "Silph Co 1F",  # SILPH_CO_1F
+    182: "Saffron Pokecenter",  # SAFFRON_POKECENTER
+    183: "Mr Psychic's House",  # MR_PSYCHICS_HOUSE
+    184: "Route 15 Gate 1F",  # ROUTE_15_GATE_1F
+    185: "Route 15 Gate 2F",  # ROUTE_15_GATE_2F
+    186: "Route 16 Gate 1F",  # ROUTE_16_GATE_1F
+    187: "Route 16 Gate 2F",  # ROUTE_16_GATE_2F
+    188: "Route 16 Fly House",  # ROUTE_16_FLY_HOUSE
+    189: "Route 12 Super Rod House",  # ROUTE_12_SUPER_ROD_HOUSE
+    190: "Route 18 Gate 1F",  # ROUTE_18_GATE_1F
+    191: "Route 18 Gate 2F",  # ROUTE_18_GATE_2F
+    192: "Seafoam Islands 1F",  # SEAFOAM_ISLANDS_1F
+    193: "Route 22 Gate",  # ROUTE_22_GATE
+    194: "Victory Road 2F",  # VICTORY_ROAD_2F
+    195: "Route 12 Gate 2F",  # ROUTE_12_GATE_2F
+    196: "Vermilion Trade House",  # VERMILION_TRADE_HOUSE
+    197: "Diglett's Cave",  # DIGLETTS_CAVE
+    198: "Victory Road 3F",  # VICTORY_ROAD_3F
+    199: "Rocket Hideout B1F",  # ROCKET_HIDEOUT_B1F
+    200: "Rocket Hideout B2F",  # ROCKET_HIDEOUT_B2F
+    201: "Rocket Hideout B3F",  # ROCKET_HIDEOUT_B3F
+    202: "Rocket Hideout B4F",  # ROCKET_HIDEOUT_B4F
+    203: "Rocket Hideout Elevator",  # ROCKET_HIDEOUT_ELEVATOR
+    204: "Unused Map CC",  # UNUSED_MAP_CC
+    205: "Unused Map CD",  # UNUSED_MAP_CD
+    206: "Unused Map CE",  # UNUSED_MAP_CE
+    207: "Silph Co 2F",  # SILPH_CO_2F
+    208: "Silph Co 3F",  # SILPH_CO_3F
+    209: "Silph Co 4F",  # SILPH_CO_4F
+    210: "Silph Co 5F",  # SILPH_CO_5F
+    211: "Silph Co 6F",  # SILPH_CO_6F
+    212: "Silph Co 7F",  # SILPH_CO_7F
+    213: "Silph Co 8F",  # SILPH_CO_8F
+    214: "Pokemon Mansion 2F",  # POKEMON_MANSION_2F
+    215: "Pokemon Mansion 3F",  # POKEMON_MANSION_3F
+    216: "Pokemon Mansion B1F",  # POKEMON_MANSION_B1F
+    217: "Safari Zone East",  # SAFARI_ZONE_EAST
+    218: "Safari Zone North",  # SAFARI_ZONE_NORTH
+    219: "Safari Zone West",  # SAFARI_ZONE_WEST
+    220: "Safari Zone Center",  # SAFARI_ZONE_CENTER
+    221: "Safari Zone Center Rest House",  # SAFARI_ZONE_CENTER_REST_HOUSE
+    222: "Safari Zone Secret House",  # SAFARI_ZONE_SECRET_HOUSE
+    223: "Safari Zone West Rest House",  # SAFARI_ZONE_WEST_REST_HOUSE
+    224: "Safari Zone East Rest House",  # SAFARI_ZONE_EAST_REST_HOUSE
+    225: "Safari Zone North Rest House",  # SAFARI_ZONE_NORTH_REST_HOUSE
+    226: "Cerulean Cave 2F",  # CERULEAN_CAVE_2F
+    227: "Cerulean Cave B1F",  # CERULEAN_CAVE_B1F
+    228: "Cerulean Cave 1F",  # CERULEAN_CAVE_1F
+    229: "Name Rater's House",  # NAME_RATERS_HOUSE
+    230: "Cerulean Badge House",  # CERULEAN_BADGE_HOUSE
+    231: "Unused Map E7",  # UNUSED_MAP_E7
+    232: "Rock Tunnel B1F",  # ROCK_TUNNEL_B1F
+    233: "Silph Co 9F",  # SILPH_CO_9F
+    234: "Silph Co 10F",  # SILPH_CO_10F
+    235: "Silph Co 11F",  # SILPH_CO_11F
+    236: "Silph Co Elevator",  # SILPH_CO_ELEVATOR
+    237: "Unused Map ED",  # UNUSED_MAP_ED
+    238: "Unused Map EE",  # UNUSED_MAP_EE
+    239: "Trade Center",  # TRADE_CENTER
+    240: "Colosseum",  # COLOSSEUM
+    241: "Unused Map F1",  # UNUSED_MAP_F1
+    242: "Unused Map F2",  # UNUSED_MAP_F2
+    243: "Unused Map F3",  # UNUSED_MAP_F3
+    244: "Unused Map F4",  # UNUSED_MAP_F4
+    245: "Lorelei's Room",  # LORELEIS_ROOM
+    246: "Bruno's Room",  # BRUNOS_ROOM
+    247: "Agatha's Room",  # AGATHAS_ROOM
 }
 # fmt: on
 
@@ -1274,6 +1470,74 @@ class RedBlueMemoryReader(GameMemoryReader):
         if battle_type != 0:
             result["enemy"] = self._read_enemy_battle_mon()
         return result
+
+    def read_battle_moves(self) -> List[Dict[str, Any]]:
+        """Moves of the Pokemon currently *on the field*, in move-list order.
+
+        Read from ``wBattleMon`` rather than party slot 0 so a switched-in Pokemon
+        reports its own moves. Verified identical to ``read_party()[0]["moves"]``
+        while the lead is out, and identical to what the move list draws.
+        """
+        ids = self.emu.read_range(ADDR_BATTLE_MON_MOVES, 4)
+        pps = self.emu.read_range(ADDR_BATTLE_MON_PP, 4)
+        return [
+            {"id": move_id, "name": MOVE_NAMES.get(move_id, f"???({move_id})"), "pp": pps[i] & 0x3F}
+            for i, move_id in enumerate(ids)
+            if move_id != 0
+        ]
+
+    def at_battle_top_menu(self) -> bool:
+        """Is the FIGHT/PKMN/ITEM/RUN menu the thing on screen and taking input?
+
+        This is the only trustworthy "the game is waiting for my turn" signal.
+        ``read_dialog()["active"]`` is not: during the battle intro it goes true,
+        then *false* for about a second while the sprites slide in, then true
+        again on "Wild X appeared!". A wait loop on it exits into the animation.
+        """
+        return (
+            self.emu.read_u8(ADDR_TEXT_BOX_ID) == BATTLE_MENU_TEXT_BOX_ID
+            and self.emu.read_u8(ADDR_TOP_MENU_ITEM_Y) == TOP_MENU_ITEM_Y
+            and self.emu.read_u8(ADDR_TOP_MENU_ITEM_X) in TOP_MENU_COLUMN_X
+            and self.emu.read_u8(ADDR_MAX_MENU_ITEM) == TOP_MENU_MAX_ITEM
+        )
+
+    def at_battle_move_menu(self) -> bool:
+        """Is the move list open?"""
+        return (
+            self.emu.read_u8(ADDR_TEXT_BOX_ID) == BATTLE_MENU_TEXT_BOX_ID
+            and self.emu.read_u8(ADDR_TOP_MENU_ITEM_Y) == MOVE_MENU_ITEM_Y
+            and self.emu.read_u8(ADDR_TOP_MENU_ITEM_X) == MOVE_MENU_ITEM_X
+        )
+
+    def remembered_move_index(self) -> int:
+        """Where the move cursor will be when the move list is next opened.
+
+        The list remembers its previous position, and it wraps at both ends, so
+        this is the only way to know what a blind A press would fire.
+        """
+        return self.emu.read_u8(ADDR_PLAYER_MOVE_LIST_INDEX)
+
+    def selected_move_id(self) -> int:
+        """The move id the current turn will use. Tracks the cursor, survives the
+        confirming A press — so it is the postcondition worth checking."""
+        return self.emu.read_u8(ADDR_PLAYER_SELECTED_MOVE)
+
+    def read_battle_menu(self) -> Dict[str, Any]:
+        """Which battle menu is open and which entry the cursor sits on.
+
+        Facts about the screen, nothing more: ``menu`` is ``top``, ``moves`` or
+        ``other``, and ``highlighted`` is the entry A would pick right now.
+        """
+        if self.at_battle_top_menu():
+            row = 1 if self.emu.read_u8(ADDR_CURRENT_MENU_ITEM) else 0
+            column = 1 if self.emu.read_u8(ADDR_TOP_MENU_ITEM_X) == TOP_MENU_COLUMN_X[1] else 0
+            return {"menu": "top", "highlighted": TOP_MENU_ENTRIES[row][column], "index": None}
+        if self.at_battle_move_menu():
+            index = self.emu.read_u8(ADDR_CURRENT_MENU_ITEM) - 1
+            moves = self.read_battle_moves()
+            name = moves[index]["name"] if 0 <= index < len(moves) else None
+            return {"menu": "moves", "highlighted": name, "index": index if name else None}
+        return {"menu": "other", "highlighted": None, "index": None}
 
     def read_dialog(self) -> Dict[str, Any]:
         """Read dialogue / text box state.

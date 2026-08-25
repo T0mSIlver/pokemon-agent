@@ -29,14 +29,13 @@ Everything below is served by the same port, so it all comes through the tunnel:
 
 | URL | What it is |
 |-----|------------|
-| `http://localhost:8765/dashboard` | Full operator console — frames, objective, plan, Pi transcript |
+| `http://localhost:8765/dashboard` | Full operator console — frames, objective, Pi transcript |
 | `http://localhost:8765/artifacts/live_frame_annotated` | Live frame with the tile grid / objective overlay (PNG) |
 | `http://localhost:8765/artifacts/live_frame` | Live frame, raw 160x144 (PNG) |
-| `http://localhost:8765/artifacts/latest_frame_annotated` | Frame from the last `/agent/observe`, annotated — the image Pi is looking at |
-| `http://localhost:8765/artifacts/latest_frame` | Frame from the last observe, raw |
+| `http://localhost:8765/artifacts/latest_frame_annotated` | Frame from the last `POST /action`, annotated — the image Pi is looking at |
+| `http://localhost:8765/artifacts/latest_frame` | Frame from the last action, raw |
 | `http://localhost:8765/screenshot` | Current frame straight from the emulator (PNG) |
-| `http://localhost:8765/artifacts/turn_context_json` | Curated turn context Pi is given |
-| `http://localhost:8765/artifacts/turn_plan_json` | Last validated turn plan |
+| `http://localhost:8765/artifacts/turn_context_json` | Turn context snapshot, for the dashboard and debugging |
 | `ws://localhost:8765/ws` | Live event stream |
 
 The dashboard is the thing to open normally. Note the artifact URLs have **no
@@ -75,6 +74,6 @@ ssh -N -L 8765:127.0.0.1:8765 -L 8080:192.168.1.183:8080 dev@192.168.1.98
   something local owns 8765. Pick a different local port (third argument to
   `scripts/tunnel.sh`).
 - **404 on an artifact** — that artifact has not been produced yet. `latest_frame*`
-  only exists after the first `POST /agent/observe`; `live_frame*` only when the
+  only exists after the first `POST /action`; `live_frame*` only when the
   realtime clock is running (it is, unless the server was started with
   `--no-realtime`).

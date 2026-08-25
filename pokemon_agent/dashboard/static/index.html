@@ -7,7 +7,7 @@
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
     <link href="https://fonts.googleapis.com/css2?family=Chakra+Petch:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;700&family=Space+Mono:wght@400;700&display=swap" rel="stylesheet">
-    <link rel="stylesheet" href="/dashboard/assets/style.css?v=18">
+    <link rel="stylesheet" href="/dashboard/assets/style.css?v=19">
 </head>
 <body>
     <!-- Decorative background layers -->
@@ -92,39 +92,22 @@
                     </header>
 
                     <div class="hud-chat-body">
-                        <div class="hud-chat-main">
-                            <div class="hud-chat-scroll" id="piTranscript">
-                                <p class="hud-empty">AWAITING TRANSMISSION…</p>
+                        <div class="hud-stream-toolbar">
+                            <div class="hud-tool-search-wrap">
+                                <input type="text" class="hud-tool-search" id="piStreamSearch" placeholder="Search stream…" autocomplete="off" spellcheck="false" />
                             </div>
+                            <div class="hud-tool-filters" id="piStreamFilters"></div>
                         </div>
 
-                        <aside class="hud-chat-side">
-                            <div class="hud-chat-live" id="hudChatLive">
-                                <div class="hud-live-line" data-channel="thinking">
-                                    <span class="hud-live-label">Thinking</span>
-                                    <pre class="hud-live-stream" id="piCurrentThinking">— silent —</pre>
-                                    <span class="hud-cursor"></span>
-                                </div>
-                                <div class="hud-live-line" data-channel="output">
-                                    <span class="hud-live-label">Response</span>
-                                    <pre class="hud-live-stream" id="piCurrentOutput">— silent —</pre>
-                                    <span class="hud-cursor"></span>
+                        <div class="hud-stream-shell">
+                            <div class="hud-stream-scroll" id="piStream" role="region" tabindex="0" aria-label="Live stream">
+                                <button type="button" class="hud-stream-older" id="piStreamOlder" hidden></button>
+                                <div class="hud-stream-list" id="piStreamList">
+                                    <p class="hud-empty">AWAITING TRANSMISSION…</p>
                                 </div>
                             </div>
-
-                            <section class="hud-tool-pane" aria-label="Pi tool calls">
-                                <div class="hud-tool-pane-head">
-                                    <span class="hud-kicker">Tools</span>
-                                </div>
-                                <div class="hud-tool-toolbar" id="piToolToolbar">
-                                    <div class="hud-tool-search-wrap">
-                                        <input type="text" class="hud-tool-search" id="piToolSearch" placeholder="Search tools…" autocomplete="off" spellcheck="false" />
-                                    </div>
-                                    <div class="hud-tool-filters" id="piToolFilters"></div>
-                                </div>
-                                <div class="hud-tool-list hud-tool-list--stream" id="piToolFeed"></div>
-                            </section>
-                        </aside>
+                            <button type="button" class="hud-stream-jump" id="piStreamJump" hidden></button>
+                        </div>
                     </div>
                 </section>
 
@@ -264,11 +247,62 @@
                         <button id="piStopButton" class="hud-btn hud-btn--danger" type="button"><span class="hud-btn-glyph">■</span>STOP</button>
                     </div>
                 </div>
+                <div class="hud-steer">
+                    <div class="hud-command-row">
+                        <label class="hud-field hud-field--grow">
+                            <span>MESSAGE TO AGENT</span>
+                            <input id="piSteerInput" type="text" maxlength="400" spellcheck="false" autocomplete="off" placeholder="Tell the running agent something it cannot see…">
+                        </label>
+                        <div class="hud-button-group">
+                            <button id="piSteerButton" class="hud-btn hud-btn--ghost" type="button"><span class="hud-btn-glyph">✦</span>SEND</button>
+                        </div>
+                    </div>
+                    <p class="hud-steer-status" id="piSteerStatus" data-state="idle"></p>
+                </div>
                 <p class="hud-command-status" id="piControlStatus">► Use the deck to launch or stop Pi cleanly.</p>
             </section>
 
             <!-- ============================================================ -->
-            <!-- ROW 3 · AGENT INTENT                                          -->
+            <!-- ROW 3 · RETROSPECTIVE                                         -->
+            <!-- ============================================================ -->
+            <section class="hud-panel hud-critique" id="hudCritique">
+                <span class="hud-corner hud-corner--tl"></span>
+                <span class="hud-corner hud-corner--tr"></span>
+                <span class="hud-corner hud-corner--bl"></span>
+                <span class="hud-corner hud-corner--br"></span>
+
+                <header class="hud-panel-header">
+                    <div class="hud-panel-title">
+                        <h2>Retrospective</h2>
+                    </div>
+                    <div class="hud-panel-badges">
+                        <span class="hud-chip" id="critiqueStateChip">NONE</span>
+                        <span class="hud-chip" id="critiqueMetaChip">—</span>
+                    </div>
+                    <span class="hud-diag" aria-hidden="true"></span>
+                </header>
+
+                <div class="hud-critique-goals">
+                    <div class="hud-critique-goal">
+                        <span class="hud-kicker">Goal this session</span>
+                        <p class="hud-strong" id="critiqueActiveGoal">No goal set.</p>
+                        <span class="hud-chip hud-chip--tiny" id="critiqueGoalSource">SOURCE: —</span>
+                    </div>
+                    <div class="hud-critique-goal">
+                        <span class="hud-kicker">Next goal from the critic</span>
+                        <p class="hud-strong" id="critiqueNextGoal">None proposed yet.</p>
+                    </div>
+                </div>
+
+                <p class="hud-dim hud-line" id="critiqueError"></p>
+
+                <div class="hud-scrollbox">
+                    <pre class="hud-critique-text" id="critiqueText">No retrospective yet.</pre>
+                </div>
+            </section>
+
+            <!-- ============================================================ -->
+            <!-- ROW 4 · AGENT INTENT                                          -->
             <!-- ============================================================ -->
             <section class="hud-panel hud-intent" id="hudIntent">
                 <span class="hud-corner hud-corner--tl"></span>
@@ -330,7 +364,7 @@
             </section>
 
             <!-- ============================================================ -->
-            <!-- ROW 4 · WORLD STATE                                           -->
+            <!-- ROW 5 · WORLD STATE                                           -->
             <!-- ============================================================ -->
             <section class="hud-panel hud-world" id="hudWorld">
                 <span class="hud-corner hud-corner--tl"></span>
@@ -374,7 +408,7 @@
             </section>
 
             <!-- ============================================================ -->
-            <!-- ROW 5 · FLIGHT RECORDER (TIMELINE)                            -->
+            <!-- ROW 6 · FLIGHT RECORDER (TIMELINE)                            -->
             <!-- ============================================================ -->
             <section class="hud-panel hud-timeline" id="hudTimeline">
                 <span class="hud-corner hud-corner--tl"></span>
@@ -407,7 +441,7 @@
             </section>
 
             <!-- ============================================================ -->
-            <!-- ROW 6 · MEMORY BANK                                           -->
+            <!-- ROW 7 · MEMORY BANK                                           -->
             <!-- ============================================================ -->
             <section class="hud-panel hud-memory" id="hudMemory">
                 <span class="hud-corner hud-corner--tl"></span>
@@ -465,7 +499,7 @@
             </section>
 
             <!-- ============================================================ -->
-            <!-- ROW 7 · SIGNAL VAULT                                          -->
+            <!-- ROW 8 · SIGNAL VAULT                                          -->
             <!-- ============================================================ -->
             <section class="hud-panel hud-vault" id="hudVault">
                 <span class="hud-corner hud-corner--tl"></span>
@@ -494,10 +528,6 @@
                         <pre class="hud-dump" id="rawSupervisor">No supervisor data yet.</pre>
                     </details>
                     <details class="hud-details">
-                        <summary><span class="hud-details-glyph">▸</span>PI EVENT TRACE</summary>
-                        <ul class="hud-divided-list" id="piRecentEvents"></ul>
-                    </details>
-                    <details class="hud-details">
                         <summary><span class="hud-details-glyph">▸</span>PI STDERR / WARNINGS</summary>
                         <pre class="hud-dump" id="piStderr">No stderr output.</pre>
                     </details>
@@ -506,6 +536,6 @@
         </main>
     </div>
 
-    <script src="/dashboard/assets/app.js?v=16"></script>
+    <script src="/dashboard/assets/app.js?v=18"></script>
 </body>
 </html>

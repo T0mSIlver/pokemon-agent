@@ -1,303 +1,662 @@
 import asyncio
+import base64
+import gc
+import json
+import subprocess
+import time
 from pathlib import Path
+from typing import Optional
 
 import pytest
 
-from pokemon_agent.harness.prompting import CONTINUE_PROMPT
-from pokemon_agent.pi_supervisor import PiSupervisor, parse_model_limits_output
-
-
-def make_fake_pi_script(
-    tmp_path: Path,
-    *,
-    include_turn_end: bool = True,
-    include_frame_read: bool = False,
-    include_write_tool: bool = True,
-    linger_after_events: bool = False,
-) -> Path:
-    script = tmp_path / "fake-pi"
-    template = """#!/usr/bin/env python3
-import json
-import pathlib
-import sys
-import time
-
-resume = "--continue" in sys.argv or "--session" in sys.argv
-session_dir = pathlib.Path(sys.argv[sys.argv.index("--session-dir") + 1])
-session_dir.mkdir(parents=True, exist_ok=True)
-workspace_dir = session_dir.parent
-session_file = session_dir / "session-123.jsonl"
-if not session_file.exists():
-    session_file.write_text(
-        json.dumps(
-            {
-                "type": "session",
-                "version": 3,
-                "id": "session-123",
-                "timestamp": "2026-01-01T00:00:00Z",
-                "cwd": str(workspace_dir),
-            }
-        )
-        + "\\n",
-        encoding="utf-8",
-    )
-message = "Continued turn." if resume else "Initial turn."
-
-vision_events = []
-if __INCLUDE_FRAME_READ__:
-    vision_events = [
-        {
-            "type": "tool_execution_start",
-            "toolCallId": "tool-read-1",
-            "toolName": "read",
-            "args": {
-                "path": str(workspace_dir / "latest_frame_annotated.png"),
-            },
-        },
-        {
-            "type": "tool_execution_end",
-            "toolCallId": "tool-read-1",
-            "toolName": "read",
-            "result": {"ok": True},
-            "isError": False,
-        },
-    ]
-
-tool_events = []
-if __INCLUDE_WRITE_TOOL__:
-    tool_events = [
-        {
-            "type": "tool_execution_start",
-            "toolCallId": "tool-1",
-            "toolName": "write",
-            "args": {
-                "path": str(workspace_dir / "turn_plan.json"),
-                "content": json.dumps(
-                    {
-                        "objective_id": "get_oaks_parcel",
-                        "summary": "Move north carefully.",
-                        "planned_actions": ["walk_up"],
-                        "fallback_actions": ["walk_left"],
-                    }
-                ),
-            },
-        },
-        {
-            "type": "tool_execution_end",
-            "toolCallId": "tool-1",
-            "toolName": "write",
-            "result": {"ok": True},
-            "isError": False,
-        },
-    ]
-
-events = [
-    {"type": "session", "id": "session-123", "cwd": str(workspace_dir)},
-    {"type": "agent_start"},
-    {"type": "turn_start", "turnIndex": 1},
-    {"type": "message_start", "message": {"role": "assistant", "content": []}},
-    {
-        "type": "message_update",
-        "message": {"role": "assistant", "content": []},
-        "assistantMessageEvent": {"type": "thinking_delta", "delta": "Inspecting the frame."},
-    },
-    *vision_events,
-    *tool_events,
-    {
-        "type": "message_update",
-        "message": {"role": "assistant", "content": []},
-        "assistantMessageEvent": {"type": "text_delta", "delta": message},
-    },
-    {
-        "type": "message_end",
-        "message": {
-            "role": "assistant",
-            "content": [
-                {"type": "thinking", "text": "Inspecting the frame."},
-                {"type": "text", "text": message},
-            ],
-            "usage": {
-                "input": 3200,
-                "output": 260,
-                "cacheRead": 0,
-                "cacheWrite": 0,
-                "totalTokens": 3460,
-            },
-        },
-    },
-    {"type": "agent_end", "messages": []},
-]
-
-if __INCLUDE_TURN_END__:
-    events.insert(
-        -1,
-        {
-            "type": "turn_end",
-            "turnIndex": 1,
-            "message": {"role": "assistant", "content": [{"type": "text", "text": message}]},
-            "toolResults": [],
-        },
-    )
-
-for event in events:
-    print(json.dumps(event), flush=True)
-
-if __LINGER_AFTER_EVENTS__:
-    while True:
-        time.sleep(1)
-"""
-    script.write_text(
-        template.replace("__INCLUDE_TURN_END__", repr(include_turn_end))
-        .replace("__INCLUDE_FRAME_READ__", repr(include_frame_read))
-        .replace("__INCLUDE_WRITE_TOOL__", repr(include_write_tool))
-        .replace("__LINGER_AFTER_EVENTS__", repr(linger_after_events)),
-        encoding="utf-8",
-    )
-    script.chmod(0o755)
-    return script
-
-
-def make_fake_cycle_pi_script(
-    tmp_path: Path,
-    *,
-    include_frame_read: bool = True,
-) -> Path:
-    script = tmp_path / "fake-pi-cycle"
-    template = """#!/usr/bin/env python3
-import json
-import pathlib
-import sys
-import time
-
-session_dir = pathlib.Path(sys.argv[sys.argv.index("--session-dir") + 1])
-session_dir.mkdir(parents=True, exist_ok=True)
-workspace_dir = session_dir.parent
-session_file = session_dir / "session-cycle.jsonl"
-if not session_file.exists():
-    session_file.write_text(
-        json.dumps(
-            {
-                "type": "session",
-                "version": 3,
-                "id": "session-cycle",
-                "timestamp": "2026-01-01T00:00:00Z",
-                "cwd": str(workspace_dir),
-            }
-        )
-        + "\\n",
-        encoding="utf-8",
-    )
-
-observe_result = {
-    "observation_id": "obs-cycle-1",
-    "artifacts": {
-        "latest_frame": str(workspace_dir / "latest_frame.png"),
-        "latest_frame_annotated": str(workspace_dir / "latest_frame_annotated.png"),
-        "turn_context_json": str(workspace_dir / "turn_context.json"),
-        "turn_plan_json": str(workspace_dir / "turn_plan.json"),
-    },
-}
-
-events = [
-    {"type": "session", "id": "session-cycle", "cwd": str(workspace_dir)},
-    {
-        "type": "tool_execution_start",
-        "toolCallId": "observe-1",
-        "toolName": "bash",
-        "args": {"command": "curl -s http://127.0.0.1:8765/agent/observe"},
-    },
-    {
-        "type": "tool_execution_end",
-        "toolCallId": "observe-1",
-        "toolName": "bash",
-        "result": observe_result,
-        "isError": False,
-    },
-]
-
-if __INCLUDE_FRAME_READ__:
-    events.extend(
-        [
-            {
-                "type": "tool_execution_start",
-                "toolCallId": "frame-1",
-                "toolName": "read",
-                "args": {"path": str(workspace_dir / "latest_frame_annotated.png")},
-            },
-            {
-                "type": "tool_execution_end",
-                "toolCallId": "frame-1",
-                "toolName": "read",
-                "result": {"ok": True},
-                "isError": False,
-            },
-        ]
-    )
-
-events.extend(
-    [
-        {
-            "type": "tool_execution_start",
-            "toolCallId": "plan-1",
-            "toolName": "bash",
-            "args": {"command": "PORT=8765 bash agent_curl.sh /agent/plan <<'JSON'\\n{}\\nJSON"},
-        },
-        {
-            "type": "tool_execution_end",
-            "toolCallId": "plan-1",
-            "toolName": "bash",
-            "result": {"success": True},
-            "isError": False,
-        },
-        {
-            "type": "tool_execution_start",
-            "toolCallId": "act-1",
-            "toolName": "bash",
-            "args": {"command": "PORT=8765 bash agent_curl.sh /agent/act <<'JSON'\\n{}\\nJSON"},
-        },
-        {
-            "type": "tool_execution_end",
-            "toolCallId": "act-1",
-            "toolName": "bash",
-            "result": {"success": True},
-            "isError": False,
-        },
-        {
-            "type": "tool_execution_start",
-            "toolCallId": "observe-2",
-            "toolName": "bash",
-            "args": {"command": "curl -s http://127.0.0.1:8765/agent/observe"},
-        },
-        {
-            "type": "tool_execution_end",
-            "toolCallId": "observe-2",
-            "toolName": "bash",
-            "result": observe_result,
-            "isError": False,
-        },
-    ]
+from pokemon_agent.critic import (
+    CRITIC_RAW_FILENAME,
+    DEBUG_DIRNAME,
+    DIGEST_CHAR_BUDGET,
+    HANDOFF_FILENAME,
+    HANDOFF_HEADING,
+    HANDOFF_PREVIOUS_FILENAME,
+    MAX_HANDOFF_WORDS,
+    SALVAGED_REASONING_NOTICE,
+    read_handoff,
+    write_handoff,
+)
+from pokemon_agent.pi_supervisor import (
+    CONTINUE_MESSAGE,
+    CRITIC_STREAM_PREFIX,
+    FALLBACK_GOAL,
+    GOAL_SOURCE_CRITIC,
+    GOAL_SOURCE_FALLBACK,
+    GOAL_SOURCE_OBJECTIVE,
+    GOAL_SOURCE_OPERATOR,
+    OPERATOR_MESSAGE_LIMIT,
+    OPERATOR_STREAM_SOURCE,
+    ORPHAN_TOOL_RESULT_TEXT,
+    STREAM_ENTRY_CAP,
+    TOOL_RESULT_LIMIT,
+    NoLiveSessionError,
+    PiSupervisor,
+    command_headline,
+    find_orphaned_tool_calls,
+    iter_jsonl_records,
+    parse_model_limits_output,
+    payload_text,
+    repair_orphaned_tool_calls,
 )
 
-for event in events:
-    print(json.dumps(event), flush=True)
-    time.sleep(0.02)
+FAKE_RPC_SERVER = '''#!/usr/bin/env python3
+"""Minimal stand-in for `pi --mode rpc`: JSON commands in, JSON events out."""
+
+import json
+import pathlib
+import sys
+import time
+
+PARAMS = __PARAMS__
+
+argv = sys.argv[1:]
+
+
+def opt(name):
+    if name in argv:
+        index = argv.index(name)
+        if index + 1 < len(argv):
+            return argv[index + 1]
+    return None
+
+
+if "--list-models" in argv:
+    provider = opt("--provider") or "llamacpp"
+    model = opt("--list-models") or "fake-model"
+    print("provider  model  context  max-out  thinking  images")
+    print(provider + "  " + model + "  262.1K   65.5K    yes       yes")
+    raise SystemExit(0)
+
+if "--print" in argv:
+    # The between-session critic: one-shot print mode, no session directory.
+    pathlib.Path.cwd().joinpath("critic_argv.json").write_text(
+        json.dumps(argv), encoding="utf-8"
+    )
+    with pathlib.Path.cwd().joinpath("critic_calls.jsonl").open("a", encoding="utf-8") as log:
+        log.write(json.dumps(argv) + "\\n")
+    critique = PARAMS["critique"]
+    if critique is None:
+        sys.stderr.write("no critique configured\\n")
+        raise SystemExit(3)
+    time.sleep(PARAMS["critique_delay"])
+
+    def emit_print(payload):
+        sys.stdout.write(json.dumps(payload) + "\\n")
+        sys.stdout.flush()
+
+    def print_deltas(kind, body):
+        for index in range(0, len(body), 8):
+            emit_print(
+                {
+                    "type": "message_update",
+                    "assistantMessageEvent": {"type": kind, "delta": body[index : index + 8]},
+                }
+            )
+
+    emit_print({"type": "agent_start"})
+    reasoning = PARAMS["critique_thinking"]
+    print_deltas("thinking_delta", reasoning)
+    print_deltas("text_delta", critique)
+    content = []
+    if reasoning:
+        content.append({"type": "thinking", "thinking": reasoning})
+    if critique:
+        content.append({"type": "text", "text": critique})
+    if content or PARAMS["critique_stop_reason"] or PARAMS["critique_usage"]:
+        message = {"role": "assistant", "content": content}
+        if PARAMS["critique_stop_reason"]:
+            message["stopReason"] = PARAMS["critique_stop_reason"]
+        if PARAMS["critique_usage"]:
+            message["usage"] = PARAMS["critique_usage"]
+        emit_print({"type": "message_end", "message": message})
+    emit_print({"type": "agent_settled"})
+    raise SystemExit(0)
+
+session_dir = pathlib.Path(opt("--session-dir"))
+session_dir.mkdir(parents=True, exist_ok=True)
+workspace_dir = session_dir.parent
+session_id = opt("--session-id") or "session-fake"
+session_file = session_dir / (session_id + ".jsonl")
+command_log = workspace_dir / "rpc_commands.jsonl"
+
+if not session_file.exists():
+    session_file.write_text(
+        json.dumps(
+            {
+                "type": "session",
+                "version": 3,
+                "id": session_id,
+                "timestamp": "2026-01-01T00:00:00Z",
+                "cwd": str(workspace_dir),
+            }
+        )
+        + "\\n",
+        encoding="utf-8",
+    )
+
+state = {"auto_compaction": True, "turn": 0, "entry": 0}
+
+
+def emit(payload):
+    sys.stdout.write(json.dumps(payload) + "\\n")
+    sys.stdout.flush()
+
+
+def log_command(command):
+    with command_log.open("a", encoding="utf-8") as handle:
+        handle.write(json.dumps(command) + "\\n")
+
+
+def append_entry(message):
+    state["entry"] += 1
+    entry_id = "entry-%04d" % state["entry"]
+    with session_file.open("a", encoding="utf-8") as handle:
+        handle.write(
+            json.dumps(
+                {
+                    "type": "message",
+                    "id": entry_id,
+                    "parentId": None,
+                    "timestamp": "2026-01-01T00:00:00Z",
+                    "message": message,
+                }
+            )
+            + "\\n"
+        )
+
+
+def run_turn():
+    state["turn"] += 1
+    text = "Initial turn." if state["turn"] == 1 else "Continued turn."
+    emit({"type": "agent_start"})
+    emit({"type": "turn_start"})
+    emit({"type": "message_start", "message": {"role": "assistant", "content": []}})
+    emit(
+        {
+            "type": "message_update",
+            "assistantMessageEvent": {
+                "type": "thinking_delta",
+                "delta": "Inspecting the frame.",
+            },
+        }
+    )
+
+    if PARAMS["hang_mid_tool"]:
+        append_entry(
+            {
+                "role": "assistant",
+                "content": [
+                    {
+                        "type": "toolCall",
+                        "id": "tool-orphan",
+                        "name": "bash",
+                        "arguments": {"command": "sleep 600"},
+                    }
+                ],
+                "stopReason": "toolUse",
+            }
+        )
+        emit(
+            {
+                "type": "tool_execution_start",
+                "toolCallId": "tool-orphan",
+                "toolName": "bash",
+                "args": {"command": "sleep 600"},
+            }
+        )
+        while True:
+            time.sleep(1)
+
+    if PARAMS["orphan_tool_call"]:
+        append_entry(
+            {
+                "role": "assistant",
+                "content": [
+                    {
+                        "type": "toolCall",
+                        "id": "tool-orphan",
+                        "name": "bash",
+                        "arguments": {"command": "echo hi"},
+                    }
+                ],
+                "stopReason": "toolUse",
+            }
+        )
+
+    if PARAMS["action_tool"]:
+        body = json.dumps({"actions": ["walk_up", "walk_up"]})
+        command = "# walk north\\ncurl -sS -X POST http://localhost:$PORT/action -d " + repr(body)
+        response = json.dumps({"x": 5, "y": 6, "facing": "up", "moved": 0, "blocked_after": 1})
+        emit(
+            {
+                "type": "tool_execution_start",
+                "toolCallId": "tool-action-%d" % state["turn"],
+                "toolName": "bash",
+                "args": {"command": command},
+            }
+        )
+        emit(
+            {
+                "type": "tool_execution_end",
+                "toolCallId": "tool-action-%d" % state["turn"],
+                "toolName": "bash",
+                "result": {"output": response},
+                "isError": False,
+            }
+        )
+
+    if PARAMS["include_write_tool"]:
+        plan = {
+            "objective_id": "get_oaks_parcel",
+            "summary": "Move north carefully.",
+            "planned_actions": ["walk_up"],
+            "fallback_actions": ["walk_left"],
+        }
+        emit(
+            {
+                "type": "tool_execution_start",
+                "toolCallId": "tool-%d" % state["turn"],
+                "toolName": "write",
+                "args": {
+                    "path": str(workspace_dir / "turn_plan.json"),
+                    "content": json.dumps(plan),
+                },
+            }
+        )
+        emit(
+            {
+                "type": "tool_execution_end",
+                "toolCallId": "tool-%d" % state["turn"],
+                "toolName": "write",
+                "result": {"ok": True},
+                "isError": False,
+            }
+        )
+
+    emit(
+        {
+            "type": "message_update",
+            "assistantMessageEvent": {"type": "text_delta", "delta": text},
+        }
+    )
+    emit(
+        {
+            "type": "message_end",
+            "message": {
+                "role": "assistant",
+                "content": [
+                    {"type": "thinking", "thinking": "Inspecting the frame."},
+                    {"type": "text", "text": text},
+                ],
+                "usage": {
+                    "input": 3200,
+                    "output": 260,
+                    "cacheRead": 0,
+                    "cacheWrite": 0,
+                    "totalTokens": 3460,
+                },
+            },
+        }
+    )
+    emit(
+        {
+            "type": "turn_end",
+            "message": {"role": "assistant", "content": [{"type": "text", "text": text}]},
+            "toolResults": [],
+        }
+    )
+    emit({"type": "agent_end", "messages": [], "willRetry": True})
+    emit({"type": "agent_end", "messages": [], "willRetry": False})
+    if PARAMS["settle"]:
+        emit({"type": "agent_settled"})
+
 
 while True:
-    time.sleep(1)
-"""
+    line = sys.stdin.readline()
+    if not line:
+        break
+    line = line.strip()
+    if not line:
+        continue
+    command = json.loads(line)
+    log_command(command)
+    kind = command.get("type")
+    request_id = command.get("id")
+
+    if kind == "set_auto_compaction":
+        state["auto_compaction"] = bool(command.get("enabled"))
+        emit(
+            {
+                "id": request_id,
+                "type": "response",
+                "command": "set_auto_compaction",
+                "success": True,
+            }
+        )
+        continue
+
+    if kind == "get_session_stats":
+        emit(
+            {
+                "id": request_id,
+                "type": "response",
+                "command": "get_session_stats",
+                "success": True,
+                "data": {
+                    "sessionFile": str(session_file),
+                    "sessionId": session_id,
+                    "tokens": {
+                        "input": 3200,
+                        "output": 260,
+                        "cacheRead": 0,
+                        "cacheWrite": 0,
+                        "total": 3460,
+                    },
+                    "cost": 0.0,
+                    "contextUsage": {
+                        "tokens": PARAMS["context_tokens"],
+                        "contextWindow": 262144,
+                        "percent": 2,
+                    },
+                },
+            }
+        )
+        continue
+
+    if kind == "get_state":
+        emit(
+            {
+                "id": request_id,
+                "type": "response",
+                "command": "get_state",
+                "success": True,
+                "data": {
+                    "isStreaming": PARAMS["is_streaming"],
+                    "messageCount": state["turn"],
+                },
+            }
+        )
+        continue
+
+    if kind == "prompt" and command.get("streamingBehavior"):
+        # A queued message: accepted for the running agent, no new turn here.
+        emit({"id": request_id, "type": "response", "command": "prompt", "success": True})
+        continue
+
+    if kind == "prompt":
+        emit({"id": request_id, "type": "response", "command": "prompt", "success": True})
+        run_turn()
+        continue
+
+    emit({"id": request_id, "type": "response", "command": kind, "success": True})
+'''
+
+
+def make_fake_rpc_server(
+    tmp_path: Path,
+    *,
+    include_write_tool: bool = True,
+    hang_mid_tool: bool = False,
+    context_tokens: int = 4200,
+    settle: bool = True,
+    orphan_tool_call: bool = False,
+    action_tool: bool = False,
+    is_streaming: bool = True,
+    critique: Optional[str] = None,
+    critique_delay: float = 0.0,
+    critique_thinking: str = "",
+    critique_stop_reason: str = "",
+    critique_usage: Optional[dict] = None,
+) -> Path:
+    """Build a stand-in RPC server.
+
+    ``settle=False`` reproduces the long single turn seen in real runs: the fake
+    streams a whole turn, never emits ``agent_settled``, and keeps servicing
+    stdin so ``get_session_stats`` still answers mid-turn.
+
+    ``critique`` is what the same binary answers in ``--print`` mode, where the
+    supervisor runs its between-session critic: ``None`` fails with status 3,
+    ``""`` returns an empty stream, and any text is the retrospective.
+    """
+
+    script = tmp_path / "fake-pi-rpc"
+    params = {
+        "include_write_tool": include_write_tool,
+        "hang_mid_tool": hang_mid_tool,
+        "context_tokens": context_tokens,
+        "settle": settle,
+        "orphan_tool_call": orphan_tool_call,
+        "action_tool": action_tool,
+        "is_streaming": is_streaming,
+        "critique": critique,
+        "critique_delay": critique_delay,
+        "critique_thinking": critique_thinking,
+        "critique_stop_reason": critique_stop_reason,
+        "critique_usage": critique_usage or {},
+    }
     script.write_text(
-        template.replace("__INCLUDE_FRAME_READ__", repr(include_frame_read)),
+        FAKE_RPC_SERVER.replace("__PARAMS__", repr(params)),
         encoding="utf-8",
     )
     script.chmod(0o755)
     return script
+
+
+def read_commands(workspace_dir: Path) -> list[dict]:
+    log = workspace_dir / "rpc_commands.jsonl"
+    if not log.is_file():
+        return []
+    return iter_jsonl_records(log.read_text(encoding="utf-8"))
+
+
+def prompt_commands(workspace_dir: Path) -> list[dict]:
+    return [command for command in read_commands(workspace_dir) if command.get("type") == "prompt"]
+
+
+def write_frames(workspace_dir: Path) -> tuple[Path, Path]:
+    workspace_dir.mkdir(parents=True, exist_ok=True)
+    annotated = workspace_dir / "latest_frame_annotated.png"
+    raw = workspace_dir / "latest_frame.png"
+    annotated.write_bytes(b"annotated-frame")
+    raw.write_bytes(b"raw-frame")
+    return annotated, raw
+
+
+async def wait_for(predicate, timeout: float = 6.0) -> bool:
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline:
+        if predicate():
+            return True
+        await asyncio.sleep(0.05)
+    return False
 
 
 @pytest.mark.asyncio
-async def test_pi_supervisor_tracks_turn_output_and_tools(tmp_path: Path):
+async def test_launch_command_uses_rpc_mode_flags(tmp_path: Path):
+    events: list[dict] = []
+    fake_pi = make_fake_rpc_server(tmp_path)
+    workspace_dir = tmp_path / "workspace"
+
+    async def sink(event: dict) -> None:
+        events.append(event)
+
+    supervisor = PiSupervisor(
+        workspace_dir=workspace_dir,
+        server_url="http://127.0.0.1:8765",
+        event_sink=sink,
+        pi_binary=str(fake_pi),
+    )
+
+    await supervisor.start(
+        goal="Reach the next checkpoint.",
+        provider="llamacpp",
+        model="fake-model",
+        thinking="medium",
+        auto_continue=False,
+    )
+    await supervisor.wait_until_idle(timeout=10)
+
+    launch = next(event for event in events if event["type"] == "pi_session_launch")
+    snapshot = supervisor.state_snapshot()
+    assert launch["command_preview"] == [
+        str(fake_pi),
+        "--mode",
+        "rpc",
+        "--system-prompt",
+        str(supervisor.skill_path),
+        "--tools",
+        "read,bash,edit,write",
+        "--session-id",
+        snapshot["session_id"],
+        "--session-dir",
+        str(workspace_dir.resolve() / "pi-session"),
+        "-ne",
+        "-ns",
+        "-nc",
+        "-np",
+        "--no-themes",
+        "--offline",
+        "--provider",
+        "llamacpp",
+        "--model",
+        "fake-model",
+        "--thinking",
+        "medium",
+    ]
+    assert "--mode json" not in " ".join(launch["command_preview"])
+    assert "--print" not in launch["command_preview"]
+    assert snapshot["model_limits"]["context_window_tokens"] == 262100
+
+
+@pytest.mark.asyncio
+async def test_auto_compaction_is_disabled_before_the_first_prompt(tmp_path: Path):
+    fake_pi = make_fake_rpc_server(tmp_path)
+    workspace_dir = tmp_path / "workspace"
+
+    supervisor = PiSupervisor(
+        workspace_dir=workspace_dir,
+        server_url="http://127.0.0.1:8765",
+        pi_binary=str(fake_pi),
+    )
+
+    await supervisor.start(goal="Reach the next checkpoint.", auto_continue=False)
+    await supervisor.wait_until_idle(timeout=10)
+
+    commands = read_commands(workspace_dir)
+    assert commands[0]["type"] == "set_auto_compaction"
+    assert commands[0]["enabled"] is False
+    assert commands[1]["type"] == "prompt"
+
+
+@pytest.mark.asyncio
+async def test_initial_prompt_carries_goal_text_and_both_frames(tmp_path: Path):
+    streamed: list[dict] = []
+    fake_pi = make_fake_rpc_server(tmp_path)
+    workspace_dir = tmp_path / "workspace"
+    annotated, raw = write_frames(workspace_dir)
+
+    async def stream(event: dict) -> None:
+        streamed.append(event)
+
+    supervisor = PiSupervisor(
+        workspace_dir=workspace_dir,
+        server_url="http://127.0.0.1:8765",
+        stream_sink=stream,
+        pi_binary=str(fake_pi),
+    )
+
+    await supervisor.start(goal="Reach the next checkpoint.", auto_continue=False)
+    await supervisor.wait_until_idle(timeout=10)
+
+    prompts = prompt_commands(workspace_dir)
+    assert len(prompts) == 1
+    assert prompts[0]["message"] == "Reach the next checkpoint."
+    images = prompts[0]["images"]
+    assert [image["mimeType"] for image in images] == ["image/png", "image/png"]
+    assert images[0]["type"] == "image"
+    assert images[0]["data"] == base64.b64encode(annotated.read_bytes()).decode("ascii")
+    assert images[1]["data"] == base64.b64encode(raw.read_bytes()).decode("ascii")
+
+    prompt_event = next(event for event in streamed if event["type"] == "pi_prompt_sent")
+    assert prompt_event["attachments"] == [str(annotated), str(raw)]
+
+
+@pytest.mark.asyncio
+async def test_follow_up_prompt_is_bare_continue_without_images(tmp_path: Path):
+    streamed: list[dict] = []
+    fake_pi = make_fake_rpc_server(tmp_path)
+    workspace_dir = tmp_path / "workspace"
+    write_frames(workspace_dir)
+
+    async def stream(event: dict) -> None:
+        streamed.append(event)
+
+    supervisor = PiSupervisor(
+        workspace_dir=workspace_dir,
+        server_url="http://127.0.0.1:8765",
+        stream_sink=stream,
+        pi_binary=str(fake_pi),
+    )
+
+    await supervisor.start(
+        goal="Reach the next checkpoint.",
+        auto_continue=True,
+        max_turns=3,
+        continue_delay_seconds=0,
+    )
+    await supervisor.wait_until_idle(timeout=15)
+
+    prompts = prompt_commands(workspace_dir)
+    assert len(prompts) == 3
+    assert prompts[1]["message"] == CONTINUE_MESSAGE == "continue"
+    assert "images" not in prompts[1]
+    assert "images" not in prompts[2]
+
+    prompt_events = [event for event in streamed if event["type"] == "pi_prompt_sent"]
+    assert prompt_events[1]["attachments"] == []
+    assert prompt_events[1]["resume"] is True
+
+    snapshot = supervisor.state_snapshot()
+    assert snapshot["status"] == "completed"
+    assert snapshot["turns_completed"] == 3
+    assert snapshot["continue_count"] == 2
+
+
+@pytest.mark.asyncio
+async def test_one_turn_completes_per_agent_settled_not_per_agent_end(tmp_path: Path):
+    events: list[dict] = []
+    fake_pi = make_fake_rpc_server(tmp_path)
+
+    async def sink(event: dict) -> None:
+        events.append(event)
+
+    supervisor = PiSupervisor(
+        workspace_dir=tmp_path / "workspace",
+        server_url="http://127.0.0.1:8765",
+        event_sink=sink,
+        pi_binary=str(fake_pi),
+    )
+
+    await supervisor.start(goal="Reach the next checkpoint.", auto_continue=False)
+    await supervisor.wait_until_idle(timeout=10)
+
+    # The fake emits two agent_end events (one with willRetry) before a single settle.
+    assert len([event for event in events if event["type"] == "pi_agent_end"]) == 2
+    assert len([event for event in events if event["type"] == "pi_agent_settled"]) == 1
+    assert len([event for event in events if event["type"] == "pi_turn_end"]) == 1
+    assert supervisor.state_snapshot()["turns_completed"] == 1
+
+
+@pytest.mark.asyncio
+async def test_transcript_tool_and_usage_telemetry(tmp_path: Path):
     events: list[dict] = []
     streamed: list[dict] = []
-    fake_pi = make_fake_pi_script(tmp_path)
+    fake_pi = make_fake_rpc_server(tmp_path)
 
     async def sink(event: dict) -> None:
         events.append(event)
@@ -314,12 +673,11 @@ async def test_pi_supervisor_tracks_turn_output_and_tools(tmp_path: Path):
     )
 
     await supervisor.start(goal="Reach the next checkpoint.", auto_continue=False)
-    await supervisor.wait_until_idle(timeout=5)
+    await supervisor.wait_until_idle(timeout=10)
 
     snapshot = supervisor.state_snapshot()
     assert snapshot["status"] == "completed"
     assert snapshot["turns_completed"] == 1
-    assert snapshot["session_id"] == "session-123"
     assert snapshot["goal"] == "Reach the next checkpoint."
     assert snapshot["last_assistant_text"] == "Initial turn."
     assert "Inspecting the frame." in snapshot["last_assistant_thinking"]
@@ -335,13 +693,27 @@ async def test_pi_supervisor_tracks_turn_output_and_tools(tmp_path: Path):
         entry["channel"] == "assistant" and entry["role"] == "assistant"
         for entry in snapshot["transcript"]
     )
+
+    counts = snapshot["counts"]
+    assert counts["tool_calls"] == 1
+    assert counts["thinking_blocks"] == 1
+    assert counts["assistant_messages"] == 1
+    assert counts["user_messages"] == 0
+
+    assert snapshot["last_message_usage"]["output"] == 260
+    assert snapshot["session_usage"]["input"] == 3200
+    assert snapshot["context_usage"]["tokens"] == 4200
+    assert snapshot["context_usage"]["contextWindow"] == 262144
+    assert snapshot["session_usage"]["totalTokens"] == 4200
+
+    assert snapshot["stderr_tail"] == []
     assert any(event["type"] == "pi_turn_end" for event in events)
     assert any(event["type"] == "pi_text_delta" for event in streamed)
     assert any(event["type"] == "pi_prompt_sent" for event in streamed)
 
 
 @pytest.mark.asyncio
-async def test_pi_supervisor_retains_full_tool_history_for_session(tmp_path: Path):
+async def test_supervisor_retains_full_tool_history_for_session(tmp_path: Path):
     supervisor = PiSupervisor(
         workspace_dir=tmp_path / "workspace",
         server_url="http://127.0.0.1:8765",
@@ -375,19 +747,317 @@ async def test_pi_supervisor_retains_full_tool_history_for_session(tmp_path: Pat
 
 
 @pytest.mark.asyncio
-async def test_pi_supervisor_attaches_latest_frame_pngs_to_turn_prompt(tmp_path: Path):
-    events: list[dict] = []
-    streamed: list[dict] = []
-    fake_pi = make_fake_pi_script(tmp_path)
+async def test_supervisor_stages_poke_cli_in_workspace(tmp_path: Path):
+    fake_pi = make_fake_rpc_server(tmp_path)
     workspace_dir = tmp_path / "workspace"
     workspace_dir.mkdir(parents=True, exist_ok=True)
-    annotated = workspace_dir / "latest_frame_annotated.png"
-    raw = workspace_dir / "latest_frame.png"
-    annotated.write_bytes(b"annotated-frame")
-    raw.write_bytes(b"raw-frame")
+    # A workspace outlives a session, so the helpers the CLI replaced can still
+    # be sitting in it from an older run.
+    for stale in ("agent_curl.sh", "act"):
+        (workspace_dir / stale).write_text("#!/usr/bin/env bash\n", encoding="utf-8")
+
+    supervisor = PiSupervisor(
+        workspace_dir=workspace_dir,
+        server_url="http://127.0.0.1:8765",
+        pi_binary=str(fake_pi),
+    )
+
+    await supervisor.start(goal="Reach the next checkpoint.", auto_continue=False)
+    await supervisor.wait_until_idle(timeout=10)
+
+    # `poke` takes bare action arguments. Hand-built curl JSON was losing ~40% of
+    # the agent's actions to a dropped closing quote; this form has nothing to
+    # misquote, so it must always be staged and executable.
+    poke = workspace_dir / "poke"
+    assert poke.is_file()
+    assert poke.stat().st_mode & 0o111, "poke must be executable"
+    assert "def cmd_act(" in poke.read_text(encoding="utf-8")
+
+    # Leaving the old helpers behind would let the quoting failure come back.
+    assert not (workspace_dir / "agent_curl.sh").exists()
+    assert not (workspace_dir / "act").exists()
+
+
+@pytest.mark.asyncio
+async def test_supervisor_stops_auto_continue_after_idle_turns(tmp_path: Path):
+    events: list[dict] = []
+    fake_pi = make_fake_rpc_server(tmp_path, include_write_tool=False)
 
     async def sink(event: dict) -> None:
         events.append(event)
+
+    supervisor = PiSupervisor(
+        workspace_dir=tmp_path / "workspace",
+        server_url="http://127.0.0.1:8765",
+        event_sink=sink,
+        pi_binary=str(fake_pi),
+        max_idle_turns=2,
+    )
+
+    await supervisor.start(
+        goal="Reach the next checkpoint.",
+        auto_continue=True,
+        continue_delay_seconds=0,
+    )
+    await supervisor.wait_until_idle(timeout=15)
+
+    snapshot = supervisor.state_snapshot()
+    assert snapshot["status"] == "stuck"
+    assert "no tool calls" in snapshot["status_reason"]
+    assert snapshot["turns_completed"] == 2
+    assert snapshot["counts"]["tool_calls"] == 0
+    stuck_event = next(event for event in events if event["type"] == "pi_supervisor_stuck")
+    assert stuck_event["idle_turns"] == 2
+
+
+@pytest.mark.asyncio
+async def test_token_budget_ends_the_run(tmp_path: Path):
+    events: list[dict] = []
+    fake_pi = make_fake_rpc_server(tmp_path, context_tokens=120_000)
+
+    async def sink(event: dict) -> None:
+        events.append(event)
+
+    supervisor = PiSupervisor(
+        workspace_dir=tmp_path / "workspace",
+        server_url="http://127.0.0.1:8765",
+        event_sink=sink,
+        pi_binary=str(fake_pi),
+        token_budget=110_000,
+    )
+
+    await supervisor.start(
+        goal="Reach the next checkpoint.",
+        auto_continue=True,
+        continue_delay_seconds=0,
+    )
+    await supervisor.wait_until_idle(timeout=10)
+
+    snapshot = supervisor.state_snapshot()
+    assert snapshot["status"] == "completed"
+    assert "Token budget reached" in snapshot["status_reason"]
+    assert snapshot["turns_completed"] == 1
+    assert any(event["type"] == "pi_token_budget_reached" for event in events)
+
+
+@pytest.mark.asyncio
+async def test_objective_callback_ends_the_run(tmp_path: Path):
+    events: list[dict] = []
+    fake_pi = make_fake_rpc_server(tmp_path)
+
+    async def sink(event: dict) -> None:
+        events.append(event)
+
+    supervisor = PiSupervisor(
+        workspace_dir=tmp_path / "workspace",
+        server_url="http://127.0.0.1:8765",
+        event_sink=sink,
+        pi_binary=str(fake_pi),
+    )
+    supervisor.set_objective_complete(lambda: True)
+
+    await supervisor.start(
+        goal="Reach the next checkpoint.",
+        auto_continue=True,
+        continue_delay_seconds=0,
+    )
+    await supervisor.wait_until_idle(timeout=10)
+
+    snapshot = supervisor.state_snapshot()
+    assert snapshot["status"] == "completed"
+    assert snapshot["status_reason"] == "Objective reported complete."
+    assert snapshot["turns_completed"] == 1
+    assert any(event["type"] == "pi_objective_complete" for event in events)
+
+
+async def live_supervisor(tmp_path: Path, **kwargs) -> PiSupervisor:
+    """A supervisor parked mid-turn: the fake streams a turn and never settles."""
+
+    fake_pi = make_fake_rpc_server(tmp_path, settle=False, **kwargs)
+    supervisor = PiSupervisor(
+        workspace_dir=tmp_path / "workspace",
+        server_url="http://127.0.0.1:8765",
+        pi_binary=str(fake_pi),
+        stats_poll_seconds=0,
+    )
+    await supervisor.start(goal="Reach the next checkpoint.", auto_continue=False)
+    assert await wait_for(lambda: supervisor.last_assistant_text == "Initial turn.")
+    assert supervisor.state_snapshot()["status"] == "running"
+    return supervisor
+
+
+def operator_entries(supervisor: PiSupervisor) -> list[dict]:
+    return [
+        entry
+        for entry in supervisor.stream_entries
+        if entry["kind"] == "user" and entry["source"] == OPERATOR_STREAM_SOURCE
+    ]
+
+
+@pytest.mark.asyncio
+async def test_operator_message_steers_the_live_session(tmp_path: Path):
+    supervisor = await live_supervisor(tmp_path)
+    workspace_dir = tmp_path / "workspace"
+
+    record = await supervisor.send_operator_message("  The ledge is one tile left.  ")
+
+    steer = prompt_commands(workspace_dir)[-1]
+    assert steer["message"] == "The ledge is one tile left."
+    assert steer["streamingBehavior"] == "steer"
+    # The opening goal prompt is untouched: the steer is a second, separate send.
+    assert len(prompt_commands(workspace_dir)) == 2
+
+    assert record["text"] == "The ledge is one tile left."
+    assert record["streaming_behavior"] == "steer"
+    assert record["ts"]
+
+    entries = operator_entries(supervisor)
+    assert len(entries) == 1
+    assert entries[0]["text"] == "The ledge is one tile left."
+    assert entries[0]["seq"] == record["seq"]
+    # The harness's own prompt sits in the same log but is not marked operator.
+    harness_prompts = [
+        entry
+        for entry in supervisor.stream_entries
+        if entry["kind"] == "user" and entry["source"] == "agent"
+    ]
+    assert harness_prompts
+    assert entries[0]["seq"] > harness_prompts[0]["seq"]
+
+    snapshot = supervisor.state_snapshot()
+    assert snapshot["operator_messages"] == [record]
+
+    await supervisor.stop()
+
+
+@pytest.mark.asyncio
+async def test_operator_message_falls_back_to_follow_up_when_pi_is_not_streaming(tmp_path: Path):
+    supervisor = await live_supervisor(tmp_path, is_streaming=False)
+    workspace_dir = tmp_path / "workspace"
+
+    record = await supervisor.send_operator_message("Heal at the centre first.")
+
+    assert prompt_commands(workspace_dir)[-1]["streamingBehavior"] == "followUp"
+    assert record["streaming_behavior"] == "followUp"
+
+    await supervisor.stop()
+
+
+@pytest.mark.asyncio
+async def test_operator_message_is_streamed_to_the_dashboard(tmp_path: Path):
+    streamed: list[dict] = []
+    fake_pi = make_fake_rpc_server(tmp_path, settle=False)
+
+    async def stream(event: dict) -> None:
+        streamed.append(event)
+
+    supervisor = PiSupervisor(
+        workspace_dir=tmp_path / "workspace",
+        server_url="http://127.0.0.1:8765",
+        stream_sink=stream,
+        pi_binary=str(fake_pi),
+        stats_poll_seconds=0,
+    )
+    await supervisor.start(goal="Reach the next checkpoint.", auto_continue=False)
+    assert await wait_for(lambda: supervisor.state_snapshot()["status"] == "running")
+
+    await supervisor.send_operator_message("Talk to the guard.")
+
+    pushed = [
+        event["entry"]
+        for event in streamed
+        if event.get("type") == "pi_stream_entry"
+        and event["entry"]["source"] == OPERATOR_STREAM_SOURCE
+    ]
+    assert [entry["text"] for entry in pushed] == ["Talk to the guard."]
+
+    await supervisor.stop()
+
+
+@pytest.mark.asyncio
+async def test_operator_message_is_refused_without_a_live_session(tmp_path: Path):
+    fake_pi = make_fake_rpc_server(tmp_path)
+    supervisor = PiSupervisor(
+        workspace_dir=tmp_path / "workspace",
+        server_url="http://127.0.0.1:8765",
+        pi_binary=str(fake_pi),
+    )
+
+    with pytest.raises(NoLiveSessionError) as idle:
+        await supervisor.send_operator_message("Go north.")
+    assert "idle" in str(idle.value)
+    assert supervisor.stream_entries == []
+    assert supervisor.state_snapshot()["operator_messages"] == []
+
+    await supervisor.start(goal="Reach the next checkpoint.", auto_continue=False)
+    await supervisor.wait_until_idle(timeout=10)
+    await supervisor.stop()
+
+    with pytest.raises(NoLiveSessionError) as stopped:
+        await supervisor.send_operator_message("Go north.")
+    assert "steer" in str(stopped.value)
+    assert operator_entries(supervisor) == []
+
+
+@pytest.mark.asyncio
+async def test_operator_message_is_refused_during_the_critique(tmp_path: Path):
+    fake_pi = make_fake_rpc_server(tmp_path)
+    supervisor = PiSupervisor(
+        workspace_dir=tmp_path / "workspace",
+        server_url="http://127.0.0.1:8765",
+        pi_binary=str(fake_pi),
+    )
+    supervisor.status = "critiquing"
+
+    with pytest.raises(NoLiveSessionError) as refused:
+        await supervisor.send_operator_message("Go north.")
+    assert "critique" in str(refused.value)
+
+
+@pytest.mark.asyncio
+async def test_operator_message_rejects_empty_and_over_long_input(tmp_path: Path):
+    supervisor = await live_supervisor(tmp_path)
+    workspace_dir = tmp_path / "workspace"
+    before = len(prompt_commands(workspace_dir))
+
+    for blank in ("", "   ", "\n\t "):
+        with pytest.raises(ValueError, match="empty"):
+            await supervisor.send_operator_message(blank)
+
+    with pytest.raises(ValueError, match=str(OPERATOR_MESSAGE_LIMIT)):
+        await supervisor.send_operator_message("x" * (OPERATOR_MESSAGE_LIMIT + 1))
+
+    # A message exactly at the cap is fine.
+    await supervisor.send_operator_message("y" * OPERATOR_MESSAGE_LIMIT)
+
+    assert len(prompt_commands(workspace_dir)) == before + 1
+    assert [entry["text"] for entry in operator_entries(supervisor)] == [
+        "y" * OPERATOR_MESSAGE_LIMIT
+    ]
+
+    await supervisor.stop()
+
+
+@pytest.mark.asyncio
+async def test_operator_message_history_is_capped_and_ordered(tmp_path: Path):
+    supervisor = await live_supervisor(tmp_path)
+
+    for index in range(3):
+        await supervisor.send_operator_message(f"note {index}")
+
+    history = supervisor.state_snapshot()["operator_messages"]
+    assert [record["text"] for record in history] == ["note 0", "note 1", "note 2"]
+    assert all(record["ts"] for record in history)
+    assert [record["seq"] for record in history] == sorted(record["seq"] for record in history)
+
+    await supervisor.stop()
+
+
+@pytest.mark.asyncio
+async def test_stats_poll_reports_usage_mid_turn_without_a_settle(tmp_path: Path):
+    streamed: list[dict] = []
+    fake_pi = make_fake_rpc_server(tmp_path, settle=False)
+    workspace_dir = tmp_path / "workspace"
 
     async def stream(event: dict) -> None:
         streamed.append(event)
@@ -395,255 +1065,246 @@ async def test_pi_supervisor_attaches_latest_frame_pngs_to_turn_prompt(tmp_path:
     supervisor = PiSupervisor(
         workspace_dir=workspace_dir,
         server_url="http://127.0.0.1:8765",
-        event_sink=sink,
         stream_sink=stream,
         pi_binary=str(fake_pi),
+        stats_poll_seconds=0.05,
     )
 
     await supervisor.start(goal="Reach the next checkpoint.", auto_continue=False)
-    await supervisor.wait_until_idle(timeout=5)
-
-    launch_event = next(event for event in events if event["type"] == "pi_turn_launch")
-    assert f"@{annotated}" in launch_event["command_preview"]
-    assert f"@{raw}" in launch_event["command_preview"]
-
-    prompt_event = next(event for event in streamed if event["type"] == "pi_prompt_sent")
-    assert prompt_event["attachments"] == [str(annotated), str(raw)]
-
-
-@pytest.mark.asyncio
-async def test_pi_supervisor_stages_agent_curl_in_workspace(tmp_path: Path):
-    fake_pi = make_fake_pi_script(tmp_path)
-    workspace_dir = tmp_path / "workspace"
-
-    supervisor = PiSupervisor(
-        workspace_dir=workspace_dir,
-        server_url="http://127.0.0.1:8765",
-        pi_binary=str(fake_pi),
-    )
-
-    await supervisor.start(goal="Reach the next checkpoint.", auto_continue=False)
-    await supervisor.wait_until_idle(timeout=5)
-
-    staged = workspace_dir / "agent_curl.sh"
-    assert staged.is_file()
-    assert "PORT:-8765" in staged.read_text(encoding="utf-8")
-
-
-@pytest.mark.asyncio
-async def test_pi_supervisor_counts_attached_frames_as_inspected(tmp_path: Path):
-    events: list[dict] = []
-    fake_pi = make_fake_pi_script(tmp_path)
-    workspace_dir = tmp_path / "workspace"
-    workspace_dir.mkdir(parents=True, exist_ok=True)
-    (workspace_dir / "latest_frame_annotated.png").write_bytes(b"annotated-frame")
-    (workspace_dir / "latest_frame.png").write_bytes(b"raw-frame")
-
-    async def sink(event: dict) -> None:
-        events.append(event)
-
-    supervisor = PiSupervisor(
-        workspace_dir=workspace_dir,
-        server_url="http://127.0.0.1:8765",
-        event_sink=sink,
-        pi_binary=str(fake_pi),
-    )
-
-    await supervisor.start(goal="Reach the next checkpoint.", auto_continue=False)
-    await supervisor.wait_until_idle(timeout=5)
+    assert await wait_for(lambda: supervisor.state_snapshot()["context_usage"] is not None)
 
     snapshot = supervisor.state_snapshot()
-    vision = snapshot["vision"]["last_turn"]
-    assert vision["annotated_attached"] is True
-    assert vision["annotated_read"] is False
-    assert vision["used_vision"] is True
-    assert vision["compliant"] is True
-    assert snapshot["vision"]["violations"] == 0
-    assert not [event for event in events if event["type"] == "pi_turn_vision_violation"]
-
-
-@pytest.mark.asyncio
-async def test_pi_supervisor_flags_turns_that_skip_annotated_frame_reads(tmp_path: Path):
-    events: list[dict] = []
-    fake_pi = make_fake_pi_script(tmp_path)
-    workspace_dir = tmp_path / "workspace"
-    workspace_dir.mkdir(parents=True, exist_ok=True)
-    (workspace_dir / "latest_frame_annotated.png").write_bytes(b"annotated-frame")
-    (workspace_dir / "latest_frame.png").write_bytes(b"raw-frame")
-
-    async def sink(event: dict) -> None:
-        events.append(event)
-
-    supervisor = PiSupervisor(
-        workspace_dir=workspace_dir,
-        server_url="http://127.0.0.1:8765",
-        event_sink=sink,
-        pi_binary=str(fake_pi),
-        require_frame_reads=True,
-    )
-
-    await supervisor.start(goal="Reach the next checkpoint.", auto_continue=False)
-    await supervisor.wait_until_idle(timeout=5)
-
-    snapshot = supervisor.state_snapshot()
-    vision = snapshot["vision"]["last_turn"]
-    assert vision["annotated_available"] is True
-    assert vision["annotated_read"] is False
-    assert vision["compliant"] is False
-    assert snapshot["vision"]["violations"] == 1
-    violation_event = next(event for event in events if event["type"] == "pi_turn_vision_violation")
-    assert "latest_frame_annotated.png" in violation_event["summary"]
-
-
-@pytest.mark.asyncio
-async def test_pi_supervisor_records_successful_annotated_frame_reads(tmp_path: Path):
-    events: list[dict] = []
-    fake_pi = make_fake_pi_script(tmp_path, include_frame_read=True)
-    workspace_dir = tmp_path / "workspace"
-    workspace_dir.mkdir(parents=True, exist_ok=True)
-    (workspace_dir / "latest_frame_annotated.png").write_bytes(b"annotated-frame")
-    (workspace_dir / "latest_frame.png").write_bytes(b"raw-frame")
-
-    async def sink(event: dict) -> None:
-        events.append(event)
-
-    supervisor = PiSupervisor(
-        workspace_dir=workspace_dir,
-        server_url="http://127.0.0.1:8765",
-        event_sink=sink,
-        pi_binary=str(fake_pi),
-    )
-
-    await supervisor.start(goal="Reach the next checkpoint.", auto_continue=False)
-    await supervisor.wait_until_idle(timeout=5)
-
-    snapshot = supervisor.state_snapshot()
-    vision = snapshot["vision"]["last_turn"]
-    assert vision["annotated_read"] is True
-    assert vision["used_vision"] is True
-    assert vision["compliant"] is True
-    assert snapshot["vision"]["violations"] == 0
-    assert any(event["type"] == "pi_vision_read" for event in events)
-
-
-@pytest.mark.asyncio
-async def test_pi_supervisor_preserves_vision_state_during_gameplay_cycle(tmp_path: Path):
-    events: list[dict] = []
-    workspace_dir = tmp_path / "workspace"
-    workspace_dir.mkdir(parents=True, exist_ok=True)
-    (workspace_dir / "latest_frame_annotated.png").write_bytes(b"annotated-frame")
-    (workspace_dir / "latest_frame.png").write_bytes(b"raw-frame")
-
-    async def sink(event: dict) -> None:
-        events.append(event)
-
-    supervisor = PiSupervisor(
-        workspace_dir=workspace_dir,
-        server_url="http://127.0.0.1:8765",
-        event_sink=sink,
-    )
-
-    await supervisor._handle_event(
-        {
-            "type": "tool_execution_start",
-            "toolCallId": "observe-1",
-            "toolName": "bash",
-            "args": {"command": "curl -s http://127.0.0.1:8765/agent/observe"},
-        }
-    )
-    await supervisor._handle_event(
-        {
-            "type": "tool_execution_end",
-            "toolCallId": "observe-1",
-            "toolName": "bash",
-            "result": {"success": True},
-            "isError": False,
-        }
-    )
-    await supervisor._handle_event(
-        {
-            "type": "tool_execution_start",
-            "toolCallId": "frame-1",
-            "toolName": "read",
-            "args": {"path": str(workspace_dir / "latest_frame_annotated.png")},
-        }
-    )
-    await supervisor._handle_event(
-        {
-            "type": "tool_execution_end",
-            "toolCallId": "frame-1",
-            "toolName": "read",
-            "result": {"ok": True},
-            "isError": False,
-        }
-    )
-    await supervisor._handle_event(
-        {
-            "type": "tool_execution_start",
-            "toolCallId": "plan-1",
-            "toolName": "bash",
-            "args": {"command": "PORT=8765 bash agent_curl.sh /agent/plan <<'JSON'\\n{}\\nJSON"},
-        }
-    )
-    await supervisor._handle_event(
-        {
-            "type": "tool_execution_end",
-            "toolCallId": "plan-1",
-            "toolName": "bash",
-            "result": {"success": True},
-            "isError": False,
-        }
-    )
-    await supervisor._handle_event(
-        {
-            "type": "tool_execution_start",
-            "toolCallId": "act-1",
-            "toolName": "bash",
-            "args": {"command": "PORT=8765 bash agent_curl.sh /agent/act <<'JSON'\\n{}\\nJSON"},
-        }
-    )
-    await supervisor._handle_event(
-        {
-            "type": "tool_execution_end",
-            "toolCallId": "act-1",
-            "toolName": "bash",
-            "result": {"success": True},
-            "isError": False,
-        }
-    )
-    await supervisor._handle_event(
-        {
-            "type": "tool_execution_start",
-            "toolCallId": "observe-2",
-            "toolName": "bash",
-            "args": {"command": "curl -s http://127.0.0.1:8765/agent/observe"},
-        }
-    )
-    await supervisor._handle_event(
-        {
-            "type": "tool_execution_end",
-            "toolCallId": "observe-2",
-            "toolName": "bash",
-            "result": {"success": True},
-            "isError": False,
-        }
-    )
-
-    snapshot = supervisor.state_snapshot()
-    vision = snapshot["vision"]["current_turn"]
+    # Still mid-turn: no settle has arrived, so the old post-settle refresh never ran.
+    assert snapshot["status"] == "running"
     assert snapshot["turns_completed"] == 0
-    assert vision["annotated_read"] is True
-    assert vision["used_vision"] is True
-    assert not any(event["type"] == "pi_turn_end" for event in events)
+    assert snapshot["context_usage"]["tokens"] == 4200
+    assert snapshot["context_usage"]["contextWindow"] == 262144
+    assert snapshot["session_usage"]["input"] == 3200
+    assert snapshot["session_usage"]["totalTokens"] == 4200
+    assert snapshot["config"]["stats_poll_seconds"] == 0.05
+
+    stats_commands = [
+        command
+        for command in read_commands(workspace_dir)
+        if command.get("type") == "get_session_stats"
+    ]
+    assert stats_commands
+    # Poll requests must not collide with the in-flight prompt's request id.
+    stats_ids = {command["id"] for command in stats_commands}
+    prompt_ids = {command["id"] for command in prompt_commands(workspace_dir)}
+    assert stats_ids.isdisjoint(prompt_ids)
+    assert len(stats_ids) == len(stats_commands)
+
+    assert any(event["type"] == "pi_session_stats" for event in streamed)
+
+    await supervisor.stop()
 
 
 @pytest.mark.asyncio
-async def test_pi_supervisor_keeps_running_until_agent_stops(tmp_path: Path):
-    fake_pi = make_fake_cycle_pi_script(tmp_path, include_frame_read=True)
+async def test_stats_poll_enforces_the_token_budget_mid_turn(tmp_path: Path):
+    events: list[dict] = []
+    fake_pi = make_fake_rpc_server(
+        tmp_path,
+        settle=False,
+        orphan_tool_call=True,
+        context_tokens=134_871,
+    )
     workspace_dir = tmp_path / "workspace"
-    workspace_dir.mkdir(parents=True, exist_ok=True)
-    (workspace_dir / "latest_frame_annotated.png").write_bytes(b"annotated-frame")
-    (workspace_dir / "latest_frame.png").write_bytes(b"raw-frame")
+
+    async def sink(event: dict) -> None:
+        events.append(event)
+
+    supervisor = PiSupervisor(
+        workspace_dir=workspace_dir,
+        server_url="http://127.0.0.1:8765",
+        event_sink=sink,
+        pi_binary=str(fake_pi),
+        token_budget=110_000,
+        stats_poll_seconds=0.05,
+    )
+
+    await supervisor.start(
+        goal="Reach the next checkpoint.",
+        auto_continue=True,
+        continue_delay_seconds=0,
+    )
+    await supervisor.wait_until_idle(timeout=15)
+
+    snapshot = supervisor.state_snapshot()
+    assert snapshot["status"] == "completed"
+    assert snapshot["status_reason"] == "Token budget reached (134871/110000 context tokens)."
+    # The turn never settled, so the run stopped without completing it.
+    assert snapshot["turns_completed"] == 0
+    assert len(prompt_commands(workspace_dir)) == 1
+    assert supervisor._stats_task is None
+
+    budget_event = next(event for event in events if event["type"] == "pi_token_budget_reached")
+    assert budget_event["token_budget"] == 110_000
+    assert budget_event["context_usage"]["tokens"] == 134_871
+
+    # The mid-turn stop still repairs the tool call the kill left open.
+    assert snapshot["counts"]["repaired_tool_calls"] == 1
+    entries = iter_jsonl_records(Path(snapshot["session_file"]).read_text(encoding="utf-8"))
+    assert find_orphaned_tool_calls(entries) == []
+    assert entries[-1]["message"]["toolCallId"] == "tool-orphan"
+
+
+@pytest.mark.asyncio
+async def test_stats_poll_task_is_cancelled_on_shutdown(tmp_path: Path):
+    fake_pi = make_fake_rpc_server(tmp_path, settle=False)
+    workspace_dir = tmp_path / "workspace"
+    loop = asyncio.get_running_loop()
+    reported: list[dict] = []
+    previous_handler = loop.get_exception_handler()
+    loop.set_exception_handler(lambda _loop, context: reported.append(context))
+
+    try:
+        supervisor = PiSupervisor(
+            workspace_dir=workspace_dir,
+            server_url="http://127.0.0.1:8765",
+            pi_binary=str(fake_pi),
+            stats_poll_seconds=0.05,
+        )
+
+        await supervisor.start(goal="Reach the next checkpoint.", auto_continue=False)
+        assert await wait_for(lambda: supervisor.state_snapshot()["context_usage"] is not None)
+
+        poll_task = supervisor._stats_task
+        assert poll_task is not None
+        assert not poll_task.done()
+
+        snapshot = await supervisor.stop()
+        assert snapshot["status"] == "stopped"
+        assert supervisor._stats_task is None
+        assert poll_task.done()
+        assert supervisor._pending_responses == {}
+
+        gc.collect()
+        await asyncio.sleep(0.05)
+        assert reported == []
+    finally:
+        loop.set_exception_handler(previous_handler)
+
+
+@pytest.mark.parametrize("interval", [0, None])
+@pytest.mark.asyncio
+async def test_stats_poll_is_disabled_when_the_interval_is_falsy(tmp_path: Path, interval):
+    fake_pi = make_fake_rpc_server(tmp_path, settle=False)
+    workspace_dir = tmp_path / "workspace"
+
+    assert (
+        PiSupervisor(
+            workspace_dir=tmp_path / "default-workspace",
+            server_url="http://127.0.0.1:8765",
+        ).stats_poll_seconds
+        == 30.0
+    )
+
+    supervisor = PiSupervisor(
+        workspace_dir=workspace_dir,
+        server_url="http://127.0.0.1:8765",
+        pi_binary=str(fake_pi),
+        stats_poll_seconds=interval,
+    )
+    assert supervisor.stats_poll_seconds == 0.0
+
+    await supervisor.start(goal="Reach the next checkpoint.", auto_continue=False)
+    assert await wait_for(lambda: supervisor.state_snapshot()["counts"]["tool_calls"] >= 1)
+    await asyncio.sleep(0.3)
+
+    assert supervisor._stats_task is None
+    assert supervisor.state_snapshot()["context_usage"] is None
+    assert not [
+        command
+        for command in read_commands(workspace_dir)
+        if command.get("type") == "get_session_stats"
+    ]
+
+    await supervisor.stop()
+
+
+def test_find_orphaned_tool_calls_ignores_matched_results() -> None:
+    entries = [
+        {"type": "session", "version": 3, "id": "abc"},
+        {
+            "type": "message",
+            "id": "e1",
+            "message": {
+                "role": "assistant",
+                "content": [
+                    {"type": "toolCall", "id": "call-1", "name": "bash", "arguments": {}},
+                    {"type": "toolCall", "id": "call-2", "name": "read", "arguments": {}},
+                ],
+            },
+        },
+        {
+            "type": "message",
+            "id": "e2",
+            "message": {"role": "toolResult", "toolCallId": "call-1", "toolName": "bash"},
+        },
+    ]
+
+    assert find_orphaned_tool_calls(entries) == [("call-2", "read")]
+
+
+def test_repair_orphaned_tool_calls_appends_synthetic_error_results(tmp_path: Path) -> None:
+    session_file = tmp_path / "session.jsonl"
+    session_file.write_text(
+        "\n".join(
+            [
+                json.dumps({"type": "session", "version": 3, "id": "abc", "cwd": str(tmp_path)}),
+                json.dumps(
+                    {
+                        "type": "message",
+                        "id": "e1",
+                        "parentId": None,
+                        "message": {"role": "user", "content": "go"},
+                    }
+                ),
+                json.dumps(
+                    {
+                        "type": "message",
+                        "id": "e2",
+                        "parentId": "e1",
+                        "message": {
+                            "role": "assistant",
+                            "content": [
+                                {
+                                    "type": "toolCall",
+                                    "id": "call-1",
+                                    "name": "bash",
+                                    "arguments": {"command": "ls"},
+                                }
+                            ],
+                        },
+                    }
+                ),
+            ]
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+
+    assert repair_orphaned_tool_calls(session_file) == ["call-1"]
+
+    entries = iter_jsonl_records(session_file.read_text(encoding="utf-8"))
+    appended = entries[-1]
+    assert appended["parentId"] == "e2"
+    assert appended["message"]["role"] == "toolResult"
+    assert appended["message"]["toolCallId"] == "call-1"
+    assert appended["message"]["toolName"] == "bash"
+    assert appended["message"]["isError"] is True
+    assert appended["message"]["content"][0]["text"] == ORPHAN_TOOL_RESULT_TEXT
+
+    # The history is now well formed, so a second pass is a no-op.
+    assert repair_orphaned_tool_calls(session_file) == []
+    assert find_orphaned_tool_calls(entries + [appended]) == []
+
+
+@pytest.mark.asyncio
+async def test_stop_repairs_tool_calls_left_open_by_the_kill(tmp_path: Path):
+    fake_pi = make_fake_rpc_server(tmp_path, hang_mid_tool=True)
+    workspace_dir = tmp_path / "workspace"
 
     supervisor = PiSupervisor(
         workspace_dir=workspace_dir,
@@ -652,301 +1313,36 @@ async def test_pi_supervisor_keeps_running_until_agent_stops(tmp_path: Path):
     )
 
     await supervisor.start(goal="Reach the next checkpoint.", auto_continue=False)
-    for _ in range(20):
-        if supervisor.state_snapshot()["vision"]["current_turn"]["annotated_read"]:
-            break
-        await asyncio.sleep(0.05)
+    assert await wait_for(lambda: supervisor.state_snapshot()["counts"]["tool_calls"] >= 1)
 
     snapshot = supervisor.state_snapshot()
     assert snapshot["status"] == "running"
     assert snapshot["turns_completed"] == 0
-    assert snapshot["vision"]["current_turn"]["annotated_read"] is True
 
-    await supervisor.stop()
-    snapshot = supervisor.state_snapshot()
+    snapshot = await supervisor.stop()
     assert snapshot["status"] == "stopped"
+    assert snapshot["counts"]["repaired_tool_calls"] == 1
+
+    session_file = Path(snapshot["session_file"])
+    entries = iter_jsonl_records(session_file.read_text(encoding="utf-8"))
+    assert find_orphaned_tool_calls(entries) == []
+    assert entries[-1]["message"]["toolCallId"] == "tool-orphan"
+    assert entries[-1]["message"]["isError"] is True
 
 
-@pytest.mark.asyncio
-async def test_pi_supervisor_auto_continue_warns_after_vision_violation(tmp_path: Path):
-    streamed: list[dict] = []
-    fake_pi = make_fake_pi_script(tmp_path)
-    workspace_dir = tmp_path / "workspace"
-    workspace_dir.mkdir(parents=True, exist_ok=True)
-    (workspace_dir / "latest_frame_annotated.png").write_bytes(b"annotated-frame")
-    (workspace_dir / "latest_frame.png").write_bytes(b"raw-frame")
+def test_iter_jsonl_records_splits_on_newline_only() -> None:
+    payload = json.dumps({"type": "message", "text": "line one\u2028line two\u2029end"})
+    # U+2028/U+2029 are legal inside a JSON string, and str.splitlines() would cut the
+    # record in three; splitting on "\n" alone keeps it intact.
+    hazard = json.dumps({"type": "hazard", "text": "a\u2028b\u2029c"}, ensure_ascii=False)
+    assert len(hazard.splitlines()) == 3
+    assert len(iter_jsonl_records(hazard + "\n")) == 1
 
-    async def stream(event: dict) -> None:
-        streamed.append(event)
+    records = iter_jsonl_records(payload + "\r\n" + json.dumps({"type": "second"}) + "\n")
 
-    supervisor = PiSupervisor(
-        workspace_dir=workspace_dir,
-        server_url="http://127.0.0.1:8765",
-        stream_sink=stream,
-        pi_binary=str(fake_pi),
-        require_frame_reads=True,
-    )
-
-    await supervisor.start(
-        goal="Reach the next checkpoint.",
-        auto_continue=True,
-        max_turns=2,
-        continue_delay_seconds=0,
-    )
-    await supervisor.wait_until_idle(timeout=5)
-
-    prompt_events = [event for event in streamed if event["type"] == "pi_prompt_sent"]
-    assert len(prompt_events) == 2
-    assert "violated the frame-inspection policy" in prompt_events[1]["prompt"]
-    assert (
-        "Do not call /agent/plan or /agent/act until both frame reads succeed."
-        in prompt_events[1]["prompt"]
-    )
-
-
-@pytest.mark.asyncio
-async def test_pi_supervisor_auto_continue_uses_exact_session_file(tmp_path: Path):
-    events: list[dict] = []
-    fake_pi = make_fake_pi_script(tmp_path)
-    workspace_dir = tmp_path / "workspace"
-
-    async def sink(event: dict) -> None:
-        events.append(event)
-
-    supervisor = PiSupervisor(
-        workspace_dir=workspace_dir,
-        server_url="http://127.0.0.1:8765",
-        event_sink=sink,
-        pi_binary=str(fake_pi),
-    )
-
-    await supervisor.start(
-        goal="Reach the next checkpoint.",
-        auto_continue=True,
-        max_turns=2,
-        continue_delay_seconds=0,
-    )
-    await supervisor.wait_until_idle(timeout=5)
-
-    launch_events = [event for event in events if event["type"] == "pi_turn_launch"]
-    expected_session_file = workspace_dir / "pi-session" / "session-123.jsonl"
-
-    assert len(launch_events) == 2
-    assert "--session" not in launch_events[0]["command_preview"]
-    assert "--session" in launch_events[1]["command_preview"]
-    assert str(expected_session_file) in launch_events[1]["command_preview"]
-
-    snapshot = supervisor.state_snapshot()
-    assert snapshot["session_file"] == str(expected_session_file)
-
-
-@pytest.mark.asyncio
-async def test_pi_supervisor_completes_text_only_turn_without_tool_calls(tmp_path: Path):
-    fake_pi = make_fake_pi_script(
-        tmp_path,
-        include_turn_end=False,
-        include_write_tool=False,
-        linger_after_events=True,
-    )
-    supervisor = PiSupervisor(
-        workspace_dir=tmp_path / "workspace",
-        server_url="http://127.0.0.1:8765",
-        pi_binary=str(fake_pi),
-    )
-
-    await supervisor.start(goal="Reach the next checkpoint.", auto_continue=False)
-    await supervisor.wait_until_idle(timeout=5)
-
-    snapshot = supervisor.state_snapshot()
-    assert snapshot["status"] == "completed"
-    assert snapshot["turns_completed"] == 1
-    assert snapshot["last_assistant_text"] == "Initial turn."
-    assert snapshot["counts"]["tool_calls"] == 0
-    assert snapshot["recent_tools"] == []
-
-
-@pytest.mark.asyncio
-async def test_pi_supervisor_auto_continue_advances_after_text_only_message(tmp_path: Path):
-    streamed: list[dict] = []
-    fake_pi = make_fake_pi_script(
-        tmp_path,
-        include_turn_end=False,
-        include_write_tool=False,
-        linger_after_events=True,
-    )
-
-    async def stream(event: dict) -> None:
-        streamed.append(event)
-
-    supervisor = PiSupervisor(
-        workspace_dir=tmp_path / "workspace",
-        server_url="http://127.0.0.1:8765",
-        stream_sink=stream,
-        pi_binary=str(fake_pi),
-    )
-
-    await supervisor.start(
-        goal="Reach the next checkpoint.",
-        auto_continue=True,
-        max_turns=2,
-        continue_delay_seconds=0,
-    )
-    await supervisor.wait_until_idle(timeout=5)
-
-    prompt_events = [event for event in streamed if event["type"] == "pi_prompt_sent"]
-    snapshot = supervisor.state_snapshot()
-    assert snapshot["status"] == "completed"
-    assert snapshot["turns_completed"] == 2
-    assert snapshot["continue_count"] == 1
-    assert snapshot["counts"]["tool_calls"] == 0
-    assert snapshot["last_assistant_text"] == "Continued turn."
-    assert len(prompt_events) == 2
-    assert prompt_events[1]["resume"] is True
-    assert prompt_events[1]["prompt"] == CONTINUE_PROMPT
-
-
-@pytest.mark.asyncio
-async def test_pi_supervisor_can_continue_existing_session(tmp_path: Path):
-    fake_pi = make_fake_pi_script(tmp_path)
-    supervisor = PiSupervisor(
-        workspace_dir=tmp_path / "workspace",
-        server_url="http://127.0.0.1:8765",
-        pi_binary=str(fake_pi),
-    )
-
-    await supervisor.start(goal="Reach the next checkpoint.", auto_continue=False)
-    await supervisor.wait_until_idle(timeout=5)
-    await supervisor.continue_once()
-    await supervisor.wait_until_idle(timeout=5)
-
-    snapshot = supervisor.state_snapshot()
-    assert snapshot["turns_completed"] == 2
-    assert snapshot["last_assistant_text"] == "Continued turn."
-    assert snapshot["status"] == "completed"
-
-
-@pytest.mark.asyncio
-async def test_pi_supervisor_continue_snapshot_clears_live_stream_fields(tmp_path: Path):
-    fake_pi = make_fake_pi_script(tmp_path)
-    supervisor = PiSupervisor(
-        workspace_dir=tmp_path / "workspace",
-        server_url="http://127.0.0.1:8765",
-        pi_binary=str(fake_pi),
-    )
-
-    await supervisor.start(goal="Reach the next checkpoint.", auto_continue=False)
-    await supervisor.wait_until_idle(timeout=5)
-
-    snapshot = await supervisor.continue_once()
-
-    assert snapshot["status"] == "starting"
-    assert snapshot["current_assistant_text"] == ""
-    assert snapshot["current_assistant_thinking"] == ""
-    assert snapshot["active_tools"] == []
-
-    await supervisor.wait_until_idle(timeout=5)
-
-
-@pytest.mark.asyncio
-async def test_pi_supervisor_auto_continue_schedules_and_runs_next_turn(tmp_path: Path):
-    events: list[dict] = []
-    streamed: list[dict] = []
-    fake_pi = make_fake_pi_script(tmp_path)
-
-    async def sink(event: dict) -> None:
-        events.append(event)
-
-    async def stream(event: dict) -> None:
-        streamed.append(event)
-
-    supervisor = PiSupervisor(
-        workspace_dir=tmp_path / "workspace",
-        server_url="http://127.0.0.1:8765",
-        event_sink=sink,
-        stream_sink=stream,
-        pi_binary=str(fake_pi),
-    )
-
-    await supervisor.start(
-        goal="Reach the next checkpoint.",
-        auto_continue=True,
-        max_turns=2,
-        continue_delay_seconds=0,
-    )
-    await supervisor.wait_until_idle(timeout=5)
-
-    snapshot = supervisor.state_snapshot()
-    assert snapshot["status"] == "completed"
-    assert snapshot["turns_completed"] == 2
-    assert snapshot["continue_count"] == 1
-    assert any(event["type"] == "pi_auto_continue_scheduled" for event in events)
-    assert any(
-        event["type"] == "pi_prompt_sent" and event.get("resume") is True for event in streamed
-    )
-
-
-@pytest.mark.asyncio
-async def test_pi_supervisor_synthesizes_turn_completion_when_pi_omits_turn_end(
-    tmp_path: Path,
-):
-    events: list[dict] = []
-    fake_pi = make_fake_pi_script(tmp_path, include_turn_end=False)
-
-    async def sink(event: dict) -> None:
-        events.append(event)
-
-    supervisor = PiSupervisor(
-        workspace_dir=tmp_path / "workspace",
-        server_url="http://127.0.0.1:8765",
-        event_sink=sink,
-        pi_binary=str(fake_pi),
-    )
-
-    await supervisor.start(
-        goal="Reach the next checkpoint.",
-        auto_continue=True,
-        max_turns=2,
-        continue_delay_seconds=0,
-    )
-    await supervisor.wait_until_idle(timeout=5)
-
-    snapshot = supervisor.state_snapshot()
-    assert snapshot["status"] == "completed"
-    assert snapshot["turns_completed"] == 2
-    assert snapshot["last_assistant_text"] == "Continued turn."
-    assert any(
-        event["type"] == "pi_turn_end" and event.get("synthetic") is True for event in events
-    )
-
-
-@pytest.mark.asyncio
-async def test_pi_supervisor_tracks_usage_and_counts(tmp_path: Path):
-    fake_pi = make_fake_pi_script(tmp_path)
-    supervisor = PiSupervisor(
-        workspace_dir=tmp_path / "workspace",
-        server_url="http://127.0.0.1:8765",
-        pi_binary=str(fake_pi),
-    )
-
-    await supervisor.start(
-        goal="Reach the next checkpoint.",
-        auto_continue=True,
-        max_turns=2,
-        continue_delay_seconds=0,
-    )
-    await supervisor.wait_until_idle(timeout=5)
-
-    snapshot = supervisor.state_snapshot()
-    counts = snapshot["counts"]
-    assert counts["assistant_messages"] == 2
-    assert counts["thinking_blocks"] == 2
-    assert counts["tool_calls"] == 2
-    assert counts["user_messages"] == 0
-    usage = snapshot["session_usage"]
-    assert usage is not None
-    assert usage["totalTokens"] == 3460
-    assert snapshot["last_message_usage"]["output"] == 260
-    assert snapshot["compaction"]["tokens_before"] is None
+    assert len(records) == 2
+    assert records[0]["text"] == "line one\u2028line two\u2029end"
+    assert records[1]["type"] == "second"
 
 
 def test_parse_model_limits_output_extracts_context_window() -> None:
@@ -965,30 +1361,374 @@ def test_parse_model_limits_output_extracts_context_window() -> None:
     assert parsed["max_output_tokens"] == 65500
 
 
-def test_continue_prompt_mentions_dialog_action_without_single_cycle_language() -> None:
-    assert "a_until_dialog_end" in CONTINUE_PROMPT
-    assert "one gameplay cycle" not in CONTINUE_PROMPT
-    assert "recent_action.plan_state" not in CONTINUE_PROMPT
+# ----------------------------------------------------------------------
+# Ordered stream log
+# ----------------------------------------------------------------------
+
+CURL_COMMAND = (
+    "curl -sS -X POST http://localhost:$PORT/action "
+    "-H 'Content-Type: application/json' "
+    '-d \'{"actions": ["walk_up","walk_right"]}\''
+)
+
+
+def make_supervisor(tmp_path: Path, **kwargs) -> PiSupervisor:
+    return PiSupervisor(
+        workspace_dir=tmp_path / "workspace",
+        server_url="http://127.0.0.1:8765",
+        **kwargs,
+    )
+
+
+async def run_tool(
+    supervisor: PiSupervisor,
+    *,
+    tool_call_id: str,
+    tool_name: str,
+    args: dict,
+    result=None,
+    is_error: bool = False,
+    finish: bool = True,
+) -> dict:
+    await supervisor._handle_event(
+        {
+            "type": "tool_execution_start",
+            "toolCallId": tool_call_id,
+            "toolName": tool_name,
+            "args": args,
+        }
+    )
+    if finish:
+        await supervisor._handle_event(
+            {
+                "type": "tool_execution_end",
+                "toolCallId": tool_call_id,
+                "toolName": tool_name,
+                "result": result,
+                "isError": is_error,
+            }
+        )
+    return last_tool_entry(supervisor)
+
+
+def stream_entries(supervisor: PiSupervisor, kind: str) -> list[dict]:
+    return [entry for entry in supervisor.stream_entries if entry["kind"] == kind]
+
+
+def last_tool_entry(supervisor: PiSupervisor) -> dict:
+    return stream_entries(supervisor, "tool")[-1]
+
+
+def system_labels(supervisor: PiSupervisor) -> list[str]:
+    return [entry["system"]["label"] for entry in stream_entries(supervisor, "system")]
+
+
+def test_command_headline_reads_a_single_line_comment() -> None:
+    command = "# Blocked. Try going up first then right\n" + CURL_COMMAND
+
+    assert command_headline(command) == "Blocked. Try going up first then right"
+
+
+def test_command_headline_joins_a_multi_line_comment_block() -> None:
+    command = (
+        "# Blocked by the ledge.\n"
+        "#\n"
+        "# Step up, then right, then re-read the frame.\n"
+        + CURL_COMMAND
+        + "\n# trailing comment that is not part of the headline"
+    )
+
+    assert command_headline(command) == (
+        "Blocked by the ledge. Step up, then right, then re-read the frame."
+    )
+
+
+def test_command_headline_falls_back_to_the_first_command_line() -> None:
+    assert command_headline("\n\necho ready\necho done") == "echo ready"
+
+    headline = command_headline(CURL_COMMAND)
+    assert len(headline) <= 120
+    assert headline.startswith("curl -sS -X POST http://localhost:$PORT/action")
+    assert headline.endswith("\u2026")
 
 
 @pytest.mark.asyncio
-async def test_pi_supervisor_stops_auto_continue_after_idle_turns(tmp_path: Path):
-    events: list[dict] = []
-    fake_pi = make_fake_pi_script(tmp_path, include_write_tool=False)
-    workspace_dir = tmp_path / "workspace"
-    workspace_dir.mkdir(parents=True, exist_ok=True)
-    (workspace_dir / "latest_frame_annotated.png").write_bytes(b"annotated-frame")
-    (workspace_dir / "latest_frame.png").write_bytes(b"raw-frame")
+async def test_bash_stream_entry_keeps_the_command_verbatim(tmp_path: Path):
+    supervisor = make_supervisor(tmp_path)
+    command = "# Blocked. Try going up first then right\n" + CURL_COMMAND
 
-    async def sink(event: dict) -> None:
-        events.append(event)
+    entry = await run_tool(
+        supervisor,
+        tool_call_id="tool-bash",
+        tool_name="bash",
+        args={"command": command},
+        result='{"actions_executed": 2, "map": "PALLET TOWN", "x": 11, "y": 34, '
+        '"facing": "up", "hp": "15/30"}',
+    )
 
-    supervisor = PiSupervisor(
-        workspace_dir=workspace_dir,
-        server_url="http://127.0.0.1:8765",
-        event_sink=sink,
+    assert entry["kind"] == "tool"
+    assert entry["tool"]["name"] == "bash"
+    assert entry["tool"]["headline"] == "Blocked. Try going up first then right"
+    assert entry["tool"]["command"] == command
+    assert entry["tool"]["path"] is None
+    assert entry["tool"]["result_summary"] == "x=11 y=34 facing=up hp=15/30"
+    assert '"actions_executed"' in entry["tool"]["result_full"]
+
+
+@pytest.mark.asyncio
+async def test_bash_result_summary_falls_back_to_the_first_output_line(tmp_path: Path):
+    supervisor = make_supervisor(tmp_path)
+
+    entry = await run_tool(
+        supervisor,
+        tool_call_id="tool-bash",
+        tool_name="bash",
+        args={"command": "ls -la"},
+        result="total 8\ndrwxr-xr-x  2 dev dev 4096 workspace",
+    )
+
+    assert entry["tool"]["headline"] == "ls -la"
+    assert entry["tool"]["result_summary"] == "total 8"
+
+
+@pytest.mark.asyncio
+async def test_file_tool_entries_carry_a_verb_headline_and_absolute_path(tmp_path: Path):
+    workspace = tmp_path / "workspace"
+    supervisor = make_supervisor(tmp_path)
+    annotated, _raw = write_frames(workspace)
+
+    read_entry = await run_tool(
+        supervisor,
+        tool_call_id="tool-read",
+        tool_name="read",
+        args={"path": str(annotated)},
+        result={"type": "image", "data": "..."},
+    )
+    write_entry = await run_tool(
+        supervisor,
+        tool_call_id="tool-write",
+        tool_name="write",
+        args={"path": "turn_plan.json", "content": "{}"},
+        result={"ok": True},
+    )
+
+    assert read_entry["tool"]["headline"] == "read latest_frame_annotated.png"
+    assert read_entry["tool"]["path"] == str(annotated.resolve())
+    assert write_entry["tool"]["headline"] == "write turn_plan.json"
+    assert write_entry["tool"]["path"] == str((workspace / "turn_plan.json").resolve())
+
+
+@pytest.mark.asyncio
+async def test_image_artifact_is_set_only_for_image_artifact_reads(tmp_path: Path):
+    workspace = tmp_path / "workspace"
+    supervisor = make_supervisor(tmp_path)
+    annotated, _raw = write_frames(workspace)
+    annotated.write_bytes(b"p" * 4200)
+    context = workspace / "turn_context.json"
+    context.write_text("{}", encoding="utf-8")
+    stray = workspace / "notes.png"
+    stray.write_bytes(b"png")
+
+    frame_entry = await run_tool(
+        supervisor,
+        tool_call_id="tool-frame",
+        tool_name="read",
+        args={"path": str(annotated)},
+        result={"type": "image", "data": "..."},
+    )
+    context_entry = await run_tool(
+        supervisor,
+        tool_call_id="tool-context",
+        tool_name="read",
+        args={"path": str(context)},
+        result="{}",
+    )
+    stray_entry = await run_tool(
+        supervisor,
+        tool_call_id="tool-stray",
+        tool_name="read",
+        args={"path": str(stray)},
+        result={"type": "image", "data": "..."},
+    )
+
+    assert frame_entry["tool"]["image_artifact"] == "latest_frame_annotated"
+    assert frame_entry["tool"]["result_summary"] == "image 4.1 KB"
+    assert context_entry["tool"]["image_artifact"] is None
+    assert context_entry["tool"]["result_summary"] == "{}"
+    assert stray_entry["tool"]["image_artifact"] is None
+
+
+@pytest.mark.asyncio
+async def test_tool_entry_goes_running_then_ok_under_one_seq(tmp_path: Path):
+    streamed: list[dict] = []
+
+    async def stream(event: dict) -> None:
+        streamed.append(event)
+
+    supervisor = make_supervisor(tmp_path, stream_sink=stream)
+
+    await run_tool(
+        supervisor,
+        tool_call_id="tool-bash",
+        tool_name="bash",
+        args={"command": "# Look around\necho hi"},
+        result="hi",
+        finish=False,
+    )
+    running = last_tool_entry(supervisor)
+    assert running["state"] == "running"
+    assert running["tool"]["headline"] == "Look around"
+    assert running["tool"]["result_summary"] == ""
+    running_seq = running["seq"]
+
+    await supervisor._handle_event(
+        {
+            "type": "tool_execution_end",
+            "toolCallId": "tool-bash",
+            "toolName": "bash",
+            "result": "hi",
+            "isError": False,
+        }
+    )
+
+    assert len(stream_entries(supervisor, "tool")) == 1
+    finished = last_tool_entry(supervisor)
+    assert finished["seq"] == running_seq
+    assert finished["state"] == "ok"
+    assert finished["tool"]["result_summary"] == "hi"
+    assert finished["tool"]["duration_ms"] is not None
+
+    pushed = [event for event in streamed if event["type"] == "pi_stream_entry"]
+    assert [event["entry"]["seq"] for event in pushed] == [running_seq, running_seq]
+    assert [event["entry"]["state"] for event in pushed] == ["running", "ok"]
+
+
+@pytest.mark.asyncio
+async def test_failed_tool_call_reports_the_error_first_line(tmp_path: Path):
+    supervisor = make_supervisor(tmp_path)
+
+    entry = await run_tool(
+        supervisor,
+        tool_call_id="tool-bash",
+        tool_name="bash",
+        args={"command": "curl http://localhost:1/action"},
+        result="curl: (7) Failed to connect to localhost port 1\nmore detail here",
+        is_error=True,
+    )
+
+    assert entry["state"] == "error"
+    assert entry["tool"]["result_summary"] == "curl: (7) Failed to connect to localhost port 1"
+    assert "more detail here" in entry["tool"]["result_full"]
+
+
+@pytest.mark.asyncio
+async def test_thinking_entry_grows_across_deltas_under_one_seq(tmp_path: Path):
+    streamed: list[dict] = []
+
+    async def stream(event: dict) -> None:
+        streamed.append(event)
+
+    supervisor = make_supervisor(tmp_path, stream_sink=stream)
+    await supervisor._handle_event(
+        {"type": "message_start", "message": {"role": "assistant", "content": []}}
+    )
+    for delta in ("Blocked ", "by the ", "ledge."):
+        await supervisor._handle_event(
+            {
+                "type": "message_update",
+                "assistantMessageEvent": {"type": "thinking_delta", "delta": delta},
+            }
+        )
+
+    thinking = stream_entries(supervisor, "thinking")
+    assert len(thinking) == 1
+    assert thinking[0]["state"] == "running"
+    assert thinking[0]["text"] == "Blocked by the ledge."
+
+    pushed = [
+        event["entry"]
+        for event in streamed
+        if event["type"] == "pi_stream_entry" and event["entry"]["kind"] == "thinking"
+    ]
+    assert {entry["seq"] for entry in pushed} == {thinking[0]["seq"]}
+    assert [entry["text"] for entry in pushed] == [
+        "Blocked",
+        "Blocked by the",
+        "Blocked by the ledge.",
+    ]
+
+    await supervisor._handle_event(
+        {
+            "type": "message_end",
+            "message": {
+                "role": "assistant",
+                "content": [
+                    {"type": "thinking", "thinking": "Blocked by the ledge."},
+                    {"type": "text", "text": "Going up then right."},
+                ],
+            },
+        }
+    )
+
+    assert len(stream_entries(supervisor, "thinking")) == 1
+    assert stream_entries(supervisor, "thinking")[0]["state"] == "ok"
+    assert stream_entries(supervisor, "text")[-1]["text"] == "Going up then right."
+    assert any(event["type"] == "pi_thinking_delta" for event in streamed)
+
+
+@pytest.mark.asyncio
+async def test_stream_seq_is_monotonic_across_kinds(tmp_path: Path):
+    fake_pi = make_fake_rpc_server(tmp_path)
+    supervisor = make_supervisor(tmp_path, pi_binary=str(fake_pi))
+
+    await supervisor.start(goal="Reach the next checkpoint.", auto_continue=False)
+    await supervisor.wait_until_idle(timeout=10)
+
+    entries = supervisor.state_snapshot()["stream"]
+    assert [entry["seq"] for entry in entries] == list(range(1, len(entries) + 1))
+    assert {entry["kind"] for entry in entries} == {"system", "user", "thinking", "tool", "text"}
+    assert all(entry["ts"].endswith("+00:00") for entry in entries)
+    assert all(entry["state"] in {"running", "ok", "error"} for entry in entries)
+    assert not [entry for entry in entries if entry["state"] == "running"]
+
+
+def test_stream_cap_drops_the_oldest_without_renumbering(tmp_path: Path):
+    supervisor = make_supervisor(tmp_path)
+    overflow = 120
+
+    for index in range(STREAM_ENTRY_CAP + overflow):
+        supervisor._new_stream_entry("text", text=f"entry {index}")
+
+    entries = supervisor.state_snapshot()["stream"]
+    assert len(entries) == STREAM_ENTRY_CAP
+    assert entries[0]["seq"] == overflow + 1
+    assert entries[-1]["seq"] == STREAM_ENTRY_CAP + overflow
+    assert entries[0]["text"] == f"entry {overflow}"
+    assert supervisor.stream_since(after=0, limit=5)["next_seq"] == overflow + 5
+
+
+def test_stream_since_pages_from_a_seq(tmp_path: Path):
+    supervisor = make_supervisor(tmp_path)
+    supervisor.session_id = "session-1"
+    for index in range(5):
+        supervisor._new_stream_entry("text", text=f"entry {index}")
+
+    page = supervisor.stream_since(after=2, limit=2)
+
+    assert [entry["seq"] for entry in page["entries"]] == [3, 4]
+    assert page["next_seq"] == 4
+    assert page["session_id"] == "session-1"
+    assert supervisor.stream_since(after=5)["entries"] == []
+    assert supervisor.stream_since(after=5)["next_seq"] == 5
+
+
+@pytest.mark.asyncio
+async def test_system_entries_mark_turn_boundaries_and_the_token_budget_stop(tmp_path: Path):
+    fake_pi = make_fake_rpc_server(tmp_path, context_tokens=120_000)
+    supervisor = make_supervisor(
+        tmp_path,
         pi_binary=str(fake_pi),
-        max_idle_turns=2,
+        token_budget=110_000,
     )
 
     await supervisor.start(
@@ -998,9 +1738,668 @@ async def test_pi_supervisor_stops_auto_continue_after_idle_turns(tmp_path: Path
     )
     await supervisor.wait_until_idle(timeout=10)
 
+    labels = system_labels(supervisor)
+    assert labels[0] == "session start"
+    assert "goal \u00b7 turn 1" in labels
+    assert "turn 1 complete" in labels
+    assert "token budget reached" in labels
+    budget = next(
+        entry
+        for entry in stream_entries(supervisor, "system")
+        if entry["system"]["label"] == "token budget reached"
+    )
+    assert budget["system"]["level"] == "warn"
+    assert "Token budget reached" in budget["text"]
+
+    prompts = stream_entries(supervisor, "user")
+    assert prompts[0]["text"] == "Reach the next checkpoint."
+
+
+@pytest.mark.asyncio
+async def test_continue_turn_boundary_is_labelled_with_the_turn_index(tmp_path: Path):
+    fake_pi = make_fake_rpc_server(tmp_path)
+    supervisor = make_supervisor(tmp_path, pi_binary=str(fake_pi))
+
+    await supervisor.start(goal="Reach the next checkpoint.", auto_continue=False)
+    await supervisor.wait_until_idle(timeout=10)
+    seq_before = supervisor.stream_entries[-1]["seq"]
+    await supervisor.continue_once()
+    await supervisor.wait_until_idle(timeout=10)
+
+    assert "continue \u00b7 turn 2" in system_labels(supervisor)
+    assert supervisor.stream_entries[-1]["seq"] > seq_before
+    continue_prompts = [
+        entry for entry in stream_entries(supervisor, "user") if entry["text"] == CONTINUE_MESSAGE
+    ]
+    assert continue_prompts
+
+
+# ----------------------------------------------------------------------
+# The between-session critic
+# ----------------------------------------------------------------------
+
+CRITIQUE = (
+    "You reached Route 1 (9,21) but 38% of your batches were blocked on the first move.\n"
+    "Stop walking north from (5,6); the wall runs the full width. Take the west path."
+)
+
+
+def critic_prompt(workspace_dir: Path) -> str:
+    """The argv the fake pi saw in --print mode; the digest is its last element."""
+
+    return json.loads((workspace_dir / "critic_argv.json").read_text(encoding="utf-8"))[-1]
+
+
+@pytest.mark.asyncio
+async def test_initial_prompt_is_the_bare_goal_without_a_handoff(tmp_path: Path):
+    fake_pi = make_fake_rpc_server(tmp_path)
+    workspace_dir = tmp_path / "workspace"
+    supervisor = make_supervisor(tmp_path, pi_binary=str(fake_pi), critic_enabled=False)
+
+    await supervisor.start(goal="Reach the next checkpoint.", auto_continue=False)
+    await supervisor.wait_until_idle(timeout=10)
+
+    prompts = prompt_commands(workspace_dir)
+    assert prompts[0]["message"] == "Reach the next checkpoint."
+    assert HANDOFF_HEADING not in prompts[0]["message"]
+
+
+@pytest.mark.asyncio
+async def test_initial_prompt_carries_the_handoff_and_leaves_the_system_prompt_alone(
+    tmp_path: Path,
+):
+    fake_pi = make_fake_rpc_server(tmp_path)
+    workspace_dir = tmp_path / "workspace"
+    workspace_dir.mkdir(parents=True, exist_ok=True)
+    write_handoff(workspace_dir, CRITIQUE)
+    supervisor = make_supervisor(tmp_path, pi_binary=str(fake_pi), critic_enabled=False)
+    skill_before = supervisor.skill_path.read_bytes()
+
+    await supervisor.start(goal="Reach the next checkpoint.", auto_continue=False)
+    await supervisor.wait_until_idle(timeout=10)
+
+    launch_command = supervisor._build_command()
+    message = prompt_commands(workspace_dir)[0]["message"]
+    assert message.startswith("Reach the next checkpoint.")
+    assert f"## {HANDOFF_HEADING}" in message
+    assert "38% of your batches were blocked" in message
+    assert supervisor.state_snapshot()["default_prompt"] == message
+    # The cached prefix stays byte-identical: the handoff rides in the user turn.
+    assert supervisor.skill_path.read_bytes() == skill_before
+    assert "38% of your batches" not in skill_before.decode("utf-8")
+    assert launch_command[launch_command.index("--system-prompt") + 1] == str(supervisor.skill_path)
+
+
+@pytest.mark.asyncio
+async def test_the_critic_runs_between_the_run_ending_and_the_terminal_status(tmp_path: Path):
+    events: list[dict] = []
+    fake_pi = make_fake_rpc_server(tmp_path, critique=CRITIQUE, critique_delay=0.8)
+    workspace_dir = tmp_path / "workspace"
+
+    async def sink(event: dict) -> None:
+        events.append(event)
+
+    supervisor = make_supervisor(tmp_path, pi_binary=str(fake_pi), event_sink=sink)
+    await supervisor.start(
+        goal="Reach the next checkpoint.",
+        provider="llamacpp",
+        model="fake-model",
+        auto_continue=False,
+    )
+
+    assert await wait_for(lambda: supervisor.status == "critiquing", timeout=15)
+    await supervisor.wait_until_idle(timeout=25)
+
     snapshot = supervisor.state_snapshot()
-    assert snapshot["status"] == "stuck"
-    assert "no tool calls" in snapshot["status_reason"]
-    assert snapshot["turns_completed"] == 2
-    stuck_event = next(event for event in events if event["type"] == "pi_supervisor_stuck")
-    assert stuck_event["idle_turns"] == 2
+    assert snapshot["status"] == "completed"
+    assert read_handoff(workspace_dir) == CRITIQUE
+
+    critique_events = [event["type"] for event in events if event["type"].startswith("pi_critique")]
+    assert critique_events == ["pi_critique_start", "pi_critique_ready"]
+    ready_at = next(
+        index for index, event in enumerate(events) if event["type"] == "pi_critique_ready"
+    )
+    terminal_at = max(
+        index
+        for index, event in enumerate(events)
+        if event["type"] == "pi_supervisor_status" and event.get("status") == "completed"
+    )
+    assert terminal_at > ready_at
+
+    critique = snapshot["critique"]
+    assert critique["enabled"] is True
+    assert critique["text"] == CRITIQUE
+    assert critique["at"]
+    assert critique["duration_seconds"] >= 0.8
+    assert critique["digest_tokens"] > 0
+    assert critique["error"] is None
+    assert critique["handoff_path"] == str(workspace_dir.resolve() / HANDOFF_FILENAME)
+    assert "critique start" in system_labels(supervisor)
+    assert "critique ready" in system_labels(supervisor)
+
+    argv = json.loads((workspace_dir / "critic_argv.json").read_text(encoding="utf-8"))
+    assert argv[:5] == ["--mode", "json", "--print", "--thinking", "xhigh"]
+    assert "--no-session" in argv
+    assert argv[argv.index("--tools") + 1] == "read"
+    assert argv[argv.index("--model") + 1] == "fake-model"
+    assert argv[-1].startswith("You are reviewing a finished session")
+
+
+@pytest.mark.asyncio
+async def test_the_digest_the_critic_reads_carries_the_session_stats(tmp_path: Path):
+    fake_pi = make_fake_rpc_server(tmp_path, critique=CRITIQUE, action_tool=True)
+    workspace_dir = tmp_path / "workspace"
+    supervisor = make_supervisor(
+        tmp_path,
+        pi_binary=str(fake_pi),
+        critic_context=lambda: {
+            "objective": "Deliver Oak's parcel",
+            "game_state": {
+                "map": {"map_name": "ROUTE 1", "map_id": 12},
+                "player": {"position": {"x": 9, "y": 21}, "badges": [], "money": 3000},
+                "party": [{"species": "CHARMANDER", "level": 8, "hp": 12, "max_hp": 26}],
+            },
+            "map_summary": {
+                "map_id": 12,
+                "map_name": "ROUTE 1",
+                "width": 20,
+                "height": 36,
+                "coverage": {"seen": 240, "walked": 130, "total": 720},
+                "warps": [{"x": 9, "y": 0}],
+            },
+        },
+    )
+    supervisor.workspace_dir.mkdir(parents=True, exist_ok=True)
+    (supervisor.workspace_dir / "NOTES.md").write_text("Head north on Route 1.", encoding="utf-8")
+
+    await supervisor.start(goal="Reach the next checkpoint.", auto_continue=False)
+    await supervisor.wait_until_idle(timeout=25)
+
+    digest = critic_prompt(workspace_dir)
+    assert "Objective: Deliver Oak's parcel" in digest
+    assert "Session ended: completed" in digest
+    assert "ROUTE 1" in digest
+    assert "CHARMANDER L8" in digest
+    assert "/action batches: 1" in digest
+    assert "Buttons sent: 2 (average batch 2.0)" in digest
+    assert "blocked_after): 1 of 1 (100%)" in digest
+    assert "Batches that ended with moved=0: 1" in digest
+    assert "Coverage: seen=240, total=720, walked=130" in digest
+    assert "Warps: (9,0)" in digest
+    assert "walk north" in digest
+    assert "Head north on Route 1." in digest
+    # The raw session JSONL is ~1 MB; the digest has to stay in the token budget.
+    assert len(digest) <= DIGEST_CHAR_BUDGET
+
+
+@pytest.mark.asyncio
+async def test_the_critic_can_be_disabled(tmp_path: Path):
+    fake_pi = make_fake_rpc_server(tmp_path, critique=CRITIQUE)
+    workspace_dir = tmp_path / "workspace"
+    supervisor = make_supervisor(tmp_path, pi_binary=str(fake_pi), critic_enabled=False)
+
+    await supervisor.start(goal="Reach the next checkpoint.", auto_continue=False)
+    await supervisor.wait_until_idle(timeout=10)
+
+    snapshot = supervisor.state_snapshot()
+    assert snapshot["status"] == "completed"
+    assert snapshot["critique"]["enabled"] is False
+    assert snapshot["critique"]["text"] is None
+    assert snapshot["config"]["critic_enabled"] is False
+    assert not (workspace_dir / HANDOFF_FILENAME).exists()
+    assert not (workspace_dir / "critic_argv.json").exists()
+    assert "critique start" not in system_labels(supervisor)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "critique_kwargs",
+    [
+        {"critique": None},
+        {"critique": ""},
+        {"critique": CRITIQUE, "critique_delay": 5.0},
+    ],
+    ids=["non-zero-exit", "empty-output", "timeout"],
+)
+async def test_a_failing_critic_keeps_the_old_handoff_and_still_ends_the_run(
+    tmp_path: Path,
+    critique_kwargs: dict,
+):
+    fake_pi = make_fake_rpc_server(tmp_path, **critique_kwargs)
+    workspace_dir = tmp_path / "workspace"
+    workspace_dir.mkdir(parents=True, exist_ok=True)
+    write_handoff(workspace_dir, "the previous critique")
+    supervisor = make_supervisor(tmp_path, pi_binary=str(fake_pi), critic_timeout_seconds=1.0)
+
+    await supervisor.start(goal="Reach the next checkpoint.", auto_continue=False)
+    await supervisor.wait_until_idle(timeout=25)
+
+    snapshot = supervisor.state_snapshot()
+    assert snapshot["status"] == "completed"
+    assert snapshot["status_reason"] == "Pi completed one turn."
+    assert snapshot["critique"]["text"] is None
+    assert snapshot["critique"]["error"]
+    assert read_handoff(workspace_dir) == "the previous critique"
+    assert not (workspace_dir / HANDOFF_PREVIOUS_FILENAME).exists()
+    assert "critique failed" in system_labels(supervisor)
+
+
+@pytest.mark.asyncio
+async def test_an_operator_stop_skips_the_critique_so_it_returns_promptly(tmp_path: Path):
+    fake_pi = make_fake_rpc_server(tmp_path, critique=CRITIQUE, critique_delay=30.0)
+    workspace_dir = tmp_path / "workspace"
+    supervisor = make_supervisor(tmp_path, pi_binary=str(fake_pi))
+
+    await supervisor.start(
+        goal="Reach the next checkpoint.",
+        auto_continue=True,
+        continue_delay_seconds=5,
+    )
+    assert await wait_for(lambda: supervisor.turns_completed >= 1, timeout=10)
+
+    started = time.monotonic()
+    snapshot = await supervisor.stop()
+
+    assert time.monotonic() - started < 12
+    assert snapshot["status"] == "stopped"
+    assert not (workspace_dir / HANDOFF_FILENAME).exists()
+
+
+def test_the_watchdog_treats_critiquing_as_busy(tmp_path: Path):
+    script = Path(__file__).resolve().parents[1] / "scripts" / "keep_run_alive.sh"
+    text = script.read_text(encoding="utf-8")
+    busy_arm = next(
+        line.strip()
+        for line in text.splitlines()
+        if "critiquing" in line and line.strip().endswith(")")
+    )
+    assert busy_arm == "running|starting|critiquing)"
+
+    # Run the real case arm, so this fails if the pattern stops matching.
+    probe = tmp_path / "probe.sh"
+    probe.write_text(
+        "\n".join(
+            [
+                "#!/usr/bin/env bash",
+                'for status in running starting critiquing completed stopped stuck ""; do',
+                '  case "$status" in',
+                f'    {busy_arm} echo "busy:$status" ;;',
+                '    "") echo "unknown" ;;',
+                '    *) echo "start:$status" ;;',
+                "  esac",
+                "done",
+            ]
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    result = subprocess.run(["bash", str(probe)], capture_output=True, text=True, check=True)
+
+    assert result.stdout.split() == [
+        "busy:running",
+        "busy:starting",
+        "busy:critiquing",
+        "start:completed",
+        "start:stopped",
+        "start:stuck",
+        "unknown",
+    ]
+
+
+# ----------------------------------------------------------------------
+# Watching the critic, and surviving one that never answers
+# ----------------------------------------------------------------------
+
+CRITIC_REASONING = "Counting the wall-rams: 38 of them, every one from (5,6) heading north."
+
+
+def critic_entries(supervisor: PiSupervisor, kind: str) -> list[dict]:
+    return [
+        entry
+        for entry in supervisor.stream_entries
+        if entry["kind"] == kind and entry.get("source") == "critic"
+    ]
+
+
+@pytest.mark.asyncio
+async def test_the_critic_narrates_into_the_stream_as_it_thinks(tmp_path: Path):
+    pushed: list[dict] = []
+
+    async def stream_sink(event: dict) -> None:
+        if event.get("type") == "pi_stream_entry":
+            pushed.append(event["entry"])
+
+    fake_pi = make_fake_rpc_server(
+        tmp_path,
+        critique=CRITIQUE,
+        critique_thinking=CRITIC_REASONING,
+    )
+    supervisor = make_supervisor(tmp_path, pi_binary=str(fake_pi), stream_sink=stream_sink)
+
+    await supervisor.start(goal="Reach the next checkpoint.", auto_continue=False)
+    await supervisor.wait_until_idle(timeout=25)
+
+    thinking = critic_entries(supervisor, "thinking")
+    said = critic_entries(supervisor, "text")
+    assert len(thinking) == 1
+    assert len(said) == 1
+    # Attributable at a glance: the critic's narration is labelled, the agent's is not.
+    assert thinking[0]["text"].startswith(CRITIC_STREAM_PREFIX)
+    assert said[0]["text"].startswith(CRITIC_STREAM_PREFIX)
+    assert "38 of them" in thinking[0]["text"]
+    assert "38% of your batches" in said[0]["text"]
+    assert thinking[0]["state"] == "ok"
+    for entry in stream_entries(supervisor, "thinking"):
+        if entry.get("source") != "critic":
+            assert not entry["text"].startswith(CRITIC_STREAM_PREFIX)
+
+    # One entry, grown in place by the deltas rather than one entry per delta.
+    grew = [
+        entry for entry in pushed if entry["kind"] == "thinking" and entry.get("source") == "critic"
+    ]
+    assert len(grew) > 1
+    assert {entry["seq"] for entry in grew} == {thinking[0]["seq"]}
+    assert [len(entry["text"]) for entry in grew] == sorted(len(e["text"]) for e in grew)
+
+
+@pytest.mark.asyncio
+async def test_the_heartbeat_mutates_one_system_entry_instead_of_spamming(tmp_path: Path):
+    pushed: list[dict] = []
+
+    async def stream_sink(event: dict) -> None:
+        if event.get("type") == "pi_stream_entry":
+            pushed.append(event["entry"])
+
+    fake_pi = make_fake_rpc_server(tmp_path, critique=CRITIQUE, critique_delay=0.5)
+    supervisor = make_supervisor(
+        tmp_path,
+        pi_binary=str(fake_pi),
+        stream_sink=stream_sink,
+        critic_heartbeat_seconds=0.05,
+    )
+
+    await supervisor.start(goal="Reach the next checkpoint.", auto_continue=False)
+    await supervisor.wait_until_idle(timeout=25)
+
+    beats = critic_entries(supervisor, "system")
+    assert len(beats) == 1
+    assert beats[0]["system"]["label"].startswith("critique ran ")
+
+    ticks = [
+        entry for entry in pushed if entry["kind"] == "system" and entry.get("source") == "critic"
+    ]
+    assert len(ticks) >= 3
+    assert {entry["seq"] for entry in ticks} == {beats[0]["seq"]}
+    assert any(entry["system"]["label"].startswith("critique running · ") for entry in ticks)
+    # The dividers the operator already relies on are still there.
+    assert "critique start" in system_labels(supervisor)
+    assert "critique ready" in system_labels(supervisor)
+
+
+@pytest.mark.asyncio
+async def test_a_critic_that_hits_its_output_ceiling_says_so_in_the_snapshot(tmp_path: Path):
+    fake_pi = make_fake_rpc_server(
+        tmp_path,
+        critique="",
+        critique_stop_reason="length",
+        critique_usage={"input": 2303, "output": 16384},
+    )
+    workspace_dir = tmp_path / "workspace"
+    workspace_dir.mkdir(parents=True, exist_ok=True)
+    write_handoff(workspace_dir, "the previous critique")
+    supervisor = make_supervisor(
+        tmp_path,
+        pi_binary=str(fake_pi),
+        critic_retry_enabled=False,
+    )
+
+    await supervisor.start(goal="Reach the next checkpoint.", auto_continue=False)
+    await supervisor.wait_until_idle(timeout=25)
+
+    snapshot = supervisor.state_snapshot()
+    critique = snapshot["critique"]
+    assert snapshot["status"] == "completed"
+    assert critique["text"] is None
+    assert critique["error"] == "Critic produced no text (stopReason=length, output=16384)."
+    assert critique["stop_reason"] == "length"
+    assert critique["usage"] == {"input": 2303, "output": 16384}
+    assert critique["salvaged"] is False
+    assert critique["raw_path"] == str(
+        workspace_dir.resolve() / DEBUG_DIRNAME / CRITIC_RAW_FILENAME
+    )
+    assert [attempt["thinking"] for attempt in critique["attempts"]] == ["xhigh"]
+    assert snapshot["config"]["critic_retry_enabled"] is False
+    assert snapshot["config"]["critic_retry_thinking"] == "medium"
+    # The artefact that makes the next one a two-minute diagnosis.
+    raw = Path(critique["raw_path"]).read_text(encoding="utf-8")
+    assert '"stopReason": "length"' in raw
+    assert read_handoff(workspace_dir) == "the previous critique"
+    assert "critique failed" in system_labels(supervisor)
+
+
+@pytest.mark.asyncio
+async def test_truncated_reasoning_still_leaves_the_next_session_a_handoff(tmp_path: Path):
+    reasoning = " ".join(f"thought{index}" for index in range(500))
+    fake_pi = make_fake_rpc_server(
+        tmp_path,
+        critique="",
+        critique_thinking=reasoning,
+        critique_stop_reason="length",
+        critique_usage={"output": 16384},
+    )
+    workspace_dir = tmp_path / "workspace"
+    supervisor = make_supervisor(tmp_path, pi_binary=str(fake_pi), critic_retry_enabled=False)
+    skill_before = supervisor.skill_path.read_bytes()
+
+    await supervisor.start(goal="Reach the next checkpoint.", auto_continue=False)
+    await supervisor.wait_until_idle(timeout=25)
+
+    snapshot = supervisor.state_snapshot()
+    handoff = read_handoff(workspace_dir)
+    assert snapshot["status"] == "completed"
+    assert snapshot["critique"]["salvaged"] is True
+    assert handoff.startswith(SALVAGED_REASONING_NOTICE)
+    assert "thought499" in handoff
+    assert len(handoff.split()) <= MAX_HANDOFF_WORDS
+    assert "critique salvaged" in system_labels(supervisor)
+    assert supervisor.skill_path.read_bytes() == skill_before
+
+
+@pytest.mark.asyncio
+async def test_a_retry_seals_the_first_attempts_narration(tmp_path: Path):
+    supervisor = make_supervisor(tmp_path)
+
+    await supervisor._on_critic_event({"type": "attempt_start", "attempt": 1, "thinking": "xhigh"})
+    await supervisor._on_critic_event({"type": "thinking_delta", "delta": "reasoning "})
+    await supervisor._on_critic_event({"type": "thinking_delta", "delta": "forever"})
+    await supervisor._on_critic_event({"type": "attempt_start", "attempt": 2, "thinking": "medium"})
+    await supervisor._on_critic_event({"type": "text_end", "text": "the short answer"})
+
+    thinking = critic_entries(supervisor, "thinking")
+    assert len(thinking) == 1
+    assert thinking[0]["text"] == CRITIC_STREAM_PREFIX + "reasoning forever"
+    assert thinking[0]["state"] == "ok"
+    said = critic_entries(supervisor, "text")
+    assert [entry["text"] for entry in said] == [CRITIC_STREAM_PREFIX + "the short answer"]
+    assert "critique retry · thinking medium" in system_labels(supervisor)
+
+
+# ----------------------------------------------------------------------
+# Nothing the operator can read is silently shortened
+# ----------------------------------------------------------------------
+
+
+def test_a_payload_past_the_ceiling_says_how_much_it_dropped():
+    assert payload_text("small enough") == "small enough"
+
+    clipped = payload_text("y" * (TOOL_RESULT_LIMIT + 500))
+
+    assert clipped.startswith("y" * 1000)
+    assert "[truncated: 500 more characters not shown]" in clipped
+    # The old marker said nothing about what was lost.
+    assert "...[truncated]..." not in clipped
+
+
+@pytest.mark.asyncio
+async def test_a_long_thinking_block_survives_into_the_stream_and_transcript(tmp_path: Path):
+    supervisor = make_supervisor(tmp_path)
+    # Far past the 8k ceiling that used to cut critic reasoning off mid-thought.
+    thinking = ("The wall at (5,6) runs the full width of the room. " * 800).strip()
+
+    await supervisor._handle_event(
+        {
+            "type": "message_end",
+            "message": {
+                "role": "assistant",
+                "content": [{"type": "thinking", "thinking": thinking}],
+            },
+        }
+    )
+
+    entry = stream_entries(supervisor, "thinking")[-1]
+    assert entry["text"] == thinking
+    assert "truncated" not in entry["text"]
+
+    transcript = supervisor.state_snapshot()["transcript"][-1]
+    assert transcript["content"] == thinking
+    # The preview is still a preview: short, and never the only copy.
+    assert len(transcript["preview"]) < 250
+
+
+@pytest.mark.asyncio
+async def test_a_long_critique_reaches_the_snapshot_and_the_stream_whole(tmp_path: Path):
+    body = "\n\n".join(
+        f"{index}. Mistake {index}: you rammed the wall at (5,6) {index} times."
+        for index in range(60)
+    )
+    critique = f"{body}\n\nNEXT GOAL: Take the west path out of Viridian Forest."
+    assert len(critique.split()) > 300  # past the cap that used to chop it
+    fake_pi = make_fake_rpc_server(tmp_path, critique=critique)
+    workspace_dir = tmp_path / "workspace"
+    supervisor = make_supervisor(tmp_path, pi_binary=str(fake_pi))
+
+    await supervisor.start(goal="Reach the next checkpoint.", auto_continue=False)
+    await supervisor.wait_until_idle(timeout=25)
+
+    snapshot = supervisor.state_snapshot()
+    assert snapshot["critique"]["text"] == critique
+    assert "truncated" not in snapshot["critique"]["text"]
+    assert read_handoff(workspace_dir) == critique
+
+    ready = [
+        entry
+        for entry in stream_entries(supervisor, "system")
+        if entry["system"]["label"] == "critique ready"
+    ]
+    assert ready and ready[0]["text"] == critique
+    assert "next goal" in system_labels(supervisor)
+
+
+@pytest.mark.asyncio
+async def test_a_salvaged_critique_reaches_the_snapshot_whole(tmp_path: Path):
+    reasoning = ". ".join(f"thought{index}" for index in range(2000)) + "."
+    fake_pi = make_fake_rpc_server(
+        tmp_path,
+        critique="",
+        critique_thinking=reasoning,
+        critique_stop_reason="length",
+        critique_usage={"output": 16384},
+    )
+    workspace_dir = tmp_path / "workspace"
+    supervisor = make_supervisor(tmp_path, pi_binary=str(fake_pi), critic_retry_enabled=False)
+
+    await supervisor.start(goal="Reach the next checkpoint.", auto_continue=False)
+    await supervisor.wait_until_idle(timeout=25)
+
+    snapshot = supervisor.state_snapshot()
+    text = snapshot["critique"]["text"]
+    assert snapshot["critique"]["salvaged"] is True
+    assert text == read_handoff(workspace_dir)
+    # The salvaged tail is marked, cut at a boundary, and never trails a bare "...".
+    assert "truncated" in text
+    assert "picking up at the next sentence" in text
+    assert text.rstrip().endswith("thought1999.")
+    assert len(text.split()) <= MAX_HANDOFF_WORDS
+
+
+# ----------------------------------------------------------------------
+# Which goal the next session gets
+# ----------------------------------------------------------------------
+
+CRITIQUE_WITH_GOAL = (
+    "You won the Boulder Badge at Pewter Gym after 41 turns.\n"
+    "Stop re-entering the gym; the badge check already reported it.\n\n"
+    "NEXT GOAL: Leave Pewter east onto Route 3 and reach Mt Moon."
+)
+CRITIC_GOAL = "Leave Pewter east onto Route 3 and reach Mt Moon"
+
+
+def test_goal_precedence_runs_operator_then_critic_then_objective(tmp_path: Path):
+    supervisor = make_supervisor(tmp_path)
+    supervisor._session_start_context = {"objective": "Collect all eight badges."}
+
+    assert supervisor._resolve_goal("Beat Brock.") == ("Beat Brock.", GOAL_SOURCE_OPERATOR)
+    # No operator goal and no critic goal: the objective engine has the floor.
+    assert supervisor._resolve_goal("   ") == (
+        "Collect all eight badges.",
+        GOAL_SOURCE_OBJECTIVE,
+    )
+
+    supervisor.critic_next_goal = CRITIC_GOAL
+    assert supervisor._resolve_goal("") == (CRITIC_GOAL, GOAL_SOURCE_CRITIC)
+    # An operator who does supply one still outranks the critic.
+    assert supervisor._resolve_goal("Beat Brock.") == ("Beat Brock.", GOAL_SOURCE_OPERATOR)
+
+    supervisor.critic_next_goal = ""
+    supervisor._session_start_context = {}
+    assert supervisor._resolve_goal("") == (FALLBACK_GOAL, GOAL_SOURCE_FALLBACK)
+
+
+@pytest.mark.asyncio
+async def test_a_finished_operator_goal_is_not_re_pinned_on_the_next_start(tmp_path: Path):
+    fake_pi = make_fake_rpc_server(tmp_path, critique=CRITIQUE_WITH_GOAL)
+    workspace_dir = tmp_path / "workspace"
+    supervisor = make_supervisor(
+        tmp_path,
+        pi_binary=str(fake_pi),
+        critic_context=lambda: {"objective": "Collect all eight badges."},
+    )
+
+    await supervisor.start(goal="Beat Brock in the Pewter Gym.", auto_continue=False)
+    await supervisor.wait_until_idle(timeout=25)
+
+    first = supervisor.state_snapshot()
+    assert first["goal"] == "Beat Brock in the Pewter Gym."
+    assert first["goal_source"] == GOAL_SOURCE_OPERATOR
+    assert first["critique"]["next_goal"] == CRITIC_GOAL
+
+    # The watchdog's restart names no goal. The finished one must not come back.
+    await supervisor.start(auto_continue=False)
+    await supervisor.wait_until_idle(timeout=25)
+
+    second = supervisor.state_snapshot()
+    assert second["operator_goal"] == ""
+    assert second["goal"] == CRITIC_GOAL
+    assert second["goal_source"] == GOAL_SOURCE_CRITIC
+    assert prompt_commands(workspace_dir)[-1]["message"].startswith(CRITIC_GOAL)
+
+
+@pytest.mark.asyncio
+async def test_a_next_goal_the_parser_rejects_falls_through_to_the_objective(tmp_path: Path):
+    fake_pi = make_fake_rpc_server(tmp_path, critique="A retrospective.\n\nNEXT GOAL: ok")
+    supervisor = make_supervisor(
+        tmp_path,
+        pi_binary=str(fake_pi),
+        critic_context=lambda: {"objective": "Collect all eight badges."},
+    )
+
+    await supervisor.start(goal="Beat Brock in the Pewter Gym.", auto_continue=False)
+    await supervisor.wait_until_idle(timeout=25)
+    assert supervisor.state_snapshot()["critique"]["next_goal"] == ""
+
+    await supervisor.start(auto_continue=False)
+    await supervisor.wait_until_idle(timeout=25)
+
+    snapshot = supervisor.state_snapshot()
+    assert snapshot["goal"] == "Collect all eight badges."
+    assert snapshot["goal_source"] == GOAL_SOURCE_OBJECTIVE

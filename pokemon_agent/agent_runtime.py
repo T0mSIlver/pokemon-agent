@@ -8,54 +8,22 @@ import json
 import os
 import re
 import tempfile
-from collections import defaultdict, deque
-from dataclasses import asdict, dataclass, field
+from collections import deque
+from dataclasses import asdict, dataclass
 from datetime import datetime, timezone
 from functools import lru_cache
 from pathlib import Path
-from typing import Any, Iterable, Optional
+from typing import Any, Callable, Iterable, Optional
 
 from PIL import Image, ImageDraw, ImageFont
-from pydantic import ValidationError
 
-from pokemon_agent.harness.context_builder import build_turn_context
-from pokemon_agent.harness.contracts import TurnContext, TurnPlan, TurnPlanInput
-from pokemon_agent.harness.planning import (
-    build_plan_execution_trace,
-    default_turn_plan,
-    evaluate_plan_outcome,
-    invalidate_plan,
-    mark_plan_executed,
-    parse_stored_turn_plan,
-    store_validated_plan,
-    validate_turn_plan_submission,
-)
-from pokemon_agent.memory.red import MAP_NAMES as RED_MAP_NAMES
-from pokemon_agent.navigation import (
-    MAP_COORDINATE_NOTE,
-    MAP_COORDINATE_SYSTEM,
-    LiveNavigationSnapshot,
-    NavigationStore,
-)
+from pokemon_agent.navigation import LiveNavigationSnapshot
 
 JsonDict = dict[str, Any]
 
 
 def utc_now() -> str:
     return datetime.now(timezone.utc).isoformat()
-
-
-_STUCK_LEVEL_ORDER = {"clear": 0, "warning": 1, "danger": 2}
-_OPPOSITE_ACTION = {
-    "walk_up": "walk_down",
-    "walk_down": "walk_up",
-    "walk_left": "walk_right",
-    "walk_right": "walk_left",
-}
-
-
-def _stuck_level_rank(level: str) -> int:
-    return _STUCK_LEVEL_ORDER.get(level, 0)
 
 
 def _slugify(value: str) -> str:
@@ -87,13 +55,6 @@ def _atomic_write_bytes(path: Path, data: bytes) -> None:
 
 def _atomic_write_text(path: Path, text: str, encoding: str = "utf-8") -> None:
     _atomic_write_bytes(path, text.encode(encoding))
-
-
-def _truncate_text_block(value: Any, limit: int = 1600) -> str:
-    text = str(value or "").strip()
-    if len(text) <= limit:
-        return text
-    return text[: limit - 16].rstrip() + "\n...[truncated]..."
 
 
 def _measure_text(
@@ -138,68 +99,14 @@ def _wrap_text(
 class ObjectiveRecord:
     pack_id: str
     id: str
-    title: str
     summary: str
     completion_predicate: str
     failure_hints: list[str]
     save_recommendation: str
-    route_hint: str
-    preferred_landmark_types: list[str]
     priority: int
     current: bool
     completed: bool
     status: str
-    progress_percent: int
-    target_npcs: list[JsonDict] = field(default_factory=list)
-
-    def to_dict(self) -> JsonDict:
-        return asdict(self)
-
-
-@dataclass(slots=True)
-class CheckpointRecord:
-    id: str
-    title: str
-    summary: str
-    objective_id: str
-    map_name: str
-    created_at: str
-    metadata: JsonDict = field(default_factory=dict)
-
-    def to_dict(self) -> JsonDict:
-        return asdict(self)
-
-
-@dataclass(slots=True)
-class RecoveryCandidate:
-    name: str
-    path: str
-    reason: str
-    score: int
-    modified_at: str
-    source: str
-    notes: list[str] = field(default_factory=list)
-
-    def to_dict(self) -> JsonDict:
-        return asdict(self)
-
-
-@dataclass(slots=True)
-class LandmarkRecord:
-    id: str
-    map_id: int
-    map_name: str
-    kind: str
-    title: str
-    coord: JsonDict
-    discovered_at: str
-    last_seen_at: str
-    seen_count: int = 1
-    source: str = "runtime"
-    notes: list[str] = field(default_factory=list)
-    target_map_name: Optional[str] = None
-    evidence: Optional[str] = None
-    confidence: Optional[float] = None
 
     def to_dict(self) -> JsonDict:
         return asdict(self)
@@ -214,67 +121,6 @@ def load_red_objective_packs() -> list[JsonDict]:
         if isinstance(payload, dict):
             packs.append(payload)
     return sorted(packs, key=lambda pack: int(pack.get("order", 0)))
-
-
-def _coord_to_key(coord: tuple[int, int]) -> str:
-    return f"{coord[0]},{coord[1]}"
-
-
-def _tuple_coord_from_any(value: Any) -> Optional[tuple[int, int]]:
-    if isinstance(value, (tuple, list)) and len(value) >= 2:
-        try:
-            return int(value[0]), int(value[1])
-        except Exception:  # noqa: BLE001
-            return None
-    if isinstance(value, dict) and value.get("x") is not None and value.get("y") is not None:
-        try:
-            return int(value["x"]), int(value["y"])
-        except Exception:  # noqa: BLE001
-            return None
-    return None
-
-
-def _coord_payload(coord: Optional[tuple[int, int]]) -> Optional[JsonDict]:
-    if coord is None:
-        return None
-    return {"x": coord[0], "y": coord[1]}
-
-
-def _int_or_zero(value: Any) -> int:
-    try:
-        return int(value or 0)
-    except (TypeError, ValueError):
-        return 0
-
-
-def _tile_map_dimensions(map_dimensions: Optional[JsonDict]) -> tuple[int, int]:
-    dims = map_dimensions or {}
-    width = _int_or_zero(dims.get("width_tiles") or dims.get("width"))
-    height = _int_or_zero(dims.get("height_tiles") or dims.get("height"))
-    return width, height
-
-
-def _boundary_sides_for_coord(
-    coord: tuple[int, int],
-    map_dimensions: Optional[JsonDict],
-) -> list[str]:
-    width, height = _tile_map_dimensions(map_dimensions)
-    sides: list[str] = []
-    if coord[1] <= 0:
-        sides.append("north")
-    if coord[0] <= 0:
-        sides.append("west")
-    if width > 0 and coord[0] >= width - 1:
-        sides.append("east")
-    if height > 0 and coord[1] >= height - 1:
-        sides.append("south")
-    return sides
-
-
-def _manhattan(a: Optional[tuple[int, int]], b: Optional[tuple[int, int]]) -> int:
-    if a is None or b is None:
-        return 999999
-    return abs(a[0] - b[0]) + abs(a[1] - b[1])
 
 
 def _stable_id(*parts: Any) -> str:
@@ -475,22 +321,6 @@ MOVE_METADATA: dict[str, JsonDict] = {
 }
 
 
-def summarize_party(party: list[JsonDict]) -> str:
-    if not party:
-        return "No Pokemon in party."
-    summary = []
-    for mon in party[:3]:
-        summary.append(
-            f"{mon.get('nickname') or mon.get('species', 'Unknown')} "
-            f"Lv{mon.get('level', '?')} "
-            f"HP {mon.get('hp', '?')}/{mon.get('max_hp', '?')}"
-        )
-    remainder = len(party) - len(summary)
-    if remainder > 0:
-        summary.append(f"+{remainder} more")
-    return "; ".join(summary)
-
-
 def extract_key_state(state: Optional[JsonDict]) -> JsonDict:
     if not state:
         return {}
@@ -525,125 +355,36 @@ def extract_key_state(state: Optional[JsonDict]) -> JsonDict:
     }
 
 
-def _preferred_direction_hint(text: str) -> Optional[str]:
-    lowered = text.lower()
-    for direction, words in (
-        ("north", ("north", "up")),
-        ("south", ("south", "down")),
-        ("west", ("west", "left")),
-        ("east", ("east", "right")),
-    ):
-        if any(word in lowered for word in words):
-            return direction
-    return None
-
-
-def _progress_amount(direction: str, start: tuple[int, int], coord: tuple[int, int]) -> int:
-    if direction == "north":
-        return start[1] - coord[1]
-    if direction == "south":
-        return coord[1] - start[1]
-    if direction == "west":
-        return start[0] - coord[0]
-    if direction == "east":
-        return coord[0] - start[0]
-    return 0
-
-
 def build_movement_guidance(
     *,
-    state: JsonDict,
     snapshot: Optional[LiveNavigationSnapshot],
-    navigation_store: Optional[NavigationStore],
-    objective: JsonDict,
 ) -> JsonDict:
+    """Describe the legal moves visible in the current collision window."""
     if snapshot is None:
         return {
-            "summary": "Navigation guidance unavailable because no live snapshot was captured.",
+            "summary": "No live collision window was captured for this frame.",
             "notes": [],
             "preferred_direction": None,
-            "candidate_route": None,
         }
 
-    current = snapshot.player_position
-    notes: list[str] = [
-        (
-            "Use the annotated screenshot as primary evidence. "
-            "Use ASCII only as a symbolic collision summary."
-        ),
-        f"Immediate legal moves: {', '.join(snapshot.valid_moves) or 'none'}.",
-    ]
+    notes: list[str] = [f"Immediate legal moves: {', '.join(snapshot.valid_moves) or 'none'}."]
     interaction = snapshot.interaction or {}
-    target = interaction.get("target_coord") or {}
     if interaction.get("source") == "blocked_tile":
+        target = interaction.get("target_coord") or {}
         notes.append(f"Forward movement is blocked at ({target.get('x')}, {target.get('y')}).")
-
-    preferred_direction = _preferred_direction_hint(objective["current"].get("route_hint", ""))
-    if preferred_direction is None:
-        preferred_direction = {
-            "up": "north",
-            "down": "south",
-            "left": "west",
-            "right": "east",
-        }.get(snapshot.facing)
-
-    candidate_route = None
-    if navigation_store is not None and preferred_direction is not None:
-        location_map = navigation_store.get(snapshot.key)
-        if location_map is not None:
-            distances = location_map.distance_map(
-                current,
-                extra_blockers=snapshot.sprite_set,
-            )
-            candidates = [
-                coord
-                for coord in distances
-                if coord != current and _progress_amount(preferred_direction, current, coord) > 0
-            ]
-            if candidates:
-                best = min(
-                    candidates,
-                    key=lambda coord: (
-                        distances[coord],
-                        abs(coord[0] - current[0]),
-                        abs(coord[1] - current[1]),
-                        coord[1],
-                        coord[0],
-                    ),
-                )
-                plan = location_map.plan_route(
-                    start=current,
-                    goal=best,
-                    extra_blockers=snapshot.sprite_set,
-                    allow_partial=False,
-                )
-                candidate_route = {
-                    "direction": preferred_direction,
-                    "target": {"x": best[0], "y": best[1]},
-                    "actions": plan.actions,
-                    "steps": len(plan.actions),
-                }
-                if plan.actions:
-                    notes.append(
-                        f"Best explored {preferred_direction}-progress route starts with: "
-                        f"{', '.join(plan.actions[:4])}."
-                    )
-                notes.append(
-                    f"Nearest explored tile that makes {preferred_direction} progress is "
-                    f"({best[0]}, {best[1]})."
-                )
-
-    if interaction.get("source") == "blocked_tile" and snapshot.valid_moves:
         sidesteps = [move for move in snapshot.valid_moves if move != snapshot.facing]
         if sidesteps:
             notes.append(f"Because forward is blocked, sidestep first: {', '.join(sidesteps)}.")
 
-    summary = notes[-1] if notes else "Navigation guidance unavailable."
     return {
-        "summary": summary,
+        "summary": notes[-1],
         "notes": notes,
-        "preferred_direction": preferred_direction,
-        "candidate_route": candidate_route,
+        "preferred_direction": {
+            "up": "north",
+            "down": "south",
+            "left": "west",
+            "right": "east",
+        }.get(snapshot.facing),
     }
 
 
@@ -762,8 +503,6 @@ def classify_action_feedback(
     state_delta: JsonDict,
     navigation_plan: Optional[JsonDict] = None,
     navigation_execution: Optional[JsonDict] = None,
-    plan_execution_trace: Optional[str] = None,
-    plan_state: Optional[str] = None,
 ) -> JsonDict:
     requested_actions = requested_actions or []
     tags: list[str] = []
@@ -800,18 +539,7 @@ def classify_action_feedback(
     elif source == "action" and requested_actions:
         notes.append(f"Executed {len(requested_actions)} raw actions.")
     elif source == "observe":
-        notes.append("Fresh observation generated for Pi.")
-
-    if plan_state:
-        tags.append(f"plan_{plan_state}")
-
-    if plan_execution_trace:
-        summary = plan_execution_trace
-        notes = [plan_execution_trace] + [
-            note for note in notes if note != "Player position changed."
-        ]
-    else:
-        summary = notes[0] if notes else ""
+        notes.append("Fresh observation generated.")
 
     if not tags:
         tags.append("observe")
@@ -819,11 +547,9 @@ def classify_action_feedback(
     return {
         "source": source,
         "requested_actions": requested_actions,
-        "summary": summary,
+        "summary": notes[0] if notes else "",
         "notes": notes,
         "tags": tags,
-        "plan_state": plan_state,
-        "plan_execution_trace": plan_execution_trace,
         "navigation_plan": navigation_plan,
         "navigation_execution": navigation_execution,
     }
@@ -857,12 +583,128 @@ def classify_ui_state(state: JsonDict) -> JsonDict:
     }
 
 
+# Mini-map inset palette. Same language as the main tile grid: unknown ground is
+# near-black, passable green, walked dimmed green, wall red, warp purple, player
+# cyan. Only the scale changes.
+_INSET_MAX_WIDTH = 176
+_INSET_MAX_HEIGHT = 320
+_INSET_MIN_CELL = 3
+_INSET_MAX_CELL = 10
+_INSET_UNKNOWN = (9, 12, 19, 255)
+_INSET_SEEN = (96, 220, 158, 255)
+_INSET_WALKED = (26, 96, 62, 255)
+_INSET_WALL = (176, 58, 58, 255)
+_INSET_WARP = (213, 80, 255, 255)
+_INSET_PLAYER = (55, 208, 255, 255)
+_INSET_BORDER = (86, 102, 122, 255)
+
+
+def _normalise_map_grid(grid: Any) -> Optional[JsonDict]:
+    """Coerce an explored-map grid payload into plain sets, or None if unusable."""
+    if not isinstance(grid, dict):
+        return None
+    try:
+        width = int(grid.get("width") or 0)
+        height = int(grid.get("height") or 0)
+    except (TypeError, ValueError):
+        return None
+    if width <= 0 or height <= 0 or width > 512 or height > 512:
+        return None
+
+    layers: JsonDict = {"width": width, "height": height}
+    for name in ("seen", "walkable", "walked", "warps"):
+        tiles: set[tuple[int, int]] = set()
+        for item in grid.get(name) or ():
+            try:
+                tile_x, tile_y = int(item[0]), int(item[1])
+            except (TypeError, ValueError, IndexError, KeyError):
+                continue
+            if 0 <= tile_x < width and 0 <= tile_y < height:
+                tiles.add((tile_x, tile_y))
+        layers[name] = tiles
+
+    if not (layers["seen"] | layers["walkable"] | layers["walked"] | layers["warps"]):
+        return None
+    return layers
+
+
+def _render_map_inset(
+    grid: JsonDict,
+    *,
+    player: Optional[tuple[int, int]],
+) -> Image.Image:
+    """Draw the whole explored map as a small image with the player marked."""
+    width = int(grid["width"])
+    height = int(grid["height"])
+    cell = min(_INSET_MAX_WIDTH // width, _INSET_MAX_HEIGHT // height, _INSET_MAX_CELL)
+    cell = max(cell, _INSET_MIN_CELL)
+
+    map_width = width * cell
+    map_height = height * cell
+    border = 1
+    inset = Image.new("RGBA", (map_width + (border * 2), map_height + (border * 2)), _INSET_BORDER)
+    draw = ImageDraw.Draw(inset)
+    draw.rectangle(
+        (border, border, border + map_width - 1, border + map_height - 1),
+        fill=_INSET_UNKNOWN,
+    )
+
+    seen = grid["seen"]
+    walkable = grid["walkable"]
+    walked = grid["walked"]
+    warps = grid["warps"]
+    for tile in seen | walkable | walked | warps:
+        tile_x, tile_y = tile
+        if tile in warps:
+            fill = _INSET_WARP
+        elif tile in walked:
+            fill = _INSET_WALKED
+        elif tile in walkable:
+            fill = _INSET_SEEN
+        else:
+            fill = _INSET_WALL
+        left = border + (tile_x * cell)
+        top = border + (tile_y * cell)
+        draw.rectangle((left, top, left + cell - 1, top + cell - 1), fill=fill)
+
+    if player is None:
+        return inset
+    player_x, player_y = int(player[0]), int(player[1])
+    if not (0 <= player_x < width and 0 <= player_y < height):
+        return inset
+
+    # The player marker is the one pixel that has to survive downscaling and a
+    # glance: full-width crosshair, dark halo, solid cyan block, white ring.
+    blend = ImageDraw.Draw(inset, "RGBA")
+    centre_x = border + (player_x * cell) + (cell // 2)
+    centre_y = border + (player_y * cell) + (cell // 2)
+    blend.line((border, centre_y, border + map_width - 1, centre_y), fill=(55, 208, 255, 120))
+    blend.line((centre_x, border, centre_x, border + map_height - 1), fill=(55, 208, 255, 120))
+    half = max(3, min(cell, 6))
+    blend.rectangle(
+        (centre_x - half - 2, centre_y - half - 2, centre_x + half + 2, centre_y + half + 2),
+        fill=(7, 10, 16, 225),
+    )
+    blend.rectangle(
+        (centre_x - half, centre_y - half, centre_x + half, centre_y + half),
+        fill=_INSET_PLAYER,
+    )
+    blend.rectangle(
+        (centre_x - half - 2, centre_y - half - 2, centre_x + half + 2, centre_y + half + 2),
+        outline=(255, 255, 255, 240),
+        width=1,
+    )
+    return inset
+
+
 def render_navigation_overlay(
     image: Image.Image,
     snapshot: Optional[LiveNavigationSnapshot],
     *,
     objective: Optional[JsonDict] = None,
     goal: Optional[tuple[int, int]] = None,
+    visited: Optional[set[tuple[int, int]]] = None,
+    map_grid: Optional[JsonDict] = None,
 ) -> Image.Image:
     scale = 2
     frame = image.convert("RGBA").resize(
@@ -928,6 +770,12 @@ def render_navigation_overlay(
     window_max_x = snapshot.window_top_left[0] + snapshot.width - 1
     window_min_y = snapshot.window_top_left[1]
     window_max_y = snapshot.window_top_left[1] + snapshot.height - 1
+    visited_locals: set[tuple[int, int]] = set()
+    for tile_x, tile_y in visited or ():
+        visited_local = snapshot.absolute_to_local(int(tile_x), int(tile_y))
+        if visited_local is not None:
+            visited_locals.add(visited_local)
+
     x_labels = [str(window_min_x + local_x) for local_x in range(snapshot.width)]
     y_labels = [str(window_min_y + local_y) for local_y in range(snapshot.height)]
     x_label_height = max(
@@ -944,7 +792,7 @@ def render_navigation_overlay(
     wrap_width = max(40, canvas_width - (padding * 2))
     pos = snapshot.player_position
     move_list = ", ".join(snapshot.valid_moves) or "none"
-    objective_line = objective["title"] if objective else "No objective"
+    objective_line = objective["summary"] if objective else "No objective"
     header_blocks = [
         (snapshot.map_name, (255, 255, 255, 255)),
         (
@@ -956,11 +804,20 @@ def render_navigation_overlay(
             (
                 "Coords are absolute map tiles. "
                 f"Columns show x={window_min_x}..{window_max_x}; "
-                f"rows show y={window_min_y}..{window_max_y}."
+                f"rows show y={window_min_y}..{window_max_y}. "
+                "North is up: walk_up decreases y, walk_down increases y."
             ),
             (110, 230, 174, 255),
         ),
     ]
+    if visited_locals:
+        header_blocks.append(
+            (
+                "Dimmed tiles with a grey dot are ground you already walked "
+                f"({len(visited_locals)} of {snapshot.width * snapshot.height} in view).",
+                (165, 180, 196, 255),
+            )
+        )
     header_lines: list[tuple[str, tuple[int, int, int, int]]] = []
     for text, fill in header_blocks:
         for line in _wrap_text(measure_draw, text, font=font, max_width=wrap_width):
@@ -969,15 +826,85 @@ def render_navigation_overlay(
     column_band_height = x_label_height + padding + 2
     header_height = padding + (len(header_lines) * line_height) + padding
     top_margin = header_height + column_band_height
+
+    # Side panel: the whole explored map, drawn to the right of the game window
+    # so it covers neither the frame nor the header. Absent grid, absent panel,
+    # and the canvas is exactly what it has always been.
+    normalised_grid = _normalise_map_grid(map_grid)
+    inset: Optional[Image.Image] = None
+    panel_width = 0
+    panel_title = ""
+    panel_caption: list[str] = []
+    if normalised_grid is not None:
+        inset = _render_map_inset(normalised_grid, player=pos)
+        known = (
+            normalised_grid["seen"]
+            | normalised_grid["walkable"]
+            | normalised_grid["walked"]
+            | normalised_grid["warps"]
+        )
+        panel_title = "MINI-MAP: whole map so far"
+        caption_width = max(inset.width, 132)
+        caption_blocks = [
+            (
+                f"{normalised_grid['width']}x{normalised_grid['height']} tiles, "
+                f"{len(known)} seen, {len(normalised_grid['walked'])} walked."
+            ),
+            (
+                "Cyan box with crosshair is you. Near-black is map you have not seen. "
+                "Green passable, dim green walked, red wall, purple warp."
+            ),
+        ]
+        for block in caption_blocks:
+            panel_caption.extend(
+                _wrap_text(measure_draw, block, font=font, max_width=caption_width)
+            )
+        panel_content_width = max(
+            inset.width,
+            _measure_text(measure_draw, panel_title, font=font)[0],
+            max(
+                (_measure_text(measure_draw, line, font=font)[0] for line in panel_caption),
+                default=0,
+            ),
+        )
+        panel_width = panel_content_width + (padding * 2)
+
+    canvas_height = top_margin + frame.height + padding
+    if inset is not None:
+        canvas_height = max(
+            canvas_height,
+            top_margin
+            + line_height
+            + inset.height
+            + 4
+            + (len(panel_caption) * line_height)
+            + padding,
+        )
     canvas = Image.new(
         "RGBA",
-        (canvas_width, top_margin + frame.height + padding),
+        (canvas_width + panel_width, canvas_height),
         (7, 10, 16, 255),
     )
     draw = ImageDraw.Draw(canvas)
     draw.rectangle((0, 0, canvas.width, header_height), fill=(12, 17, 26, 235))
     draw.rectangle((0, header_height, canvas.width, top_margin), fill=(12, 17, 26, 220))
     draw.rectangle((0, top_margin, left_margin, canvas.height), fill=(12, 17, 26, 220))
+    if inset is not None:
+        panel_left = canvas_width
+        draw.rectangle(
+            (panel_left, header_height, canvas.width, canvas.height),
+            fill=(12, 17, 26, 220),
+        )
+        panel_y = top_margin
+        draw.text(
+            (panel_left + padding, panel_y), panel_title, fill=(255, 255, 255, 255), font=font
+        )
+        panel_y += line_height
+        canvas.alpha_composite(inset, (panel_left + padding, panel_y))
+        panel_y += inset.height + 4
+        for line in panel_caption:
+            draw.text((panel_left + padding, panel_y), line, fill=(165, 180, 196, 255), font=font)
+            panel_y += line_height
     canvas.alpha_composite(frame, (left_margin, top_margin))
     draw.rectangle(
         (
@@ -999,15 +926,51 @@ def render_navigation_overlay(
     tile_height = frame.height / snapshot.height
     grid_line_width = max(1, scale)
 
+    # Tiles whose centre already carries a letter (P, W, G); the walked dot is
+    # skipped there so the glyph stays readable. The dimmed fill still shows.
+    glyph_locals: set[tuple[int, int]] = {(4, 4)}
+    if goal is not None:
+        goal_glyph = snapshot.absolute_to_local(goal[0], goal[1])
+        if goal_glyph is not None:
+            glyph_locals.add(goal_glyph)
+    for warp in snapshot.warps:
+        if not isinstance(warp, dict):
+            continue
+        warp_x = warp.get("x")
+        warp_y = warp.get("y")
+        if warp_x is None or warp_y is None:
+            continue
+        warp_glyph = snapshot.absolute_to_local(int(warp_x), int(warp_y))
+        if warp_glyph is not None:
+            glyph_locals.add(warp_glyph)
+    visited_dot_radius = max(2, scale * 2)
+
     for local_y, row in enumerate(snapshot.terrain):
         for local_x, tile in enumerate(row):
             left = int(left_margin + (local_x * tile_width))
             top = int(top_margin + (local_y * tile_height))
             right = int(left_margin + ((local_x + 1) * tile_width))
             bottom = int(top_margin + ((local_y + 1) * tile_height))
-            fill = (24, 123, 73, 72) if tile else (180, 58, 58, 92)
-            outline = (110, 230, 174, 190) if tile else (255, 120, 120, 200)
+            walked = (local_x, local_y) in visited_locals
+            if tile:
+                fill = (13, 68, 41, 96) if walked else (24, 123, 73, 72)
+                outline = (74, 156, 118, 190) if walked else (110, 230, 174, 190)
+            else:
+                fill = (108, 35, 35, 110) if walked else (180, 58, 58, 92)
+                outline = (206, 96, 96, 200) if walked else (255, 120, 120, 200)
             draw.rectangle((left, top, right, bottom), outline=outline, fill=fill, width=1)
+            if walked and (local_x, local_y) not in glyph_locals:
+                dot_x = int(left_margin + ((local_x + 0.5) * tile_width))
+                dot_y = int(top_margin + ((local_y + 0.5) * tile_height))
+                draw.ellipse(
+                    (
+                        dot_x - visited_dot_radius,
+                        dot_y - visited_dot_radius,
+                        dot_x + visited_dot_radius,
+                        dot_y + visited_dot_radius,
+                    ),
+                    fill=(203, 213, 225, 235),
+                )
 
     for local_x, label in enumerate(x_labels):
         label_width, label_height = _measure_text(measure_draw, label, font=font)
@@ -1149,13 +1112,6 @@ class ObjectiveEngine:
                     continue
                 merged = dict(item)
                 merged["pack_id"] = pack_id
-                merged.setdefault("preferred_landmark_types", [])
-                merged.setdefault("target_npcs", [])
-                if merged["target_npcs"] and "npc_target" not in merged["preferred_landmark_types"]:
-                    merged["preferred_landmark_types"] = [
-                        *list(merged["preferred_landmark_types"]),
-                        "npc_target",
-                    ]
                 merged.setdefault("selector", {})
                 self.objectives.append(merged)
         self.by_id = {item["id"]: item for item in self.objectives}
@@ -1174,18 +1130,14 @@ class ObjectiveEngine:
             empty = ObjectiveRecord(
                 pack_id="unknown_pack",
                 id="no_objectives_loaded",
-                title="No objectives loaded",
                 summary="Objective data was not loaded.",
                 completion_predicate="N/A",
                 failure_hints=[],
                 save_recommendation="Manual saves only.",
-                route_hint="Inspect objective data loading.",
-                preferred_landmark_types=[],
                 priority=1,
                 current=True,
                 completed=False,
                 status="current",
-                progress_percent=0,
             ).to_dict()
             return {
                 "game": "red",
@@ -1207,30 +1159,17 @@ class ObjectiveEngine:
         for index, item in enumerate(self.objectives):
             completed = index < current_index
             current = item["id"] == current_id
-            status = "completed" if completed else "current" if current else "pending"
-            progress = (
-                100
-                if completed
-                else progress_percent
-                if current
-                else int((index / total_steps) * 100)
-            )
             record = ObjectiveRecord(
                 pack_id=item["pack_id"],
                 id=item["id"],
-                title=item["title"],
                 summary=item["summary"],
                 completion_predicate=item["completion_predicate"],
                 failure_hints=item.get("failure_hints", []),
                 save_recommendation=item.get("save_recommendation", ""),
-                route_hint=item.get("route_hint", ""),
-                preferred_landmark_types=item.get("preferred_landmark_types", []),
                 priority=index + 1,
                 current=current,
                 completed=completed,
-                status=status,
-                progress_percent=progress,
-                target_npcs=item.get("target_npcs", []),
+                status="completed" if completed else "current" if current else "pending",
             ).to_dict()
             objectives.append(record)
             if current:
@@ -1244,12 +1183,7 @@ class ObjectiveEngine:
             "progress_percent": progress_percent,
             "current_pack_id": current_objective["pack_id"],
             "packs": [
-                {
-                    "pack_id": pack.get("pack_id"),
-                    "order": pack.get("order"),
-                    "title": pack.get("title"),
-                }
-                for pack in self.packs
+                {"pack_id": pack.get("pack_id"), "order": pack.get("order")} for pack in self.packs
             ],
             "phase_complete": current_id == "phase_complete_cut_access",
         }
@@ -1265,34 +1199,36 @@ class AgentRuntime:
         workspace_dir: Path,
         objective_engine: Optional[ObjectiveEngine] = None,
         history_limit: int = 400,
+        visited_lookup: Optional[Callable[[int], set[tuple[int, int]]]] = None,
+        map_grid_lookup: Optional[Callable[[int], Optional[JsonDict]]] = None,
     ) -> None:
         self.data_dir = data_dir.expanduser().resolve()
         self.workspace_dir = workspace_dir.expanduser().resolve()
         self.objective_engine = objective_engine or ObjectiveEngine()
         self.history_limit = history_limit
+        # SEAM: the server sets this to ExploredMaps.visited (map_id -> absolute
+        # tiles the player has stood on) so the overlay can shade walked ground.
+        # Left as None the overlay renders exactly as before.
+        self.visited_lookup = visited_lookup
+        # SEAM: the server sets this to ExploredMaps.grid (map_id -> the whole
+        # stored map as width/height plus seen/walkable/walked/warp tile sets)
+        # so the overlay can inset a mini-map. Left as None the overlay renders
+        # exactly as before.
+        self.map_grid_lookup = map_grid_lookup
         self.event_history: deque[JsonDict] = deque(maxlen=history_limit)
         self.recent_trajectory: deque[JsonDict] = deque(maxlen=60)
         self.latest_bundle: Optional[JsonDict] = None
         self.live_bundle: Optional[JsonDict] = None
         self.last_state: Optional[JsonDict] = None
         self.last_objective_id: Optional[str] = None
-        self.last_turn_plan_hash: Optional[str] = None
-        self.checkpoint_ids: set[str] = set()
         self.action_events_since_objective_change = 0
-        self.semantic_memory: deque[JsonDict] = deque(maxlen=600)
-        self.landmarks_by_id: dict[str, JsonDict] = {}
-        self.failure_memory: dict[str, dict[str, JsonDict]] = defaultdict(dict)
         self.dialog_transcript_recent: deque[JsonDict] = deque(maxlen=12)
         self.last_dialog_text = ""
         self.dialog_last_change_at: Optional[str] = None
         self.workspace_dir.mkdir(parents=True, exist_ok=True)
         self.debug_dir = self.workspace_dir / "debug"
         self.debug_dir.mkdir(parents=True, exist_ok=True)
-        self._migrate_workspace_artifacts()
         self._ensure_workspace_files()
-        self._load_existing_checkpoint_ids()
-        self._load_existing_landmarks()
-        self._load_existing_event_memory()
 
     @property
     def artifacts(self) -> dict[str, Path]:
@@ -1302,143 +1238,19 @@ class AgentRuntime:
             "live_frame": self.workspace_dir / "live_frame.png",
             "live_frame_annotated": self.workspace_dir / "live_frame_annotated.png",
             "turn_context_json": self.workspace_dir / "turn_context.json",
-            "turn_plan_json": self.workspace_dir / "turn_plan.json",
-            "recovery_saves_json": self.workspace_dir / "recovery_saves.json",
             "latest_observation_json": self.debug_dir / "latest_observation.json",
-            "latest_observation_md": self.debug_dir / "latest_observation.md",
             "current_objective_json": self.debug_dir / "current_objective.json",
-            "current_objective_md": self.debug_dir / "current_objective.md",
-            "working_memory_md": self.debug_dir / "working_memory.md",
-            "checkpoints_jsonl": self.debug_dir / "checkpoints.jsonl",
-            "knowledge_graph_json": self.debug_dir / "knowledge_graph.json",
-            "landmarks_json": self.debug_dir / "landmarks.json",
-            "event_memory_jsonl": self.debug_dir / "event_memory.jsonl",
-            "session_brief_md": self.debug_dir / "session_brief.md",
             "run_log_jsonl": self.debug_dir / "run_log.jsonl",
         }
 
-    def _migrate_workspace_artifacts(self) -> None:
-        legacy_paths = {
-            "latest_observation_json": self.workspace_dir / "latest_observation.json",
-            "latest_observation_md": self.workspace_dir / "latest_observation.md",
-            "current_objective_json": self.workspace_dir / "current_objective.json",
-            "current_objective_md": self.workspace_dir / "current_objective.md",
-            "working_memory_md": self.workspace_dir / "working_memory.md",
-            "checkpoints_jsonl": self.workspace_dir / "checkpoints.jsonl",
-            "knowledge_graph_json": self.workspace_dir / "knowledge_graph.json",
-            "landmarks_json": self.workspace_dir / "landmarks.json",
-            "event_memory_jsonl": self.workspace_dir / "event_memory.jsonl",
-            "session_brief_md": self.workspace_dir / "session_brief.md",
-            "run_log_jsonl": self.workspace_dir / "run_log.jsonl",
-        }
-        for key, legacy_path in legacy_paths.items():
-            if not legacy_path.exists():
-                continue
-            target_path = self.artifacts[key]
-            target_path.parent.mkdir(parents=True, exist_ok=True)
-            if target_path.exists():
-                legacy_path.unlink()
-                continue
-            legacy_path.replace(target_path)
-
     def _ensure_workspace_files(self) -> None:
-        for path in (
-            self.artifacts["checkpoints_jsonl"],
-            self.artifacts["event_memory_jsonl"],
-            self.artifacts["run_log_jsonl"],
-        ):
-            path.parent.mkdir(parents=True, exist_ok=True)
-            path.touch(exist_ok=True)
-
-        defaults: dict[str, Any] = {
-            "turn_plan_json": default_turn_plan().model_dump(mode="json"),
-            "knowledge_graph_json": {
-                "updated_at": "",
-                "summary": {"nodes": 0, "edges": 0},
-                "nodes": [],
-                "edges": [],
-            },
-            "landmarks_json": {
-                "updated_at": "",
-                "landmarks": [],
-            },
-            "recovery_saves_json": {
-                "updated_at": "",
-                "current_recommendation": None,
-                "candidates": [],
-                "autosave_history": [],
-            },
-            "turn_context_json": {},
-            "latest_observation_json": {},
-            "current_objective_json": {},
-        }
-
-        for key, payload in defaults.items():
+        run_log = self.artifacts["run_log_jsonl"]
+        run_log.parent.mkdir(parents=True, exist_ok=True)
+        run_log.touch(exist_ok=True)
+        for key in ("turn_context_json", "latest_observation_json", "current_objective_json"):
             path = self.artifacts[key]
             if not path.exists():
-                path.write_text(json.dumps(payload, indent=2), encoding="utf-8")
-
-        if not self.artifacts["working_memory_md"].exists():
-            self.artifacts["working_memory_md"].write_text(
-                "# Working Memory\n\n"
-                "- Operator-only notes.\n"
-                "- Keep notes factual: location, blockers, routes tried, battle plans.\n"
-                "- Canonical model-facing state lives in turn_context.json.\n",
-                encoding="utf-8",
-            )
-        if not self.artifacts["current_objective_md"].exists():
-            self.artifacts["current_objective_md"].write_text(
-                "Objective state will appear here after the first observation.\n",
-                encoding="utf-8",
-            )
-        if not self.artifacts["latest_observation_md"].exists():
-            self.artifacts["latest_observation_md"].write_text(
-                "Observation summary will appear here after the first observation.\n",
-                encoding="utf-8",
-            )
-        if not self.artifacts["session_brief_md"].exists():
-            self.artifacts["session_brief_md"].write_text(
-                "# Session Brief\n\nA deterministic resume brief will appear here.\n",
-                encoding="utf-8",
-            )
-
-    def _load_existing_checkpoint_ids(self) -> None:
-        path = self.artifacts["checkpoints_jsonl"]
-        for line in path.read_text(encoding="utf-8").splitlines():
-            line = line.strip()
-            if not line:
-                continue
-            try:
-                record = json.loads(line)
-            except json.JSONDecodeError:
-                continue
-            checkpoint_id = record.get("id")
-            if checkpoint_id:
-                self.checkpoint_ids.add(checkpoint_id)
-
-    def _load_existing_landmarks(self) -> None:
-        payload = self._read_json(self.artifacts["landmarks_json"], {"landmarks": []})
-        for landmark in payload.get("landmarks", []):
-            if isinstance(landmark, dict) and landmark.get("id"):
-                self.landmarks_by_id[str(landmark["id"])] = landmark
-
-    def _load_existing_event_memory(self) -> None:
-        path = self.artifacts["event_memory_jsonl"]
-        for line in path.read_text(encoding="utf-8").splitlines():
-            line = line.strip()
-            if not line:
-                continue
-            try:
-                record = json.loads(line)
-            except json.JSONDecodeError:
-                continue
-            if not isinstance(record, dict):
-                continue
-            self.semantic_memory.append(record)
-            self._ingest_failure_memory_event(record)
-            if record.get("kind") == "dialog_text" and record.get("text"):
-                self.last_dialog_text = str(record["text"])
-                self.dialog_last_change_at = record.get("timestamp")
+                path.write_text("{}\n", encoding="utf-8")
 
     def _write_json(self, path: Path, payload: Any) -> None:
         _atomic_write_text(
@@ -1456,134 +1268,8 @@ class AgentRuntime:
         except Exception:  # noqa: BLE001
             return fallback
 
-    def load_turn_plan_model(self) -> TurnPlan:
-        return parse_stored_turn_plan(
-            self._read_json(self.artifacts["turn_plan_json"], default_turn_plan().model_dump())
-        )
-
-    def load_turn_plan(self) -> JsonDict:
-        return self._turn_plan_view(self.load_turn_plan_model())
-
     def load_turn_context(self) -> JsonDict:
         return self._read_json(self.artifacts["turn_context_json"], {})
-
-    def save_turn_plan(self, plan: TurnPlan) -> TurnPlan:
-        payload = plan.model_dump(mode="json")
-        self._write_json(self.artifacts["turn_plan_json"], payload)
-        plan_view = self._turn_plan_view(plan)
-        for bundle in (self.latest_bundle, self.live_bundle):
-            if not bundle:
-                continue
-            bundle["turn_plan"] = plan_view
-            bundle["plan_status"] = payload.get("status") or {}
-        return plan
-
-    def plan_status(self) -> JsonDict:
-        return self.load_turn_plan_model().status.model_dump(mode="json")
-
-    def validate_and_store_turn_plan(self, submission: JsonDict) -> TurnPlan:
-        current_plan = self.load_turn_plan_model()
-        if current_plan.status.state == "executed_waiting_observe":
-            raise ValueError("Run /agent/observe before submitting another plan.")
-        try:
-            current_context = TurnContext.model_validate(self.load_turn_context())
-            payload = TurnPlanInput.model_validate(submission)
-        except ValidationError as exc:
-            raise ValueError(str(exc)) from exc
-        validate_turn_plan_submission(payload, current_context)
-        plan = store_validated_plan(payload)
-        return self.save_turn_plan(plan)
-
-    def mark_turn_plan_executed(
-        self,
-        *,
-        branch: str,
-        branch_kind: str,
-        requested_actions: list[str],
-        executed_actions: int,
-        baseline_map_name: Optional[str],
-        baseline_position: Optional[JsonDict],
-        summary: str,
-    ) -> TurnPlan:
-        plan = self.load_turn_plan_model()
-        plan = mark_plan_executed(
-            plan,
-            branch=branch,  # type: ignore[arg-type]
-            branch_kind=branch_kind,
-            requested_actions=requested_actions,
-            executed_actions=executed_actions,
-            baseline_map_name=baseline_map_name,
-            baseline_position=baseline_position,
-            summary=summary,
-        )
-        return self.save_turn_plan(plan)
-
-    def invalidate_turn_plan(self, reason: str, *, state: str = "invalid") -> TurnPlan:
-        plan = self.load_turn_plan_model()
-        if not plan.observation_id and not plan.intent:
-            return plan
-        updated = invalidate_plan(plan, reason=reason, state=state)  # type: ignore[arg-type]
-        return self.save_turn_plan(updated)
-
-    def _plan_branch_actions_view(self, branch: Any) -> list[str]:
-        if not branch:
-            return []
-        if isinstance(branch, dict):
-            kind = branch.get("kind")
-            if kind == "raw_actions":
-                return list(branch.get("actions") or [])
-            if kind == "navigation":
-                target = branch.get("target") or {}
-                return [
-                    f"navigate:{target.get('x')},{target.get('y')}:{branch.get('mode', 'auto')}"
-                ]
-            return []
-        kind = getattr(branch, "kind", None)
-        if kind == "raw_actions":
-            return list(getattr(branch, "actions", []) or [])
-        if kind == "navigation":
-            target = getattr(branch, "target", None)
-            if target is None:
-                return []
-            return [f"navigate:{target.x},{target.y}:{getattr(branch, 'mode', 'auto')}"]
-        return []
-
-    def _turn_plan_view(self, plan_payload: Any) -> JsonDict:
-        if isinstance(plan_payload, dict) and "summary" in plan_payload:
-            return {
-                "objective_id": plan_payload.get("objective_id"),
-                "summary": plan_payload.get("summary"),
-                "planned_actions": list(plan_payload.get("planned_actions") or []),
-                "fallback_actions": list(plan_payload.get("fallback_actions") or []),
-                "notes": plan_payload.get("notes"),
-                "updated_at": plan_payload.get("updated_at"),
-                "status": plan_payload.get("status") or {},
-                "mode": plan_payload.get("mode"),
-                "observation_id": plan_payload.get("observation_id"),
-            }
-
-        plan = (
-            plan_payload
-            if isinstance(plan_payload, TurnPlan)
-            else parse_stored_turn_plan(plan_payload)
-        )
-        status = plan.status.model_dump(mode="json")
-        summary = plan.intent or status.get("reason") or "Awaiting next plan."
-        notes = plan.notes or status.get("reason") or ""
-        expected_outcome = plan.expected_outcome.summary if plan.expected_outcome else ""
-        if expected_outcome:
-            notes = f"{notes} Expected: {expected_outcome}".strip()
-        return {
-            "objective_id": plan.objective_id,
-            "summary": summary,
-            "planned_actions": self._plan_branch_actions_view(plan.primary_branch),
-            "fallback_actions": self._plan_branch_actions_view(plan.fallback_branch),
-            "notes": notes,
-            "updated_at": plan.updated_at,
-            "status": status,
-            "mode": plan.mode,
-            "observation_id": plan.observation_id,
-        }
 
     def _record_event(self, event_type: str, payload: JsonDict) -> JsonDict:
         event = {
@@ -1613,629 +1299,6 @@ class AgentRuntime:
         if self.event_history:
             return list(self.event_history)[-limit:]
         return self._tail_jsonl(self.artifacts["run_log_jsonl"], limit)
-
-    def _map_key(
-        self,
-        *,
-        state: Optional[JsonDict] = None,
-        snapshot: Optional[LiveNavigationSnapshot] = None,
-    ) -> str:
-        if state is not None:
-            map_info = state.get("map") or {}
-            if map_info.get("map_name") is not None:
-                return f"{map_info.get('map_id', '?')}:{map_info.get('map_name', 'Unknown')}"
-        if snapshot is not None:
-            return snapshot.key
-        map_info = (state or {}).get("map") or {}
-        return f"{map_info.get('map_id', '?')}:{map_info.get('map_name', 'Unknown')}"
-
-    def _persist_landmarks(self) -> None:
-        payload = {
-            "updated_at": utc_now(),
-            "landmarks": sorted(
-                self.landmarks_by_id.values(),
-                key=lambda entry: (
-                    int(entry.get("map_id", 0)),
-                    str(entry.get("kind", "")),
-                    int((entry.get("coord") or {}).get("y", 0)),
-                    int((entry.get("coord") or {}).get("x", 0)),
-                    str(entry.get("title", "")),
-                ),
-            ),
-        }
-        self._write_json(self.artifacts["landmarks_json"], payload)
-
-    def _landmarks_for_map(self, *, map_id: int, map_name: str) -> list[JsonDict]:
-        return [
-            landmark
-            for landmark in self.landmarks_by_id.values()
-            if int(landmark.get("map_id", -1)) == map_id
-            and str(landmark.get("map_name", "")) == map_name
-        ]
-
-    def _upsert_landmark(
-        self,
-        *,
-        map_id: int,
-        map_name: str,
-        kind: str,
-        coord: tuple[int, int],
-        title: str,
-        source: str,
-        notes: Optional[list[str]] = None,
-        target_map_name: Optional[str] = None,
-        evidence: Optional[str] = None,
-        confidence: Optional[float] = None,
-    ) -> tuple[JsonDict, bool]:
-        now = utc_now()
-        landmark_id = f"landmark:{_stable_id(map_id, kind, _coord_to_key(coord))}"
-        existing = self.landmarks_by_id.get(landmark_id)
-        if existing:
-            existing["title"] = title
-            existing["last_seen_at"] = now
-            existing["seen_count"] = int(existing.get("seen_count", 0)) + 1
-            existing["source"] = existing.get("source") or source
-            merged_notes = list(existing.get("notes") or [])
-            for note in notes or []:
-                if note and note not in merged_notes:
-                    merged_notes.append(note)
-            existing["notes"] = merged_notes[:6]
-            if target_map_name:
-                existing["target_map_name"] = target_map_name
-            if evidence:
-                existing["evidence"] = evidence
-            if confidence is not None:
-                existing["confidence"] = round(float(confidence), 2)
-            self.landmarks_by_id[landmark_id] = existing
-            return existing, False
-
-        record = LandmarkRecord(
-            id=landmark_id,
-            map_id=map_id,
-            map_name=map_name,
-            kind=kind,
-            title=title,
-            coord={"x": coord[0], "y": coord[1]},
-            discovered_at=now,
-            last_seen_at=now,
-            source=source,
-            notes=list(notes or [])[:6],
-            target_map_name=target_map_name,
-            evidence=evidence,
-            confidence=round(float(confidence), 2) if confidence is not None else None,
-        ).to_dict()
-        self.landmarks_by_id[landmark_id] = record
-        return record, True
-
-    def _ingest_failure_memory_event(self, record: JsonDict) -> None:
-        if record.get("kind") != "failure":
-            return
-        map_key = str(record.get("map_key") or "unknown")
-        coord = _tuple_coord_from_any(record.get("coord"))
-        coord_key = str(
-            record.get("coord_key")
-            or (_coord_to_key(coord) if coord else record.get("type") or "unknown")
-        )
-        bucket = self.failure_memory[map_key]
-        existing = bucket.get(coord_key)
-        count_delta = max(1, int(record.get("count_delta") or 1))
-        if existing:
-            existing["count"] = int(existing.get("count", 0)) + count_delta
-            existing["last_seen_at"] = record.get("timestamp") or utc_now()
-            existing["summary"] = record.get("summary") or existing.get("summary")
-            existing["reason"] = record.get("reason") or existing.get("reason")
-            if record.get("actions"):
-                existing["actions"] = record.get("actions")
-            bucket[coord_key] = existing
-        else:
-            bucket[coord_key] = {
-                "id": f"failure:{_stable_id(map_key, coord_key, record.get('type'))}",
-                "map_key": map_key,
-                "map_id": record.get("map_id"),
-                "map_name": record.get("map_name"),
-                "coord": record.get("coord"),
-                "coord_key": coord_key,
-                "type": record.get("type"),
-                "summary": record.get("summary"),
-                "reason": record.get("reason"),
-                "actions": record.get("actions") or [],
-                "count": count_delta,
-                "first_seen_at": record.get("timestamp") or utc_now(),
-                "last_seen_at": record.get("timestamp") or utc_now(),
-            }
-
-        failure = bucket[coord_key]
-        if coord is not None and int(failure.get("count", 0)) >= 2:
-            map_id = int(record.get("map_id") or -1)
-            map_name = str(record.get("map_name") or "")
-            if map_id >= 0 and map_name:
-                self._upsert_landmark(
-                    map_id=map_id,
-                    map_name=map_name,
-                    kind="dead_end",
-                    coord=coord,
-                    title=f"Repeated failure near ({coord[0]}, {coord[1]})",
-                    source="failure_memory",
-                    notes=[
-                        str(record.get("summary") or record.get("reason") or "Repeated failure")
-                    ],
-                )
-                self._persist_landmarks()
-
-    def _record_semantic_memory(self, kind: str, summary: str, **payload: Any) -> JsonDict:
-        record = {
-            "id": payload.pop(
-                "id",
-                (
-                    "memory:"
-                    + _stable_id(
-                        kind,
-                        summary,
-                        payload.get("map_key"),
-                        payload.get("coord_key"),
-                        payload.get("objective_id"),
-                    )
-                ),
-            ),
-            "timestamp": utc_now(),
-            "kind": kind,
-            "summary": summary,
-            **payload,
-        }
-        if self.semantic_memory:
-            last = self.semantic_memory[-1]
-            if (
-                last.get("kind") == record["kind"]
-                and last.get("summary") == record["summary"]
-                and last.get("map_key") == record.get("map_key")
-                and kind != "failure"
-            ):
-                return last
-        self.semantic_memory.append(record)
-        self._append_jsonl(self.artifacts["event_memory_jsonl"], record)
-        self._ingest_failure_memory_event(record)
-        return record
-
-    def _discover_landmarks(
-        self,
-        *,
-        snapshot: Optional[LiveNavigationSnapshot],
-    ) -> list[JsonDict]:
-        if snapshot is None:
-            return []
-
-        created: list[JsonDict] = []
-        changed = False
-
-        for warp in snapshot.warps:
-            coord = _tuple_coord_from_any(warp)
-            if coord is None:
-                continue
-            target_map_id = warp.get("target_map_id")
-            target_map_name = None
-            if target_map_id is not None:
-                target_map_name = RED_MAP_NAMES.get(_int_or_zero(target_map_id))
-            title = (
-                f"Warp to {target_map_name} at ({coord[0]}, {coord[1]})"
-                if target_map_name
-                else f"Warp at ({coord[0]}, {coord[1]})"
-            )
-            evidence = (
-                f"Warp table entry targeting {target_map_name}."
-                if target_map_name
-                else f"Warp table entry targeting map_id={target_map_id}."
-            )
-            record, is_new = self._upsert_landmark(
-                map_id=snapshot.map_id,
-                map_name=snapshot.map_name,
-                kind="warp",
-                coord=coord,
-                title=title,
-                source="navigation",
-                notes=[
-                    f"target_map_id={target_map_id}",
-                    *([f"target_map_name={target_map_name}"] if target_map_name else []),
-                ],
-                target_map_name=target_map_name,
-                evidence=evidence,
-                confidence=0.95 if target_map_name else 0.7,
-            )
-            changed = True
-            if is_new:
-                created.append(record)
-
-        for sign in snapshot.signs:
-            coord = _tuple_coord_from_any(sign)
-            if coord is None:
-                continue
-            record, is_new = self._upsert_landmark(
-                map_id=snapshot.map_id,
-                map_name=snapshot.map_name,
-                kind="sign",
-                coord=coord,
-                title=f"Sign at ({coord[0]}, {coord[1]})",
-                source="navigation",
-                notes=[f"text_id={sign.get('text_id')}"],
-            )
-            changed = True
-            if is_new:
-                created.append(record)
-
-        interaction = snapshot.interaction or {}
-        target = _tuple_coord_from_any(interaction.get("target_coord"))
-        interaction_kind = str(interaction.get("kind") or "").lower()
-        interaction_source = str(interaction.get("source") or "").lower()
-        non_destination_sources = {
-            "blocked_tile",
-            "counter_tile",
-            "dialog_lock",
-            "unknown_facing",
-            "none",
-        }
-        is_destination = (
-            target is not None
-            and interaction_kind in {"object", "sign"}
-            and interaction_source not in non_destination_sources
-            and interaction_source != ""
-        )
-        if is_destination:
-            assert target is not None
-            if interaction_source in {"sprite_direct", "sprite_via_talk_over"}:
-                kind = "npc_blocker"
-                title = f"NPC blocker at ({target[0]}, {target[1]})"
-            elif "sign" in interaction_source:
-                kind = "sign"
-                title = f"Talkable sign at ({target[0]}, {target[1]})"
-            else:
-                kind = "interactable"
-                title = f"Interactable at ({target[0]}, {target[1]})"
-            record, is_new = self._upsert_landmark(
-                map_id=snapshot.map_id,
-                map_name=snapshot.map_name,
-                kind=kind,
-                coord=target,
-                title=title,
-                source="interaction_probe",
-                notes=[str(interaction.get("reason") or "Visible interaction target")],
-            )
-            changed = True
-            if is_new:
-                created.append(record)
-
-        if changed:
-            self._persist_landmarks()
-        return created
-
-    def _build_navigation_avoidances(
-        self,
-        *,
-        map_key: str,
-        current: Optional[tuple[int, int]],
-    ) -> list[JsonDict]:
-        failures = list(self.failure_memory.get(map_key, {}).values())
-        ranked = sorted(
-            failures,
-            key=lambda entry: (
-                -int(entry.get("count", 0)),
-                _manhattan(current, _tuple_coord_from_any(entry.get("coord"))),
-                str(entry.get("summary") or ""),
-            ),
-        )
-        result: list[JsonDict] = []
-        for entry in ranked[:5]:
-            coord = _tuple_coord_from_any(entry.get("coord"))
-            result.append(
-                {
-                    "id": entry.get("id"),
-                    "kind": entry.get("type"),
-                    "coord": _coord_payload(coord),
-                    "title": entry.get("summary") or "Repeated failure",
-                    "reason": entry.get("reason") or entry.get("summary"),
-                    "times_seen": entry.get("count", 0),
-                    "last_seen_at": entry.get("last_seen_at"),
-                    "actions": (entry.get("actions") or [])[:4],
-                }
-            )
-        return result
-
-    def _nearby_failure_count(
-        self,
-        *,
-        coord: tuple[int, int],
-        avoidances: list[JsonDict],
-    ) -> int:
-        nearby_counts = [
-            _int_or_zero(entry.get("times_seen"))
-            for entry in avoidances
-            if _manhattan(coord, _tuple_coord_from_any(entry.get("coord"))) <= 1
-        ]
-        return max(nearby_counts, default=0)
-
-    def _failure_evidence_suffix(self, failure_count: int) -> Optional[str]:
-        if failure_count >= 2:
-            return f"Suppressed after {failure_count} failed attempts nearby."
-        if failure_count == 1:
-            return "Down-ranked because a recent attempt failed nearby."
-        return None
-
-    def _build_navigation_assistance(
-        self,
-        *,
-        snapshot: Optional[LiveNavigationSnapshot],
-        navigation_store: Optional[NavigationStore],
-        objective: JsonDict,
-    ) -> JsonDict:
-        if snapshot is None or navigation_store is None:
-            return {
-                "frontiers": [],
-                "landmarks": [],
-                "distance_ascii": "(navigation guidance unavailable)",
-                "route_cards": [],
-                "avoidances": [],
-            }
-
-        location_map = navigation_store.get(snapshot.key)
-        if location_map is None:
-            return {
-                "frontiers": [],
-                "landmarks": [],
-                "distance_ascii": "(explored map unavailable)",
-                "route_cards": [],
-                "avoidances": [],
-            }
-
-        current = snapshot.player_position
-        preferred_types = set(
-            (objective.get("current") or {}).get("preferred_landmark_types") or []
-        )
-        preferred_direction = _preferred_direction_hint(
-            (objective.get("current") or {}).get("route_hint", "")
-        )
-        avoidances = self._build_navigation_avoidances(map_key=snapshot.key, current=current)
-
-        distances = location_map.distance_map(current, extra_blockers=snapshot.sprite_set)
-        frontiers: list[JsonDict] = []
-        seen_frontier_coords: set[tuple[int, int]] = set()
-        for coord, distance in sorted(
-            distances.items(),
-            key=lambda item: (item[1], item[0][1], item[0][0]),
-        ):
-            if coord == current:
-                continue
-            unknown_neighbors = [
-                neighbor
-                for _, neighbor in (
-                    ((0, -1), (coord[0], coord[1] - 1)),
-                    ((0, 1), (coord[0], coord[1] + 1)),
-                    ((-1, 0), (coord[0] - 1, coord[1])),
-                    ((1, 0), (coord[0] + 1, coord[1])),
-                )
-                if location_map.tiles.get(neighbor) is None
-            ]
-            if not unknown_neighbors or coord in seen_frontier_coords:
-                continue
-            route = location_map.plan_route(
-                start=current,
-                goal=coord,
-                extra_blockers=snapshot.sprite_set,
-                allow_partial=False,
-            )
-            progress_bonus = max(0, _progress_amount(preferred_direction or "", current, coord))
-            failure_count = self._nearby_failure_count(coord=coord, avoidances=avoidances)
-            blocked = failure_count > 0
-            boundary_sides = _boundary_sides_for_coord(coord, snapshot.map_dimensions)
-            is_boundary_exit = bool(boundary_sides) and (
-                not preferred_direction
-                or preferred_direction in boundary_sides
-                or progress_bonus > 0
-            )
-            if failure_count >= 2:
-                continue
-            novelty_score = max(
-                1,
-                35
-                + (len(unknown_neighbors) * 12)
-                + (progress_bonus * 4)
-                - (distance * 2)
-                + (18 if is_boundary_exit else 0)
-                - min(48, failure_count * 30),
-            )
-            title = (
-                f"Boundary exit frontier at ({coord[0]}, {coord[1]})"
-                if is_boundary_exit
-                else f"Probe frontier at ({coord[0]}, {coord[1]})"
-            )
-            why_now_parts = [f"reveals {len(unknown_neighbors)} unknown edge(s)"]
-            if progress_bonus > 0 and preferred_direction:
-                why_now_parts.append(f"advances {preferred_direction}")
-            if is_boundary_exit:
-                why_now_parts.append(f"touches the {'/'.join(boundary_sides)} map boundary")
-            if blocked:
-                why_now_parts.append("near a recently failed branch")
-            evidence_parts = [
-                f"Explored frontier adjacent to {len(unknown_neighbors)} unknown tile(s)."
-            ]
-            if is_boundary_exit:
-                evidence_parts.append(
-                    f"Touches the {'/'.join(boundary_sides)} tile boundary of the current map."
-                )
-            failure_evidence = self._failure_evidence_suffix(failure_count)
-            if failure_evidence:
-                evidence_parts.append(failure_evidence)
-            frontiers.append(
-                {
-                    "id": f"frontier:{_stable_id(snapshot.key, _coord_to_key(coord))}",
-                    "kind": "exit" if is_boundary_exit else "frontier",
-                    "coord": _coord_payload(coord),
-                    "title": title,
-                    "novelty_score": novelty_score,
-                    "route_steps": len(route.actions),
-                    "route_actions": route.actions[:8],
-                    "first_action": route.actions[0] if route.actions else None,
-                    "why_now": ", ".join(why_now_parts),
-                    "blocked_by_recent_failure": blocked,
-                    "target_map_name": None,
-                    "evidence": " ".join(evidence_parts),
-                    "confidence": 0.7 if is_boundary_exit else 0.45,
-                    "failure_count": failure_count,
-                }
-            )
-            seen_frontier_coords.add(coord)
-
-        frontiers = sorted(
-            frontiers,
-            key=lambda entry: (
-                -int(entry.get("novelty_score", 0)),
-                int(entry.get("route_steps", 999)),
-                str(entry.get("title", "")),
-            ),
-        )[:8]
-
-        landmarks: list[JsonDict] = []
-        route_cards: list[JsonDict] = []
-        map_landmarks = list(
-            self._landmarks_for_map(map_id=snapshot.map_id, map_name=snapshot.map_name)
-        )
-        for npc in (objective.get("current") or {}).get("target_npcs") or []:
-            if str(npc.get("map_name") or "") != snapshot.map_name:
-                continue
-            coord = _tuple_coord_from_any(npc.get("coord"))
-            if coord is None:
-                continue
-            map_landmarks.insert(
-                0,
-                {
-                    "id": f"npc-target:{_stable_id(snapshot.key, npc.get('name'), coord)}",
-                    "map_id": snapshot.map_id,
-                    "map_name": snapshot.map_name,
-                    "kind": "npc_target",
-                    "title": f"Talk to {npc.get('name') or 'target NPC'}",
-                    "coord": _coord_payload(coord),
-                    "source": "objective",
-                    "evidence": "Objective target NPC on the current map.",
-                    "confidence": 0.98,
-                },
-            )
-        for landmark in sorted(
-            map_landmarks,
-            key=lambda entry: (
-                _manhattan(current, _tuple_coord_from_any(entry.get("coord"))),
-                str(entry.get("kind", "")),
-                str(entry.get("title", "")),
-            ),
-        ):
-            coord = _tuple_coord_from_any(landmark.get("coord"))
-            if coord is None:
-                continue
-            visible = snapshot.absolute_to_local(coord[0], coord[1]) is not None
-            distance = _manhattan(current, coord)
-            landmark_view = {
-                **landmark,
-                "coord": _coord_payload(coord),
-                "distance": distance,
-                "visible": visible,
-            }
-            landmarks.append(landmark_view)
-
-            route = location_map.plan_route(
-                start=current,
-                goal=coord,
-                extra_blockers=snapshot.sprite_set,
-                allow_partial=True,
-            )
-            failure_count = self._nearby_failure_count(coord=coord, avoidances=avoidances)
-            blocked = failure_count > 0
-            if failure_count >= 2 and str(landmark.get("kind")) != "npc_target":
-                continue
-            type_bonus = 24 if str(landmark.get("kind")) in preferred_types else 0
-            objective_target_bonus = 40 if str(landmark.get("kind")) == "npc_target" else 0
-            evidence = str(
-                landmark.get("evidence")
-                or (landmark.get("notes") or ["Known landmark with a concrete route."])[0]
-            )
-            failure_evidence = self._failure_evidence_suffix(failure_count)
-            if failure_evidence:
-                evidence = f"{evidence} {failure_evidence}"
-            score = max(
-                1,
-                55
-                + type_bonus
-                + objective_target_bonus
-                + (12 if visible else 0)
-                - (distance * 2)
-                - min(44, failure_count * 26)
-                - (8 if str(landmark.get("kind")) == "dead_end" else 0),
-            )
-            route_cards.append(
-                {
-                    "id": f"route:{landmark.get('id')}",
-                    "kind": str(landmark.get("kind") or "landmark"),
-                    "coord": _coord_payload(coord),
-                    "title": landmark.get("title"),
-                    "score": score,
-                    "route_steps": len(route.actions),
-                    "route_actions": route.actions[:8],
-                    "first_action": route.actions[0] if route.actions else None,
-                    "why_now": (
-                        "Objective NPC target on this map."
-                        if str(landmark.get("kind")) == "npc_target"
-                        else "Matches the current objective preferences."
-                        if type_bonus
-                        else "Known landmark with a concrete route."
-                    ),
-                    "blocked_by_recent_failure": blocked,
-                    "target_id": landmark.get("id"),
-                    "target_map_name": landmark.get("target_map_name"),
-                    "evidence": evidence,
-                    "confidence": landmark.get("confidence"),
-                    "failure_count": failure_count,
-                }
-            )
-
-        for frontier in frontiers:
-            route_cards.append(
-                {
-                    "id": f"route:{frontier['id']}",
-                    "kind": frontier["kind"],
-                    "coord": frontier["coord"],
-                    "title": frontier["title"],
-                    "score": frontier["novelty_score"],
-                    "route_steps": frontier["route_steps"],
-                    "route_actions": frontier["route_actions"],
-                    "first_action": frontier["first_action"],
-                    "why_now": frontier["why_now"],
-                    "blocked_by_recent_failure": frontier["blocked_by_recent_failure"],
-                    "target_id": frontier["id"],
-                    "target_map_name": frontier.get("target_map_name"),
-                    "evidence": frontier.get("evidence"),
-                    "confidence": frontier.get("confidence"),
-                    "failure_count": frontier.get("failure_count"),
-                }
-            )
-
-        route_cards = sorted(
-            route_cards,
-            key=lambda entry: (
-                -int(entry.get("score", 0)),
-                int(entry.get("route_steps", 999)),
-                str(entry.get("title", "")),
-            ),
-        )[:5]
-
-        distance_ascii = location_map.render_distance_ascii(
-            start=current,
-            extra_blockers=snapshot.sprite_set,
-            sprites=snapshot.sprite_positions,
-            max_distance=60,
-        )
-
-        return {
-            "frontiers": frontiers,
-            "landmarks": landmarks[:12],
-            "distance_ascii": distance_ascii,
-            "route_cards": route_cards,
-            "avoidances": avoidances,
-        }
 
     def _update_dialog_guidance(
         self,
@@ -2354,336 +1417,6 @@ class AgentRuntime:
             "safe_short_actions": ["press_a"],
         }
 
-    def _build_hypotheses(
-        self,
-        *,
-        objective: JsonDict,
-        navigation_guidance: JsonDict,
-        dialog_guidance: JsonDict,
-        battle_guidance: JsonDict,
-    ) -> list[str]:
-        hypotheses: list[str] = []
-        current = objective.get("current") or {}
-        if dialog_guidance.get("should_continue"):
-            hypotheses.append("Clear the active dialog before attempting movement.")
-        elif battle_guidance.get("recommended_mode") == "select_best_move":
-            move = battle_guidance.get("recommended_move") or {}
-            if move.get("name"):
-                hypotheses.append(f"In battle, prefer {move['name']} on the next menu advance.")
-        route_cards = navigation_guidance.get("route_cards") or []
-        if route_cards:
-            top = route_cards[0]
-            hypotheses.append(f"Best near-term progress is {top.get('title')}.")
-        if current.get("route_hint"):
-            hypotheses.append(f"Route hint: {current['route_hint']}")
-        return hypotheses[:4]
-
-    def _build_memory_snapshot(
-        self,
-        *,
-        objective: JsonDict,
-        navigation_guidance: JsonDict,
-        dialog_guidance: JsonDict,
-        battle_guidance: JsonDict,
-        state: JsonDict,
-    ) -> JsonDict:
-        map_key = self._map_key(state=state)
-        failed_attempts = self._build_navigation_avoidances(
-            map_key=map_key,
-            current=_tuple_coord_from_any((state.get("player") or {}).get("position")),
-        )
-        recent_facts = [
-            {
-                "timestamp": entry.get("timestamp"),
-                "kind": entry.get("kind"),
-                "summary": entry.get("summary"),
-            }
-            for entry in list(self.semantic_memory)[-8:]
-        ]
-        hypotheses = self._build_hypotheses(
-            objective=objective,
-            navigation_guidance=navigation_guidance,
-            dialog_guidance=dialog_guidance,
-            battle_guidance=battle_guidance,
-        )
-        return {
-            "recent_facts": recent_facts,
-            "current_hypotheses": hypotheses,
-            "failed_attempts": failed_attempts,
-            "session_brief_path": str(self.artifacts["session_brief_md"]),
-        }
-
-    def _write_session_brief(
-        self,
-        *,
-        objective: JsonDict,
-        navigation_guidance: JsonDict,
-        memory_snapshot: JsonDict,
-        dialog_guidance: JsonDict,
-        battle_guidance: JsonDict,
-        state: JsonDict,
-    ) -> None:
-        current = objective.get("current") or {}
-        route_cards = navigation_guidance.get("route_cards") or []
-        lines = [
-            "# Session Brief",
-            "",
-            f"- Objective: {current.get('title', 'Unknown objective')}",
-            f"- Objective summary: {current.get('summary', 'No summary.')}",
-            f"- Map: {(state.get('map') or {}).get('map_name', 'Unknown')}",
-            f"- Position: {(state.get('player') or {}).get('position')}",
-            "",
-            "## Best Routes",
-        ]
-        for card in route_cards[:5]:
-            lines.append(
-                f"- {card.get('title')} | score={card.get('score')} | "
-                f"actions={', '.join(card.get('route_actions') or []) or 'none'}"
-            )
-        lines.extend(["", "## Recent Facts"])
-        for fact in memory_snapshot.get("recent_facts") or []:
-            lines.append(f"- [{fact.get('kind')}] {fact.get('summary')}")
-        lines.extend(["", "## Failed Attempts"])
-        for attempt in memory_snapshot.get("failed_attempts") or []:
-            lines.append(
-                f"- {attempt.get('title')} | seen={attempt.get('times_seen')} | "
-                f"{attempt.get('reason')}"
-            )
-        lines.extend(["", "## Dialog"])
-        lines.append(
-            f"- Continue dialog: {dialog_guidance.get('should_continue')} | "
-            f"last_change_at={dialog_guidance.get('last_change_at')}"
-        )
-        for text in dialog_guidance.get("transcript_recent") or []:
-            lines.append(f"- {text}")
-        lines.extend(["", "## Battle"])
-        lines.append(f"- Mode: {battle_guidance.get('recommended_mode')}")
-        lines.append(f"- Reason: {battle_guidance.get('reason')}")
-        move = battle_guidance.get("recommended_move") or {}
-        if move.get("name"):
-            lines.append(f"- Recommended move: {move.get('name')} ({move.get('type')})")
-        _atomic_write_text(self.artifacts["session_brief_md"], "\n".join(lines) + "\n")
-
-    def _candidate_checkpoints(
-        self, state: JsonDict, objective: JsonDict
-    ) -> list[CheckpointRecord]:
-        flags = state.get("flags") or {}
-        map_name = (state.get("map") or {}).get("map_name") or "Unknown"
-        current_objective_id = objective["current"]["id"]
-        records: list[CheckpointRecord] = []
-
-        definitions = [
-            (
-                bool(flags.get("has_oaks_parcel")),
-                "oak_parcel_obtained",
-                "Oak's Parcel Obtained",
-                "Oak's Parcel is now in the bag.",
-            ),
-            (
-                bool(flags.get("has_pokedex")),
-                "pokedex_received",
-                "Pokedex Received",
-                "Oak's parcel was delivered and the Pokedex was received.",
-            ),
-            (
-                map_name == "Viridian Forest",
-                "entered_viridian_forest",
-                "Entered Viridian Forest",
-                "Reached the forest section of the Brock route.",
-            ),
-            (
-                map_name == "Pewter City",
-                "arrived_pewter_city",
-                "Arrived In Pewter City",
-                "Made it through the forest to Pewter City.",
-            ),
-            (
-                map_name == "Pewter Gym",
-                "entered_pewter_gym",
-                "Entered Pewter Gym",
-                "Ready to challenge Brock.",
-            ),
-            (
-                (flags.get("badge_count") or 0) >= 1,
-                "boulder_badge_earned",
-                "Boulder Badge Earned",
-                "Phase 1 objective pack is complete.",
-            ),
-        ]
-
-        for condition, checkpoint_id, title, summary in definitions:
-            if not condition or checkpoint_id in self.checkpoint_ids:
-                continue
-            records.append(
-                CheckpointRecord(
-                    id=checkpoint_id,
-                    title=title,
-                    summary=summary,
-                    objective_id=current_objective_id,
-                    map_name=map_name,
-                    created_at=utc_now(),
-                    metadata={"source": "deterministic_progress"},
-                )
-            )
-        return records
-
-    def _persist_checkpoints(self, checkpoints: Iterable[CheckpointRecord]) -> list[JsonDict]:
-        emitted: list[JsonDict] = []
-        for checkpoint in checkpoints:
-            record = checkpoint.to_dict()
-            self._append_jsonl(self.artifacts["checkpoints_jsonl"], record)
-            self.checkpoint_ids.add(checkpoint.id)
-            emitted.append(record)
-        return emitted
-
-    def _build_knowledge_graph(
-        self,
-        *,
-        state: JsonDict,
-        navigation: Optional[JsonDict],
-        objective: JsonDict,
-        navigation_store: Optional[NavigationStore],
-    ) -> JsonDict:
-        existing = self._read_json(
-            self.artifacts["knowledge_graph_json"],
-            {
-                "updated_at": "",
-                "summary": {"nodes": 0, "edges": 0},
-                "nodes": [],
-                "edges": [],
-            },
-        )
-        nodes_by_id = {
-            node["id"]: node
-            for node in existing.get("nodes", [])
-            if isinstance(node, dict) and node.get("id")
-        }
-        edges_by_key = {
-            (edge.get("source"), edge.get("target"), edge.get("type")): edge
-            for edge in existing.get("edges", [])
-            if isinstance(edge, dict)
-        }
-
-        map_info = state.get("map") or {}
-        player = state.get("player") or {}
-        current_location_id = (
-            f"location:{map_info.get('map_id')}:{_slugify(map_info.get('map_name', 'unknown'))}"
-        )
-        nodes_by_id[current_location_id] = {
-            "id": current_location_id,
-            "type": "location",
-            "label": map_info.get("map_name", "Unknown"),
-            "current": True,
-            "position": player.get("position"),
-        }
-
-        for location in (
-            navigation_store.location_maps.values() if navigation_store is not None else []
-        ):
-            location_id = f"location:{location.map_id}:{_slugify(location.map_name)}"
-            node = nodes_by_id.get(location_id, {})
-            node.update(
-                {
-                    "id": location_id,
-                    "type": "location",
-                    "label": location.map_name,
-                    "known_tiles": len(location.tiles),
-                    "passable_tiles": location.passable_count(),
-                    "blocked_tiles": location.blocked_count(),
-                    "current": location_id == current_location_id,
-                }
-            )
-            nodes_by_id[location_id] = node
-
-        current_objective = objective["current"]
-        objective_id = f"objective:{current_objective['id']}"
-        nodes_by_id[objective_id] = {
-            "id": objective_id,
-            "type": "objective",
-            "label": current_objective["title"],
-            "status": current_objective["status"],
-            "progress_percent": objective["progress_percent"],
-        }
-        edges_by_key[(current_location_id, objective_id, "objective_context")] = {
-            "source": current_location_id,
-            "target": objective_id,
-            "type": "objective_context",
-        }
-
-        flags = state.get("flags") or {}
-        for key, label in (
-            ("has_pokedex", "Has Pokedex"),
-            ("has_oaks_parcel", "Has Oak's Parcel"),
-        ):
-            if not flags.get(key):
-                continue
-            node_id = f"fact:{key}"
-            nodes_by_id[node_id] = {
-                "id": node_id,
-                "type": "fact",
-                "label": label,
-                "value": True,
-            }
-            edges_by_key[(current_location_id, node_id, "fact_seen_here")] = {
-                "source": current_location_id,
-                "target": node_id,
-                "type": "fact_seen_here",
-            }
-
-        if navigation:
-            snapshot = navigation.get("snapshot") or {}
-            interaction = snapshot.get("interaction") or {}
-            if interaction.get("target_coord"):
-                target = interaction["target_coord"]
-                node_id = (
-                    f"interaction:{interaction.get('kind', 'unknown')}:"
-                    f"{target.get('x')}:{target.get('y')}"
-                )
-                nodes_by_id[node_id] = {
-                    "id": node_id,
-                    "type": "interaction",
-                    "label": interaction.get("kind", "unknown"),
-                    "source": interaction.get("source"),
-                    "target_coord": target,
-                    "reason": interaction.get("reason"),
-                }
-                edges_by_key[(current_location_id, node_id, "visible_interaction")] = {
-                    "source": current_location_id,
-                    "target": node_id,
-                    "type": "visible_interaction",
-                }
-
-            for warp in snapshot.get("warps") or []:
-                warp_id = f"warp:{map_info.get('map_id')}:{warp.get('x')}:{warp.get('y')}"
-                nodes_by_id[warp_id] = {
-                    "id": warp_id,
-                    "type": "exit",
-                    "label": f"Warp at ({warp.get('x')}, {warp.get('y')})",
-                    "target_map_id": warp.get("target_map_id"),
-                }
-                edges_by_key[(current_location_id, warp_id, "contains_exit")] = {
-                    "source": current_location_id,
-                    "target": warp_id,
-                    "type": "contains_exit",
-                }
-
-        graph = {
-            "updated_at": utc_now(),
-            "summary": {
-                "nodes": len(nodes_by_id),
-                "edges": len(edges_by_key),
-                "current_location": map_info.get("map_name"),
-                "current_objective": current_objective["title"],
-            },
-            "nodes": sorted(nodes_by_id.values(), key=lambda node: node["id"]),
-            "edges": sorted(
-                edges_by_key.values(),
-                key=lambda edge: (edge["source"], edge["type"], edge["target"]),
-            ),
-        }
-        self._write_json(self.artifacts["knowledge_graph_json"], graph)
-        return graph
-
     def _maybe_auto_save(
         self,
         *,
@@ -2691,7 +1424,6 @@ class AgentRuntime:
         state: JsonDict,
         objective: JsonDict,
         state_delta: JsonDict,
-        checkpoints: list[JsonDict],
         requested_actions: Optional[list[str]],
         source: str,
     ) -> list[JsonDict]:
@@ -2700,8 +1432,6 @@ class AgentRuntime:
             triggers.append("map_transition")
         if objective["current"]["id"] != self.last_objective_id:
             triggers.append("objective_change")
-        if checkpoints:
-            triggers.append("checkpoint")
         if source in {"action", "navigation"} and state.get("battle", {}).get("in_battle"):
             triggers.append("battle_entry")
 
@@ -2734,70 +1464,6 @@ class AgentRuntime:
             )
         return created
 
-    def _build_recovery(self, recent_auto_saves: list[JsonDict]) -> JsonDict:
-        current = self._read_json(
-            self.artifacts["recovery_saves_json"],
-            {
-                "updated_at": "",
-                "current_recommendation": None,
-                "candidates": [],
-                "autosave_history": [],
-            },
-        )
-        autosave_history = list(current.get("autosave_history", []))
-        autosave_history.extend(recent_auto_saves)
-        autosave_history = autosave_history[-50:]
-
-        saves_dir = self.data_dir / "saves"
-        candidates: list[RecoveryCandidate] = []
-        known_notes = {
-            entry.get("name"): entry
-            for entry in autosave_history
-            if isinstance(entry, dict) and entry.get("name")
-        }
-        for path in sorted(saves_dir.glob("*.state")):
-            meta = known_notes.get(path.stem, {})
-            source = meta.get("source", "manual")
-            reason = meta.get("reason", "manual_save")
-            score = 40
-            if reason == "checkpoint":
-                score = 95
-            elif reason == "objective_change":
-                score = 90
-            elif reason == "map_transition":
-                score = 75
-            elif reason == "battle_entry":
-                score = 65
-            elif source == "manual":
-                score = 80
-            candidates.append(
-                RecoveryCandidate(
-                    name=path.stem,
-                    path=str(path),
-                    reason=reason,
-                    score=score,
-                    modified_at=datetime.fromtimestamp(
-                        path.stat().st_mtime, tz=timezone.utc
-                    ).isoformat(),
-                    source=source,
-                    notes=list(meta.get("notes", [])),
-                )
-            )
-
-        ranked = sorted(
-            candidates,
-            key=lambda entry: (entry.score, entry.modified_at, entry.name),
-            reverse=True,
-        )
-        payload = {
-            "updated_at": utc_now(),
-            "current_recommendation": ranked[0].to_dict() if ranked else None,
-            "candidates": [entry.to_dict() for entry in ranked[:12]],
-            "autosave_history": autosave_history,
-        }
-        self._write_json(self.artifacts["recovery_saves_json"], payload)
-        return payload
-
     def _detect_stuck(
         self,
         *,
@@ -2805,69 +1471,34 @@ class AgentRuntime:
         objective: JsonDict,
         source: str,
         requested_actions: Optional[list[str]],
-        plan: Optional[TurnPlan] = None,
     ) -> JsonDict:
+        """Detect no-progress loops. Rendered by the operator dashboard only."""
         player = state.get("player") or {}
-        position = player.get("position") or {}
-        plan_state = plan.status.state if plan is not None else None
-        plan_target: Optional[JsonDict] = None
-        if plan is not None and plan.expected_outcome is not None:
-            if plan.expected_outcome.position is not None:
-                plan_target = {
-                    "x": plan.expected_outcome.position.x,
-                    "y": plan.expected_outcome.position.y,
-                }
-            elif (
-                plan.primary_branch is not None
-                and getattr(plan.primary_branch, "kind", None) == "navigation"
-            ):
-                target = getattr(plan.primary_branch, "target", None)
-                if target is not None:
-                    plan_target = {"x": target.x, "y": target.y}
         signature = {
             "map_name": (state.get("map") or {}).get("map_name"),
-            "position": position,
+            "position": player.get("position") or {},
             "dialog_active": bool(
                 state.get("dialog_active") or (state.get("dialog") or {}).get("active")
             ),
             "objective_id": objective["current"]["id"],
             "source": source,
             "actions": requested_actions or [],
-            "plan_state": plan_state,
-            "plan_target": plan_target,
         }
         self.recent_trajectory.append(signature)
 
         recent = list(self.recent_trajectory)[-8:]
         no_movement_loop = False
         dialog_loop = False
-        objective_timeout = False
-        drift_loop_count = 0
-        drift_loop_targets: list[JsonDict] = []
 
         if len(recent) >= 4:
             locations = {
-                (
-                    item.get("map_name"),
-                    json.dumps(item.get("position"), sort_keys=True),
-                )
+                (item.get("map_name"), json.dumps(item.get("position"), sort_keys=True))
                 for item in recent[-4:]
             }
             if len(locations) == 1 and any(item.get("actions") for item in recent[-4:]):
                 no_movement_loop = True
             if no_movement_loop and all(item.get("dialog_active") for item in recent[-4:]):
                 dialog_loop = True
-
-        drifts = [
-            item
-            for item in recent
-            if item.get("plan_state") == "drifted" and item.get("map_name") == signature["map_name"]
-        ]
-        drift_loop_count = len(drifts)
-        for item in drifts:
-            target = item.get("plan_target")
-            if target and target not in drift_loop_targets:
-                drift_loop_targets.append(target)
 
         if objective["current"]["id"] == self.last_objective_id and source in {
             "action",
@@ -2876,235 +1507,27 @@ class AgentRuntime:
             self.action_events_since_objective_change += 1
         else:
             self.action_events_since_objective_change = 0
-        if self.action_events_since_objective_change >= 12:
-            objective_timeout = True
 
         level = "clear"
         reason = "No stuck pattern detected."
-        recommended: list[str] = []
         if dialog_loop:
             level = "warning"
             reason = (
                 "Dialog loop detected: repeated actions with the same position and active dialog."
             )
-            recommended = ["press_a", "press_b", "re-check latest_frame.png if text is ambiguous"]
         elif no_movement_loop:
             level = "warning"
             reason = "No-movement loop detected: repeated actions without position or map change."
-            recommended = [
-                "inspect valid_moves",
-                "use a shorter action batch",
-                "consider a recovery save",
-            ]
 
-        if drift_loop_count >= 3:
-            new_level = "danger" if drift_loop_count >= 5 else "warning"
-            if _stuck_level_rank(new_level) > _stuck_level_rank(level):
-                level = new_level
-            target_note = ""
-            recent_failed_action_hint = None
-            latest_drift = next(
-                (item for item in reversed(recent) if item in drifts and item.get("actions")),
-                None,
-            )
-            if latest_drift is not None:
-                first_action = str((latest_drift.get("actions") or [None])[0] or "")
-                if first_action:
-                    opposite = _OPPOSITE_ACTION.get(first_action)
-                    if opposite:
-                        recent_failed_action_hint = (
-                            f"first action {first_action} repeatedly fails; "
-                            f"try {opposite} or face a different valid_moves direction first"
-                        )
-                    else:
-                        recent_failed_action_hint = (
-                            f"first action {first_action} repeatedly fails; "
-                            "face a different valid_moves direction first"
-                        )
-            if drift_loop_targets:
-                first = drift_loop_targets[0]
-                target_note = f" target=({first.get('x')}, {first.get('y')})"
-                if len(drift_loop_targets) > 1:
-                    target_note += f" ({len(drift_loop_targets)} distinct targets)"
-            reason = (
-                f"Plan drifted {drift_loop_count} of the last {len(recent)} observations"
-                f"{target_note}. The last raw_actions batches are not landing as planned."
-            )
-            if drift_loop_targets:
-                first = drift_loop_targets[0]
-                recommended = [
-                    (
-                        "switch to mode=navigation with "
-                        f"target={{x:{first.get('x')},y:{first.get('y')}}}"
-                    ),
-                    "drop primary_branch to 1 action and re-check after each step",
-                    "reload a recovery save if the same target keeps failing",
-                ]
-            else:
-                recommended = [
-                    "switch to mode=navigation with a nearby walkable target",
-                    "drop primary_branch to 1 action and re-check after each step",
-                    "reload a recovery save if the same target keeps failing",
-                ]
-            if recent_failed_action_hint:
-                recommended.insert(0, recent_failed_action_hint)
-
-        if objective_timeout:
+        if self.action_events_since_objective_change >= 12:
             level = "danger" if level == "warning" else "warning"
             reason = "Current objective has seen many action turns without progress."
-            recommended = recommended or [
-                "review turn_plan.json",
-                "reload the top recovery candidate",
-            ]
 
         return {
             "level": level,
             "reason": reason,
-            "recommended_actions": recommended,
             "objective_action_count": self.action_events_since_objective_change,
-            "drift_count": drift_loop_count,
         }
-
-    def _objective_markdown(self, objective: JsonDict) -> str:
-        current = objective["current"]
-        lines = [
-            "# Current Objective",
-            "",
-            f"- Title: {current['title']}",
-            f"- Summary: {current['summary']}",
-            f"- Completion predicate: {current['completion_predicate']}",
-            f"- Save recommendation: {current['save_recommendation']}",
-            f"- Route hint: {current['route_hint']}",
-            f"- Progress: {objective['progress_percent']}%",
-            "",
-            "## Failure Hints",
-        ]
-        for hint in current.get("failure_hints", []):
-            lines.append(f"- {hint}")
-        return "\n".join(lines) + "\n"
-
-    def _observation_markdown(
-        self,
-        *,
-        bundle: JsonDict,
-    ) -> str:
-        objective = bundle["objective"]["current"]
-        state = bundle["state"]
-        navigation = bundle.get("navigation") or {}
-        snapshot = navigation.get("snapshot") or {}
-        turn_plan = bundle["turn_plan"]
-        feedback = bundle["recent_action"]
-        movement_guidance = bundle["movement_guidance"]
-        navigation_guidance = bundle.get("navigation_guidance") or {}
-        memory_snapshot = bundle.get("memory") or {}
-        dialog_guidance = bundle.get("dialog_guidance") or {}
-        battle_guidance = bundle.get("battle_guidance") or {}
-        stuck = bundle["stuck"]
-        recovery = bundle["recovery"]
-        state_delta_summary = (bundle.get("state_delta") or {}).get("summary") or [
-            "Live frame sync only. Run /agent/observe for refreshed deltas."
-        ]
-        lines = [
-            "# Vision-First Turn Brief",
-            "",
-            f"Read first: `{bundle['artifacts']['latest_frame_annotated']}`",
-            f"Fallback frame: `{bundle['artifacts']['latest_frame']}`",
-            "Mandatory: inspect the annotated frame before choosing actions.",
-            "Do not infer terrain from ASCII alone.",
-            "",
-            f"Objective: {objective['title']}",
-            f"Objective summary: {objective['summary']}",
-            f"Route hint: {objective['route_hint']}",
-            "",
-            f"UI mode: {bundle['screen_text']['ui_mode']}",
-            f"Map: {(state.get('map') or {}).get('map_name', 'Unknown')}",
-            f"Position: {(state.get('player') or {}).get('position')}",
-            f"Facing: {(state.get('player') or {}).get('facing')}",
-            f"Valid moves: {', '.join(snapshot.get('valid_moves', [])) or 'none'}",
-            f"Interaction probe: {(snapshot.get('interaction') or {}).get('reason', 'none')}",
-            f"Coordinate system: {snapshot.get('coordinate_note') or MAP_COORDINATE_NOTE}",
-            "ASCII legend: P=player G=goal S=sprite .=passable #=blocked ?=unknown",
-            f"Movement guidance: {movement_guidance.get('summary', 'none')}",
-            "",
-            f"What changed: {' '.join(state_delta_summary[:3])}",
-            f"Recent action result: {feedback.get('summary', 'No recent action result.')}",
-            f"Planned action batch: {', '.join(turn_plan.get('planned_actions', [])) or 'not set'}",
-            f"Fallback: {', '.join(turn_plan.get('fallback_actions', [])) or 'not set'}",
-            "",
-            f"Screen text: {bundle['screen_text']['text']}",
-            "",
-            f"Dialog continue: {dialog_guidance.get('should_continue')}",
-            f"Battle mode: {battle_guidance.get('recommended_mode')}",
-            f"Battle reason: {battle_guidance.get('reason')}",
-            "",
-            f"Recovery recommendation: "
-            f"{(recovery.get('current_recommendation') or {}).get('name', 'none')}",
-            f"Stuck signal: {stuck['level']} - {stuck['reason']}",
-            "",
-            "Top route cards:",
-        ]
-        for card in navigation_guidance.get("route_cards", [])[:5]:
-            target_map = (
-                f" | target={card.get('target_map_name')}" if card.get("target_map_name") else ""
-            )
-            evidence = f" | evidence={card.get('evidence')}" if card.get("evidence") else ""
-            lines.append(
-                f"- {card.get('title')} | "
-                f"kind={card.get('kind')}{target_map} | "
-                f"actions={', '.join(card.get('route_actions') or []) or 'none'} | "
-                f"why={card.get('why_now')}{evidence}"
-            )
-        lines.extend(
-            [
-                "",
-                "Nearby landmarks:",
-            ]
-        )
-        for landmark in navigation_guidance.get("landmarks", [])[:5]:
-            target_map = (
-                f" -> {landmark.get('target_map_name')}" if landmark.get("target_map_name") else ""
-            )
-            evidence = f" | {landmark.get('evidence')}" if landmark.get("evidence") else ""
-            lines.append(
-                f"- {landmark.get('kind')}: {landmark.get('title')}{target_map} "
-                f"(distance {landmark.get('distance')}){evidence}"
-            )
-        lines.extend(
-            [
-                "",
-                "Failed attempts to avoid:",
-            ]
-        )
-        for attempt in memory_snapshot.get("failed_attempts", [])[:4]:
-            lines.append(
-                f"- {attempt.get('title')} | seen={attempt.get('times_seen')} | "
-                f"{attempt.get('reason')}"
-            )
-        lines.extend(
-            [
-                "",
-                "Recent deterministic facts:",
-            ]
-        )
-        for fact in memory_snapshot.get("recent_facts", [])[:5]:
-            lines.append(f"- [{fact.get('kind')}] {fact.get('summary')}")
-        lines.extend(
-            [
-                "",
-                "Dialog transcript recent:",
-            ]
-        )
-        for text in dialog_guidance.get("transcript_recent", [])[:4]:
-            lines.append(f"- {text}")
-        lines.extend(
-            [
-                "",
-                "Navigation notes:",
-            ]
-        )
-        for note in movement_guidance.get("notes", []):
-            lines.append(f"- {note}")
-        return "\n".join(lines) + "\n"
 
     def _latest_observed_frame_artifacts(self) -> JsonDict:
         artifacts = ((self.latest_bundle or {}).get("artifacts") or {}).copy()
@@ -3139,17 +1562,7 @@ class AgentRuntime:
             "live_frame_annotated": str(self.artifacts["live_frame_annotated"]),
             "turn_context_json": str(self.artifacts["turn_context_json"]),
             "latest_observation_json": str(self.artifacts["latest_observation_json"]),
-            "latest_observation_md": str(self.artifacts["latest_observation_md"]),
             "current_objective_json": str(self.artifacts["current_objective_json"]),
-            "current_objective_md": str(self.artifacts["current_objective_md"]),
-            "turn_plan_json": str(self.artifacts["turn_plan_json"]),
-            "working_memory_md": str(self.artifacts["working_memory_md"]),
-            "checkpoints_jsonl": str(self.artifacts["checkpoints_jsonl"]),
-            "knowledge_graph_json": str(self.artifacts["knowledge_graph_json"]),
-            "landmarks_json": str(self.artifacts["landmarks_json"]),
-            "event_memory_jsonl": str(self.artifacts["event_memory_jsonl"]),
-            "session_brief_md": str(self.artifacts["session_brief_md"]),
-            "recovery_saves_json": str(self.artifacts["recovery_saves_json"]),
             "run_log_jsonl": str(self.artifacts["run_log_jsonl"]),
         }
 
@@ -3171,41 +1584,32 @@ class AgentRuntime:
             (state.get("metadata") or {}).get("frame_count"),
         )
 
-    def _evaluate_pending_plan(self, bundle: JsonDict) -> TurnPlan:
-        plan = self.load_turn_plan_model()
-        if plan.status.state != "executed_waiting_observe":
-            return plan
-        plan = evaluate_plan_outcome(plan, bundle)
-        return self.save_turn_plan(plan)
-
-    def _write_turn_context(
-        self,
-        bundle: JsonDict,
-        *,
-        goal_override: Optional[str] = None,
-    ) -> TurnContext:
-        plan = self._evaluate_pending_plan(bundle)
-        observation_id = str(bundle.get("observation_id") or "")
-        if (
-            plan.status.state == "validated"
-            and plan.observation_id
-            and plan.observation_id != observation_id
-        ):
-            plan = self.save_turn_plan(
-                invalidate_plan(
-                    plan,
-                    reason="A newer observation was generated before the validated plan executed.",
-                    state="stale",
-                )
-            )
-        plan_status = plan.status
-        context = build_turn_context(
-            bundle=bundle,
-            plan_status=plan_status,
-            map_id_to_name=RED_MAP_NAMES,
-            goal_override=goal_override,
-        )
-        self._write_json(self.artifacts["turn_context_json"], context.model_dump(mode="json"))
+    def _write_turn_context(self, bundle: JsonDict) -> JsonDict:
+        """Write the slim display-only turn context. Not a model contract."""
+        current = (bundle.get("objective") or {}).get("current") or {}
+        state = bundle.get("state") or {}
+        player = state.get("player") or {}
+        position = player.get("position") or {}
+        screen_text = bundle.get("screen_text") or {}
+        context = {
+            "observation_id": bundle.get("observation_id"),
+            "objective": {
+                "id": current.get("id"),
+                "summary": current.get("summary"),
+                "completion_predicate": current.get("completion_predicate"),
+            },
+            "position": {
+                "map_name": (state.get("map") or {}).get("map_name"),
+                "x": position.get("x"),
+                "y": position.get("y"),
+                "facing": player.get("facing"),
+            },
+            "ui": {
+                "mode": screen_text.get("ui_mode"),
+                "screen_text": screen_text.get("text"),
+            },
+        }
+        self._write_json(self.artifacts["turn_context_json"], context)
         return context
 
     def _snapshot_from_navigation_payload(
@@ -3245,6 +1649,29 @@ class AgentRuntime:
                     snapshot = None
         return snapshot
 
+    def _visited_tiles(
+        self,
+        snapshot: Optional[LiveNavigationSnapshot],
+    ) -> Optional[set[tuple[int, int]]]:
+        if snapshot is None or self.visited_lookup is None:
+            return None
+        try:
+            return {(int(x), int(y)) for x, y in self.visited_lookup(snapshot.map_id)}
+        except Exception:  # noqa: BLE001
+            return None
+
+    def _map_grid(
+        self,
+        snapshot: Optional[LiveNavigationSnapshot],
+    ) -> Optional[JsonDict]:
+        if snapshot is None or self.map_grid_lookup is None:
+            return None
+        try:
+            grid = self.map_grid_lookup(snapshot.map_id)
+        except Exception:  # noqa: BLE001
+            return None
+        return grid if isinstance(grid, dict) else None
+
     def _coerce_screen_image(self, emulator: Any) -> Image.Image:
         screen = emulator.get_screen()
         if not isinstance(screen, Image.Image):
@@ -3273,7 +1700,6 @@ class AgentRuntime:
         emulator: Any,
         state: JsonDict,
         navigation: Optional[JsonDict],
-        navigation_store: Optional[NavigationStore],
     ) -> JsonDict:
         current_objective = self.objective_engine.evaluate(state)
         screen = self._coerce_screen_image(emulator)
@@ -3283,6 +1709,8 @@ class AgentRuntime:
             snapshot,
             objective=current_objective["current"],
             goal=None,
+            visited=self._visited_tiles(snapshot),
+            map_grid=self._map_grid(snapshot),
         )
         self._write_frame_artifacts(
             screen=screen,
@@ -3306,35 +1734,15 @@ class AgentRuntime:
             preserved_text = previous_screen_text["text"]
             preserved_source = "live_sync_cached"
         if not preserved_text:
-            preserved_text = "Live frame sync active. Run /agent/observe for refreshed state."
+            preserved_text = "Live frame sync active. POST /action to advance the game."
 
-        movement_guidance = build_movement_guidance(
-            state=state,
-            snapshot=snapshot,
-            navigation_store=navigation_store,
-            objective=current_objective,
-        )
-        navigation_guidance = self._build_navigation_assistance(
-            snapshot=snapshot,
-            navigation_store=navigation_store,
-            objective=current_objective,
-        )
         dialog_guidance = (previous_bundle.get("dialog_guidance") or {}).copy()
         dialog_guidance.setdefault("transcript_recent", [])
         dialog_guidance["should_continue"] = dialog_active
         dialog_guidance.setdefault("last_change_at", self.dialog_last_change_at)
-        battle_guidance = self._build_battle_guidance(state, dialog_guidance)
-        memory_snapshot = self._build_memory_snapshot(
-            objective=current_objective,
-            navigation_guidance=navigation_guidance,
-            dialog_guidance=dialog_guidance,
-            battle_guidance=battle_guidance,
-            state=state,
-        )
 
-        generated_at = utc_now()
         live_bundle = {
-            "generated_at": generated_at,
+            "generated_at": utc_now(),
             "observation_id": (self.latest_bundle or {}).get("observation_id"),
             "reason": "realtime_live_sync",
             "source": "live_sync",
@@ -3348,63 +1756,25 @@ class AgentRuntime:
                 "dialog_active": dialog_active,
             },
             "objective": current_objective,
-            "turn_plan": self.load_turn_plan(),
-            "plan_status": self.plan_status(),
             "recent_action": previous_bundle.get("recent_action") or {},
-            "movement_guidance": movement_guidance,
-            "navigation_guidance": navigation_guidance,
+            "movement_guidance": build_movement_guidance(snapshot=snapshot),
             "dialog_guidance": dialog_guidance,
-            "battle_guidance": battle_guidance,
-            "memory": memory_snapshot,
+            "battle_guidance": self._build_battle_guidance(state, dialog_guidance),
             "state_delta": previous_bundle.get("state_delta")
             or {
                 "changed": False,
-                "summary": ["Live frame sync only. Run /agent/observe for refreshed deltas."],
+                "summary": ["Live frame sync only. POST /action to advance the game."],
                 "movement": None,
             },
-            "checkpoints": previous_bundle.get("checkpoints")
-            or self._tail_jsonl(self.artifacts["checkpoints_jsonl"], 20),
-            "knowledge_graph": self._read_json(
-                self.artifacts["knowledge_graph_json"],
-                previous_bundle.get("knowledge_graph") or {},
-            ),
-            "recovery": self._read_json(
-                self.artifacts["recovery_saves_json"],
-                previous_bundle.get("recovery") or {},
-            ),
             "stuck": previous_bundle.get("stuck")
             or {
                 "level": "clear",
                 "reason": "No stuck signal recorded yet.",
-                "recommended_actions": [],
                 "objective_action_count": 0,
             },
             "workspace_dir": str(self.workspace_dir),
             "turn_context": self.load_turn_context(),
         }
-
-        self._write_session_brief(
-            objective=current_objective,
-            navigation_guidance=navigation_guidance,
-            memory_snapshot=memory_snapshot,
-            dialog_guidance=dialog_guidance,
-            battle_guidance=battle_guidance,
-            state=state,
-        )
-
-        self._write_json(self.artifacts["current_objective_json"], current_objective)
-        _atomic_write_text(
-            self.artifacts["current_objective_md"],
-            self._objective_markdown(current_objective),
-        )
-        self._write_json(
-            self.artifacts["latest_observation_json"],
-            self._compact_observation_payload(live_bundle),
-        )
-        _atomic_write_text(
-            self.artifacts["latest_observation_md"],
-            self._observation_markdown(bundle=live_bundle),
-        )
 
         self.live_bundle = live_bundle
         return {
@@ -3414,228 +1784,29 @@ class AgentRuntime:
             "screen_text": live_bundle["screen_text"],
         }
 
-    def _compact_observation_payload(self, bundle: JsonDict) -> JsonDict:
-        navigation = bundle.get("navigation") or {}
-        snapshot = navigation.get("snapshot") or {}
-        location_map = navigation.get("location_map") or {}
-        navigation_guidance = bundle.get("navigation_guidance") or {}
-        objective = bundle.get("objective") or {}
-        recovery = bundle.get("recovery") or {}
-        artifacts = bundle.get("artifacts") or {}
-        current_objective = objective.get("current") or {}
-        recent_action = bundle.get("recent_action") or {}
-        movement_guidance = bundle.get("movement_guidance") or {}
-        state_delta = bundle.get("state_delta") or {}
-        memory_snapshot = bundle.get("memory") or {}
-        dialog_guidance = bundle.get("dialog_guidance") or {}
-        battle_guidance = bundle.get("battle_guidance") or {}
-        candidate_route = movement_guidance.get("candidate_route") or {}
-        live_ascii = _truncate_text_block(snapshot.get("ascii"), 900)
-        explored_ascii = _truncate_text_block(location_map.get("ascii"), 1400)
-        distance_ascii = _truncate_text_block(navigation_guidance.get("distance_ascii"), 1800)
-        coordinate_note = (
-            snapshot.get("coordinate_note")
-            or location_map.get("coordinate_note")
-            or MAP_COORDINATE_NOTE
-        )
-        return {
-            "generated_at": bundle.get("generated_at"),
-            "observation_id": bundle.get("observation_id"),
-            "reason": bundle.get("reason"),
-            "source": bundle.get("source"),
-            "artifacts": {
-                "latest_frame": artifacts.get("latest_frame"),
-                "latest_frame_annotated": artifacts.get("latest_frame_annotated"),
-                "live_frame": artifacts.get("live_frame"),
-                "live_frame_annotated": artifacts.get("live_frame_annotated"),
-                "turn_context_json": artifacts.get("turn_context_json"),
-                "latest_observation_md": artifacts.get("latest_observation_md"),
-                "current_objective_json": artifacts.get("current_objective_json"),
-                "current_objective_md": artifacts.get("current_objective_md"),
-                "turn_plan_json": artifacts.get("turn_plan_json"),
-                "working_memory_md": artifacts.get("working_memory_md"),
-                "landmarks_json": artifacts.get("landmarks_json"),
-                "event_memory_jsonl": artifacts.get("event_memory_jsonl"),
-                "session_brief_md": artifacts.get("session_brief_md"),
-                "recovery_saves_json": artifacts.get("recovery_saves_json"),
-            },
-            "state": extract_key_state(bundle.get("state")),
-            "screen_text": {
-                "text": _truncate_text_block((bundle.get("screen_text") or {}).get("text"), 420),
-                "source": (bundle.get("screen_text") or {}).get("source"),
-                "ui_mode": (bundle.get("screen_text") or {}).get("ui_mode"),
-                "dialog_active": (bundle.get("screen_text") or {}).get("dialog_active"),
-            },
-            "objective": {
-                "current": {
-                    "id": current_objective.get("id"),
-                    "title": current_objective.get("title"),
-                    "summary": current_objective.get("summary"),
-                    "completion_predicate": current_objective.get("completion_predicate"),
-                    "save_recommendation": current_objective.get("save_recommendation"),
-                    "route_hint": current_objective.get("route_hint"),
-                    "preferred_landmark_types": current_objective.get("preferred_landmark_types"),
-                    "failure_hints": (current_objective.get("failure_hints") or [])[:4],
-                    "progress_percent": current_objective.get("progress_percent"),
-                    "pack_id": current_objective.get("pack_id"),
-                },
-                "progress_percent": objective.get("progress_percent"),
-                "current_pack_id": objective.get("current_pack_id"),
-            },
-            "turn_plan": {
-                "objective_id": (bundle.get("turn_plan") or {}).get("objective_id"),
-                "summary": (bundle.get("turn_plan") or {}).get("summary"),
-                "planned_actions": ((bundle.get("turn_plan") or {}).get("planned_actions") or [])[
-                    :6
-                ],
-                "fallback_actions": ((bundle.get("turn_plan") or {}).get("fallback_actions") or [])[
-                    :6
-                ],
-                "notes": _truncate_text_block((bundle.get("turn_plan") or {}).get("notes"), 260),
-                "updated_at": (bundle.get("turn_plan") or {}).get("updated_at"),
-                "status": (bundle.get("turn_plan") or {}).get("status") or {},
-                "mode": (bundle.get("turn_plan") or {}).get("mode"),
-                "observation_id": (bundle.get("turn_plan") or {}).get("observation_id"),
-            },
-            "plan_status": bundle.get("plan_status"),
-            "recent_action": {
-                "source": recent_action.get("source"),
-                "summary": recent_action.get("summary"),
-                "notes": (recent_action.get("notes") or [])[:4],
-                "tags": recent_action.get("tags"),
-            },
-            "movement_guidance": {
-                "summary": movement_guidance.get("summary"),
-                "notes": (movement_guidance.get("notes") or [])[:5],
-                "preferred_direction": movement_guidance.get("preferred_direction"),
-                "candidate_route": (
-                    {
-                        "direction": candidate_route.get("direction"),
-                        "target": candidate_route.get("target"),
-                        "steps": candidate_route.get("steps"),
-                        "actions": (candidate_route.get("actions") or [])[:6],
-                    }
-                    if candidate_route
-                    else None
-                ),
-            },
-            "state_delta": {
-                "changed": state_delta.get("changed"),
-                "summary": (state_delta.get("summary") or [])[:4],
-                "movement": state_delta.get("movement"),
-            },
-            "navigation": {
-                "coordinate_system": snapshot.get("coordinate_system") or MAP_COORDINATE_SYSTEM,
-                "coordinate_note": coordinate_note,
-                "valid_moves": snapshot.get("valid_moves", []),
-                "interaction": snapshot.get("interaction"),
-                "live_ascii": live_ascii,
-                "explored_ascii": explored_ascii,
-                "distance_ascii": distance_ascii,
-                "frontiers": (navigation_guidance.get("frontiers") or [])[:8],
-                "landmarks": (navigation_guidance.get("landmarks") or [])[:8],
-                "route_cards": (navigation_guidance.get("route_cards") or [])[:5],
-                "avoidances": (navigation_guidance.get("avoidances") or [])[:5],
-                "ascii_note": (
-                    "ASCII is symbolic only and may be truncated. "
-                    "It uses the same absolute map tile coordinates as the annotated frame."
-                ),
-                "window_top_left": snapshot.get("window_top_left"),
-                "window_size": snapshot.get("window_size"),
-                "bounds": location_map.get("bounds"),
-            },
-            "memory": memory_snapshot,
-            "dialog": dialog_guidance,
-            "battle": battle_guidance,
-            "checkpoints": [
-                {
-                    "id": checkpoint.get("id"),
-                    "title": checkpoint.get("title"),
-                    "created_at": checkpoint.get("created_at"),
-                    "objective_id": checkpoint.get("objective_id"),
-                    "map_name": checkpoint.get("map_name"),
-                }
-                for checkpoint in (bundle.get("checkpoints") or [])[-10:]
-            ],
-            "knowledge_graph_summary": (bundle.get("knowledge_graph") or {}).get("summary"),
-            "recovery": {
-                "updated_at": recovery.get("updated_at"),
-                "current_recommendation": recovery.get("current_recommendation"),
-                "candidates": (recovery.get("candidates") or [])[:3],
-            },
-            "stuck": bundle.get("stuck"),
-        }
-
-    def _expected_outcome_coord(self, plan: TurnPlan) -> Optional[tuple[int, int]]:
-        expected = plan.expected_outcome
-        if expected is None:
-            return None
-        if expected.position is not None:
-            return expected.position.x, expected.position.y
-        if (
-            expected.position_delta is not None
-            and plan.execution is not None
-            and plan.execution.baseline_position is not None
-        ):
-            baseline = plan.execution.baseline_position
-            return (
-                baseline.x + expected.position_delta.dx,
-                baseline.y + expected.position_delta.dy,
-            )
-        return None
-
-    def _failure_coord_for_attempt(
-        self,
-        *,
-        snapshot: Optional[LiveNavigationSnapshot],
-        current_position: Optional[tuple[int, int]],
-        plan: Optional[TurnPlan],
-        navigation_plan: Optional[JsonDict],
-        navigation_execution: Optional[JsonDict],
-    ) -> Optional[tuple[int, int]]:
-        if navigation_execution:
-            coord = _tuple_coord_from_any(navigation_execution.get("target"))
-            if coord is not None:
-                return coord
-        if navigation_plan:
-            coord = _tuple_coord_from_any(navigation_plan.get("target"))
-            if coord is not None:
-                return coord
-        if plan is not None:
-            coord = self._expected_outcome_coord(plan)
-            if coord is not None:
-                return coord
-        if snapshot is not None:
-            coord = _tuple_coord_from_any((snapshot.interaction or {}).get("target_coord"))
-            if coord is not None:
-                return coord
-        return current_position
-
     def refresh(
         self,
         *,
         emulator: Any,
         state: JsonDict,
         navigation: Optional[JsonDict],
-        navigation_store: Optional[NavigationStore],
         reason: str,
         source: str,
         requested_actions: Optional[list[str]] = None,
         navigation_plan: Optional[JsonDict] = None,
         navigation_execution: Optional[JsonDict] = None,
         explicit_save: Optional[JsonDict] = None,
-        goal_override: Optional[str] = None,
     ) -> JsonDict:
+        """Produce one observation bundle: frames, objective, deltas, telemetry."""
         current_objective = self.objective_engine.evaluate(state)
         screen = self._coerce_screen_image(emulator)
-
-        goal = None
-        if navigation_execution and navigation_execution.get("target"):
-            goal_data = navigation_execution["target"]
-            if goal_data.get("x") is not None and goal_data.get("y") is not None:
-                goal = (int(goal_data["x"]), int(goal_data["y"]))
-
         snapshot = self._snapshot_from_navigation_payload(navigation)
+
+        goal: Optional[tuple[int, int]] = None
+        target = (navigation_execution or {}).get("target") or {}
+        if target.get("x") is not None and target.get("y") is not None:
+            goal = (int(target["x"]), int(target["y"]))
+
         generated_at = utc_now()
         observation_id = self._next_observation_id(
             generated_at=generated_at,
@@ -3643,288 +1814,14 @@ class AgentRuntime:
             state=state,
         )
         observation_frames = self._observation_frame_paths(observation_id)
-
         annotated = render_navigation_overlay(
             screen,
             snapshot,
             objective=current_objective["current"],
             goal=goal,
+            visited=self._visited_tiles(snapshot),
+            map_grid=self._map_grid(snapshot),
         )
-        screen_text = classify_ui_state(state)
-        state_delta = build_state_delta(self.last_state, state)
-        evaluated_plan = self._evaluate_pending_plan(
-            {
-                "state": state,
-                "state_delta": state_delta,
-                "screen_text": screen_text,
-            }
-        )
-        plan_execution_trace: Optional[str] = None
-        plan_state_label: Optional[str] = None
-        if evaluated_plan.execution is not None and evaluated_plan.status.state in {
-            "matched",
-            "partial",
-            "drifted",
-            "invalid",
-            "stale",
-        }:
-            plan_state_label = evaluated_plan.status.state
-            plan_execution_trace = build_plan_execution_trace(
-                evaluated_plan,
-                {
-                    "state": state,
-                    "state_delta": state_delta,
-                    "screen_text": screen_text,
-                },
-            )
-        action_feedback = classify_action_feedback(
-            source=source,
-            requested_actions=requested_actions,
-            state_before=self.last_state,
-            state_after=state,
-            state_delta=state_delta,
-            navigation_plan=navigation_plan,
-            navigation_execution=navigation_execution,
-            plan_execution_trace=plan_execution_trace,
-            plan_state=plan_state_label,
-        )
-        movement_guidance = build_movement_guidance(
-            state=state,
-            snapshot=snapshot,
-            navigation_store=navigation_store,
-            objective=current_objective,
-        )
-        landmark_creations = self._discover_landmarks(snapshot=snapshot)
-        dialog_guidance, dialog_change = self._update_dialog_guidance(
-            screen_text=screen_text,
-            state=state,
-        )
-        battle_guidance = self._build_battle_guidance(state, dialog_guidance)
-        turn_plan = self.load_turn_plan()
-        checkpoints = self._persist_checkpoints(
-            self._candidate_checkpoints(state, current_objective)
-        )
-        knowledge_graph = self._build_knowledge_graph(
-            state=state,
-            navigation=navigation,
-            objective=current_objective,
-            navigation_store=navigation_store,
-        )
-        auto_saves = self._maybe_auto_save(
-            emulator=emulator,
-            state=state,
-            objective=current_objective,
-            state_delta=state_delta,
-            checkpoints=checkpoints,
-            requested_actions=requested_actions,
-            source=source,
-        )
-        if explicit_save:
-            auto_saves.append(explicit_save)
-        recovery = self._build_recovery(auto_saves)
-        stuck = self._detect_stuck(
-            state=state,
-            objective=current_objective,
-            source=source,
-            requested_actions=requested_actions,
-            plan=evaluated_plan,
-        )
-
-        map_name = str((state.get("map") or {}).get("map_name") or "Unknown")
-        map_id = int((state.get("map") or {}).get("map_id") or -1)
-        map_key = self._map_key(state=state, snapshot=snapshot)
-        objective_id = str(current_objective["current"]["id"])
-        current_position = _tuple_coord_from_any((state.get("player") or {}).get("position"))
-
-        if current_objective["current"]["id"] != self.last_objective_id:
-            self._record_semantic_memory(
-                "objective_change",
-                f"Objective advanced to {current_objective['current']['title']}.",
-                map_key=map_key,
-                map_id=map_id,
-                map_name=map_name,
-                objective_id=objective_id,
-                pack_id=current_objective.get("current_pack_id"),
-            )
-
-        map_field = (state_delta.get("fields") or {}).get("map")
-        if map_field:
-            self._record_semantic_memory(
-                "map_transition",
-                f"Entered {map_field.get('after')}.",
-                map_key=map_key,
-                map_id=map_id,
-                map_name=map_name,
-                objective_id=objective_id,
-                before=map_field.get("before"),
-                after=map_field.get("after"),
-            )
-
-        for key in ("has_pokedex", "has_oaks_parcel", "badge_count"):
-            if key in (state_delta.get("fields") or {}):
-                field = state_delta["fields"][key]
-                self._record_semantic_memory(
-                    "flag_change",
-                    f"{key} changed from {field.get('before')} to {field.get('after')}.",
-                    map_key=map_key,
-                    map_id=map_id,
-                    map_name=map_name,
-                    objective_id=objective_id,
-                    field=key,
-                    before=field.get("before"),
-                    after=field.get("after"),
-                )
-
-        for summary in (state_delta.get("fields") or {}).get("bag", []):
-            self._record_semantic_memory(
-                "bag_change",
-                summary,
-                map_key=map_key,
-                map_id=map_id,
-                map_name=map_name,
-                objective_id=objective_id,
-            )
-
-        for landmark in landmark_creations:
-            coord = _tuple_coord_from_any(landmark.get("coord"))
-            self._record_semantic_memory(
-                "landmark_discovery",
-                f"Learned landmark: {landmark.get('title')}.",
-                map_key=map_key,
-                map_id=map_id,
-                map_name=map_name,
-                objective_id=objective_id,
-                landmark_id=landmark.get("id"),
-                landmark_kind=landmark.get("kind"),
-                coord=_coord_payload(coord),
-            )
-
-        for checkpoint in checkpoints:
-            self._record_semantic_memory(
-                "checkpoint",
-                checkpoint.get("summary") or checkpoint.get("title") or "Checkpoint reached.",
-                map_key=map_key,
-                map_id=map_id,
-                map_name=map_name,
-                objective_id=objective_id,
-                checkpoint_id=checkpoint.get("id"),
-            )
-
-        if dialog_change is not None:
-            self._record_semantic_memory(
-                "dialog_text",
-                f"Dialog updated: {dialog_change['text']}",
-                map_key=map_key,
-                map_id=map_id,
-                map_name=map_name,
-                objective_id=objective_id,
-                text=dialog_change["text"],
-            )
-
-        for save_event in auto_saves:
-            self._record_semantic_memory(
-                "save_point",
-                f"Save recorded: {save_event.get('name')}.",
-                map_key=map_key,
-                map_id=map_id,
-                map_name=map_name,
-                objective_id=objective_id,
-                save_name=save_event.get("name"),
-                reason=save_event.get("reason"),
-            )
-
-        failure_coord = self._failure_coord_for_attempt(
-            snapshot=snapshot,
-            current_position=current_position,
-            plan=evaluated_plan if evaluated_plan.execution is not None else None,
-            navigation_plan=navigation_plan,
-            navigation_execution=navigation_execution,
-        )
-
-        if (
-            source == "navigation"
-            and navigation_execution
-            and not navigation_execution.get("success")
-        ):
-            self._record_semantic_memory(
-                "failure",
-                navigation_execution.get("status") or "Navigation route failed.",
-                map_key=map_key,
-                map_id=map_id,
-                map_name=map_name,
-                objective_id=objective_id,
-                type="navigation_partial",
-                coord=_coord_payload(failure_coord),
-                coord_key=_coord_to_key(failure_coord) if failure_coord else None,
-                reason=navigation_execution.get("status"),
-                actions=requested_actions or [],
-            )
-        if (
-            requested_actions
-            and evaluated_plan.execution is not None
-            and evaluated_plan.status.state
-            in {
-                "partial",
-                "drifted",
-            }
-        ):
-            self._record_semantic_memory(
-                "failure",
-                evaluated_plan.status.reason or f"Plan outcome {evaluated_plan.status.state}.",
-                map_key=map_key,
-                map_id=map_id,
-                map_name=map_name,
-                objective_id=objective_id,
-                type=f"plan_{evaluated_plan.status.state}",
-                coord=_coord_payload(failure_coord),
-                coord_key=_coord_to_key(failure_coord) if failure_coord else None,
-                reason=evaluated_plan.status.reason,
-                actions=requested_actions or [],
-            )
-        elif requested_actions and "no_progress" in (action_feedback.get("tags") or []):
-            self._record_semantic_memory(
-                "failure",
-                "Repeated actions produced no structured progress.",
-                map_key=map_key,
-                map_id=map_id,
-                map_name=map_name,
-                objective_id=objective_id,
-                type="no_progress",
-                coord=_coord_payload(failure_coord),
-                coord_key=_coord_to_key(failure_coord) if failure_coord else None,
-                reason=action_feedback.get("summary"),
-                actions=requested_actions or [],
-            )
-
-        if stuck["level"] != "clear":
-            failure_type = "dialog_loop" if "dialog loop" in stuck["reason"].lower() else "stuck"
-            self._record_semantic_memory(
-                "failure",
-                stuck["reason"],
-                map_key=map_key,
-                map_id=map_id,
-                map_name=map_name,
-                objective_id=objective_id,
-                type=failure_type,
-                coord=_coord_payload(failure_coord),
-                coord_key=_coord_to_key(failure_coord) if failure_coord else None,
-                reason=stuck["reason"],
-                actions=requested_actions or [],
-            )
-
-        navigation_guidance = self._build_navigation_assistance(
-            snapshot=snapshot,
-            navigation_store=navigation_store,
-            objective=current_objective,
-        )
-        memory_snapshot = self._build_memory_snapshot(
-            objective=current_objective,
-            navigation_guidance=navigation_guidance,
-            dialog_guidance=dialog_guidance,
-            battle_guidance=battle_guidance,
-            state=state,
-        )
-
         self._write_frame_artifacts(
             screen=screen,
             annotated=annotated,
@@ -3937,15 +1834,40 @@ class AgentRuntime:
             frame_path=self.artifacts["latest_frame"],
             annotated_path=self.artifacts["latest_frame_annotated"],
         )
-        self._write_session_brief(
-            objective=current_objective,
-            navigation_guidance=navigation_guidance,
-            memory_snapshot=memory_snapshot,
-            dialog_guidance=dialog_guidance,
-            battle_guidance=battle_guidance,
+
+        screen_text = classify_ui_state(state)
+        state_delta = build_state_delta(self.last_state, state)
+        action_feedback = classify_action_feedback(
+            source=source,
+            requested_actions=requested_actions,
+            state_before=self.last_state,
+            state_after=state,
+            state_delta=state_delta,
+            navigation_plan=navigation_plan,
+            navigation_execution=navigation_execution,
+        )
+        dialog_guidance, _dialog_change = self._update_dialog_guidance(
+            screen_text=screen_text,
             state=state,
         )
-        bundle = {
+        auto_saves = self._maybe_auto_save(
+            emulator=emulator,
+            state=state,
+            objective=current_objective,
+            state_delta=state_delta,
+            requested_actions=requested_actions,
+            source=source,
+        )
+        if explicit_save:
+            auto_saves.append(explicit_save)
+        stuck = self._detect_stuck(
+            state=state,
+            objective=current_objective,
+            source=source,
+            requested_actions=requested_actions,
+        )
+
+        bundle: JsonDict = {
             "generated_at": generated_at,
             "observation_id": observation_id,
             "reason": reason,
@@ -3958,43 +1880,20 @@ class AgentRuntime:
             "navigation": navigation,
             "screen_text": screen_text,
             "objective": current_objective,
-            "turn_plan": turn_plan,
-            "plan_status": self.plan_status(),
             "recent_action": action_feedback,
-            "movement_guidance": movement_guidance,
-            "navigation_guidance": navigation_guidance,
+            "movement_guidance": build_movement_guidance(snapshot=snapshot),
             "dialog_guidance": dialog_guidance,
-            "battle_guidance": battle_guidance,
-            "memory": memory_snapshot,
+            "battle_guidance": self._build_battle_guidance(state, dialog_guidance),
             "state_delta": state_delta,
-            "checkpoints": self._tail_jsonl(self.artifacts["checkpoints_jsonl"], 20),
-            "knowledge_graph": knowledge_graph,
-            "recovery": recovery,
             "stuck": stuck,
             "workspace_dir": str(self.workspace_dir),
         }
+        bundle["turn_context"] = self._write_turn_context(bundle)
 
         self._write_json(self.artifacts["current_objective_json"], current_objective)
-        _atomic_write_text(
-            self.artifacts["current_objective_md"],
-            self._objective_markdown(current_objective),
-        )
-        turn_context = self._write_turn_context(bundle, goal_override=goal_override)
-        bundle["turn_context"] = turn_context.model_dump(mode="json")
-        bundle["plan_status"] = turn_context.plan_status.model_dump(mode="json")
-        bundle["turn_plan"] = self.load_turn_plan()
-        turn_plan_hash = json.dumps(bundle["turn_plan"], sort_keys=True)
-        self._write_json(
-            self.artifacts["latest_observation_json"],
-            self._compact_observation_payload(bundle),
-        )
-        _atomic_write_text(
-            self.artifacts["latest_observation_md"],
-            self._observation_markdown(bundle=bundle),
-        )
+        self._write_json(self.artifacts["latest_observation_json"], bundle)
 
-        emitted_events: list[JsonDict] = []
-        emitted_events.append(
+        events: list[JsonDict] = [
             self._record_event(
                 "observe",
                 {
@@ -4004,10 +1903,9 @@ class AgentRuntime:
                     "summary": action_feedback["summary"],
                 },
             )
-        )
-
+        ]
         if current_objective["current"]["id"] != self.last_objective_id:
-            emitted_events.append(
+            events.append(
                 self._record_event(
                     "objective",
                     {
@@ -4016,54 +1914,16 @@ class AgentRuntime:
                     },
                 )
             )
-
-        for checkpoint in checkpoints:
-            emitted_events.append(self._record_event("checkpoint", checkpoint))
-
-        emitted_events.append(
-            self._record_event(
-                "knowledge",
-                {
-                    "summary": knowledge_graph["summary"],
-                },
-            )
-        )
-
         for save_event in auto_saves:
-            emitted_events.append(self._record_event("save", save_event))
-
-        emitted_events.append(
-            self._record_event(
-                "recovery",
-                {
-                    "current_recommendation": recovery.get("current_recommendation"),
-                    "candidate_count": len(recovery.get("candidates", [])),
-                },
-            )
-        )
-
+            events.append(self._record_event("save", save_event))
         if stuck["level"] != "clear":
-            emitted_events.append(self._record_event("stuck", stuck))
-
-        if turn_plan_hash != self.last_turn_plan_hash:
-            emitted_events.append(
-                self._record_event(
-                    "turn_plan_updated",
-                    {
-                        "turn_plan": bundle["turn_plan"],
-                    },
-                )
-            )
-            self.last_turn_plan_hash = turn_plan_hash
+            events.append(self._record_event("stuck", stuck))
 
         self.latest_bundle = bundle
         self.live_bundle = bundle
         self.last_state = state
         self.last_objective_id = current_objective["current"]["id"]
-        return {
-            "bundle": bundle,
-            "events": emitted_events,
-        }
+        return {"bundle": bundle, "events": events}
 
     def dashboard_state(self) -> JsonDict:
         bundle = (
@@ -4083,12 +1943,7 @@ class AgentRuntime:
 
         state = bundle.get("state") or {}
         navigation = bundle.get("navigation") or {}
-        current_objective = (bundle.get("objective") or {}).get("current") or {}
-        turn_plan = bundle.get("turn_plan") or {}
-        turn_context = bundle.get("turn_context") or self.load_turn_context()
-        recovery = bundle.get("recovery") or {}
-        knowledge_graph = bundle.get("knowledge_graph") or {}
-        memory_snapshot = bundle.get("memory") or {}
+        snapshot = navigation.get("snapshot") or {}
         visual_artifacts = bundle.get("artifacts") or {}
         use_live_frames = (
             bundle.get("source") == "live_sync"
@@ -4096,7 +1951,7 @@ class AgentRuntime:
             and visual_artifacts.get("live_frame_annotated")
         )
         return {
-            "observation_id": bundle.get("observation_id") or turn_context.get("observation_id"),
+            "observation_id": bundle.get("observation_id"),
             "generated_at": bundle.get("generated_at"),
             "visuals": {
                 "raw_frame_path": (
@@ -4114,13 +1969,10 @@ class AgentRuntime:
                 "screen_text": bundle.get("screen_text"),
             },
             "agent_intent": {
-                "objective": current_objective,
-                "turn_context": turn_context,
-                "turn_plan": turn_plan,
-                "plan_status": bundle.get("plan_status") or turn_context.get("plan_status") or {},
+                "objective": (bundle.get("objective") or {}).get("current") or {},
+                "turn_context": bundle.get("turn_context") or self.load_turn_context(),
                 "recent_action": bundle.get("recent_action"),
                 "movement_guidance": bundle.get("movement_guidance"),
-                "navigation_guidance": bundle.get("navigation_guidance"),
                 "dialog_guidance": bundle.get("dialog_guidance"),
                 "battle_guidance": bundle.get("battle_guidance"),
                 "state_delta": bundle.get("state_delta"),
@@ -4131,58 +1983,19 @@ class AgentRuntime:
                 "party": state.get("party"),
                 "battle": state.get("battle"),
                 "dialog": state.get("dialog"),
-                "interaction": state.get("interaction")
-                or (navigation.get("snapshot") or {}).get("interaction"),
-                "valid_moves": (navigation.get("snapshot") or {}).get("valid_moves", []),
-                "live_ascii": (navigation.get("snapshot") or {}).get("ascii"),
-                "explored_ascii": (navigation.get("location_map") or {}).get("ascii"),
+                "interaction": state.get("interaction") or snapshot.get("interaction"),
+                "valid_moves": snapshot.get("valid_moves", []),
+                "live_ascii": snapshot.get("ascii"),
                 "navigation": navigation,
             },
             "memory_and_progress": {
                 "progress_percent": (bundle.get("objective") or {}).get("progress_percent"),
-                "checkpoints": bundle.get("checkpoints"),
-                "knowledge_graph_summary": knowledge_graph.get("summary"),
-                "memory": memory_snapshot,
-                "recovery": recovery,
                 "stuck": bundle.get("stuck"),
                 "workspace": {
                     "workspace_dir": bundle.get("workspace_dir"),
-                    "turn_context_json": (bundle.get("artifacts") or {}).get("turn_context_json"),
-                    "turn_plan_json": (bundle.get("artifacts") or {}).get("turn_plan_json"),
-                    "recovery_saves_json": (bundle.get("artifacts") or {}).get(
-                        "recovery_saves_json"
-                    ),
+                    "turn_context_json": visual_artifacts.get("turn_context_json"),
                 },
             },
             "timeline": self.history(80),
-            "artifacts": bundle.get("artifacts") or {},
-        }
-
-    def navigator_payload(self) -> JsonDict:
-        bundle = (
-            self.live_bundle
-            or self.latest_bundle
-            or self._read_json(self.artifacts["latest_observation_json"], {})
-        )
-        navigation_guidance = bundle.get("navigation_guidance") or (bundle.get("navigation") or {})
-        route_cards = list(navigation_guidance.get("route_cards") or [])
-        best_route = route_cards[0] if route_cards else None
-        return {
-            "generated_at": bundle.get("generated_at"),
-            "reason": bundle.get("reason"),
-            "objective": (bundle.get("objective") or {}).get("current"),
-            "map": (bundle.get("state") or {}).get("map"),
-            "player": (bundle.get("state") or {}).get("player"),
-            "best_route": best_route,
-            "alternatives": route_cards[1:5],
-            "avoidances": (navigation_guidance.get("avoidances") or [])[:5],
-            "landmarks": (navigation_guidance.get("landmarks") or [])[:8],
-            "memory": bundle.get("memory") or {},
-            "dialog": bundle.get("dialog_guidance") or bundle.get("dialog") or {},
-            "battle": bundle.get("battle_guidance") or bundle.get("battle") or {},
-            "artifacts": {
-                "turn_context_json": (bundle.get("artifacts") or {}).get("turn_context_json"),
-                "turn_plan_json": (bundle.get("artifacts") or {}).get("turn_plan_json"),
-                "recovery_saves_json": (bundle.get("artifacts") or {}).get("recovery_saves_json"),
-            },
+            "artifacts": visual_artifacts,
         }

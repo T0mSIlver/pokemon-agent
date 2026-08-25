@@ -160,13 +160,6 @@ def main():
     pos = data.get("state_after", {}).get("player", {}).get("position", {})
     print(f"  Position after load: {pos}")
 
-    print("\n=== Testing GET /minimap ===")
-    r = httpx.get("http://localhost:8765/minimap")
-    print(f"  Status: {r.status_code}")
-    print("  Content:")
-    for line in r.text.split("\n"):
-        print(f"    {line}")
-
     print("\n=== Testing error handling ===")
     r = httpx.post("http://localhost:8765/action", json={"actions": ["invalid_action"]})
     print(f"  Invalid action status: {r.status_code}")
