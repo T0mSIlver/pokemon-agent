@@ -15,6 +15,7 @@ import contextlib
 import io
 import json
 import mimetypes
+import os
 import time
 from collections import deque
 from collections.abc import AsyncIterator
@@ -40,9 +41,19 @@ from pokemon_agent.coordinator import (
 )
 from pokemon_agent.explored_map import ExploredMaps
 from pokemon_agent.guides import GuideLog
+from pokemon_agent.intervention_loop import (
+    DEFAULT_SLOT_BASE_URL,
+    DEFAULT_SLOT_FILENAME,
+    DEFAULT_SLOT_MODEL,
+    JOURNAL_FILENAME,
+    InterventionRunner,
+    build_slot_client,
+    pi_thinker,
+)
 from pokemon_agent.memory.red import MAP_NAMES, MOVE_NAMES
 from pokemon_agent.milestones import MilestoneTracker
 from pokemon_agent.pi_supervisor import NoLiveSessionError, PiSupervisor
+from pokemon_agent.run_recorder import RunRecorder, receipt_from_batch
 from pokemon_agent.saves import (
     SaveNameError,
     list_save_files,
@@ -54,6 +65,20 @@ from pokemon_agent.world import World
 __version__ = "0.1.0"
 
 SCREEN_TEXT_LIMIT = 160
+
+
+#: Environment switch for the intervention loop, since the launcher scripts
+#: build a GameConfig they do not parameterise.
+INTERVENTIONS_ENV_VAR = "POKEMON_AGENT_INTERVENTIONS"
+_TRUTHY = {"1", "true", "yes", "on"}
+
+
+def _interventions_flag(config: Optional["GameConfig"]) -> bool:
+    """Whether the harness may interrupt the player. Off unless told otherwise."""
+
+    if config is not None and config.interventions_enabled is not None:
+        return bool(config.interventions_enabled)
+    return os.environ.get(INTERVENTIONS_ENV_VAR, "").strip().lower() in _TRUTHY
 
 
 def _guess_content_type(path: Path) -> str:
@@ -79,6 +104,18 @@ class GameConfig(BaseModel):
     realtime: bool = True
     realtime_fps: int = 60
     live_artifact_broadcast_fps: Optional[int] = None
+
+    #: Whether the harness may stop the player and think. Off unless something
+    #: says otherwise, because firing an intervention swaps the player's whole
+    #: KV cache out to disk and a live run is somebody's data. ``None`` defers to
+    #: the ``POKEMON_AGENT_INTERVENTIONS`` environment variable, which is what the
+    #: launch scripts actually set; the flag is read once, at startup, and can be
+    #: turned on for a run already in flight because the run itself is adopted
+    #: from disk rather than restarted.
+    interventions_enabled: Optional[bool] = None
+    slot_base_url: str = DEFAULT_SLOT_BASE_URL
+    slot_model: str = DEFAULT_SLOT_MODEL
+    slot_filename: str = DEFAULT_SLOT_FILENAME
 
 
 class ActionRequest(BaseModel):
@@ -181,9 +218,16 @@ _explored_maps: Optional[ExploredMaps] = None
 _world: Optional[World] = None
 _guide_log: Optional[GuideLog] = None
 
-#: Buttons sent since startup. The run metric is quoted in presses, so this is
-#: the number GET /progress reports alongside the milestone ladder.
+#: Buttons sent since startup. A fallback only: once a run is open its own
+#: receipts are the press total, and they outlive this process.
 _press_count: int = 0
+
+#: The run's receipt writer, and the loop that reads those receipts back to
+#: decide whether the player should stop and think. Both are created at startup;
+#: the recorder is handed to the supervisor, which owns the run lifecycle.
+_run_recorder: Optional[RunRecorder] = None
+_interventions: Optional[InterventionRunner] = None
+_intervention_task: Optional[asyncio.Task] = None
 
 #: Why the emulator was never created, if it was not. An unsupported ROM is
 #: reported here rather than as an ImportError three steps later.
@@ -319,7 +363,17 @@ class _ServerOps:
         return _get_state_dict()
 
     def execute_batch(self, actions: list[str]) -> dict:
-        return _execute_action_batch_sync(actions)
+        """Run the batch and price it, without letting go of the lock.
+
+        ``presses`` and ``milestones`` are what the run's receipt is built from,
+        and both have to be read from the machine this batch just left. Sampling
+        them after the transaction would describe whatever the next request did.
+        """
+        before = _press_count
+        outcome = dict(_execute_action_batch_sync(actions))
+        outcome["presses"] = max(0, _press_count - before)
+        outcome["milestones"] = _milestone_ids_sync()
+        return outcome
 
     def reject_unsafe_battle_actions(self, actions: list[str]) -> None:
         _reject_unsafe_battle_actions(actions)
@@ -823,6 +877,29 @@ def _make_runtime_save_event(name: str, path: Path, source: str, reason: str) ->
     }
 
 
+def _milestone_ids_sync() -> tuple[str, ...]:
+    """Every ladder milestone the game currently satisfies. Never raises.
+
+    One RAM read of the event-flag block plus the badge byte and the bag. It is
+    called under the emulator lock at the end of every batch, so a milestone is
+    priced at the presses of the batch that actually reached it.
+    """
+    if _reader is None or not hasattr(_reader, "read_bits"):
+        return ()
+    try:
+        return tuple(sorted(MilestoneTracker(_reader).snapshot()))
+    except Exception as exc:  # noqa: BLE001 — the oracle must never fail a batch
+        print(f"[server] WARNING: milestone read failed: {exc}")
+        return ()
+
+
+async def _milestone_snapshot() -> frozenset:
+    """The milestone oracle as the run recorder wants it: awaited, under the lock."""
+    if _emulator is None or _reader is None or not hasattr(_reader, "read_bits"):
+        return frozenset()
+    return frozenset(await _run_emulator_sync(_milestone_ids_sync))
+
+
 def _navigation_payload_sync() -> Optional[dict]:
     """Serialize the live collision window that the annotated frame overlay draws."""
     if _emulator is None:
@@ -999,6 +1076,132 @@ def _check_action_limits(actions: list[str]) -> None:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
 
 
+# ---------------------------------------------------------------------------
+# Receipts and interventions
+#
+# One receipt per action batch, appended after the emulator lock is released.
+# The supervisor decides which run it lands in; this half only ever knows what
+# a batch did, which is the half nothing else in the process can see.
+# ---------------------------------------------------------------------------
+
+
+async def _write_receipt(
+    *,
+    tool: str,
+    presses: int,
+    bundle: Optional[dict],
+    outcome: Optional[dict],
+    milestone_ids: tuple = (),
+    exit_code: int = 0,
+    reloaded: bool = False,
+    extra: Optional[dict] = None,
+) -> None:
+    """Record what one batch cost, then let the intervention loop read it.
+
+    Cost on the hot path: building a dict from values already in hand, plus one
+    ``write`` and one ``fsync`` of a few hundred bytes that the recorder hands to
+    the default executor, so the event loop is free while the line lands. The
+    file is opened ``O_APPEND`` and never re-read, so this does not grow with
+    the length of the run.
+    """
+    recorder = _run_recorder
+    if recorder is not None and recorder.run_id is not None:
+        try:
+            await recorder.append(
+                **receipt_from_batch(
+                    tool=tool,
+                    presses=presses,
+                    bundle=bundle,
+                    outcome=outcome,
+                    milestone_ids=milestone_ids,
+                    exit_code=exit_code,
+                    reloaded=reloaded,
+                    extra=extra,
+                )
+            )
+        except Exception as exc:  # noqa: BLE001 — a lost receipt must not lose the batch
+            print(f"[server] WARNING: could not record a receipt: {exc}")
+    _schedule_intervention_check(bundle)
+
+
+def _intervention_state_summary(bundle: Optional[dict]) -> str:
+    """The few lines a thinking session gets instead of the player's history."""
+    summary = _observation_summary(bundle)
+    parts = [f"{key}: {value}" for key, value in summary.items() if value not in (None, "", [])]
+    return "\n".join(parts) or "(no observation available)"
+
+
+def _intervention_milestone_summary() -> str:
+    recorder = _run_recorder
+    if recorder is None or recorder.run_id is None:
+        return ""
+    lines = [f"{recorder.total_presses} presses spent so far in run {recorder.run_id}."]
+    tail = recorder.attainments[-4:]
+    if tail:
+        lines.append("Most recent milestones, with what they cost:")
+        lines += [f"  {item['label']} at {item['presses']} presses" for item in tail]
+    return "\n".join(lines)
+
+
+def _schedule_intervention_check(bundle: Optional[dict]) -> None:
+    """Ask the loop to look at the run, off the request that produced the batch.
+
+    A swap takes the player's whole KV cache to disk and back; making an action
+    wait for that would stall the very run it is trying to help. One at a time:
+    a batch that arrives while a swap is in flight is skipped, not queued.
+    """
+    global _intervention_task
+    runner, recorder = _interventions, _run_recorder
+    if runner is None or recorder is None or not runner.enabled:
+        return
+    if _intervention_task is not None and not _intervention_task.done():
+        return
+    _intervention_task = asyncio.create_task(_run_intervention_check(bundle))
+
+
+async def _run_intervention_check(bundle: Optional[dict]) -> None:
+    runner, recorder = _interventions, _run_recorder
+    if runner is None or recorder is None:
+        return
+    try:
+        await runner.after_batch(
+            recorder.recent_receipts(),
+            state={"map": _observation_summary(bundle).get("map")},
+            total_presses=recorder.total_presses,
+            state_summary=_intervention_state_summary(bundle),
+            milestone_summary=_intervention_milestone_summary(),
+        )
+    except Exception as exc:  # noqa: BLE001 — never let this take the server with it
+        print(f"[server] WARNING: intervention check failed: {exc}")
+
+
+def _intervention_advise(prompt: str) -> str:
+    """Run one thinking-mode Pi session. Blocking: it holds the borrowed slot."""
+    supervisor = _supervisor
+    if supervisor is None or not supervisor.pi_binary:
+        raise RuntimeError("Pi executable was not found, so nothing can think.")
+    return pi_thinker(
+        supervisor.pi_binary,
+        provider=supervisor.provider,
+        model=supervisor.model,
+        cwd=supervisor.workspace_dir,
+    )(prompt)
+
+
+def _build_intervention_runner(data_dir: Path) -> InterventionRunner:
+    enabled = _interventions_flag(_config)
+    return InterventionRunner(
+        enabled=enabled,
+        advise=_intervention_advise,
+        slot_client=build_slot_client(
+            base_url=_config.slot_base_url if _config else DEFAULT_SLOT_BASE_URL,
+            model=_config.slot_model if _config else DEFAULT_SLOT_MODEL,
+        ),
+        slot_filename=_config.slot_filename if _config else DEFAULT_SLOT_FILENAME,
+        journal_path=data_dir / JOURNAL_FILENAME,
+    )
+
+
 async def _run_actions(
     actions: list[str], *, source: str, reason: str, rate_check: bool = True
 ) -> dict:
@@ -1010,9 +1213,24 @@ async def _run_actions(
     """
     if rate_check:
         _check_action_rate()
-    _check_action_limits(actions)
-    result = await _coordinator.act_and_observe(actions, source=source, reason=reason)
+    try:
+        _check_action_limits(actions)
+        result = await _coordinator.act_and_observe(actions, source=source, reason=reason)
+    except Exception as exc:
+        # A refused or failed batch is a receipt too. Two of them in a row is
+        # exactly what the repeated_failure detector fires on, and a run whose
+        # receipts hold only its successes cannot show what it wasted.
+        await _write_receipt(
+            tool=source,
+            presses=0,
+            bundle=None,
+            outcome=None,
+            exit_code=1,
+            extra={"error": str(exc)[:200], "actions": list(actions)[:8]},
+        )
+        raise
     bundle = result["bundle"]
+    outcome = result["outcome"]
     executed = result["actions_executed"]
 
     await _record_and_broadcast(
@@ -1034,7 +1252,14 @@ async def _run_actions(
             "screen_text": bundle.get("screen_text"),
         },
     )
-    return {"actions_executed": executed, "bundle": bundle, "outcome": result["outcome"]}
+    await _write_receipt(
+        tool=source,
+        presses=outcome.get("presses") or 0,
+        bundle=bundle,
+        outcome=outcome,
+        milestone_ids=outcome.get("milestones") or (),
+    )
+    return {"actions_executed": executed, "bundle": bundle, "outcome": outcome}
 
 
 # ---------------------------------------------------------------------------
@@ -1397,8 +1622,17 @@ async def _run_battle_sequence(intent: dict, func, *args) -> dict:
     cursor read in the sequence has to see the machine the previous press left.
     """
     _check_action_rate()
+
+    def _counted(*call_args) -> dict:
+        """The command, priced. A battle spends buttons like any other batch."""
+        before = _press_count
+        counted = dict(func(*call_args))
+        counted["presses"] = max(0, _press_count - before)
+        counted["milestones"] = _milestone_ids_sync()
+        return counted
+
     result = await _coordinator.battle_and_observe(
-        func=func,
+        func=_counted,
         args=args,
         reason="battle_command",
         source="battle",
@@ -1426,6 +1660,14 @@ async def _run_battle_sequence(intent: dict, func, *args) -> dict:
             "state_after": result["state_after"],
             "screen_text": bundle.get("screen_text"),
         },
+    )
+    await _write_receipt(
+        tool="battle",
+        presses=outcome.get("presses") or 0,
+        bundle=bundle,
+        outcome=outcome,
+        milestone_ids=outcome.get("milestones") or (),
+        extra={"intent": intent},
     )
     return {"outcome": outcome, "bundle": bundle}
 
@@ -1493,6 +1735,9 @@ async def _startup():
         _world, \
         _guide_log, \
         _press_count, \
+        _run_recorder, \
+        _interventions, \
+        _intervention_task, \
         _startup_error
     _loop = asyncio.get_running_loop()
     _start_time = time.time()
@@ -1503,6 +1748,9 @@ async def _startup():
     _reader = None
     _runtime = None
     _press_count = 0
+    _run_recorder = None
+    _interventions = None
+    _intervention_task = None
     _startup_error = None
     _realtime_ticks = 0
     _realtime_last_tick_at = None
@@ -1570,6 +1818,17 @@ async def _startup():
     )
     # SEAM: the annotated frame insets a mini-map drawn from these tile sets.
     _runtime.map_grid_lookup = _explored_maps.grid
+    # The scoreboard. The recorder resolves which run this process is joining
+    # from a pointer file, so a restart rejoins the playthrough already in
+    # progress instead of starting a second one beside it.
+    _run_recorder = RunRecorder(
+        data_dir,
+        milestone_snapshot=_milestone_snapshot,
+        start_checkpoint=_config.load_state,
+    )
+    open_run = _run_recorder.read_pointer()
+    print(f"[server] Run receipts: {data_dir / 'runs'} — open run: {open_run or 'none yet'}")
+    _interventions = _build_intervention_runner(data_dir)
     _supervisor = PiSupervisor(
         workspace_dir=workspace_dir,
         server_url=f"http://127.0.0.1:{_config.port}",
@@ -1577,6 +1836,21 @@ async def _startup():
         stream_sink=broadcast,
         artifact_paths=_runtime_artifact_paths,
         critic_context=_critic_context,
+        run_recorder=_run_recorder,
+    )
+    # Wired after the supervisor exists: an intervention is delivered down the
+    # same RPC path POST /supervisor/steer uses, and reported where the run is
+    # watched from.
+    _interventions.deliver = _supervisor.deliver_intervention
+    _interventions.notify = _supervisor.record_intervention
+    _supervisor.intervention_state["enabled"] = _interventions.enabled
+    print(
+        "[server] Interventions: "
+        + (
+            "ON — the harness may stop the player and think"
+            if _interventions.enabled
+            else f"off (set {INTERVENTIONS_ENV_VAR}=1 to enable)"
+        )
     )
     _realtime_frames_per_second = max(1, int(_config.realtime_fps))
     _realtime_enabled = bool(_config.realtime)
@@ -1638,7 +1912,12 @@ async def _startup():
 
 
 async def _shutdown():
-    global _supervisor, _realtime_task, _live_artifact_task
+    global _supervisor, _realtime_task, _live_artifact_task, _intervention_task
+    if _intervention_task is not None:
+        _intervention_task.cancel()
+        with contextlib.suppress(asyncio.CancelledError, Exception):
+            await _intervention_task
+        _intervention_task = None
     if _live_artifact_task is not None:
         _live_artifact_task.cancel()
         try:
@@ -1660,6 +1939,10 @@ async def _shutdown():
             await _supervisor.stop()
     if _explored_maps is not None:
         _explored_maps.save()
+    if _run_recorder is not None:
+        # Closes the append handle, not the run: the playthrough outlives this
+        # process and the next start adopts it straight back off the pointer.
+        _run_recorder.close()
 
 
 # ---------------------------------------------------------------------------
@@ -1694,6 +1977,8 @@ async def health():
         "dashboard_ready": _dashboard_dir is not None,
         "emulation": _server_runtime_snapshot(),
         "pi_supervisor": _compact_supervisor_status(supervisor_snapshot),
+        "run": _run_recorder.status() if _run_recorder is not None else None,
+        "interventions": _interventions.status() if _interventions is not None else None,
         "startup_error": _startup_error,
     }
 
@@ -2023,6 +2308,18 @@ async def load_state(req: SaveRequest):
         await _broadcast_runtime_refresh(result)
     await _record_and_broadcast("load", {"name": req.name, "path": str(save_path)})
     await broadcast({"type": "state_update", "reason": "load", "state": result["state_after"]})
+    # A reload rewinds the game, never the bill. The receipt spends no presses
+    # and the running total carries straight over it, so a gym won on the fourth
+    # attempt costs what all four attempts cost.
+    await _write_receipt(
+        tool="load",
+        presses=0,
+        bundle=bundle,
+        outcome=None,
+        milestone_ids=await _run_emulator_sync(_milestone_ids_sync),
+        reloaded=True,
+        extra={"save": req.name},
+    )
     payload = {
         "success": True,
         "save": {"name": req.name, "path": str(save_path)},
@@ -2299,6 +2596,18 @@ def _milestone_summary_sync() -> dict:
     return MilestoneTracker(_reader).summary()
 
 
+def _progress_presses() -> int:
+    """Buttons spent by the *run*, which outlives this process and its sessions.
+
+    Falls back to the since-startup counter only when no run is open, which is
+    the case before a supervisor session has ever started.
+    """
+    recorder = _run_recorder
+    if recorder is not None and recorder.run_id is not None:
+        return recorder.total_presses
+    return _press_count
+
+
 @app.get("/progress")
 async def progress():
     """How far along the run is, in verified milestones and in buttons spent."""
@@ -2312,7 +2621,14 @@ async def progress():
         summary = await _run_emulator_sync(_milestone_summary_sync)
     except Exception as exc:  # noqa: BLE001
         raise HTTPException(status_code=503, detail=f"Milestones unreadable: {exc}") from exc
-    return capabilities.progress_payload(summary, _press_count)
+    payload = capabilities.progress_payload(summary, _progress_presses())
+    if _run_recorder is not None:
+        # Additive: `presses_to` and `attainments` are the names the dashboard
+        # already prefers over the ledger it derives for itself, and `presses`
+        # keeps its meaning — it is just the run's number now, not this
+        # process's. Empty until a run is open, never absent.
+        payload.update(_run_recorder.progress_payload())
+    return payload
 
 
 # ---------------------------------------------------------------------------

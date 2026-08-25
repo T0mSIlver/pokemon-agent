@@ -3,6 +3,7 @@
 import asyncio
 import io
 import json
+import time
 from contextlib import contextmanager
 from pathlib import Path
 from types import SimpleNamespace
@@ -1988,6 +1989,11 @@ def test_progress_on_a_fresh_game_is_honest_about_zero(server_app):
         "furthest_label": None,
         "latest": [],
         "presses": 0,
+        # The run ledger is always present and empty until a run opens, so the
+        # dashboard never has to guess whether the server has an opinion.
+        "run_id": None,
+        "presses_to": {},
+        "attainments": [],
     }
 
 
@@ -2030,3 +2036,305 @@ def test_the_dashboard_is_mounted_exactly_once(server_app):
     assert paths.count("/dashboard") == 1
     assert paths.count("/dashboard/") == 1
     assert paths.count("/dashboard/assets") == 1
+
+
+# ---------------------------------------------------------------------------
+# Receipts
+#
+# The scoreboard in pokemon_agent/bench has never been written to by anything.
+# These are the tests that it is now: one receipt per batch, appended after the
+# emulator lock is released, priced in the buttons the batch actually sent.
+# ---------------------------------------------------------------------------
+
+
+def on_server_loop(coro, timeout: float = 10.0):
+    """Await a server coroutine from the test thread, on the server's own loop.
+
+    The TestClient runs the app in a background thread and the emulator lock
+    belongs to that loop, so a second loop here would be a different machine.
+    """
+    from pokemon_agent import server as server_mod
+
+    return asyncio.run_coroutine_threadsafe(coro, server_mod._loop).result(timeout=timeout)
+
+
+def open_run(goal: str = "Reach Pewter") -> str:
+    from pokemon_agent import server as server_mod
+
+    handle = on_server_loop(server_mod._run_recorder.begin_session(goal=goal, model="fake-model"))
+    return handle.run_id
+
+
+def receipts(app, run_id: str) -> list[dict]:
+    path = app.data_dir / "runs" / run_id / "receipts.jsonl"
+    return [json.loads(line) for line in path.read_text(encoding="utf-8").splitlines() if line]
+
+
+def action_receipts(app, run_id: str) -> list[dict]:
+    return [entry for entry in receipts(app, run_id) if entry["tool"] == "action"]
+
+
+def test_a_run_starts_with_a_header_and_a_baseline_receipt(server_app):
+    run_id = open_run()
+
+    meta = json.loads(
+        (server_app.data_dir / "runs" / run_id / "meta.json").read_text(encoding="utf-8")
+    )
+    assert meta["goal"] == "Reach Pewter"
+    assert meta["model"] == "fake-model"
+    assert meta["status"] == "running"
+    assert receipts(server_app, run_id)[0]["tool"] == "run_start"
+
+
+def test_an_action_batch_leaves_one_receipt_with_every_field_filled(server_app):
+    run_id = open_run()
+
+    server_app.http.post("/action", json={"actions": ["walk_up", "walk_up", "press_a"]})
+
+    written = action_receipts(server_app, run_id)
+    assert len(written) == 1
+    receipt = written[0]
+    assert receipt["presses"] == 3
+    assert receipt["map"] == "PALLET TOWN"
+    assert receipt["pos"] == [5, 4]
+    assert receipt["moved"] == 2
+    assert receipt["blocked_after"] is None
+    assert receipt["hp"] == [20, 22]
+    assert receipt["party_size"] == 1
+    assert receipt["milestones_new"] == []
+    assert receipt["exit"] == 0
+    assert receipt["reloaded"] is False
+    assert receipt["whiteout"] is False
+    assert receipt["t"] > 0
+
+
+def test_a_batch_that_went_nowhere_says_so_in_its_receipt(server_app):
+    run_id = open_run()
+    server_app.emulator.walls = {(5, 5)}
+
+    server_app.http.post("/action", json={"actions": ["walk_up", "walk_up"]})
+
+    receipt = action_receipts(server_app, run_id)[-1]
+    assert receipt["presses"] == 2
+    assert receipt["moved"] == 0
+    assert receipt["blocked_after"] == "1"
+
+
+def test_a_refused_batch_still_leaves_a_receipt(server_app):
+    """Two failures in a row is what the repeated_failure detector fires on."""
+    run_id = open_run()
+
+    assert server_app.http.post("/action", json={"actions": ["fly_north"]}).status_code == 400
+
+    receipt = action_receipts(server_app, run_id)[-1]
+    assert receipt["exit"] == 1
+    assert receipt["presses"] == 0
+    assert "fly_north" in receipt["error"]
+
+
+def test_a_milestone_is_priced_at_the_presses_that_reached_it(server_app):
+    from pokemon_agent.milestones import ALL_EVENTS, MILESTONES
+
+    run_id = open_run()
+    starter = MILESTONES[0]
+
+    server_app.http.post("/action", json={"actions": ["walk_up", "walk_up"]})
+    server_app.emulator.event_bits = {ALL_EVENTS[starter.source]}
+    server_app.http.post("/action", json={"actions": ["press_a"]})
+    server_app.http.post("/action", json={"actions": ["press_a"]})
+
+    written = action_receipts(server_app, run_id)
+    assert written[0]["milestones_new"] == []
+    assert written[1]["milestones_new"] == [starter.id]
+    assert written[2]["milestones_new"] == []  # first attainment only
+
+    payload = server_app.http.get("/progress").json()
+    assert payload["run_id"] == run_id
+    assert payload["presses_to"] == {starter.id: 3}
+    assert payload["attainments"][0]["presses"] == 3
+    assert payload["attainments"][0]["label"] == starter.label
+
+
+def test_a_battle_command_is_priced_like_any_other_batch(server_app):
+    run_id = open_run()
+    in_battle(server_app)
+
+    server_app.http.post("/battle/run")
+
+    battles = [entry for entry in receipts(server_app, run_id) if entry["tool"] == "battle"]
+    assert len(battles) == 1
+    assert battles[0]["presses"] > 0
+    assert battles[0]["intent"] == {"run": True}
+
+
+def test_a_reload_leaves_a_receipt_and_never_rewinds_the_bill(server_app):
+    """A gym won on the fourth attempt costs what all four attempts cost."""
+    run_id = open_run()
+    server_app.http.post("/action", json={"actions": ["walk_up", "walk_up"]})
+    server_app.http.post("/save", json={"name": "before-brock"})
+    server_app.http.post("/action", json={"actions": ["walk_up", "walk_up", "walk_up"]})
+
+    server_app.http.post("/load", json={"name": "before-brock"})
+    server_app.http.post("/action", json={"actions": ["press_a"]})
+
+    reloads = [entry for entry in receipts(server_app, run_id) if entry["reloaded"]]
+    assert len(reloads) == 1
+    assert reloads[0]["presses"] == 0
+    assert reloads[0]["tool"] == "load"
+    assert server_app.http.get("/progress").json()["presses"] == 6
+
+
+def test_progress_reports_the_runs_total_and_not_this_processs(server_app):
+    from pokemon_agent import server as server_mod
+
+    run_id = open_run()
+    # 900 presses this process never saw, from the sessions before it started.
+    on_server_loop(server_mod._run_recorder.append(tool="action", presses=900, map_name="Route 3"))
+    server_app.http.post("/action", json={"actions": ["walk_up"]})
+
+    payload = server_app.http.get("/progress").json()
+
+    assert payload["presses"] == 901
+    assert payload["run_id"] == run_id
+    assert server_mod._press_count == 1
+
+
+def test_progress_keeps_the_field_names_it_already_had(server_app):
+    open_run()
+    payload = server_app.http.get("/progress").json()
+
+    assert {"count", "total", "furthest", "furthest_label", "latest", "presses"}.issubset(payload)
+    assert {"run_id", "presses_to", "attainments"}.issubset(payload)
+
+
+def test_health_reports_the_run_and_the_intervention_switch(server_app):
+    payload = server_app.http.get("/health").json()
+
+    assert payload["run"]["run_id"] is None
+    assert payload["interventions"]["enabled"] is False
+    assert payload["interventions"]["slot_lost"] is None
+
+    run_id = open_run()
+    assert server_app.http.get("/health").json()["run"]["run_id"] == run_id
+
+
+# ---------------------------------------------------------------------------
+# Interventions, through the server
+# ---------------------------------------------------------------------------
+
+
+def wait_for_intervention(timeout: float = 5.0) -> None:
+    from pokemon_agent import server as server_mod
+
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline:
+        task = server_mod._intervention_task
+        if task is not None and task.done():
+            return
+        time.sleep(0.02)
+    raise AssertionError("the intervention loop never ran")
+
+
+def arm_interventions(server_mod, steers: list, answer: str = "Walk left four tiles."):
+    """Enable the loop with the model and the slot API faked out entirely."""
+    from pokemon_agent.interventions import InterventionPolicy, RepeatedFailure
+
+    runner = server_mod._interventions
+    runner.enabled = True
+    runner.policy = InterventionPolicy(detectors=(RepeatedFailure(),), cooldown_presses=0)
+    runner.slot_client = None  # nothing here may touch the model box
+    runner.advise = lambda prompt: answer
+
+    async def deliver(text: str) -> None:
+        steers.append(text)
+
+    runner.deliver = deliver
+    return runner
+
+
+def test_the_flag_is_off_and_nothing_fires(server_app):
+    from pokemon_agent import server as server_mod
+
+    open_run()
+    server_mod._interventions.advise = lambda prompt: pytest.fail("the model was asked to think")
+
+    server_app.http.post("/action", json={"actions": ["fly_north"]})
+    server_app.http.post("/action", json={"actions": ["fly_north"]})
+
+    assert server_mod._intervention_task is None
+    assert server_mod._interventions.status()["fired"] == 0
+
+
+def test_a_trigger_steers_the_live_session_exactly_once(server_app):
+    from pokemon_agent import server as server_mod
+
+    open_run()
+    steers: list[str] = []
+    runner = arm_interventions(server_mod, steers)
+
+    server_app.http.post("/action", json={"actions": ["fly_north"]})
+    server_app.http.post("/action", json={"actions": ["fly_north"]})
+    wait_for_intervention()
+
+    assert steers == ["Walk left four tiles."]
+    assert runner.status()["fired"] == 1
+    assert runner.status()["delivered"] == 1
+
+
+def test_a_lost_slot_disables_the_loop_and_shows_up_in_health(server_app):
+    from pokemon_agent import server as server_mod
+    from pokemon_agent.slots import SlotLost
+
+    open_run()
+    steers: list[str] = []
+    runner = arm_interventions(server_mod, steers)
+
+    def lose_the_slot(prompt: str) -> str:
+        raise SlotLost("could not restore slot 0 from 'player.bin'", "player.bin")
+
+    runner.advise = lose_the_slot
+
+    server_app.http.post("/action", json={"actions": ["fly_north"]})
+    server_app.http.post("/action", json={"actions": ["fly_north"]})
+    wait_for_intervention()
+
+    health = server_app.http.get("/health").json()["interventions"]
+    assert health["slot_lost"]["filename"] == "player.bin"
+    assert health["active"] is False
+    assert health["disabled_reason"]
+    assert steers == []
+
+
+def test_the_environment_flag_turns_the_loop_on_at_startup(tmp_path, monkeypatch):
+    from pokemon_agent import server as server_mod
+
+    monkeypatch.setenv(server_mod.INTERVENTIONS_ENV_VAR, "1")
+    with running_server(tmp_path, monkeypatch, FakeEmulator()) as app:
+        assert app.http.get("/health").json()["interventions"]["enabled"] is True
+
+
+def test_the_flag_defaults_to_off_with_no_environment_and_no_config(monkeypatch):
+    from pokemon_agent import server as server_mod
+
+    monkeypatch.delenv(server_mod.INTERVENTIONS_ENV_VAR, raising=False)
+
+    assert server_mod._interventions_flag(None) is False
+    assert server_mod._interventions_flag(server_mod.GameConfig(rom_path="x.gb")) is False
+
+
+@pytest.mark.parametrize("value", ["1", "true", "YES", "on"])
+def test_the_environment_flag_accepts_the_usual_spellings(monkeypatch, value):
+    from pokemon_agent import server as server_mod
+
+    monkeypatch.setenv(server_mod.INTERVENTIONS_ENV_VAR, value)
+
+    assert server_mod._interventions_flag(None) is True
+
+
+def test_the_config_field_wins_over_the_environment(monkeypatch):
+    from pokemon_agent import server as server_mod
+
+    monkeypatch.setenv(server_mod.INTERVENTIONS_ENV_VAR, "1")
+    config = server_mod.GameConfig(rom_path="x.gb", interventions_enabled=False)
+
+    assert server_mod._interventions_flag(config) is False

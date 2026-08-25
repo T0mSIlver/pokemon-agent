@@ -19,6 +19,7 @@ from typing import Any, Awaitable, Callable, Optional, Union
 from urllib.parse import urlparse
 
 from pokemon_agent.agent_runtime import utc_now
+from pokemon_agent.run_recorder import RunRecorder
 
 JsonDict = dict[str, Any]
 EventSink = Callable[[JsonDict], Awaitable[None]]
@@ -92,6 +93,13 @@ OPERATOR_MESSAGE_LIMIT = 400
 OPERATOR_MESSAGE_HISTORY = 20
 #: ``source`` marker on stream entries a human typed, as opposed to the harness.
 OPERATOR_STREAM_SOURCE = "operator"
+#: ``source`` marker on the one instruction an intervention hands the player. It
+#: arrives down the operator path but nobody typed it, and the transcript has to
+#: be able to tell those apart afterwards.
+INTERVENTION_STREAM_SOURCE = "intervention"
+#: An intervention's answer is a plan for a segment, not a nudge, so it gets more
+#: room than a human's steer. Still one instruction, still capped.
+INTERVENTION_MESSAGE_LIMIT = 1200
 #: Statuses where a ``pi --mode rpc`` process is live enough to take a message.
 STEERABLE_STATUSES = frozenset({"starting", "running"})
 
@@ -589,6 +597,7 @@ class PiSupervisor:
         critic_retry_enabled: bool = True,
         critic_retry_thinking: Optional[str] = None,
         critic_heartbeat_seconds: float = CRITIC_HEARTBEAT_SECONDS,
+        run_recorder: Optional[RunRecorder] = None,
     ) -> None:
         self.max_idle_turns = max_idle_turns if max_idle_turns and max_idle_turns > 0 else 0
         self.token_budget = token_budget if token_budget and token_budget > 0 else 0
@@ -605,6 +614,23 @@ class PiSupervisor:
         self.stream_sink = stream_sink
         self.objective_complete = objective_complete
         self.artifact_paths = artifact_paths
+        #: The scoreboard's writer. The supervisor owns the run *lifecycle*: it is
+        #: the only thing that knows a playthrough has begun and what it is for.
+        #: The server owns the receipts, because only it sees an action batch.
+        self.run_recorder = run_recorder
+        self.run_id: Optional[str] = None
+        self.run_adopted: bool = False
+        self.run_error: Optional[str] = None
+        #: Last thing the intervention loop did, mirrored here so a swap of the
+        #: player's KV cache is visible where the run is watched from.
+        self.intervention_state: JsonDict = {
+            "enabled": False,
+            "fired": 0,
+            "delivered": 0,
+            "last": None,
+            "slot_lost": None,
+            "disabled_reason": None,
+        }
         self.session_dir = self.workspace_dir / "pi-session"
         self.session_dir.mkdir(parents=True, exist_ok=True)
 
@@ -826,8 +852,23 @@ class PiSupervisor:
                 "attempts": list(self.last_critique_attempts),
                 "handoff_path": str(_critic_module().handoff_path(self.workspace_dir)),
             },
+            "run": self.run_snapshot(),
+            "interventions": dict(self.intervention_state),
             "config": self._config_snapshot(),
         }
+
+    def run_snapshot(self) -> JsonDict:
+        """Which run the sessions are adding up to, and what it has cost."""
+
+        recorder = self.run_recorder
+        payload: JsonDict = {
+            "run_id": self.run_id,
+            "adopted": self.run_adopted,
+            "error": self.run_error,
+        }
+        if recorder is not None:
+            payload.update(recorder.status())
+        return payload
 
     # ------------------------------------------------------------------
     # Ordered stream log
@@ -1266,6 +1307,9 @@ class PiSupervisor:
             "session start",
             text=self.goal or FALLBACK_GOAL,
         )
+        # After the stream reset, so the run the session joined is the first
+        # thing in the log a watcher scrolls to.
+        await self._begin_run()
         self._task = asyncio.create_task(self._run_loop(resume=False, force_single_turn=False))
         return self.state_snapshot()
 
@@ -1289,6 +1333,7 @@ class PiSupervisor:
         self._critic_cancelled = False
         self._stage_workspace_helpers()
         await self._refresh_model_limits()
+        await self._begin_run()
         await self._emit_major(
             "pi_supervisor_status",
             {
@@ -1329,6 +1374,130 @@ class PiSupervisor:
         await self._push_stream_system("session stop", text=self.status_reason)
         return self.state_snapshot()
 
+    # ------------------------------------------------------------------
+    # Run lifecycle
+    #
+    # A session is not a run. The token budget kills a session every ~30 minutes
+    # and the watchdog POSTs /supervisor/start for the next one; the playthrough
+    # those sessions add up to is the thing worth scoring, so every start adopts
+    # the open run rather than beginning a new one. Only the objective being
+    # reached closes it.
+    # ------------------------------------------------------------------
+
+    async def _begin_run(self) -> None:
+        """Attach this session to the open run, or open one. Never raises."""
+
+        recorder = self.run_recorder
+        if recorder is None:
+            return
+        try:
+            handle = await recorder.begin_session(
+                goal=self.goal,
+                model=self.model or "",
+                config={
+                    "provider": self.provider,
+                    "model": self.model,
+                    "thinking": self.thinking,
+                    "token_budget": self.token_budget,
+                    "max_idle_turns": self.max_idle_turns,
+                    "skill_path": str(self.skill_path),
+                },
+            )
+        except Exception as exc:  # noqa: BLE001 — a run that cannot be scored still plays
+            self.run_error = _truncate(str(exc), ERROR_TEXT_LIMIT)
+            self._push_recent_event("pi_run_record_failed", self.run_error)
+            return
+        self.run_id = handle.run_id
+        self.run_adopted = handle.adopted
+        self.run_error = None
+        verb = "resumed" if handle.adopted else "started"
+        await self._push_stream_system(
+            f"run {verb}",
+            text=(
+                f"{handle.run_id} — session {handle.sessions}, "
+                f"{handle.total_presses:,} presses so far."
+            ),
+        )
+
+    async def _finish_run(self, reason: str) -> None:
+        """Close the run for good. Only the objective being reached gets here."""
+
+        recorder = self.run_recorder
+        if recorder is None or self.run_id is None:
+            return
+        try:
+            await recorder.finish_run(reason)
+        except Exception as exc:  # noqa: BLE001
+            self.run_error = _truncate(str(exc), ERROR_TEXT_LIMIT)
+            return
+        await self._push_stream_system("run finished", text=f"{self.run_id} — {reason}")
+        self.run_id = None
+        self.run_adopted = False
+
+    # ------------------------------------------------------------------
+    # Interventions
+    # ------------------------------------------------------------------
+
+    async def record_intervention(self, payload: JsonDict) -> None:
+        """Mirror one intervention into the session stream and the state.
+
+        A slot that could not be restored is the loudest thing this harness can
+        report: the player's whole context is a file on the model box and the
+        run is playing without it. It goes in as an error and stays in the state
+        snapshot, which is what ``/health`` reads.
+        """
+
+        raw_status = payload.get("status")
+        status: JsonDict = raw_status if isinstance(raw_status, dict) else {}
+        self.intervention_state = {
+            "enabled": bool(status.get("enabled")),
+            "fired": int(status.get("fired") or 0),
+            "delivered": int(status.get("delivered") or 0),
+            "last": {
+                "at": payload.get("at"),
+                "trigger": payload.get("trigger"),
+                "reason": payload.get("reason"),
+                "answer": payload.get("answer"),
+                "delivered": bool(payload.get("delivered")),
+                "error": payload.get("error"),
+            },
+            "slot_lost": status.get("slot_lost"),
+            "disabled_reason": status.get("disabled_reason"),
+        }
+        slot_lost = status.get("slot_lost")
+        if slot_lost:
+            self.last_error = _truncate(str(slot_lost.get("message") or ""), ERROR_TEXT_LIMIT)
+            await self._push_stream_system(
+                "intervention slot lost",
+                text=str(slot_lost.get("message") or ""),
+                level="error",
+            )
+            await self._emit_major(
+                "pi_intervention_slot_lost",
+                {"summary": self.last_error, "filename": slot_lost.get("filename")},
+            )
+            return
+        headline = f"intervention: {payload.get('trigger') or 'unknown'}"
+        if payload.get("error"):
+            await self._push_stream_system(
+                f"{headline} failed", text=str(payload["error"]), level="warn"
+            )
+            return
+        await self._push_stream_system(headline, text=str(payload.get("reason") or ""))
+
+    async def deliver_intervention(self, message: str) -> JsonDict:
+        """Hand a thinking session's answer to the live player.
+
+        The same RPC path ``POST /supervisor/steer`` uses, marked so the
+        transcript can tell a harness instruction from a human one.
+        """
+
+        return await self.send_operator_message(
+            message,
+            source=INTERVENTION_STREAM_SOURCE,
+            limit=INTERVENTION_MESSAGE_LIMIT,
+        )
+
     def live_session_refusal(self) -> Optional[str]:
         """Why an operator message cannot land right now, or ``None`` when it can."""
 
@@ -1362,8 +1531,18 @@ class PiSupervisor:
             return "followUp"
         return "steer"
 
-    async def send_operator_message(self, message: str) -> JsonDict:
-        """Inject a human-typed message into the live session.
+    async def send_operator_message(
+        self,
+        message: str,
+        *,
+        source: str = OPERATOR_STREAM_SOURCE,
+        limit: int = OPERATOR_MESSAGE_LIMIT,
+    ) -> JsonDict:
+        """Inject a message into the live session.
+
+        ``source`` and ``limit`` exist so the intervention loop can travel this
+        same path — one RPC prompt, one stream entry, one transcript line —
+        without pretending a harness instruction was typed by a person.
 
         Raises ``ValueError`` for input the game loop should not carry and
         ``NoLiveSessionError`` when nothing is live to receive it.
@@ -1372,11 +1551,8 @@ class PiSupervisor:
         text = (message or "").strip()
         if not text:
             raise ValueError("Operator message is empty.")
-        if len(text) > OPERATOR_MESSAGE_LIMIT:
-            raise ValueError(
-                f"Operator message is {len(text)} characters; "
-                f"the limit is {OPERATOR_MESSAGE_LIMIT}."
-            )
+        if len(text) > limit:
+            raise ValueError(f"Operator message is {len(text)} characters; the limit is {limit}.")
         refusal = self.live_session_refusal()
         if refusal:
             raise NoLiveSessionError(refusal)
@@ -1391,11 +1567,11 @@ class PiSupervisor:
         if isinstance(response, dict) and response.get("success") is False:
             raise RuntimeError(f"Pi rejected the operator message: {response.get('error')}")
 
-        entry = await self._push_stream_user(text, source=OPERATOR_STREAM_SOURCE)
+        entry = await self._push_stream_user(text, source=source)
         self._append_transcript(
             direction="outbound",
             role="user",
-            channel="operator",
+            channel=source,
             content=text,
             meta={"streaming_behavior": behavior},
         )
@@ -1404,6 +1580,7 @@ class PiSupervisor:
             "seq": entry["seq"],
             "ts": entry["ts"],
             "text": entry["text"],
+            "source": source,
             "streaming_behavior": behavior,
         }
         self.operator_messages.append(record)
@@ -1453,6 +1630,7 @@ class PiSupervisor:
                 if await self._objective_is_complete():
                     self.status = "completed"
                     self.status_reason = "Objective reported complete."
+                    await self._finish_run("objective complete")
                     await self._emit_major(
                         "pi_objective_complete",
                         {

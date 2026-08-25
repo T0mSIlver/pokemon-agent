@@ -9,6 +9,7 @@ from typing import Optional
 
 import pytest
 
+from pokemon_agent.bench.registry import STATUS_FINISHED, RunRegistry
 from pokemon_agent.critic import (
     CRITIC_RAW_FILENAME,
     DEBUG_DIRNAME,
@@ -29,6 +30,8 @@ from pokemon_agent.pi_supervisor import (
     GOAL_SOURCE_FALLBACK,
     GOAL_SOURCE_OBJECTIVE,
     GOAL_SOURCE_OPERATOR,
+    INTERVENTION_MESSAGE_LIMIT,
+    INTERVENTION_STREAM_SOURCE,
     OPERATOR_MESSAGE_LIMIT,
     OPERATOR_STREAM_SOURCE,
     ORPHAN_TOOL_RESULT_TEXT,
@@ -43,6 +46,7 @@ from pokemon_agent.pi_supervisor import (
     payload_text,
     repair_orphaned_tool_calls,
 )
+from pokemon_agent.run_recorder import RUN_POINTER_FILENAME, RunRecorder
 
 FAKE_RPC_SERVER = '''#!/usr/bin/env python3
 """Minimal stand-in for `pi --mode rpc`: JSON commands in, JSON events out."""
@@ -2403,3 +2407,243 @@ async def test_a_next_goal_the_parser_rejects_falls_through_to_the_objective(tmp
     snapshot = supervisor.state_snapshot()
     assert snapshot["goal"] == "Collect all eight badges."
     assert snapshot["goal_source"] == GOAL_SOURCE_OBJECTIVE
+
+
+# ---------------------------------------------------------------------------
+# The run the sessions add up to
+#
+# A session dies on the token budget every half hour and the watchdog starts
+# another. What is being scored is the playthrough, so the supervisor adopts the
+# open run at every start instead of opening a second one beside it.
+# ---------------------------------------------------------------------------
+
+
+def recorded_supervisor(tmp_path: Path, **kwargs) -> tuple[PiSupervisor, RunRecorder]:
+    fake_pi = make_fake_rpc_server(tmp_path, **kwargs)
+    recorder = RunRecorder(tmp_path / "data")
+    supervisor = PiSupervisor(
+        workspace_dir=tmp_path / "workspace",
+        server_url="http://127.0.0.1:8765",
+        pi_binary=str(fake_pi),
+        stats_poll_seconds=0,
+        run_recorder=recorder,
+    )
+    return supervisor, recorder
+
+
+@pytest.mark.asyncio
+async def test_a_run_spans_several_sessions_and_the_presses_carry_over(tmp_path: Path):
+    supervisor, recorder = recorded_supervisor(tmp_path)
+
+    await supervisor.start(goal="Reach Pewter.", auto_continue=False)
+    await supervisor.wait_until_idle(timeout=25)
+    first_run = supervisor.run_id
+    assert first_run
+    assert supervisor.run_adopted is False
+    await recorder.append(tool="action", presses=40, map_name="Route 1")
+    await recorder.append(tool="action", presses=17, map_name="Route 1")
+
+    # The budget tripped; the watchdog POSTs /supervisor/start again.
+    await supervisor.start(goal="Reach Pewter.", auto_continue=False)
+    await supervisor.wait_until_idle(timeout=25)
+
+    assert supervisor.run_id == first_run
+    assert supervisor.run_adopted is True
+    assert recorder.total_presses == 57
+    assert RunRegistry(tmp_path / "data").load_meta(first_run).status == "running"
+
+
+@pytest.mark.asyncio
+async def test_the_run_snapshot_says_what_the_playthrough_has_cost(tmp_path: Path):
+    supervisor, recorder = recorded_supervisor(tmp_path)
+    await supervisor.start(goal="Reach Pewter.", auto_continue=False)
+    await supervisor.wait_until_idle(timeout=25)
+    await recorder.append(tool="action", presses=12)
+
+    run = supervisor.state_snapshot()["run"]
+
+    assert run["run_id"] == supervisor.run_id
+    assert run["presses"] == 12
+    assert run["sessions"] == 1
+    assert run["adopted"] is False
+
+
+@pytest.mark.asyncio
+async def test_a_session_start_announces_the_run_in_the_stream(tmp_path: Path):
+    supervisor, _ = recorded_supervisor(tmp_path)
+    await supervisor.start(goal="Reach Pewter.", auto_continue=False)
+    await supervisor.wait_until_idle(timeout=25)
+
+    assert "run started" in system_labels(supervisor)
+
+
+@pytest.mark.asyncio
+async def test_reaching_the_objective_is_the_one_thing_that_closes_a_run(tmp_path: Path):
+    supervisor, recorder = recorded_supervisor(tmp_path)
+    supervisor.set_objective_complete(lambda: True)
+
+    await supervisor.start(goal="Reach Pewter.", auto_continue=True, continue_delay_seconds=0)
+    await supervisor.wait_until_idle(timeout=25)
+
+    assert supervisor.run_id is None
+    assert recorder.run_id is None
+    assert not (tmp_path / "data" / "runs" / RUN_POINTER_FILENAME).exists()
+    finished = RunRegistry(tmp_path / "data").list_runs()[-1]
+    assert finished.status == STATUS_FINISHED
+    assert finished.finish_reason == "objective complete"
+
+
+@pytest.mark.asyncio
+async def test_a_recorder_that_cannot_open_a_run_does_not_stop_the_session(tmp_path: Path):
+    class Broken(RunRecorder):
+        async def begin_session(self, **kwargs):
+            raise OSError("read-only file system")
+
+    fake_pi = make_fake_rpc_server(tmp_path)
+    supervisor = PiSupervisor(
+        workspace_dir=tmp_path / "workspace",
+        server_url="http://127.0.0.1:8765",
+        pi_binary=str(fake_pi),
+        stats_poll_seconds=0,
+        run_recorder=Broken(tmp_path / "data"),
+    )
+
+    await supervisor.start(goal="Reach Pewter.", auto_continue=False)
+    await supervisor.wait_until_idle(timeout=25)
+
+    assert supervisor.state_snapshot()["status"] == "completed"
+    assert "read-only file system" in (supervisor.run_error or "")
+
+
+@pytest.mark.asyncio
+async def test_a_supervisor_with_no_recorder_still_plays(tmp_path: Path):
+    supervisor = make_supervisor(tmp_path, pi_binary=str(make_fake_rpc_server(tmp_path)))
+
+    await supervisor.start(goal="Reach Pewter.", auto_continue=False)
+    await supervisor.wait_until_idle(timeout=25)
+
+    assert supervisor.state_snapshot()["run"]["run_id"] is None
+
+
+# ---------------------------------------------------------------------------
+# Delivering an intervention
+# ---------------------------------------------------------------------------
+
+
+def intervention_entries(supervisor: PiSupervisor) -> list[dict]:
+    return [
+        entry
+        for entry in supervisor.stream_entries
+        if entry["kind"] == "user" and entry["source"] == INTERVENTION_STREAM_SOURCE
+    ]
+
+
+@pytest.mark.asyncio
+async def test_an_intervention_is_delivered_down_the_steer_path(tmp_path: Path):
+    supervisor = await live_supervisor(tmp_path)
+    workspace_dir = tmp_path / "workspace"
+
+    record = await supervisor.deliver_intervention("Walk left four tiles, then up two.")
+
+    steer = prompt_commands(workspace_dir)[-1]
+    assert steer["message"] == "Walk left four tiles, then up two."
+    assert steer["streamingBehavior"] == "steer"
+    assert record["source"] == INTERVENTION_STREAM_SOURCE
+
+    entries = intervention_entries(supervisor)
+    assert [entry["text"] for entry in entries] == ["Walk left four tiles, then up two."]
+    # Nobody typed it, so it is not filed among the operator's own messages.
+    assert operator_entries(supervisor) == []
+
+    await supervisor.stop()
+
+
+@pytest.mark.asyncio
+async def test_an_intervention_gets_more_room_than_a_human_steer(tmp_path: Path):
+    supervisor = await live_supervisor(tmp_path)
+    plan = "x" * (OPERATOR_MESSAGE_LIMIT + 100)
+
+    with pytest.raises(ValueError):
+        await supervisor.send_operator_message(plan)
+
+    record = await supervisor.deliver_intervention(plan)
+    assert record["text"] == plan
+
+    with pytest.raises(ValueError):
+        await supervisor.deliver_intervention("x" * (INTERVENTION_MESSAGE_LIMIT + 1))
+
+    await supervisor.stop()
+
+
+@pytest.mark.asyncio
+async def test_an_intervention_cannot_land_without_a_live_session(tmp_path: Path):
+    supervisor = make_supervisor(tmp_path)
+
+    with pytest.raises(NoLiveSessionError):
+        await supervisor.deliver_intervention("Walk left.")
+
+
+@pytest.mark.asyncio
+async def test_a_fired_intervention_shows_up_in_the_supervisor_state(tmp_path: Path):
+    supervisor = make_supervisor(tmp_path)
+
+    await supervisor.record_intervention(
+        {
+            "at": "2026-08-26T09:00:00Z",
+            "trigger": "circling",
+            "reason": "112 positions across 40 tiles.",
+            "answer": "Head south to the gate.",
+            "delivered": True,
+            "status": {"enabled": True, "fired": 1, "delivered": 1, "slot_lost": None},
+        }
+    )
+
+    state = supervisor.state_snapshot()["interventions"]
+    assert state["enabled"] is True
+    assert state["fired"] == 1
+    assert state["last"]["trigger"] == "circling"
+    assert state["last"]["delivered"] is True
+    assert "intervention: circling" in system_labels(supervisor)
+
+
+@pytest.mark.asyncio
+async def test_a_lost_slot_is_the_loudest_thing_the_supervisor_reports(tmp_path: Path):
+    """The player's whole context is a file on the model box. Nothing swallows that."""
+    events: list[dict] = []
+
+    async def sink(event: dict) -> None:
+        events.append(event)
+
+    supervisor = make_supervisor(tmp_path, event_sink=sink)
+
+    await supervisor.record_intervention(
+        {
+            "at": "2026-08-26T09:00:00Z",
+            "trigger": "stalled",
+            "error": "could not restore slot 0",
+            "status": {
+                "enabled": False,
+                "fired": 1,
+                "delivered": 0,
+                "disabled_reason": "interventions are off for the rest of this session",
+                "slot_lost": {
+                    "at": "2026-08-26T09:00:00Z",
+                    "filename": "player.bin",
+                    "message": "could not restore slot 0 from 'player.bin'",
+                },
+            },
+        }
+    )
+
+    state = supervisor.state_snapshot()["interventions"]
+    assert state["slot_lost"]["filename"] == "player.bin"
+    assert state["disabled_reason"]
+    assert "could not restore slot 0" in supervisor.state_snapshot()["last_error"]
+
+    errors = [
+        entry
+        for entry in supervisor.stream_entries
+        if (entry.get("system") or {}).get("level") == "error"
+    ]
+    assert any("slot lost" in (entry["system"]["label"]) for entry in errors)
+    assert any(event["type"] == "pi_intervention_slot_lost" for event in events)

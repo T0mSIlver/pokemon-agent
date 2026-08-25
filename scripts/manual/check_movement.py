@@ -175,10 +175,11 @@ def main():
     except Exception as e:
         print(f"  Save failed: {e}")
 
-    from pokemon_agent.state.builder import build_game_state, build_state_summary
+    from pokemon_agent.agent_cli import state_lines
+    from pokemon_agent.state.builder import build_game_state
 
     state = build_game_state(reader)
-    print("\n" + build_state_summary(state))
+    print("\n" + "\n".join(state_lines(state)))
 
     emu.close()
     print("\nDone!")
