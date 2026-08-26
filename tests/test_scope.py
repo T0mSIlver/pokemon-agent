@@ -565,7 +565,7 @@ def test_ladder_progress_counts_the_checkpoint_it_inherited() -> None:
     from pokemon_agent.scope.runs import ladder_ids
 
     rungs = ladder_ids()
-    assert len(rungs) == 63, "the curated ladder is the denominator scope prints"
+    assert len(rungs) == 58, "the curated ladder is the denominator scope prints"
     record = make_record(
         [
             receipt(seq=0, presses=0, baseline_milestones=list(rungs[:3])),
@@ -574,10 +574,10 @@ def test_ladder_progress_counts_the_checkpoint_it_inherited() -> None:
         ]
     )
     progress = ladder_progress(record)
-    assert progress.total == 63
+    assert progress.total == 58
     assert progress.baseline == 3
     assert progress.reached == 4
-    assert str(progress) == "4/63"
+    assert str(progress) == "4/58"
 
 
 def test_timeline_rows_carry_deltas() -> None:
@@ -1558,7 +1558,7 @@ def test_the_real_run_reads_back_consistently() -> None:
     metrics = run_metrics(record)
     waste = analysis.waste_report(record, ContextOracle([]))
     assert waste.overall.total_presses == metrics.total_presses
-    assert ladder_progress(record).total == 63
+    assert ladder_progress(record).total == 58
 
 
 @needs_runs

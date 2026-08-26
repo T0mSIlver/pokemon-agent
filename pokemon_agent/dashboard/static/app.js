@@ -243,14 +243,9 @@
         ["EVENT_BEAT_VIRIDIAN_GYM_GIOVANNI", "Defeated Giovanni in the Viridian Gym", "event"],
         ["BADGE_EARTH", "Earth Badge", "badge"],
         ["EVENT_BEAT_ROUTE22_RIVAL_2ND_BATTLE", "Beat the rival on Route 22 again", "event"],
-        ["EVENT_VICTORY_ROAD_2_BOULDER_ON_SWITCH2", "Opened the Victory Road 2F barrier", "event"],
-        ["EVENT_AUTOWALKED_INTO_LORELEIS_ROOM", "Cleared Victory Road and reached the Elite Four", "event"],
-        ["EVENT_BEAT_LORELEIS_ROOM_TRAINER_0", "Defeated Lorelei", "event"],
-        ["EVENT_BEAT_BRUNOS_ROOM_TRAINER_0", "Defeated Bruno", "event"],
-        ["EVENT_BEAT_AGATHAS_ROOM_TRAINER_0", "Defeated Agatha", "event"],
-        ["EVENT_BEAT_LANCE", "Defeated Lance", "event"],
-        ["EVENT_BEAT_CHAMPION_RIVAL", "Defeated the Champion", "event"],
-        ["EVENT_HALL_OF_FAME_DEX_RATING", "Entered the Hall of Fame", "event"],
+        ["EVENT_PASSED_EARTHBADGE_CHECK", "Passed the last Route 23 badge check", "event"],
+        ["TOWN_INDIGO_PLATEAU", "Cleared Victory Road and reached the Indigo Plateau", "ram_bit"],
+        ["ELITE_FOUR_CHAMPION", "Beat the Elite Four and entered the Hall of Fame", "ram_bit"],
     ];
     const RED_LADDER = RED_LADDER_RAW.map(([id, label, kind], index) => ({ id, label, kind, index }));
     const LADDER_BY_ID = new Map(RED_LADDER.map((rung) => [rung.id, rung]));

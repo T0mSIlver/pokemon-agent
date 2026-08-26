@@ -1,5 +1,6 @@
 {
   "source": "https://raw.githubusercontent.com/pret/pokered/master/constants/event_constants.asm",
+  "source_tree": "https://codeload.github.com/pret/pokered/tar.gz/refs/heads/master",
   "flag_base_address": 55111,
   "num_event_bits": 2560,
   "events": [
@@ -2032,6 +2033,48 @@
       "bit_index": 2522
     }
   ],
+  "resettable": [
+    "EVENT_1B8",
+    "EVENT_1BF",
+    "EVENT_1ST_LOCK_OPENED",
+    "EVENT_1ST_ROUTE22_RIVAL_BATTLE",
+    "EVENT_2A7",
+    "EVENT_2ND_ROUTE22_RIVAL_BATTLE",
+    "EVENT_67F",
+    "EVENT_AUTOWALKED_INTO_AGATHAS_ROOM",
+    "EVENT_AUTOWALKED_INTO_BRUNOS_ROOM",
+    "EVENT_AUTOWALKED_INTO_LORELEIS_ROOM",
+    "EVENT_BEAT_AGATHAS_ROOM_TRAINER_0",
+    "EVENT_BEAT_BRUNOS_ROOM_TRAINER_0",
+    "EVENT_BEAT_CHAMPION_RIVAL",
+    "EVENT_BEAT_LANCE",
+    "EVENT_BEAT_LANCES_ROOM_TRAINER_0",
+    "EVENT_BEAT_LORELEIS_ROOM_TRAINER_0",
+    "EVENT_BILL_SAID_USE_CELL_SEPARATOR",
+    "EVENT_BOUGHT_MUSEUM_TICKET",
+    "EVENT_FIGHT_ROUTE12_SNORLAX",
+    "EVENT_FIGHT_ROUTE16_SNORLAX",
+    "EVENT_GAVE_FOSSIL_TO_LAB",
+    "EVENT_HALL_OF_FAME_DEX_RATING",
+    "EVENT_IN_PURIFIED_ZONE",
+    "EVENT_IN_SAFARI_ZONE",
+    "EVENT_IN_SEAFOAM_ISLANDS",
+    "EVENT_LAB_HANDING_OVER_FOSSIL_MON",
+    "EVENT_LAB_STILL_REVIVING_FOSSIL",
+    "EVENT_LANCES_ROOM_LOCK_DOOR",
+    "EVENT_MANSION_SWITCH_ON",
+    "EVENT_NUGGET_REWARD_AVAILABLE",
+    "EVENT_PIKACHU_FAN_BOAST",
+    "EVENT_POKEMON_TOWER_RIVAL_ON_LEFT",
+    "EVENT_ROUTE22_RIVAL_WANTS_BATTLE",
+    "EVENT_SAFARI_GAME_OVER",
+    "EVENT_SEEL_FAN_BOAST",
+    "EVENT_VICTORY_ROAD_1_BOULDER_ON_SWITCH",
+    "EVENT_VICTORY_ROAD_2_BOULDER_ON_SWITCH1",
+    "EVENT_VICTORY_ROAD_2_BOULDER_ON_SWITCH2",
+    "EVENT_VICTORY_ROAD_3_BOULDER_ON_SWITCH1",
+    "EVENT_VICTORY_ROAD_3_BOULDER_ON_SWITCH2"
+  ],
   "ladder": [
     {
       "id": "EVENT_GOT_STARTER",
@@ -2364,52 +2407,22 @@
       "source": "EVENT_BEAT_ROUTE22_RIVAL_2ND_BATTLE"
     },
     {
-      "id": "EVENT_VICTORY_ROAD_2_BOULDER_ON_SWITCH2",
-      "label": "Opened the Victory Road 2F barrier",
+      "id": "EVENT_PASSED_EARTHBADGE_CHECK",
+      "label": "Passed the last Route 23 badge check",
       "kind": "event",
-      "source": "EVENT_VICTORY_ROAD_2_BOULDER_ON_SWITCH2"
+      "source": "EVENT_PASSED_EARTHBADGE_CHECK"
     },
     {
-      "id": "EVENT_AUTOWALKED_INTO_LORELEIS_ROOM",
-      "label": "Cleared Victory Road and reached the Elite Four",
-      "kind": "event",
-      "source": "EVENT_AUTOWALKED_INTO_LORELEIS_ROOM"
+      "id": "TOWN_INDIGO_PLATEAU",
+      "label": "Cleared Victory Road and reached the Indigo Plateau",
+      "kind": "ram_bit",
+      "source": "ram_bit:0xD70B:9"
     },
     {
-      "id": "EVENT_BEAT_LORELEIS_ROOM_TRAINER_0",
-      "label": "Defeated Lorelei",
-      "kind": "event",
-      "source": "EVENT_BEAT_LORELEIS_ROOM_TRAINER_0"
-    },
-    {
-      "id": "EVENT_BEAT_BRUNOS_ROOM_TRAINER_0",
-      "label": "Defeated Bruno",
-      "kind": "event",
-      "source": "EVENT_BEAT_BRUNOS_ROOM_TRAINER_0"
-    },
-    {
-      "id": "EVENT_BEAT_AGATHAS_ROOM_TRAINER_0",
-      "label": "Defeated Agatha",
-      "kind": "event",
-      "source": "EVENT_BEAT_AGATHAS_ROOM_TRAINER_0"
-    },
-    {
-      "id": "EVENT_BEAT_LANCE",
-      "label": "Defeated Lance",
-      "kind": "event",
-      "source": "EVENT_BEAT_LANCE"
-    },
-    {
-      "id": "EVENT_BEAT_CHAMPION_RIVAL",
-      "label": "Defeated the Champion",
-      "kind": "event",
-      "source": "EVENT_BEAT_CHAMPION_RIVAL"
-    },
-    {
-      "id": "EVENT_HALL_OF_FAME_DEX_RATING",
-      "label": "Entered the Hall of Fame",
-      "kind": "event",
-      "source": "EVENT_HALL_OF_FAME_DEX_RATING"
+      "id": "ELITE_FOUR_CHAMPION",
+      "label": "Beat the Elite Four and entered the Hall of Fame",
+      "kind": "ram_bit",
+      "source": "ram_bit:0xD734:0"
     }
   ]
 }

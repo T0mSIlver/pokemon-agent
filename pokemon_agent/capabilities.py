@@ -1387,28 +1387,34 @@ def guide_search(query: str, limit: int = 5) -> dict:
     }
 
 
-def split_ref(ref: str) -> tuple[str, str]:
-    guide, _, slug = str(ref).partition("/")
-    if not guide or not slug:
-        raise NotFound(f"{ref!r} is not a guide reference. Use '<guide>/<slug>'.")
-    return guide, slug
-
-
 def guide_section(ref: str) -> dict:
-    """One section's body, addressed as ``guide/slug``."""
-    guide, slug = split_ref(ref)
-    body = guides.read(guide, slug)
-    if body is None:
-        raise NotFound(f"No guide section at {ref!r}. GET /guide lists every section.")
-    title = next(
-        (
-            section.title
-            for section in guides.index()
-            if section.guide == guide and section.slug == slug
-        ),
-        slug,
-    )
-    return {"guide": guide, "slug": slug, "title": title, "body": body}
+    """One section's body, addressed as ``guide/slug`` or as a bare slug.
+
+    A miss answers with the sections that *do* match the words in *ref* rather
+    than with a bare 404. Two guide reads happened in a 457-call session and one
+    of them failed; a failure that costs a second call to find out what exists is
+    most of the reason the shelf went unread.
+    """
+    matches = guides.find(ref)
+    if len(matches) > 1:
+        options = ", ".join(section.ref for section in matches)
+        raise NotFound(f"{ref!r} is in more than one guide. Ask for one of: {options}")
+    if not matches:
+        suggestions = guides.search(str(ref).replace("/", " ").replace("-", " "), limit=3)
+        hint = (
+            "Closest sections: " + ", ".join(section.ref for section in suggestions)
+            if suggestions
+            else "GET /guide lists every section."
+        )
+        raise NotFound(f"No guide section at {ref!r}. {hint}")
+    section = matches[0]
+    body = guides.read(section.guide, section.slug)
+    return {
+        "guide": section.guide,
+        "slug": section.slug,
+        "title": section.title,
+        "body": body,
+    }
 
 
 # ---------------------------------------------------------------------------
@@ -1420,7 +1426,7 @@ def progress_payload(summary: dict, presses: int) -> dict:
     """The milestone scoreboard, in the currency runs are compared in: buttons.
 
     ``frontier`` is the same table read forwards instead of backwards: of the
-    63 rungs, the few the game will currently let the player attempt. It is a
+    58 rungs, the few the game will currently let the player attempt. It is a
     menu, not an instruction -- which one to take stays the model's call.
     """
     furthest = summary.get("furthest")
@@ -1734,7 +1740,6 @@ __all__ = [
     "progress_payload",
     "route_payload",
     "simulate_payload",
-    "split_ref",
     "walk_to",
     "warp_coords",
 ]

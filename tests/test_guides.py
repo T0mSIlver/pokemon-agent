@@ -115,6 +115,96 @@ def test_every_indexed_section_is_readable():
 
 
 # ----------------------------------------------------------------------
+# Hop chains, against the decoded map data
+# ----------------------------------------------------------------------
+
+
+def _world():
+    from pokemon_agent import gamedata
+
+    return gamedata.world()
+
+
+@pytest.mark.parametrize("section", [s for s in guides.index() if s.hops], ids=lambda s: s.ref)
+def test_every_hop_a_guide_claims_exists_on_the_map(section):
+    """The one part of a walkthrough that is checkable, checked.
+
+    `standard_playthrough` said "Exit west onto Route 4" where the exit is east
+    and the run spent thousands of presses on it. A sentence cannot be tested; a
+    `<!-- hops: -->` triple can, so every direction a guide asserts now has to
+    survive a lookup in world.json before it can be committed.
+    """
+    world = _world()
+    for from_map, edge, to_map in section.hops:
+        assert from_map in world, f"{section.ref}: no map named {from_map!r}"
+        assert to_map in world, f"{section.ref}: no map named {to_map!r}"
+        if edge == "warp":
+            destinations = {warp["to_map"] for warp in world[from_map]["warps"]}
+            assert to_map in destinations, (
+                f"{section.ref}: no warp from {from_map} to {to_map}; it warps to "
+                f"{sorted(d for d in destinations if d)}"
+            )
+        else:
+            actual = (world[from_map]["connections"] or {}).get(edge)
+            assert actual == to_map, (
+                f"{section.ref}: {from_map} {edge} is {actual!r}, not {to_map!r}"
+            )
+
+
+def test_the_route_guides_carry_hop_chains_and_the_reference_does_not():
+    """A guide that moves has to say where; a lookup table has nothing to say."""
+    with_hops = {section.guide for section in guides.index() if section.hops}
+    assert {"standard_playthrough", "speedrun_glitchless"} <= with_hops
+    assert not any(section.hops for section in guides.index() if section.guide == "battles")
+
+
+def test_read_leads_with_the_checked_route():
+    body = guides.read("standard_playthrough", "mt-moon")
+    assert body.startswith("Route: Route 4 -warp-> Mt Moon 1F")
+    # And the prose is still all there, under it.
+    assert "Moon Stone" in body
+
+
+def test_a_section_that_stays_put_gets_no_route_line():
+    body = guides.read("battles", "gym-leaders")
+    assert not body.startswith("Route:")
+
+
+def test_parse_hops_refuses_a_chain_it_cannot_decode():
+    assert guides.parse_hops("") == ()
+    assert guides.parse_hops("Pewter City") == ()
+    assert guides.parse_hops("Pewter City -sideways-> Route 3") == ()
+    assert guides.parse_hops("Pewter City -east-> Route 3") == (("Pewter City", "east", "Route 3"),)
+
+
+def test_two_disjoint_stretches_render_as_two_runs():
+    section = next(s for s in guides.index() if s.ref == "standard_playthrough/cinnabar-blaine")
+    assert "; Fuchsia City" in section.route_line
+
+
+# ----------------------------------------------------------------------
+# Addressing
+# ----------------------------------------------------------------------
+
+
+def test_a_bare_slug_resolves_when_only_one_guide_has_it():
+    assert [s.ref for s in guides.find("start")] == ["standard_playthrough/start"]
+    assert [s.ref for s in guides.find("standard_playthrough/start")] == [
+        "standard_playthrough/start"
+    ]
+
+
+def test_a_bare_slug_that_two_guides_share_comes_back_as_both():
+    refs = {section.ref for section in guides.find("mt-moon")}
+    assert refs == {"standard_playthrough/mt-moon", "speedrun_glitchless/mt-moon"}
+
+
+def test_an_unknown_address_finds_nothing():
+    assert guides.find("no-such-section") == ()
+    assert guides.find("no_such_guide/mt-moon") == ()
+
+
+# ----------------------------------------------------------------------
 # search
 # ----------------------------------------------------------------------
 

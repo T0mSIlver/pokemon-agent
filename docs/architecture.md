@@ -96,7 +96,7 @@ standalone script, so everything it can do is an endpoint.
 
 | Module | Holds |
 |---|---|
-| `milestones.py` | 507 named event flags, 63 of them ordered into a ladder |
+| `milestones.py` | 507 named event flags, 55 of them ordered into a ladder alongside three RAM bits |
 | `bench/` | run registry and the presses-to-milestone scoreboard |
 | `gamedata/` | the whole game as JSON, generated from pokered |
 | `world.py` | routing over the map graph, plan simulation, `frontier()` |

@@ -122,8 +122,10 @@ def test_embedded_ladder_matches_the_ladder_on_disk():
     assert _embedded_ladder() == expected
 
 
-def test_ladder_has_sixty_three_rungs():
-    assert len(_embedded_ladder()) == 63
+def test_ladder_has_fifty_eight_rungs():
+    # 63 until the reset audit: the last eight rungs were flags the game clears
+    # again, replaced by three it does not. See pokemon_agent/milestones.py.
+    assert len(_embedded_ladder()) == 58
 
 
 def test_first_gym_rung_is_on_the_ladder():
