@@ -328,6 +328,7 @@ class _Grid:
         "ledges",
         "seams",
         "warp_exits",
+        "warps",
     )
 
     def __init__(
@@ -341,6 +342,7 @@ class _Grid:
         live: Optional[Collection[Coord]] = None,
         seen: Optional[Collection[Coord]] = None,
         ledges: Optional[Mapping[Tuple[Coord, str], Coord]] = None,
+        warps: Collection[Coord] = (),
     ) -> None:
         self.walkable = walkable
         self.width = width
@@ -358,6 +360,24 @@ class _Grid:
         # one, so no caller has to grow an argument to pass them along.
         self.seams: Set[Tuple[Coord, Coord]] = set(getattr(ledges, "blocked_pairs", ()) or ())
         self.warp_exits: Set[Tuple[Coord, str]] = set(getattr(ledges, "warp_exits", ()) or ())
+        # Walking onto one of these leaves the map. See `is_absorbing`.
+        self.warps: Set[Coord] = set(warps)
+
+    def is_absorbing(self, coord: Coord) -> bool:
+        """Whether a walk that reaches *coord* ends there, wherever it was going.
+
+        A warp tile is not a corridor. Gen 1 fires it the moment you step on,
+        so a route that crosses one does not continue on the other side of it
+        -- it stops, on a different map, wherever that warp leads.
+
+        Measured on Mt. Moon 1F: the shortest walk from the south entrance
+        (14, 35) to the ladder at (5, 5) is 89 steps and crosses the *other*
+        ladder at (17, 11) on step 72. Walked, it spends 72 presses and ends on
+        B1F, and every /goto after that asks for (5, 5) on a floor that has no
+        such tile. The tile stays reachable — you may still be going to it —
+        but nothing routes through it.
+        """
+        return coord in self.warps
 
     def is_live(self, x: int, y: int) -> bool:
         """Whether this tile came from the current frame rather than memory."""
@@ -421,6 +441,7 @@ def _rows_to_grid(
     origin: Coord,
     npcs: Collection[Coord],
     ledges: Optional[Mapping[Tuple[Coord, str], Coord]] = None,
+    warps: Collection[Coord] = (),
 ):
     height = len(rows)
     width = max((len(row) for row in rows), default=0)
@@ -443,6 +464,7 @@ def _rows_to_grid(
         live=live,
         seen=live,
         ledges=ledges,
+        warps=warps,
     )
 
 
@@ -507,6 +529,37 @@ def _seam_pair(value: object) -> Optional[Tuple[Coord, Coord]]:
     return first, second
 
 
+def tile_id_map(tile_ids: object) -> Dict[Coord, int]:
+    """Tile ids as ``{(x, y): id}``, from either shape this codebase carries.
+
+    A coordinate-keyed mapping is what `mapdecode` builds in process. Rows of
+    ints, ``rows[y][x]``, is what the same floor looks like once it has been
+    through JSON — a tuple key cannot be serialised, so the wire shape is rows.
+    Both mean the same map and neither caller should have to know which it got.
+    """
+    ids: Dict[Coord, int] = {}
+    if isinstance(tile_ids, Mapping):
+        for key, value in tile_ids.items():
+            coord = _coord(key)
+            if coord is None:
+                continue
+            try:
+                ids[coord] = int(value)  # type: ignore[arg-type]
+            except (TypeError, ValueError):
+                continue
+        return ids
+    if isinstance(tile_ids, Sequence) and not isinstance(tile_ids, (str, bytes)):
+        for y, row in enumerate(tile_ids):
+            if not isinstance(row, Sequence) or isinstance(row, (str, bytes)):
+                continue
+            for x, value in enumerate(row):
+                try:
+                    ids[(x, y)] = int(value)  # type: ignore[arg-type]
+                except (TypeError, ValueError):
+                    continue
+    return ids
+
+
 def movement_edges(source: object) -> MovementEdges:
     """Everything *source* knows about moving between two adjacent tiles.
 
@@ -541,17 +594,8 @@ def movement_edges(source: object) -> MovementEdges:
         edges.warp_exits |= set(getattr(explicit, "warp_exits", ()) or ())
 
     tileset = _attribute(source, "tileset")
-    tile_ids = _attribute(source, "tile_ids")
-    if isinstance(tileset, str) and isinstance(tile_ids, Mapping):
-        ids: Dict[Coord, int] = {}
-        for key, value in tile_ids.items():
-            coord = _coord(key)
-            if coord is None:
-                continue
-            try:
-                ids[coord] = int(value)  # type: ignore[arg-type]
-            except (TypeError, ValueError):
-                continue
+    ids = tile_id_map(_attribute(source, "tile_ids"))
+    if isinstance(tileset, str) and ids:
         for coord, tile in ids.items():
             for direction, (dx, dy) in DIRECTIONS.items():
                 neighbour = ids.get((coord[0] + dx, coord[1] + dy))
@@ -590,6 +634,24 @@ def ledge_edges(source: object) -> MovementEdges:
     return movement_edges(source)
 
 
+def warp_tiles(source: object) -> Set[Coord]:
+    """Every tile on this map that walking onto ends the walk.
+
+    Read off whichever `warps` list the caller happens to carry: the snapshot's
+    ``{"x", "y", "warp_id"}`` records, the decoded floor's ``{"at": (x, y)}``
+    ones, or bare pairs. All three shapes are already in this codebase and none
+    of them was ever consulted by the flood.
+    """
+    found: Set[Coord] = set()
+    for warp in _attribute(source, "warps") or ():
+        coord = _coord(warp)
+        if coord is None and isinstance(warp, Mapping):
+            coord = _coord(warp.get("at")) or _coord(warp.get("coord"))
+        if coord is not None:
+            found.add(coord)
+    return found
+
+
 def _as_grid(collision: object) -> _Grid:
     """Normalise any of the collision shapes this codebase already uses."""
     if isinstance(collision, _Grid):
@@ -604,7 +666,7 @@ def _as_grid(collision: object) -> _Grid:
             for found in (_coord(item) for item in getattr(collision, "sprite_positions", ()) or ())
             if found is not None
         ]
-        return _rows_to_grid(terrain, origin, npcs, ledge_edges(collision))
+        return _rows_to_grid(terrain, origin, npcs, ledge_edges(collision), warp_tiles(collision))
 
     if isinstance(collision, Mapping):
         npcs = [
@@ -618,7 +680,7 @@ def _as_grid(collision: object) -> _Grid:
         rows = collision.get("terrain")
         if rows is not None:
             origin = _coord(collision.get("window_top_left")) or (0, 0)
-            return _rows_to_grid(rows, origin, npcs, ledge_edges(collision))
+            return _rows_to_grid(rows, origin, npcs, ledge_edges(collision), warp_tiles(collision))
         raw = collision.get("walkable")
         if raw is None:
             raise TypeError("collision mapping needs a 'terrain' or 'walkable' key")
@@ -642,6 +704,7 @@ def _as_grid(collision: object) -> _Grid:
             live=live,
             seen=seen,
             ledges=ledge_edges(collision),
+            warps=warp_tiles(collision),
         )
 
     if isinstance(collision, (set, frozenset)):
@@ -866,7 +929,13 @@ class _Flood:
         self.distance: Dict[Coord, int] = {start: 0}
 
 
-def _bfs(grid: _Grid, start: Coord, *, goal: Optional[Coord] = None) -> _Flood:
+def _bfs(
+    grid: _Grid,
+    start: Coord,
+    *,
+    goal: Optional[Coord] = None,
+    refused: Collection[Coord] = (),
+) -> _Flood:
     """Breadth-first flood from `start` over a DIRECTED graph.
 
     Walking is symmetric; a ledge is not. Pressing a direction that jumps a
@@ -874,20 +943,31 @@ def _bfs(grid: _Grid, start: Coord, *, goal: Optional[Coord] = None) -> _Flood:
     can leave through a ledge and can never enter through one. Undirected BFS
     over the same tiles is what reported a sealed pocket as an open route.
 
+    A warp is neither: it is an edge *in* with no edge onward. The flood may
+    reach one, because it may be where you are going, and it never expands past
+    one, because the walk that arrives there is over. See `_Grid.is_absorbing`.
+
+    `refused` is ground this caller has already tried to step onto and been
+    refused — an NPC in a doorway, a tile the decoder got wrong. It is left out
+    of the flood entirely, so no plan built on this flood can propose it again.
+
     `start` is entered whether or not it reads as walkable: the player may be
     standing on a warp or a doorway that the grid calls blocked, and refusing
     to path off it would strand them.
     """
     flood = _Flood(start)
+    blocked = {found for found in refused if found != start}
     queue: deque[Coord] = deque([start])
     while queue:
         current = queue.popleft()
         if goal is not None and current == goal:
             break
+        if current != start and grid.is_absorbing(current):
+            continue
         for direction, (dx, dy) in DIRECTIONS.items():
             hop = grid.ledge_from(current, direction)
             step = hop if hop is not None else (current[0] + dx, current[1] + dy)
-            if step in flood.previous or not grid.is_walkable(*step):
+            if step in flood.previous or step in blocked or not grid.is_walkable(*step):
                 continue
             # Two passable tiles the tileset will not let you move between are
             # not connected, and a flood that crosses one invents a route.
@@ -917,12 +997,20 @@ def _actions_from(flood: _Flood, target: Coord) -> Optional[Tuple[str, ...]]:
     return tuple(directions_to_actions(directions))
 
 
-def path_within(collision, start: Coord, target: Coord) -> Optional[Tuple[str, ...]]:
+def path_within(
+    collision,
+    start: Coord,
+    target: Coord,
+    *,
+    refused: Collection[Coord] = (),
+) -> Optional[Tuple[str, ...]]:
     """Shortest walk from `start` to `target` inside one map, as actions.
 
     Returns ``('walk_up', 'walk_right', ...)`` — the same strings `poke act`
     takes — or None when `target` is blocked, off the grid, or walled off.
     An empty tuple means you are already there.
+
+    `refused` is ground already tried and refused; see `_bfs`.
     """
     grid = _as_grid(collision)
     start = (int(start[0]), int(start[1]))
@@ -932,7 +1020,7 @@ def path_within(collision, start: Coord, target: Coord) -> Optional[Tuple[str, .
     if not grid.is_walkable(*target):
         return None
 
-    return _actions_from(_bfs(grid, start, goal=target), target)
+    return _actions_from(_bfs(grid, start, goal=target, refused=refused), target)
 
 
 @dataclass(frozen=True)
@@ -1000,17 +1088,20 @@ class Region:
         return best
 
 
-def reachable_region(collision, start: Coord) -> Region:
+def reachable_region(collision, start: Coord, *, refused: Collection[Coord] = ()) -> Region:
     """Flood from `start` and report where it stopped and why.
 
     One flood answers every "can I get there from here" a caller has, which is
     the other half of the point: picking the nearest of three ladders used to
     cost three floods, so it was not done, so the first ladder in the file won
     every time.
+
+    `refused` is ground the caller has already been refused on this trip. Pass
+    it and the flood cannot rebuild the plan that just failed; see `_bfs`.
     """
     grid = _as_grid(collision)
     start = (int(start[0]), int(start[1]))
-    flood = _bfs(grid, start)
+    flood = _bfs(grid, start, refused=refused)
     edge: List[Tuple[Coord, Coord]] = []
     for tile in flood.order:
         for dx, dy in DIRECTIONS.values():
@@ -1095,5 +1186,7 @@ __all__ = [
     "path_within",
     "reachable_region",
     "simulate",
+    "tile_id_map",
     "unseen_reachable_count",
+    "warp_tiles",
 ]

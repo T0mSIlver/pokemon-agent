@@ -16,9 +16,23 @@ import math
 import os
 import tempfile
 from pathlib import Path
-from typing import Dict, FrozenSet, Iterable, List, NamedTuple, Optional, Sequence, Set, Tuple
+from typing import (
+    TYPE_CHECKING,
+    Dict,
+    FrozenSet,
+    Iterable,
+    List,
+    NamedTuple,
+    Optional,
+    Sequence,
+    Set,
+    Tuple,
+)
 
 from PIL import Image, ImageDraw, ImageFont
+
+if TYPE_CHECKING:  # `world` imports nothing from here, and this keeps it that way.
+    from pokemon_agent.world import MovementEdges
 
 try:  # The canonical map table is data, not a hard dependency of the store.
     from pokemon_agent import gamedata as _gamedata
@@ -26,6 +40,8 @@ except Exception:  # noqa: BLE001 — a missing data file must not break the sto
     _gamedata = None  # type: ignore[assignment]
 
 Coord = Tuple[int, int]
+#: Two adjacent tiles that cannot be walked between, in either direction.
+Seam = Tuple[Coord, Coord]
 
 STORE_VERSION = 1
 
@@ -184,7 +200,11 @@ def _label_warps(map_name: str, coords: Sequence[Coord]) -> List[Dict[str, objec
 
 
 def _tile_coord(value: object) -> Optional[Coord]:
-    """A coordinate from either shape: the wire's {x, y} or a plain (x, y)."""
+    """A coordinate from either shape: the wire's {x, y} or a plain (x, y).
+
+    A decoded floor arrives as plain tuples. Reading only the wire shape turned
+    the whole floor into an empty set and skipped adoption without raising.
+    """
     if isinstance(value, (tuple, list)) and len(value) == 2:
         try:
             return int(value[0]), int(value[1])
@@ -193,22 +213,30 @@ def _tile_coord(value: object) -> Optional[Coord]:
     return _as_coord(value)
 
 
-def _ledges_from(truth: dict) -> Dict[Tuple[int, int, str], Coord]:
-    """Every ledge hop on a decoded map, worked out once and kept.
+def _movement_from(truth: dict) -> Tuple[Dict[Tuple[int, int, str], Coord], Set[Seam]]:
+    """Every ledge hop and every uncrossable seam on a decoded map, worked out once.
 
     Computed here rather than on demand because tile ids are only readable for
     the map the player is standing on, and a route crosses maps they are not.
+
+    The seams come back too. They used to be dropped on the way out of
+    `movement_edges`, which mattered the moment anything routed over stored
+    terrain: Mt. Moon 1F has 131 of them and they are the entire boundary
+    between its upper floor and its lower one, so a pocket split that cannot
+    see them reports 1076 tiles in the main pocket where a walk from it reaches
+    907.
     """
     from pokemon_agent import world as world_mod
 
     tile_ids = truth.get("tile_ids")
     if not tile_ids:
-        return {}
+        return {}, set()
     edges = world_mod.movement_edges({"tileset": truth.get("tileset"), "tile_ids": tile_ids})
-    return {
+    ledges = {
         (int(tile[0]), int(tile[1]), str(direction)): (int(landing[0]), int(landing[1]))
         for (tile, direction), landing in edges.items()
     }
+    return ledges, set(edges.blocked_pairs)
 
 
 def _inside(coord: Coord, width: int, height: int) -> bool:
@@ -279,7 +307,20 @@ def incoherence(snapshot: dict, map_id: int, known_size: Optional[Coord] = None)
 
 
 def _as_coord(value: object) -> Optional[Coord]:
-    """Read an {x, y} mapping — or an {x, y}-bearing wrapper — as a coordinate."""
+    """Read an {x, y} mapping — or an {x, y}-bearing wrapper, or a pair — as a coordinate.
+
+    Pairs because the decoded floor travels as ``[[x, y], ...]``: at 1144
+    walkable tiles for one Mt. Moon floor, ``{"x": .., "y": ..}`` each is more
+    than twice the bytes for the same two numbers. Rejecting the shape it
+    arrives in is how `adopt_truth` came to have no callers that reached it —
+    the decoded terrain was read, dropped by the snapshot, and would have been
+    dropped here too.
+    """
+    if isinstance(value, (list, tuple)) and len(value) == 2:
+        try:
+            return int(value[0]), int(value[1])
+        except (TypeError, ValueError):
+            return None
     if not isinstance(value, dict):
         return None
     source = value
@@ -360,6 +401,7 @@ class _MapRecord:
         "player",
         "truth",
         "ledges",
+        "seams",
         "connections",
     )
 
@@ -379,6 +421,10 @@ class _MapRecord:
         # loaded one. Route 4's east half hangs off 169 of these, so a router
         # without them calls the road to Cerulean a wall.
         self.ledges: Dict[Tuple[int, int, str], Coord] = {}
+        # Adjacent tile pairs the tileset refuses to let anyone move between,
+        # either way round. A property of the seam and not of either tile, so
+        # the walkable set above cannot hold them.
+        self.seams: Set[Seam] = set()
         # ``edge -> connection spec`` from the map header, which carries the
         # offset `gamedata`'s connection table does not. Without it a router has
         # to guess which pocket walking off an edge lands in, and on Route 4 the
@@ -475,6 +521,7 @@ class _MapRecord:
                 [x, y, direction, landing[0], landing[1]]
                 for (x, y, direction), landing in self.ledges.items()
             ),
+            "seams": sorted([a[0], a[1], b[0], b[1]] for a, b in self.seams),
             "connections": self.connections,
         }
 
@@ -497,6 +544,11 @@ class _MapRecord:
             (int(row[0]), int(row[1]), str(row[2])): (int(row[3]), int(row[4]))
             for row in payload.get("ledges") or []
             if isinstance(row, (list, tuple)) and len(row) == 5
+        }
+        record.seams = {
+            ((int(row[0]), int(row[1])), (int(row[2]), int(row[3])))
+            for row in payload.get("seams") or []
+            if isinstance(row, (list, tuple)) and len(row) == 4
         }
         stored_connections = payload.get("connections")
         record.connections = (
@@ -612,11 +664,12 @@ class ExploredMaps:
             _log(f"map {map_id} carried a decoded floor that read as empty; not adopting")
         if truth_walkable and record.truth is None:
             record.adopt_truth(truth_walkable, int(truth["width"]), int(truth["height"]))
-            record.ledges = _ledges_from(truth)
+            record.ledges, record.seams = _movement_from(truth)
             record.connections = dict(truth.get("connections") or {})
             _log(
                 f"map {map_id} adopted decoded terrain: {len(truth_walkable)} walkable "
-                f"of {truth['width']}x{truth['height']}, {len(record.ledges)} ledge hops"
+                f"of {truth['width']}x{truth['height']}, {len(record.ledges)} ledge hops, "
+                f"{len(record.seams)} seams"
             )
 
         # A sprite standing on a tile makes that tile read as blocked, so skip
@@ -765,7 +818,8 @@ class ExploredMaps:
             # router can tell ground truth from the doors the live window added.
             # None until this map has been stood on and decoded.
             "truth": set(record.truth) if record.truth is not None else None,
-            "ledges": dict(record.ledges),
+            # `MovementEdges`, so the seams ride along with the ledges.
+            "ledges": self.ledges_for(map_id),
             "connections": dict(record.connections),
         }
 
@@ -780,10 +834,21 @@ class ExploredMaps:
             return None
         return set(record.truth)
 
-    def ledges_for(self, map_id: int) -> Dict[Tuple[int, int, str], Coord]:
-        """One map's ledge hops. Empty for a map never decoded, which is honest."""
+    def ledges_for(self, map_id: int) -> "MovementEdges":
+        """One map's ledge hops, with its seams riding along on the same object.
+
+        Empty for a map never decoded, which is honest. The seams travel here
+        rather than as a second return value because every consumer already
+        reads them off the ledge mapping — that is what `MovementEdges` is for.
+        """
+        from pokemon_agent.world import MovementEdges
+
+        edges = MovementEdges()
         record = self._maps.get(map_id)
-        return dict(record.ledges) if record is not None else {}
+        if record is not None:
+            edges.update(record.ledges)
+            edges.blocked_pairs |= record.seams
+        return edges
 
     def connections_for(self, map_id: int) -> Dict[str, dict]:
         """One map's edge connections with their offsets, from the map header.

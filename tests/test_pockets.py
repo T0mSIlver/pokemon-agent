@@ -152,6 +152,34 @@ def test_there_is_no_route_back_up_a_ledge():
     assert ledge_graph().route("cliff", (4, 0), "cliff", (0, 0)) is None
 
 
+#: Two passable rows a CAVERN tile pair refuses to let anyone cross, which is
+#: what separates Mt. Moon 1F's upper floor from its lower one.
+SEAM_TERRAIN = {(x, y) for x in range(3) for y in range(2)}
+
+
+def seam_edges():
+    """The seams on the object every consumer already reads ledges off."""
+    from pokemon_agent.world import MovementEdges
+
+    edges = MovementEdges()
+    edges.blocked_pairs |= {((x, 0), (x, 1)) for x in range(3)}
+    return edges
+
+
+def test_a_seam_does_not_merge_the_two_floors_into_one_pocket():
+    """Passable both sides, uncrossable between: a wall the walkable set cannot hold.
+
+    `components` flooded plain four-adjacency and so walked straight through
+    every one of Mt. Moon 1F's 131 seams. Measured on the real floor: it
+    reported 1076 tiles in the main pocket where a walk from the entrance
+    reaches 907, so /route would offer a crossing that cannot be walked. The
+    seams travel on the same object the ledges do, and neither is a property of
+    a tile.
+    """
+    assert len(components(SEAM_TERRAIN, seam_edges())) == 2
+    assert len(components(SEAM_TERRAIN)) == 1, "and without them it is one place, as before"
+
+
 def test_without_ledges_the_far_side_looks_unreachable():
     """What the router said for sixteen hours, and why the terrain alone was not enough."""
     blind = PocketGraph(lambda name: [], lambda name: LEDGE_TERRAIN)

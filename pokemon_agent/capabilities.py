@@ -209,11 +209,20 @@ def collision_from(snapshot: dict, explored: Optional[dict] = None) -> dict:
         height = max((y for _, y in walkable), default=-1) + 1
 
     sprites = [found for found in (_coord(item) for item in snapshot.get("sprites") or ()) if found]
+    # The window only lists the warps it can see, and the flood needs every one
+    # on the floor: a route that crosses an unseen ladder is walked, not
+    # planned around. See `world._Grid.is_absorbing`.
+    warps = set(warp_coords(snapshot))
+    for warp in truth.get("warps") or ():
+        found = _coord(warp.get("at") if isinstance(warp, dict) else None) or _coord(warp)
+        if found is not None:
+            warps.add(found)
     return {
         "width": width,
         "height": height,
         "walkable": walkable,
         "sprites": sprites,
+        "warps": sorted(warps),
         "live": live,
         # A tile is looked-at if this frame shows it, if the store wrote it
         # down either way, or if we believe it is ground — you cannot hold a
@@ -224,7 +233,7 @@ def collision_from(snapshot: dict, explored: Optional[dict] = None) -> dict:
         # Every refusal built on it says which, because "unreachable" from ground
         # truth is a fact and "unreachable" from a mosaic of screens is a guess.
         "ground_truth": bool(ground_truth),
-        "tile_ids": dict(truth.get("tile_ids") or {}),
+        "tile_ids": world_mod.tile_id_map(truth.get("tile_ids")),
     }
 
 
@@ -560,51 +569,69 @@ def _cheapest(
     return best, list(actions), best_cost
 
 
-def _progress(here: Coord, there: Coord, *, toward: object) -> int:
-    """How much closer *there* is than *here*, in whatever `toward` means.
+def _remaining(there: Coord, *, toward: object, bounds: Optional[dict] = None) -> int:
+    """How far *there* still is from what `toward` means, in tiles.
 
-    `toward` is either a compass edge — progress is distance along that axis —
-    or a tile, and then it is the drop in Manhattan distance to it.
+    A compass edge is a distance along one axis; a tile is Manhattan distance
+    to it. Neither is a promise about walking — nothing on a maze is — but it
+    orders candidates by how much of the journey is left rather than by how
+    much of it the last step covered, which is the whole difference between
+    A* and hill climbing.
     """
     if isinstance(toward, str):
+        width = int((bounds or {}).get("width") or 0)
+        height = int((bounds or {}).get("height") or 0)
         if toward == "north":
-            return here[1] - there[1]
+            return there[1]
         if toward == "south":
-            return there[1] - here[1]
+            return max(0, height - 1 - there[1])
         if toward == "west":
-            return here[0] - there[0]
+            return there[0]
         if toward == "east":
-            return there[0] - here[0]
+            return max(0, width - 1 - there[0])
         return 0
     goal = _coord(toward)
     if goal is None:
         return 0
-    return (abs(here[0] - goal[0]) + abs(here[1] - goal[1])) - (
-        abs(there[0] - goal[0]) + abs(there[1] - goal[1])
-    )
+    return abs(there[0] - goal[0]) + abs(there[1] - goal[1])
 
 
 def _toward_the_unseen(
     region: world_mod.Region,
     toward: object,
+    *,
+    bounds: Optional[dict] = None,
+    spent: Collection[Coord] = (),
 ) -> Optional[tuple[Coord, Coord, list[str]]]:
-    """Where to stand to look at the nearest unseen ground in this direction.
+    """Where to stand to look at the unseen ground most likely to lead onward.
 
-    Returns ``(stand here, the unseen tile beyond, how to get there)``. Only
-    ground that is actually *forward* counts: walking to the edge of knowledge
-    behind you is not a step toward anything, and a /goto that wanders is worse
-    than one that stops.
+    Returns ``(stand here, the unseen tile beyond, how to get there)``, chosen
+    by ``steps walked + tiles still to go`` — what it costs to get there plus
+    what is left after. That is A*'s estimate of a whole journey, and picking
+    the smallest of it is what lets the answer be a frontier the goal is
+    *behind*.
+
+    It used to be ``gain = closer than where I stand?`` with everything scoring
+    zero or less thrown away, which is hill climbing on Manhattan distance and
+    cannot leave a local minimum by construction. On a maze whose only route
+    starts by going the wrong way there was nothing left to choose from, so the
+    same short plan came back every round and the same ground got walked again:
+    measured at 64% of all presses landing on tiles already walked.
+
+    `spent` is the frontier this call has already gone and looked at. Standing
+    on the edge of knowledge and finding it did not help is an answer; going
+    back to look at it a second time is not.
     """
     best: Optional[tuple[Coord, Coord, list[str]]] = None
     best_key: Optional[tuple[int, int]] = None
+    already = set(spent)
     for stand, unseen in region.edge_of_knowledge:
-        gain = _progress(region.start, unseen, toward=toward)
-        if gain <= 0:
+        if unseen in already or stand in already:
             continue
         steps = region.steps_to(stand)
         if steps is None:  # pragma: no cover - it came out of this region
             continue
-        key = (-gain, steps)
+        key = (steps + _remaining(unseen, toward=toward, bounds=bounds), steps)
         if best_key is not None and key >= best_key:
             continue
         actions = region.actions_to(stand)
@@ -782,6 +809,8 @@ def _leg_for_map(
     *,
     target_map: Optional[str],
     target_xy: Optional[Coord],
+    refused: Collection[Coord] = (),
+    spent: Collection[Coord] = (),
 ) -> tuple[Optional[list[str]], Optional[_Stop]]:
     """The next batch of walk actions, or the reason there is not one.
 
@@ -789,16 +818,28 @@ def _leg_for_map(
     Everything here runs off one flood: which of several doors is nearest,
     whether the ground that stopped us was looked at, and where the nearest
     unlooked-at ground in this direction is.
+
+    `refused` and `spent` are this call's memory — ground the game would not
+    let the player onto, and frontier the walk has already been to and looked
+    at. Both are held out of the flood, so a plan that failed cannot be built
+    a second time from the same facts. Without them the planner has no memory
+    at all between rounds: it recomputes from scratch, gets the same shortest
+    path, walks into the same NPC, and does it again.
+
+    The reachable answer comes first and always. On a floor decoded out of
+    WRAM there is no unseen ground at all, so "walk at the unknown and find
+    out" is not an answer there — the flood either reaches the tile or the
+    tile is behind a wall, and `_walled_off` says which.
     """
     position = observation["position"]
     snapshot = observation["snapshot"]
-    region = world_mod.reachable_region(collision, position)
+    region = world_mod.reachable_region(collision, position, refused=refused)
 
     if target_xy is not None:
         found = _cheapest(region, [target_xy])
         if found is not None:
             return found[1], None
-        toward = _toward_the_unseen(region, target_xy)
+        toward = _toward_the_unseen(region, target_xy, bounds=collision, spent=spent)
         if toward is not None:
             stand, unseen, plan = toward
             return plan, _go_look(str(list(target_xy)), stand, unseen, observation, len(plan))
@@ -869,7 +910,7 @@ def _leg_for_map(
         toward = connections[0].edge
     else:
         toward = tuple(warps[0].at)
-    look = _toward_the_unseen(region, toward)
+    look = _toward_the_unseen(region, toward, bounds=collision, spent=spent)
     if look is not None:
         stand, unseen, plan = look
         return plan, _go_look(goal_name, stand, unseen, observation, len(plan))
@@ -902,6 +943,46 @@ def _hop_goal_name(
     return f"the {plural} to {next_map} at {tiles}"
 
 
+def _trail(collision: dict, start: Coord, actions: Sequence[str]) -> list[Coord]:
+    """Every tile *actions* means to stand on, starting with *start*.
+
+    Built over the same ledge table the plan was built over, so a jump counts
+    as the two tiles it really crosses. Used to name the tile a batch was
+    refused on: the plan is a path, the player stopped somewhere on it, and
+    the next tile along is the one the game would not allow.
+    """
+    ledges = world_mod.movement_edges(collision)
+    tiles = [start]
+    here = start
+    for action in actions:
+        direction = str(action).replace("walk_", "")
+        step = ledges.get((here, direction))
+        if step is None:
+            delta = DIRECTIONS.get(direction)
+            if delta is None:
+                break
+            step = (here[0] + delta[0], here[1] + delta[1])
+        tiles.append(step)
+        here = step
+    return tiles
+
+
+def _refused_tile(trail: Sequence[Coord], stopped_at: Optional[Coord]) -> Optional[Coord]:
+    """The tile a walk was refused on, or None if the trail does not explain it.
+
+    The player stopped somewhere along the planned path; whatever came next on
+    it is what the game would not let them onto. Answering None rather than
+    guessing matters: a wrong tile taken out of the flood is a corridor closed
+    for the rest of the trip.
+    """
+    if stopped_at is None:
+        return None
+    for index in range(len(trail) - 2, -1, -1):
+        if trail[index] == stopped_at:
+            return trail[index + 1]
+    return None
+
+
 async def walk_to(
     *,
     observe: Callable[[], Awaitable[dict]],
@@ -927,6 +1008,14 @@ async def walk_to(
     unseen ground, stops there, and says what to look at. One such hop per
     call — the point is to hand back a decision, not to wander.
 
+    A plan that just failed is never proposed again inside one call. The tile
+    the game refused is remembered for the rest of the walk and held out of
+    every later flood, so the next round has to find a different way or admit
+    there is not one. Before that memory existed the planner recomputed from
+    scratch every round, produced the identical shortest path, walked into the
+    identical NPC and reported the identical refusal — measured on Mt. Moon 1F
+    at 40 presses per round, forever.
+
     Never a step onto ground that was not planned over: the frontier tile is
     reached across known walkable tiles like any other goal.
     """
@@ -949,6 +1038,11 @@ async def walk_to(
     onward: Optional[dict] = None
     #: The unseen tile this call set out to look at, once it has picked one.
     looking_at: Optional[Coord] = None
+    #: Ground the game refused this call, and frontier it has already looked at.
+    #: Both are the memory that stops a failed plan coming back unchanged.
+    refused: set[Coord] = set()
+    spent: set[Coord] = set()
+    origin_map = observation["map_name"]
 
     for _ in range(MAX_GOTO_ROUNDS):
         if target_xy is not None and observation["position"] == target_xy:
@@ -968,7 +1062,10 @@ async def walk_to(
             collision,
             target_map=target_map,
             target_xy=target_xy,
+            refused=refused,
+            spent=spent,
         )
+        heading_for: Optional[Coord] = None
         if plan is None or (stop is not None and not plan):
             stopped = stop.reason if stop is not None else "no plan"
             onward = stop.onward if stop is not None else None
@@ -983,6 +1080,7 @@ async def walk_to(
                 break
             found = _coord(onward.get("heading_for"))
             looking_at = found or looking_at
+            heading_for = _coord(onward.get("unseen_at"))
         if not plan:
             arrived = True
             break
@@ -992,6 +1090,8 @@ async def walk_to(
             stopped = f"frame budget of {frame_budget} frames spent"
             break
 
+        was_at = observation["position"]
+        trail = _trail(collision, was_at, batch)
         result = await act(batch)
         executed += int(result.get("actions_executed") or 0)
         budget -= sum(frames_for_action(action) for action in batch)
@@ -1003,6 +1103,30 @@ async def walk_to(
             stopped = "lost track of the player — a battle or a cutscene interrupted the walk"
             onward = None
             break
+        if target_xy is not None and not _same_map(observation["map_name"], origin_map):
+            # A warp fired. Nothing routes *through* one, so the only way this
+            # happens is that the goal tile was itself a warp — a cave ladder
+            # is both — and stepping onto it is arriving on it.
+            arrived = trail[-1] == target_xy and len(trail) == len(batch) + 1
+            where = f"{observation['map_name']} at {list(observation['position'])}"
+            stopped = (
+                f"{list(target_xy)} is a warp, so walking onto it left {origin_map}: now on {where}"
+                if arrived
+                else f"left {origin_map} through a warp and is now on {where}"
+            )
+            onward = None
+            break
+        if heading_for is not None and len(batch) == len(plan):
+            # Walked the whole way to the edge of knowledge. Looking at it again
+            # is not a second answer, so it is out of the running from here on.
+            spent.add(heading_for)
+        if not moved or outcome.get("blocked_after") is not None:
+            blocked_on = _refused_tile(trail, observation["position"])
+            if blocked_on is not None and blocked_on not in refused:
+                # The one fact this round produced. Keep it, and let the next
+                # round plan without it rather than rebuild the same plan.
+                refused.add(blocked_on)
+                continue
         if not moved:
             stopped = (
                 f"blocked after {outcome.get('blocked_after') or 0} of {len(batch)} steps on "
