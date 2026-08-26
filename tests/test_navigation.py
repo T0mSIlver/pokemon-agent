@@ -559,9 +559,7 @@ def test_settle_does_not_stop_on_the_intermediate_tile_of_a_ledge_hop():
 
 def cave_tile_ids() -> dict[tuple[int, int], int]:
     """Two floors of a cave: 0x20 above y = 1, 0x05 below, all of it passable."""
-    return {
-        (x, y): (0x20 if y < 1 else 0x05) + TILE_ID_OFFSET for y in range(2) for x in range(3)
-    }
+    return {(x, y): (0x20 if y < 1 else 0x05) + TILE_ID_OFFSET for y in range(2) for x in range(3)}
 
 
 def test_a_cave_seam_is_found_once_and_written_one_way_round():

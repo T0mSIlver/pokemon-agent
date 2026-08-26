@@ -183,14 +183,23 @@ def action_help() -> str:
 
 
 def _flatten(tokens: Sequence[Tokens]) -> list[str]:
-    """``act("up", "a")``, ``act(["up", "a"])`` and ``act(*plan)`` all mean the same."""
+    """``act("up", "a")``, ``act(["up", "a"])`` and ``act(*plan)`` all mean the same.
+
+    So does ``act("up a")``. The CLI takes ``poke sim down:5 right:2`` and the
+    shell splits it, so that is the form every example and every habit is in;
+    written as one Python string it used to arrive as a single token and raise
+    ``unknown action 'down:5 right:2'``. It cost four tracebacks and an
+    abandoned probe loop across the sessions. No action name has a space in it,
+    so splitting one can never mean anything else.
+    """
 
     flat: list[str] = []
     for token in tokens:
         if isinstance(token, str):
-            flat.append(token)
+            flat.extend(token.split())
         elif isinstance(token, Iterable):
-            flat.extend(str(part) for part in token)
+            for part in token:
+                flat.extend(str(part).split())
         else:
             raise ActionError(f"{token!r} is not an action or a list of actions")
     return flat
@@ -508,7 +517,18 @@ class Result:
 
     def __str__(self) -> str:
         if self.in_battle:
-            return f"battle vs {self.enemy or '?'} hp {self.hp}/{self.max_hp}"
+            # Say the map, and say why there are no coordinates. A battle
+            # payload carries no x or y, so `.position` is None here and this
+            # line has no "(x,y) facing" in it. One session, unable to find
+            # `.position` — `__dict__` does not list a property and
+            # `inspect.getsource` raises on a dataclass `__repr__` — fell back
+            # to a regex over this string, and the regex quietly returned None
+            # the first time a Zubat appeared. Its 120-step search stopped at
+            # step 6 printing "no pos in: battle vs Zubat...".
+            return (
+                f"battle on {self.map} vs {self.enemy or '?'} hp {self.hp}/{self.max_hp} "
+                "(no position while in battle)"
+            )
         where = f"{self.map} ({self.x},{self.y}) facing {self.facing}"
         moved = "" if self.moved is None else f" moved {self.moved}"
         blocked = "" if self.blocked_after is None else f" blocked after {self.blocked_after}"
@@ -1407,7 +1427,16 @@ class Client:
         return Result.from_payload(self._json("/load", method="POST", payload={"name": name}))
 
     def saves(self) -> list[str]:
-        return [entry.get("name") for entry in self._json("/saves").get("saves") or []]
+        """Named saves, newest first.
+
+        ``named=true`` for the same reason ``poke saves`` uses it: the plain
+        list is the newest forty of everything, and with the 465 saves this run
+        has written that is forty ``auto__`` checkpoints and none of the 165
+        names anyone would load. ``load()`` still takes an autosave's name.
+        """
+
+        payload = self._json("/saves", params={"named": True})
+        return [entry.get("name") for entry in payload.get("saves") or []]
 
     def frames(self) -> dict[str, Path]:
         """Paths of the two workspace frames the runtime keeps rewritten."""

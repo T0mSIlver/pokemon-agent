@@ -386,15 +386,20 @@ def test_action_returns_a_tiny_payload(server_app):
     }
 
 
-def test_action_reports_dialog_and_screen_text_only_when_present(server_app):
+def test_a_dialog_it_cannot_read_says_so_once_not_twice(server_app):
+    # `classify_ui_state` emits a fixed "Dialog box visible (...)" placeholder
+    # whenever a box is open, because nothing here reads the words -- the agent
+    # is told to look at latest_frame.png for those. All 660 payloads that ever
+    # carried `screen_text` carried that placeholder: 36,300 bytes restating the
+    # `dialog` flag sitting next to it.
     server_app.emulator.dialog_active = True
 
     payload = server_app.http.post("/action", json={"actions": ["press_a"]}).json()
 
-    assert set(payload) == ACTION_KEYS | {"screen_text"}
     assert payload["mode"] == "dialog"
     assert payload["dialog"] is True
-    assert payload["screen_text"]
+    assert "screen_text" not in payload
+    assert set(payload) == ACTION_KEYS
 
 
 def test_action_refreshes_both_frame_pngs(server_app):
@@ -1041,14 +1046,24 @@ def step(server_app, direction):
 
 
 def test_here_before_appears_only_once_a_tile_becomes_a_habit(server_app):
-    # The startup refresh already counts as the first arrival at (5, 6).
-    assert "here_before" not in step(server_app, "up")  # (5, 5), 1st
-    assert "here_before" not in step(server_app, "down")  # (5, 6), 2nd
-    assert "here_before" not in step(server_app, "up")  # (5, 5), 2nd
+    # The threshold is 8, not 3. At 3 this field was sent 2,339 times across a
+    # run and referred to again in the next command exactly zero times -- it
+    # reached 49 on one tile and changed nothing -- so it now waits for a loop
+    # rather than firing on any corridor walked back down.
+    payload = {}
+    for i in range(server.HERE_BEFORE_THRESHOLD * 2):
+        payload = step(server_app, "up" if i % 2 == 0 else "down")
+        if "here_before" in payload:
+            break
 
-    third_time = step(server_app, "down")  # (5, 6), 3rd
+    assert payload["here_before"] >= server.HERE_BEFORE_THRESHOLD - 1
 
-    assert third_time["here_before"] == 2
+
+def test_a_tile_walked_a_couple_of_times_is_not_worth_saying(server_app):
+    # A corridor you walk back down is not a loop.
+    for _ in range(2):
+        assert "here_before" not in step(server_app, "up")
+        assert "here_before" not in step(server_app, "down")
 
 
 def test_standing_still_does_not_inflate_the_revisit_count(server_app):
@@ -1082,15 +1097,19 @@ def test_action_never_tells_the_agent_where_to_go(corridor_app):
 
 def test_the_action_payload_stays_small_with_every_field_present(corridor_app):
     descend_the_corridor(corridor_app)
-    for direction in ("up", "down", "up"):  # pace the corridor until it is a rut
-        walk(corridor_app, direction, 4)
+    # Pace it until it is a rut. `here_before` waits for a real loop now, so this
+    # walks the corridor rather than assuming a fixed number of passes.
+    # An odd number of passes, so it finishes back at the top and the descent
+    # below is the same six-step walk the assertions describe.
+    for i in range(server.HERE_BEFORE_THRESHOLD * 2 + 1):
+        walk(corridor_app, "up" if i % 2 == 0 else "down", 4)
 
     response = corridor_app.http.post("/action", json={"actions": ["walk_down"] * 6})
     payload = response.json()
 
     assert payload["moved"] == 4
     assert payload["blocked_after"] == 5  # the corridor ends; steps 5 and 6 were wasted
-    assert payload["here_before"] == 2
+    assert "here_before" in payload, "every field must be present for this to mean anything"
     assert len(response.content) < 300, response.content
 
 

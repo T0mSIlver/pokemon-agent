@@ -66,6 +66,14 @@ def live(tmp_path_factory):
     data_dir = tmp_path_factory.mktemp("live-data")
     (data_dir / "saves").mkdir()
     shutil.copy2(SAVES_DIR / START_STATE, data_dir / "saves" / "start.state")
+    # One harness checkpoint alongside the named save. The live run has 300 of
+    # them against 165 names, and newest-first they crowded every name off the
+    # list; whether the server really filters them is a contract, not a shape,
+    # so it belongs here rather than against a stub.
+    shutil.copy2(
+        SAVES_DIR / START_STATE,
+        data_dir / "saves" / "auto__20260101T000000Z__battle-entry__pewter.state",
+    )
     port = _free_port()
 
     process = subprocess.Popen(
@@ -261,6 +269,15 @@ def test_progress_reports_the_run_in_milestones_and_presses(live):
     assert 0 < progress.count <= progress.total
     assert progress.furthest_label
     assert progress.presses >= 0
+
+
+def test_saves_lists_the_names_and_not_the_harness_checkpoints(live):
+    """The autosave is still loadable; it is just not what the list is for."""
+    names = live.saves()
+
+    assert "start" in names
+    assert not [name for name in names if name.startswith("auto__")]
+    assert live.load("auto__20260101T000000Z__battle-entry__pewter").map
 
 
 def test_a_refusal_arrives_as_the_servers_own_words(live):

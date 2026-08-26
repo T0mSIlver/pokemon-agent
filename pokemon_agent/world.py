@@ -716,7 +716,14 @@ def simulate(
     """
     grid = _as_grid(collision)
     warp_set = {found for found in (_coord(item) for item in warps) if found is not None}
-    actions = expand_actions(list(plan)) if plan else []
+    # batch=False: the 40-action and 3600-frame caps exist because the server
+    # holds its one emulator lock for a batch it *executes*. A simulation presses
+    # nothing and takes no lock. Applying the caps here cost one session 505 of
+    # its 549 calls: the model grew a route through Mt. Moon segment by segment,
+    # re-simulated it each time, and every attempt past forty actions came back
+    # refused -- 41 to 159 actions, 186,737 characters of command and refusal for
+    # no answer at all.
+    actions = expand_actions(list(plan), batch=False) if plan else []
 
     position = (int(start[0]), int(start[1]))
     trace: List[Coord] = [position]

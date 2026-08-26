@@ -67,6 +67,12 @@ __version__ = "0.1.0"
 
 SCREEN_TEXT_LIMIT = 160
 
+#: What the screen reader emits when it can see a dialog box but cannot read any
+#: words out of it. `agent_runtime` already filters on this prefix; the action
+#: payload did not, so it shipped the placeholder 660 times -- 36,300 bytes
+#: restating the `dialog` flag printed beside it.
+DIALOG_PLACEHOLDER_PREFIX = "Dialog box visible"
+
 
 #: Environment switch for the intervention loop, since the launcher scripts
 #: build a GameConfig they do not parameterise.
@@ -980,14 +986,28 @@ def _observation_summary(bundle: Optional[dict]) -> dict:
         if menu.get("highlighted"):
             summary["highlighted"] = menu["highlighted"]
 
+    # Real on-screen words only. The reader falls back to a fixed placeholder --
+    # "Dialog box visible (waiting for input)." -- when it cannot extract any, and
+    # all 660 payloads that ever carried this field carried exactly that string,
+    # 36,300 bytes saying what the `dialog` flag beside it already says.
     text = str(screen_text.get("text") or "").strip()
-    if text:
+    if text and not text.startswith(DIALOG_PLACEHOLDER_PREFIX):
         summary["screen_text"] = text[:SCREEN_TEXT_LIMIT]
     return summary
 
 
 #: Two visits is a corridor you walked back down. Three is a loop.
-HERE_BEFORE_THRESHOLD = 3
+#:
+#: Raised from 3 after measuring what it bought: `here_before` was sent 2,339
+#: times across the run and referred to again in the agent's next command exactly
+#: zero times. It reached 49 on one tile without changing anything. It is the
+#: clearest advisory-versus-corrective case in this project -- `run` and `exits`
+#: are facts the next command acts on, and this is a number about the past.
+#:
+#: Not deleted, because it is the only thing in the payload that says "you have
+#: been here", and the `circling` detector reads the same store. Raised so it
+#: appears when the loop is real rather than on every step of a corridor.
+HERE_BEFORE_THRESHOLD = 8
 
 
 def _annotate_batch_outcome(summary: dict, outcome: Optional[dict]) -> None:

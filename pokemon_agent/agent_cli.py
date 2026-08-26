@@ -66,6 +66,13 @@ MAX_ACTIONS_PER_BATCH = 40
 MAX_FRAMES_PER_ACTION = 600
 MAX_FRAMES_PER_BATCH = 3600
 
+#: A plan that is only ever walked on paper costs no emulator time and takes no
+#: lock, so the batch caps above do not apply to it — only a ceiling that stops
+#: a runaway loop asking the server to simulate forever. Four hundred is the
+#: same number `agent_api.WALK_MAX_ACTIONS` uses for a chunked walk, and the
+#: longest plan any session ever offered to `poke sim` was 159 actions.
+MAX_PLAN_ACTIONS = 400
+
 #: What each action costs in emulator frames, for the batch budget. Walks and
 #: presses are the fixed press-plus-wait cadence. `a_until_dialog_end` is counted
 #: at the server's own worst case, ten presses of 30 frames: budget it any
@@ -145,13 +152,24 @@ def action_help() -> str:
     )
 
 
-def expand_actions(tokens: list[str]) -> list[str]:
+def expand_actions(tokens: list[str], *, batch: bool = True) -> list[str]:
     """Tokens as typed into the action list the server expects.
 
     Handles aliases and the ``name:count`` repeat form. Raises on anything it
     does not recognise, so a typo costs nothing but the error.
+
+    ``batch=False`` keeps the vocabulary and the per-action frame ceiling but
+    drops the per-batch caps, which exist only because the server holds its one
+    emulator lock for the whole batch it is executing. A plan that is only
+    simulated is never executed and never takes that lock, so the caps do not
+    apply to it. Applying them anyway cost one session 505 of its 549 calls:
+    the model grew a candidate route through Mt. Moon one segment at a time and
+    re-simulated it, and every attempt past forty actions came back refused,
+    41 to 159 actions, 183,599 characters of command and refusal for no answer
+    at all.
     """
 
+    max_repeat = MAX_REPEAT if batch else MAX_PLAN_ACTIONS
     actions: list[str] = []
     for token in tokens:
         name, separator, count_text = token.partition(":")
@@ -162,8 +180,8 @@ def expand_actions(tokens: list[str]) -> list[str]:
                     f"bad repeat count in {token!r} - write up:4 to send four walk_up"
                 )
             count = int(count_text)
-            if count > MAX_REPEAT:
-                raise ActionError(f"{token!r} repeats more than {MAX_REPEAT} times")
+            if count > max_repeat:
+                raise ActionError(f"{token!r} repeats more than {max_repeat} times")
         action = resolve_action(name)
         if action is None:
             raise ActionError(f"unknown action {name!r}\n{action_help()}")
@@ -176,10 +194,21 @@ def expand_actions(tokens: list[str]) -> list[str]:
         actions.extend([action] * count)
     if not actions:
         raise ActionError(f"no actions given\n{action_help()}")
+    if not batch:
+        if len(actions) > MAX_PLAN_ACTIONS:
+            raise ActionError(
+                f"that plan is {len(actions)} actions; even on paper the limit is "
+                f"{MAX_PLAN_ACTIONS}. A plan that long is a loop, not a route."
+            )
+        return actions
     if len(actions) > MAX_ACTIONS_PER_BATCH:
+        # "Send fewer" named no number, and a model that had just grown its plan
+        # read it as noise and grew the plan again: 505 refusals in a row, every
+        # one longer than the last. Name the exact edit instead.
         raise ActionError(
             f"that batch is {len(actions)} actions; the limit is "
-            f"{MAX_ACTIONS_PER_BATCH}. Send fewer and look at the frame after."
+            f"{MAX_ACTIONS_PER_BATCH}. Drop the last {len(actions) - MAX_ACTIONS_PER_BATCH}, "
+            f"or send the first {MAX_ACTIONS_PER_BATCH} and re-plan from where they land."
         )
     total = sum(frames_for(action) for action in actions)
     if total > MAX_FRAMES_PER_BATCH:
@@ -299,6 +328,20 @@ def state_lines(state: dict) -> list[str]:
                 f"  {mon.get('species')} L{mon.get('level')} "
                 f"{mon.get('hp')}/{mon.get('max_hp')} {types}{tail}"
             )
+            # Only the empty ones, and only for the lead. The payload has carried
+            # PP per move all along and nothing printed it, so `poke fight` was
+            # refused 12 times for a move that had run dry — and `poke calc`
+            # still ranks a 0 PP move as the best one available, because its own
+            # payload does not carry PP either. Naming the dry moves once costs
+            # a line only on the turn it would have cost a wasted call.
+            if mon is party[0]:
+                empty = [
+                    move.get("name")
+                    for move in mon.get("moves") or []
+                    if isinstance(move, dict) and move.get("pp") == 0
+                ]
+                if empty:
+                    lines.append(f"  no PP: {', '.join(name for name in empty if name)}")
     else:
         lines.append("party: empty")
 
@@ -450,13 +493,27 @@ def cmd_calc(args: argparse.Namespace, url: str) -> int:
 
 
 def cmd_frontier(args: argparse.Namespace, url: str) -> int:
-    """Tiles you can reach on this map that you have never stood on."""
+    """Tiles you can reach on this map that you have never stood on.
+
+    The payload says how far to trust the list — how many tiles the live window
+    confirmed, how many are believed off the remembered map, and which of the
+    two the answer rests on — and this printed none of it. So 34 of the 47
+    frontier calls across every session asked for ``--json`` instead, and 35
+    piped that to ``head``: the real payload is 927 bytes and the ``head -c
+    400`` they reached for stops inside the tile array, before ``count``,
+    ``confirmed_count``, ``believed_count`` and ``basis``. The one question the
+    JSON was opened for was the one the truncation cut off.
+    """
     payload = fetch_json(url, "/frontier")
     if args.json:
         print(compact(payload))
         return EXIT_OK
     tiles = payload.get("tiles") or []
     print(f"{payload.get('map')} from {tuple(payload.get('from') or ())}: {len(tiles)} unseen")
+    confirmed = payload.get("confirmed_count")
+    believed = payload.get("believed_count")
+    if confirmed is not None or believed is not None:
+        print(f"  {confirmed or 0} confirmed, {believed or 0} believed ({payload.get('basis')})")
     for tile in tiles[: args.limit]:
         print(f"  {tuple(tile)}")
     if len(tiles) > args.limit:
@@ -465,8 +522,15 @@ def cmd_frontier(args: argparse.Namespace, url: str) -> int:
 
 
 def cmd_sim(args: argparse.Namespace, url: str) -> int:
-    """Try a plan without spending it. Nothing here touches the game."""
-    actions = expand_actions(args.actions)
+    """Try a plan without spending it. Nothing here touches the game.
+
+    ``batch=False``: a simulated plan is never executed, so the caps that exist
+    to bound how long the server holds the emulator do not bound this. The
+    server simulates from the live tile and cannot resume from a hypothetical
+    one, so a long plan cannot be split and re-sent either — refusing it here
+    left the model with nothing it could do but ask again.
+    """
+    actions = expand_actions(args.actions, batch=False)
     payload = fetch_json(url, "/sim", method="POST", payload={"actions": actions})
     if args.json:
         print(compact(payload))
@@ -560,12 +624,27 @@ def cmd_load(args: argparse.Namespace, url: str) -> int:
 
 
 def cmd_saves(args: argparse.Namespace, url: str) -> int:
-    saves = (fetch_json(url, "/saves") or {}).get("saves") or []
+    """The saves you can go back to, newest first.
+
+    ``named=true``, because asking for the plain list asks for the newest forty
+    of everything and the harness writes an ``auto__`` checkpoint on every
+    battle and every map change. With the 465 saves this run has made, all
+    forty rows were autosaves and not one of the 165 named saves appeared —
+    the command could not answer the only question anyone asks it. The
+    autosaves are still there and ``poke load`` still takes their names; the
+    count is reported so nobody thinks they are gone.
+    """
+
+    payload = fetch_json(url, "/saves?named=true") or {}
+    saves = payload.get("saves") or []
     if not saves:
-        print("no saves")
+        print("no named saves (auto__ checkpoints are not listed)")
         return EXIT_OK
     for save in saves:
         print(f"{save.get('name')} ({ago(save.get('modified'))})")
+    total = payload.get("count")
+    if isinstance(total, int) and total > len(saves):
+        print(f"... and {total - len(saves)} more; auto__ checkpoints are not listed")
     return EXIT_OK
 
 

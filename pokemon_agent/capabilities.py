@@ -668,6 +668,7 @@ def calc_payload(battle: dict, party: Sequence[dict], moves: Sequence[dict]) -> 
                     "effectiveness": None,
                     "damage": [0, 0],
                     "turns_to_ko": None,
+                    "pp": move.get("pp"),
                 }
             )
             continue
@@ -681,6 +682,9 @@ def calc_payload(battle: dict, party: Sequence[dict], moves: Sequence[dict]) -> 
                 "effectiveness": gamedata.effectiveness(record["type"], defender["types"]),
                 "damage": [rolled[0], rolled[1]],
                 "turns_to_ko": turns,
+                # Without this `calc` ranks a move at 0 PP as the best available
+                # and `poke fight` then refuses it. That happened 12 times.
+                "pp": move.get("pp"),
             }
         )
 

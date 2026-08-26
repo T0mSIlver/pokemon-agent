@@ -292,6 +292,67 @@ def test_sim_says_whether_the_plan_walks(stub, poke):
     assert blocked.clear_prefix == ["walk_up", "walk_up"]
 
 
+def test_a_plan_written_as_one_string_means_the_same_as_separate_tokens(stub, poke):
+    """`poke sim down:5 right:2` is the shell form, so it is the form of habit.
+
+    Written as one Python string it used to arrive as a single token and raise
+    `unknown action 'down:5 right:2'`. It cost four tracebacks across the
+    sessions and an abandoned per-row probe loop. No action name has a space
+    in it, so splitting one can never mean anything else.
+    """
+    assert agent_api.expand("down:2 right:2") == agent_api.expand("down:2", "right:2")
+    assert agent_api.expand(["up a"]) == ["walk_up", "press_a"]
+
+    stub.route("POST", "/sim", {"end": [13, 7], "facing": "up", "steps": 4, "blocked_at": None})
+    poke.sim("down:2 right:2")
+    assert stub.requests[-1]["body"]["actions"] == [
+        "walk_down",
+        "walk_down",
+        "walk_right",
+        "walk_right",
+    ]
+
+
+def test_a_battle_result_says_the_map_and_why_it_has_no_coordinates():
+    """A battle payload carries no x or y, so `.position` is None here.
+
+    One session could not find `.position` — `__dict__` does not list a
+    property and `inspect.getsource` raises on a dataclass `__repr__` — and
+    fell back to a regex over this string. The regex returned None the first
+    time a Zubat appeared and its 120-step search stopped at step 6 printing
+    "no pos in: battle vs Zubat...".
+    """
+    result = agent_api.Result.from_payload(
+        {
+            "actions_executed": 1,
+            "map": "Mt Moon 1F",
+            "mode": "battle",
+            "battle": True,
+            "hp": "22/73",
+            "enemy": "Zubat L7 23/23 (Poison/Flying)",
+        }
+    )
+
+    assert result.position is None
+    text = str(result)
+    assert "Mt Moon 1F" in text
+    assert "no position while in battle" in text
+
+
+def test_saves_lists_the_named_ones(stub, poke):
+    """The plain list is the newest forty of everything.
+
+    The harness writes an `auto__` checkpoint on every battle and every map
+    change: 300 of the run's 465 saves. Newest-first with the server's default
+    limit of 40, every row was one of those and not one of the 165 names a
+    script could load appeared.
+    """
+    stub.route("GET", "/saves?named=1", {"saves": [{"name": "brock"}, {"name": "forest"}]})
+
+    assert poke.saves() == ["brock", "forest"]
+    assert stub.requests[-1]["path"] == "/saves?named=1"
+
+
 def test_frontier_slices_like_the_tile_list_it_is(stub, poke):
     stub.route(
         "GET",

@@ -306,6 +306,35 @@ def test_state_reports_a_battle(stub, capsys):
     assert "battle: Weedle L3 15/15" in capsys.readouterr().out
 
 
+def test_state_names_the_moves_that_have_run_dry(stub, capsys):
+    """`poke fight` was refused 12 times for a move with no PP left.
+
+    The payload has carried PP per move all along and nothing printed it, and
+    `poke calc` still ranks a 0 PP move as the best one available because its
+    own payload does not carry PP at all.
+    """
+    payload = json.loads(json.dumps(STATE_PAYLOAD))
+    payload["party"][0]["moves"] = [
+        {"name": "Scratch", "pp": 12},
+        {"name": "Ember", "pp": 0},
+        {"name": "Rage", "pp": 0},
+    ]
+    stub.route("GET", "/state", payload)
+
+    assert run(stub, "state") == 0
+    assert "no PP: Ember, Rage" in capsys.readouterr().out
+
+
+def test_state_stays_quiet_while_every_move_still_has_pp(stub, capsys):
+    """It costs a line only on the turn it would otherwise cost a wasted call."""
+    payload = json.loads(json.dumps(STATE_PAYLOAD))
+    payload["party"][0]["moves"] = [{"name": "Scratch", "pp": 12}, {"name": "Ember", "pp": 5}]
+    stub.route("GET", "/state", payload)
+
+    assert run(stub, "state") == 0
+    assert "no PP" not in capsys.readouterr().out
+
+
 def test_map_summary_includes_the_png_path(stub, capsys):
     stub.route("GET", "/map", MAP_PAYLOAD)
 
@@ -380,11 +409,21 @@ def test_load_missing_save_surfaces_the_detail(stub, capsys):
     assert "Save not found: nope" in capsys.readouterr().err
 
 
-def test_saves_lists_names(stub, capsys):
+def test_saves_asks_for_the_named_ones(stub, capsys):
+    """The newest forty of everything is forty autosaves and no answer.
+
+    The harness writes an `auto__` checkpoint on every battle and every map
+    change: 300 of the run's 465 saves. Newest-first with the server's default
+    limit of 40, every row was one of those and not one of the 165 names a
+    caller could act on appeared.
+    """
     stub.route(
         "GET",
-        "/saves",
-        {"saves": [{"name": "brock", "modified": 0}, {"name": "forest", "modified": 0}]},
+        "/saves?named=true",
+        {
+            "saves": [{"name": "brock", "modified": 0}, {"name": "forest", "modified": 0}],
+            "count": 2,
+        },
     )
 
     assert run(stub, "saves") == 0
@@ -392,13 +431,29 @@ def test_saves_lists_names(stub, capsys):
     out = capsys.readouterr().out
     assert "brock" in out
     assert "forest" in out
+    assert stub.requests[-1]["path"] == "/saves?named=true"
+
+
+def test_saves_says_how_many_more_names_it_did_not_show(stub, capsys):
+    stub.route(
+        "GET",
+        "/saves?named=true",
+        {"saves": [{"name": "brock", "modified": 0}], "count": 165},
+    )
+
+    assert run(stub, "saves") == 0
+    assert "and 164 more" in capsys.readouterr().out
 
 
 def test_saves_says_so_when_empty(stub, capsys):
-    stub.route("GET", "/saves", {"saves": []})
+    stub.route("GET", "/saves?named=true", {"saves": []})
 
     assert run(stub, "saves") == 0
-    assert capsys.readouterr().out.strip() == "no saves"
+    out = capsys.readouterr().out.strip()
+    assert out.startswith("no named saves")
+    # The checkpoints are still loadable by name; say so rather than imply they
+    # are gone.
+    assert "auto__" in out
 
 
 def test_health(stub, capsys):
@@ -524,6 +579,50 @@ def test_a_batch_longer_than_the_cap_is_refused():
     too_many = ["up"] * (agent_cli.MAX_ACTIONS_PER_BATCH + 1)
     with pytest.raises(agent_cli.ActionError, match="the limit is"):
         agent_cli.expand_actions(too_many)
+
+
+def test_the_refusal_names_the_edit_rather_than_saying_send_fewer():
+    """Send fewer named no number, and one session read it as noise.
+
+    It was growing a route through Mt. Moon segment by segment and re-simulating
+    the whole thing; every attempt past forty came back refused and every next
+    attempt was longer. 505 of that session's 549 calls were that refusal, 41 to
+    159 actions, and not one of them shortened the plan.
+    """
+    with pytest.raises(agent_cli.ActionError) as caught:
+        agent_cli.expand_actions(["up"] * 57)
+
+    message = str(caught.value)
+    assert "Drop the last 17" in message
+    assert f"send the first {agent_cli.MAX_ACTIONS_PER_BATCH}" in message
+
+
+def test_a_plan_that_is_only_simulated_is_not_held_to_the_batch_caps():
+    """`batch=False` keeps the vocabulary and drops the execution caps.
+
+    The caps exist because the server holds its one emulator lock for the whole
+    batch it is executing. Nothing is executed on paper, so nothing is held.
+    """
+    plan = agent_cli.expand_actions(["up:40", "left:40", "down:40"], batch=False)
+
+    assert len(plan) == 120
+    assert plan[0] == "walk_up"
+    # A repeat count past MAX_REPEAT is a legal probe on paper too.
+    assert len(agent_cli.expand_actions(["up:120"], batch=False)) == 120
+    # The frame budget is about emulator time, which a simulation does not spend.
+    assert agent_cli.expand_actions(["wait_600"] * 10, batch=False)
+
+
+def test_even_a_simulated_plan_has_a_ceiling():
+    with pytest.raises(agent_cli.ActionError, match="even on paper"):
+        agent_cli.expand_actions(["up"] * (agent_cli.MAX_PLAN_ACTIONS + 1), batch=False)
+
+
+def test_a_simulated_plan_is_still_checked_for_typos():
+    with pytest.raises(agent_cli.ActionError, match="unknown action"):
+        agent_cli.expand_actions(["sideways"], batch=False)
+    with pytest.raises(agent_cli.ActionError, match="the limit is"):
+        agent_cli.expand_actions(["wait_1000000000"], batch=False)
 
 
 def test_a_batch_within_the_action_cap_can_still_bust_the_frame_budget():
@@ -679,6 +778,22 @@ def test_sim_refuses_a_bad_plan_without_asking_the_server(stub):
     assert stub.requests == []
 
 
+def test_sim_sends_a_plan_longer_than_one_batch(stub, capsys):
+    """The server simulates from the live tile, so a long plan cannot be split.
+
+    `poke act` can send the first forty and re-plan from where they land. There
+    is no equivalent for `poke sim`: it always starts where the player actually
+    is, so refusing a long plan left the model with nothing to do but ask again,
+    which it did 505 times in one session.
+    """
+    stub.route("POST", "/sim", {"end": [9, 9], "facing": "up", "blocked_at": None})
+
+    assert run(stub, "sim", "up:40", "left:40", "down:40") == agent_cli.EXIT_OK
+
+    assert len(stub.requests[-1]["body"]["actions"]) == 120
+    assert "clean" in capsys.readouterr().out
+
+
 def test_frontier_truncates_a_long_list_but_says_it_did(stub, capsys):
     stub.route(
         "GET",
@@ -694,6 +809,35 @@ def test_frontier_truncates_a_long_list_but_says_it_did(stub, capsys):
     out = capsys.readouterr().out
     assert "30 unseen" in out
     assert "and 25 more" in out
+
+
+def test_frontier_says_how_far_to_trust_the_list(stub, capsys):
+    """The confidence fields are why 34 of 47 frontier calls asked for --json.
+
+    Then 35 of them piped that to `head`, and the payload puts the tile array
+    first: `head -c 400` stops inside it, before `count`, `confirmed_count`,
+    `believed_count` and `basis`. The truncation cut off the one thing the JSON
+    had been opened for.
+    """
+    stub.route(
+        "GET",
+        "/frontier",
+        {
+            "map": "Mt Moon B1F",
+            "from": [4, 4],
+            "tiles": [[1, 1], [2, 2], [3, 3]],
+            "count": 3,
+            "confirmed_count": 2,
+            "believed_count": 1,
+            "basis": "the live 90-tile window plus the remembered map",
+        },
+    )
+
+    assert run(stub, "frontier") == agent_cli.EXIT_OK
+
+    out = capsys.readouterr().out
+    assert "2 confirmed, 1 believed" in out
+    assert "the remembered map" in out
 
 
 def test_guide_with_no_argument_lists_sections(stub, capsys):
