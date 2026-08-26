@@ -896,6 +896,56 @@ def test_progress_reports_the_ladder_and_the_cost(stub, capsys):
     assert "4207 presses" in out
 
 
+def _mt_moon_progress_payload() -> dict:
+    """The real payload for where the fourteen-hour run sat: Mt. Moon, one badge."""
+    from pokemon_agent import capabilities
+    from pokemon_agent.milestones import MILESTONES, frontier
+
+    reached = [m for m in MILESTONES[:9] if m.id != "EVENT_GOT_TOWN_MAP"]
+    summary = {
+        "count": len(reached),
+        "total": len(MILESTONES),
+        "furthest": reached[-1].id,
+        "latest": [m.id for m in reached[-5:]],
+        "frontier": [m.id for m in frontier({m.id for m in reached})],
+    }
+    return capabilities.progress_payload(summary, 12043)
+
+
+def test_progress_offers_the_open_milestones_and_says_what_each_opens(stub, capsys):
+    """The menu the harness narrows, printed as the choices themselves.
+
+    A run banked zero of 63 milestones in fourteen hours with `progress` called
+    zero times, so the verb has to be worth calling: the graph knows which few
+    rungs the game will currently permit, and this is where that is said.
+    Naming what each one opens is what lets one be preferred over another.
+    """
+    stub.route("GET", "/progress", _mt_moon_progress_payload())
+    assert run(stub, "progress") == agent_cli.EXIT_OK
+    out = capsys.readouterr().out
+
+    assert "open now (7), pick one:" in out
+    assert "Defeated Misty" in out
+    assert "Got HM05 Flash -> dark caves, once the Boulder Badge allows it" in out
+    # Behind the Cut trees, so not a choice yet however much it looks like one.
+    assert "Erika" not in out
+
+
+def test_the_whole_progress_answer_still_fits_in_a_few_hundred_bytes(stub, capsys):
+    """Tool text is 98% of this model's prompt and is paid again every turn.
+
+    Switching `act` from JSON to prose cut it 52%; a frontier that arrived as a
+    JSON array of objects would hand most of that back. The bound is generous
+    against the widest point of the graph, which is twelve open rungs.
+    """
+    stub.route("GET", "/progress", _mt_moon_progress_payload())
+    assert run(stub, "progress") == agent_cli.EXIT_OK
+    out = capsys.readouterr().out
+
+    assert len(out.encode("utf-8")) < 700
+    assert "{" not in out and "[" not in out
+
+
 # ---------------------------------------------------------------------------
 # `act` prints prose, not a JSON object
 #

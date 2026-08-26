@@ -25,7 +25,7 @@ from pokemon_agent.coordinator import (
     batch_within_budget,
     frames_for_action,
 )
-from pokemon_agent.milestones import MILESTONES_BY_ID
+from pokemon_agent.milestones import MILESTONE_DAG, MILESTONES_BY_ID
 from pokemon_agent.pathfinding import DIRECTIONS
 
 Coord = tuple[int, int]
@@ -1182,7 +1182,12 @@ def guide_section(ref: str) -> dict:
 
 
 def progress_payload(summary: dict, presses: int) -> dict:
-    """The milestone scoreboard, in the currency runs are compared in: buttons."""
+    """The milestone scoreboard, in the currency runs are compared in: buttons.
+
+    ``frontier`` is the same table read forwards instead of backwards: of the
+    63 rungs, the few the game will currently let the player attempt. It is a
+    menu, not an instruction -- which one to take stays the model's call.
+    """
     furthest = summary.get("furthest")
     milestone = MILESTONES_BY_ID.get(furthest) if furthest else None
     return {
@@ -1192,6 +1197,15 @@ def progress_payload(summary: dict, presses: int) -> dict:
         "furthest_label": milestone.label if milestone else None,
         "latest": list(summary.get("latest") or []),
         "presses": int(presses),
+        "frontier": [
+            {
+                "id": open_id,
+                "label": MILESTONES_BY_ID[open_id].label,
+                "gives": list(MILESTONE_DAG[open_id].effects),
+            }
+            for open_id in (summary.get("frontier") or [])
+            if open_id in MILESTONES_BY_ID
+        ],
     }
 
 

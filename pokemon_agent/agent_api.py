@@ -832,6 +832,8 @@ class Progress:
     furthest_label: Optional[str] = None
     latest: list[str] = field(default_factory=list)
     presses: int = 0
+    #: Milestones whose preconditions the game already satisfies, ladder order.
+    frontier: list[dict] = field(default_factory=list)
     raw: dict = field(default_factory=dict)
 
     @classmethod
@@ -843,12 +845,17 @@ class Progress:
             furthest_label=payload.get("furthest_label"),
             latest=list(payload.get("latest") or []),
             presses=payload.get("presses") or 0,
+            frontier=list(payload.get("frontier") or []),
             raw=payload,
         )
 
     def __str__(self) -> str:
         head = f"{self.count}/{self.total} milestones, {self.presses} presses"
-        return head + (f"\nfurthest: {self.furthest_label}" if self.furthest_label else "")
+        if self.furthest_label:
+            head += f"\nfurthest: {self.furthest_label}"
+        for entry in self.frontier:
+            head += f"\nopen: {entry.get('label')}"
+        return head
 
 
 @dataclass

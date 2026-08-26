@@ -651,7 +651,13 @@ def cmd_guide(args: argparse.Namespace, url: str) -> int:
 
 
 def cmd_progress(args: argparse.Namespace, url: str) -> int:
-    """How far through the game you are, and what it has cost so far."""
+    """How far through the game you are, what it cost, and what is open next.
+
+    The `open now` block is the point of the verb. The 63 milestones form a
+    graph, and this is the handful whose preconditions the game already
+    satisfies: everything else is behind a road, a door or a badge you do not
+    have yet. Nothing here says which one to take.
+    """
     payload = fetch_json(url, "/progress")
     if args.json:
         print(compact(payload))
@@ -662,6 +668,12 @@ def cmd_progress(args: argparse.Namespace, url: str) -> int:
         print(f"furthest: {payload['furthest_label']}")
     for label in payload.get("latest") or []:
         print(f"  reached {label}")
+    open_now = payload.get("frontier") or []
+    if open_now:
+        print(f"open now ({len(open_now)}), pick one:")
+        for entry in open_now:
+            gives = ", ".join(entry.get("gives") or [])
+            print(f"  {entry.get('label')}" + (f" -> {gives}" if gives else ""))
     return EXIT_OK
 
 

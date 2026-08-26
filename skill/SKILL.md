@@ -307,6 +307,8 @@ Explore widely. Take the side path, walk the edge of the map, enter the building
 
 `poke progress` says how far through the game you are, which rung of the ladder you last reached, and how many buttons it has taken. The count only moves when you actually advance the game, so a long stretch with no change means what you are doing is not working.
 
+It also lists what is open now. The 63 milestones are ordered — most of them stand behind a road, a locked door or a badge — and `open now` is the short list whose preconditions the game already satisfies. Anything not on that list cannot be done yet, however good an idea it sounds. Which one of them to go after is yours to choose; the list only says what the choices are.
+
 Play until you reach the goal, or until you are genuinely blocked and have written down why. Then stop. The harness will send `continue`, which means keep playing from where you are.
 
 If the same action fails three times, stop repeating it. Something in your model of the map is wrong. Look at the raw frame, check which tiles the overlay marks blocked, try a different direction, or reconsider whether the thing you are walking toward is where you think it is.
@@ -318,7 +320,7 @@ If the same action fails three times, stop repeating it. Something in your model
 - `poke sim <actions>`: try a plan against the collision map without spending it.
 - `poke route <map>`: which maps lie between here and there. `poke goto <map|x,y>` walks it.
 - `poke frontier`: reachable tiles on this map you have never stood on.
-- `poke progress`: milestones reached and buttons spent.
+- `poke progress`: milestones reached, buttons spent, and which milestones are open now.
 - `poke guide`: the walkthrough shelf. Under Walkthroughs.
 - `poke state`: party with levels and HP, bag, badges, money, where you are. `--json` for everything.
 - `poke map`: the whole current map as a picture. Under When you are lost.
