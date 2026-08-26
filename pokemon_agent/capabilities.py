@@ -69,6 +69,17 @@ def _coord(value: Any) -> Optional[Coord]:
         return None
 
 
+def _all_tiles(truth: dict) -> set[Coord]:
+    """Every coordinate on a decoded map, walkable or not.
+
+    A fully decoded floor has no unexplored ground, so `seen` covers all of it.
+    That is what lets a refusal say "this is a wall" rather than "nobody has
+    looked", which are different answers and were indistinguishable before.
+    """
+    width, height = int(truth.get("width") or 0), int(truth.get("height") or 0)
+    return {(x, y) for y in range(height) for x in range(width)}
+
+
 def collision_from(snapshot: dict, explored: Optional[dict] = None) -> dict:
     """Live walkability for the current map, in absolute coordinates.
 
@@ -91,9 +102,25 @@ def collision_from(snapshot: dict, explored: Optional[dict] = None) -> dict:
     ground nobody has ever been shown. Both read as "not in `walkable`", and
     answering "unreachable" for the second is how a route that had never been
     looked at got reported as a route that does not exist.
+
+    All of that describes the world before `map_terrain`. When the snapshot
+    carries the decoded floor it *replaces* the store rather than adding to it,
+    because the store's defect was never coverage, it was that it could not
+    forget: "a tile seen passable once stays passable", so a tile corrected as
+    solid inside the window was walkable again the moment it left. Ground truth
+    has no such problem, and it makes every tile `seen`, so nothing downstream
+    has to reason about unexplored ground on a map that is fully known.
     """
-    walkable: set[Coord] = set(explored.get("walkable") or ()) if explored else set()
-    seen: set[Coord] = set(explored.get("seen") or ()) if explored else set()
+    truth = snapshot.get("map_terrain") or {}
+    ground_truth: set[Coord] = {
+        found for found in (_coord(item) for item in truth.get("walkable") or ()) if found
+    }
+
+    if ground_truth:
+        walkable, seen = set(ground_truth), _all_tiles(truth)
+    else:
+        walkable = set(explored.get("walkable") or ()) if explored else set()
+        seen = set(explored.get("seen") or ()) if explored else set()
 
     live: set[Coord] = set()
     origin = _coord(snapshot.get("window_top_left")) or (0, 0)
@@ -102,9 +129,17 @@ def collision_from(snapshot: dict, explored: Optional[dict] = None) -> dict:
             coord = (origin[0] + local_x, origin[1] + local_y)
             live.add(coord)
             if tile:
+                # The frame still knows things the blockset does not: a door or a
+                # warp carpet is walkable without being in the collision list.
                 walkable.add(coord)
-            else:
+            elif not ground_truth:
                 walkable.discard(coord)
+            # With ground truth in hand a blocked frame tile is not evidence about
+            # terrain. The frame blocks whatever a sprite is standing on, and an
+            # NPC is not a wall -- deleting the tile is how a trainer standing in
+            # a corridor became a permanent hole in the map. Sprites travel in
+            # their own field, where a caller can treat them as the transient
+            # thing they are.
 
     # A ledge's landing is two tiles away because the tile between is one no
     # player can stand on. That holds wherever the ledge was learned, so it
@@ -114,8 +149,8 @@ def collision_from(snapshot: dict, explored: Optional[dict] = None) -> dict:
         walkable.discard(((start[0] + landing[0]) // 2, (start[1] + landing[1]) // 2))
 
     dimensions = snapshot.get("map_dimensions") or {}
-    width = int(dimensions.get("width") or 0)
-    height = int(dimensions.get("height") or 0)
+    width = int(truth.get("width") or dimensions.get("width") or 0)
+    height = int(truth.get("height") or dimensions.get("height") or 0)
     if not width or not height:
         width = max((x for x, _ in walkable), default=-1) + 1
         height = max((y for _, y in walkable), default=-1) + 1
@@ -132,6 +167,11 @@ def collision_from(snapshot: dict, explored: Optional[dict] = None) -> dict:
         # belief about ground nobody ever saw.
         "seen": seen | live | walkable,
         "ledges": ledges,
+        # Whether this grid is the decoded floor or an accumulation of windows.
+        # Every refusal built on it says which, because "unreachable" from ground
+        # truth is a fact and "unreachable" from a mosaic of screens is a guess.
+        "ground_truth": bool(ground_truth),
+        "tile_ids": dict(truth.get("tile_ids") or {}),
     }
 
 
@@ -146,6 +186,13 @@ def collision_basis(collision: dict) -> str:
     remembered = len([tile for tile in collision.get("walkable") or () if tile not in live])
     ledges = len(collision.get("ledges") or ())
     ledge_note = f", {ledges} one-way ledge jump(s) in view" if ledges else ""
+    if collision.get("ground_truth"):
+        walkable = len(collision.get("walkable") or ())
+        return (
+            f"this floor's real terrain, all {walkable} walkable tiles of it, decoded "
+            f"from the game's own map data (fact, not a guess from what has been "
+            f"walked){ledge_note}"
+        )
     if not remembered:
         return f"the live {len(live)}-tile window only{ledge_note}"
     return (
