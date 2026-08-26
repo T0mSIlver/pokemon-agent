@@ -2018,6 +2018,14 @@ def test_progress_on_a_fresh_game_is_honest_about_zero(server_app):
         "furthest_label": None,
         "latest": [],
         "presses": 0,
+        # A game where nothing has happened has exactly one thing it can do.
+        "frontier": [
+            {
+                "id": "EVENT_GOT_STARTER",
+                "label": "Chose a starter Pokemon",
+                "gives": ["a Pokemon of your own"],
+            }
+        ],
         # The run ledger is always present and empty until a run opens, so the
         # dashboard never has to guess whether the server has an opinion.
         "run_id": None,

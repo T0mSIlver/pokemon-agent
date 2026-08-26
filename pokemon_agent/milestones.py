@@ -34,7 +34,7 @@ import json
 from dataclasses import dataclass
 from pathlib import Path
 from types import MappingProxyType
-from typing import Any, Dict, List, Mapping, Tuple
+from typing import Any, Collection, Dict, List, Mapping, Tuple
 
 from pokemon_agent.memory.red import ADDR_EVENT_FLAGS, BADGE_NAMES
 
@@ -169,4 +169,256 @@ class MilestoneTracker:
             "furthest": furthest.id if furthest else None,
             "furthest_index": furthest.ladder_index if furthest else -1,
             "latest": [m.id for m in reached[-LATEST_LIMIT:]],
+            # Computed off the same snapshot rather than a second read, so the
+            # score and what is open next can never describe different moments.
+            "frontier": [m.id for m in frontier(current)],
         }
+
+    def frontier(self) -> Tuple[Milestone, ...]:
+        """Milestones the game will let the player attempt from where it is now."""
+        return frontier(self.snapshot())
+
+
+# ---------------------------------------------------------------------------
+# The plan the ladder always was
+#
+# The 63 rungs above were only ever a scoreboard: a flat list, read after the
+# fact. Read the other way round they are a plan nobody wrote down. One run
+# spent 457 tool calls and fourteen hours banking zero of them -- 361 `act`, 64
+# `state`, and not a single `route`, `frontier`, `calc` or `progress` -- because
+# the model was handed twenty verbs and an open map and collapsed to the two
+# cheapest. Writing the orderings down turns the list into a graph, and a graph
+# has a frontier: the few milestones whose preconditions already hold.
+#
+# What is deliberately *not* here is any notion of which frontier node to take.
+# The harness narrows the menu; the model still orders off it.
+#
+# Two rules govern the table.
+#
+# 1. A postcondition is never asserted, only read. Each node's postcondition is
+#    the milestone's own ``kind``/``source`` -- an event bit, a badge bit, a bag
+#    slot -- so the frontier is a memory read like every other answer in this
+#    module. Nothing here marks itself done.
+# 2. An uncertain edge is left out. A precondition that is wrong in the strict
+#    direction hides a legal goal, which is the failure this structure exists to
+#    prevent; a missing one only offers something not yet reachable, which costs
+#    one wasted look. So these are edges the game enforces -- a blocked road, a
+#    locked door, a badge check the field move will fail -- and soft "you would
+#    normally do this first" orderings are absent on purpose.
+# ---------------------------------------------------------------------------
+
+#: Gen 1 gates field moves on badges rather than on knowing the move, so the
+#: ground behind a tree needs HM01 *and* the Cascade Badge. Surf is the same
+#: shape. These pairs are the joins that make the chain a graph.
+CUT = ("EVENT_GOT_HM01", "BADGE_CASCADE")
+SURF = ("EVENT_GOT_HM03", "BADGE_SOUL")
+
+#: Route 23's guards check one badge each on the climb to Victory Road.
+ALL_BADGES = (
+    "BADGE_BOULDER",
+    "BADGE_CASCADE",
+    "BADGE_THUNDER",
+    "BADGE_RAINBOW",
+    "BADGE_SOUL",
+    "BADGE_MARSH",
+    "BADGE_VOLCANO",
+    "BADGE_EARTH",
+)
+
+
+@dataclass(frozen=True)
+class MilestoneNode:
+    """One rung as a planning step rather than a scoreboard row.
+
+    ``requires`` is a conjunction: every id in it must be satisfied before this
+    milestone is on the frontier. ``effects`` say what the world gains, in the
+    terms a player would use -- a road that opens, a move that starts working
+    outside battle -- because "what does this get me" is what picks between two
+    open goals.
+
+    ``excludes`` covers the one place Red forks irreversibly: take the Dome
+    Fossil and the Helix is gone for the run. Without it the road not taken
+    would sit on the frontier forever, unreachable and still advertised.
+
+    There is no postcondition field. The postcondition is the milestone itself,
+    read out of RAM by :class:`MilestoneTracker`.
+    """
+
+    id: str
+    requires: Tuple[str, ...]
+    effects: Tuple[str, ...]
+    excludes: Tuple[str, ...] = ()
+
+
+#: ``id -> (requires, effects, excludes)``, in ladder order.
+_PLAN: Dict[str, Tuple[Tuple[str, ...], Tuple[str, ...], Tuple[str, ...]]] = {
+    "EVENT_GOT_STARTER": ((), ("a Pokemon of your own",), ()),
+    # The rival challenges you on the way out of the lab; it is not optional.
+    "EVENT_BATTLED_RIVAL_IN_OAKS_LAB": (("EVENT_GOT_STARTER",), (), ()),
+    "EVENT_GOT_OAKS_PARCEL": (("EVENT_BATTLED_RIVAL_IN_OAKS_LAB",), (), ()),
+    # The old man asleep in the road north out of Viridian wants his coffee.
+    "EVENT_OAK_GOT_PARCEL": (
+        ("EVENT_GOT_OAKS_PARCEL",),
+        ("the road north out of Viridian",),
+        (),
+    ),
+    "EVENT_GOT_POKEDEX": (("EVENT_OAK_GOT_PARCEL",), ("the Pokedex",), ()),
+    "EVENT_GOT_TOWN_MAP": (("EVENT_GOT_POKEDEX",), ("where every town is",), ()),
+    "EVENT_BEAT_ROUTE22_RIVAL_1ST_BATTLE": (("EVENT_GOT_POKEDEX",), (), ()),
+    "EVENT_BEAT_BROCK": (("EVENT_OAK_GOT_PARCEL",), ("the road east out of Pewter",), ()),
+    "BADGE_BOULDER": (("EVENT_BEAT_BROCK",), ("Flash outside battle",), ()),
+    # Optional: the fossil room is on Mt. Moon B2F, which warps only back to
+    # B1F, while the way out to Route 4 sits on B1F. So nothing east of the
+    # mountain waits on this fight.
+    "EVENT_BEAT_MT_MOON_EXIT_SUPER_NERD": (("EVENT_BEAT_BROCK",), ("the two fossils",), ()),
+    "EVENT_GOT_DOME_FOSSIL": (
+        ("EVENT_BEAT_MT_MOON_EXIT_SUPER_NERD",),
+        (),
+        ("EVENT_GOT_HELIX_FOSSIL",),
+    ),
+    "EVENT_GOT_HELIX_FOSSIL": (
+        ("EVENT_BEAT_MT_MOON_EXIT_SUPER_NERD",),
+        (),
+        ("EVENT_GOT_DOME_FOSSIL",),
+    ),
+    # He waits at the north end of Cerulean in front of Nugget Bridge, not
+    # between the player and the gym, so Misty does not wait on him.
+    "EVENT_BEAT_CERULEAN_RIVAL": (("EVENT_BEAT_BROCK",), ("Nugget Bridge and Route 25",), ()),
+    "EVENT_BEAT_MISTY": (("EVENT_BEAT_BROCK",), (), ()),
+    "BADGE_CASCADE": (("EVENT_BEAT_MISTY",), ("Cut outside battle",), ()),
+    "EVENT_MET_BILL": (("EVENT_BEAT_CERULEAN_RIVAL",), (), ()),
+    "EVENT_GOT_SS_TICKET": (("EVENT_MET_BILL",), ("passage aboard the S.S. Anne",), ()),
+    "EVENT_RUBBED_CAPTAINS_BACK": (("EVENT_GOT_SS_TICKET",), (), ()),
+    "EVENT_GOT_HM01": (
+        ("EVENT_RUBBED_CAPTAINS_BACK",),
+        ("trees, once the Cascade Badge allows it",),
+        (),
+    ),
+    "EVENT_SS_ANNE_LEFT": (("EVENT_GOT_HM01",), (), ()),
+    # A small tree stands in front of the gym door, so Surge needs Cut working.
+    "EVENT_BEAT_LT_SURGE": (CUT, (), ()),
+    "BADGE_THUNDER": (("EVENT_BEAT_LT_SURGE",), ("Fly outside battle",), ()),
+    "EVENT_GOT_OLD_AMBER": (("EVENT_OAK_GOT_PARCEL",), (), ()),
+    "EVENT_GOT_BIKE_VOUCHER": (("EVENT_BEAT_BROCK",), (), ()),
+    "EVENT_GOT_BICYCLE": (("EVENT_GOT_BIKE_VOUCHER",), ("the bicycle, and Cycling Road",), ()),
+    # Oak's aide also wants ten species in the Pokedex, which is a count rather
+    # than a milestone and so cannot be an edge here.
+    "EVENT_GOT_HM05": (
+        ("EVENT_GOT_POKEDEX",),
+        ("dark caves, once the Boulder Badge allows it",),
+        (),
+    ),
+    # Celadon lies behind the Cut trees east of Cerulean: Route 9, Rock Tunnel,
+    # Lavender, then the Route 7-8 Underground Path around sealed Saffron.
+    "EVENT_FOUND_ROCKET_HIDEOUT": (CUT, (), ()),
+    "ITEM_LIFT_KEY": (("EVENT_FOUND_ROCKET_HIDEOUT",), ("the hideout lift",), ()),
+    "EVENT_BEAT_ROCKET_HIDEOUT_GIOVANNI": (("EVENT_FOUND_ROCKET_HIDEOUT",), (), ()),
+    "ITEM_SILPH_SCOPE": (
+        ("EVENT_BEAT_ROCKET_HIDEOUT_GIOVANNI",),
+        ("sight of the Marowak ghost",),
+        (),
+    ),
+    "EVENT_BEAT_ERIKA": (CUT, (), ()),
+    "BADGE_RAINBOW": (("EVENT_BEAT_ERIKA",), ("Strength outside battle",), ()),
+    "EVENT_BEAT_POKEMON_TOWER_RIVAL": (CUT, (), ()),
+    "EVENT_BEAT_GHOST_MAROWAK": (
+        ("ITEM_SILPH_SCOPE", "EVENT_BEAT_POKEMON_TOWER_RIVAL"),
+        (),
+        (),
+    ),
+    "EVENT_RESCUED_MR_FUJI": (("EVENT_BEAT_GHOST_MAROWAK",), (), ()),
+    "EVENT_GOT_POKE_FLUTE": (("EVENT_RESCUED_MR_FUJI",), ("both Snorlax roads south",), ()),
+    "EVENT_BEAT_ROUTE12_SNORLAX": (("EVENT_GOT_POKE_FLUTE",), (), ()),
+    # The house holding HM02 sits behind a tree on Route 16, west of Celadon.
+    "EVENT_GOT_HM02": (CUT, ("Fly, once the Thunder Badge allows it",), ()),
+    # Fuchsia is past one Snorlax or the other; either way that is the flute.
+    "EVENT_GOT_HM03": (("EVENT_GOT_POKE_FLUTE",), ("water, once the Soul Badge allows it",), ()),
+    "EVENT_GAVE_GOLD_TEETH": (("EVENT_GOT_POKE_FLUTE",), (), ()),
+    "EVENT_GOT_HM04": (
+        ("EVENT_GAVE_GOLD_TEETH",),
+        ("boulders, once the Rainbow Badge allows it",),
+        (),
+    ),
+    "EVENT_BEAT_KOGA": (("EVENT_GOT_POKE_FLUTE",), (), ()),
+    "BADGE_SOUL": (("EVENT_BEAT_KOGA",), ("Surf outside battle",), ()),
+    # Saffron opens on a drink bought from the Celadon vending machines, so
+    # everything inside it stands behind reaching Celadon at all.
+    "ITEM_CARD_KEY": (CUT, ("the locked doors in Silph Co.",), ()),
+    "EVENT_BEAT_SILPH_CO_RIVAL": (CUT, (), ()),
+    "EVENT_BEAT_SILPH_CO_GIOVANNI": (("ITEM_CARD_KEY",), ("the Viridian Gym",), ()),
+    "EVENT_GOT_MASTER_BALL": (("EVENT_BEAT_SILPH_CO_GIOVANNI",), (), ()),
+    "EVENT_BEAT_SABRINA": (CUT, (), ()),
+    "BADGE_MARSH": (("EVENT_BEAT_SABRINA",), (), ()),
+    # Cinnabar is an island. Surf is the only way onto it.
+    "ITEM_SECRET_KEY": (SURF, ("the Cinnabar Gym door",), ()),
+    "EVENT_BEAT_BLAINE": (("ITEM_SECRET_KEY",), (), ()),
+    "BADGE_VOLCANO": (("EVENT_BEAT_BLAINE",), (), ()),
+    # Giovanni is only in his own gym once he has been run out of Silph Co.
+    "EVENT_BEAT_VIRIDIAN_GYM_GIOVANNI": (("EVENT_BEAT_SILPH_CO_GIOVANNI",), (), ()),
+    "BADGE_EARTH": (("EVENT_BEAT_VIRIDIAN_GYM_GIOVANNI",), ("every traded Pokemon obeys",), ()),
+    "EVENT_BEAT_ROUTE22_RIVAL_2ND_BATTLE": (("BADGE_EARTH",), (), ()),
+    # Eight badges to get up Route 23, Strength to shift the boulders inside.
+    "EVENT_VICTORY_ROAD_2_BOULDER_ON_SWITCH2": (
+        ALL_BADGES + ("EVENT_BEAT_ROUTE22_RIVAL_2ND_BATTLE", "EVENT_GOT_HM04"),
+        ("the way through to the Elite Four",),
+        (),
+    ),
+    "EVENT_AUTOWALKED_INTO_LORELEIS_ROOM": (
+        ("EVENT_VICTORY_ROAD_2_BOULDER_ON_SWITCH2",),
+        (),
+        (),
+    ),
+    "EVENT_BEAT_LORELEIS_ROOM_TRAINER_0": (("EVENT_AUTOWALKED_INTO_LORELEIS_ROOM",), (), ()),
+    "EVENT_BEAT_BRUNOS_ROOM_TRAINER_0": (("EVENT_BEAT_LORELEIS_ROOM_TRAINER_0",), (), ()),
+    "EVENT_BEAT_AGATHAS_ROOM_TRAINER_0": (("EVENT_BEAT_BRUNOS_ROOM_TRAINER_0",), (), ()),
+    "EVENT_BEAT_LANCE": (("EVENT_BEAT_AGATHAS_ROOM_TRAINER_0",), (), ()),
+    "EVENT_BEAT_CHAMPION_RIVAL": (("EVENT_BEAT_LANCE",), (), ()),
+    "EVENT_HALL_OF_FAME_DEX_RATING": (("EVENT_BEAT_CHAMPION_RIVAL",), ("Cerulean Cave",), ()),
+}
+
+MILESTONE_DAG: Mapping[str, MilestoneNode] = MappingProxyType(
+    {
+        milestone.id: MilestoneNode(
+            id=milestone.id,
+            requires=_PLAN[milestone.id][0],
+            effects=_PLAN[milestone.id][1],
+            excludes=_PLAN[milestone.id][2],
+        )
+        for milestone in MILESTONES
+    }
+)
+
+
+def frontier(reached: Collection[str]) -> Tuple[Milestone, ...]:
+    """Ladder milestones that are open right now, in ladder order.
+
+    Open is three things at once: not already reached, every ``requires``
+    reached, and no rival of an ``excludes`` pair taken. *reached* is whatever
+    :meth:`MilestoneTracker.snapshot` read out of RAM -- this function judges
+    nothing of its own, it intersects a set with a graph.
+
+    Ids in *reached* that are not on the ladder are ignored rather than
+    rejected, so an off-ladder event snapshot is safe to pass in.
+    """
+    have = frozenset(reached)
+    open_now: List[Milestone] = []
+    for milestone in MILESTONES:
+        if milestone.id in have:
+            continue
+        node = MILESTONE_DAG[milestone.id]
+        if not have.issuperset(node.requires):
+            continue
+        if have.intersection(node.excludes):
+            continue
+        open_now.append(milestone)
+    return tuple(open_now)
+
+
+def blocking(milestone_id: str, reached: Collection[str]) -> Tuple[str, ...]:
+    """Which of *milestone_id*'s preconditions are still outstanding.
+
+    The frontier says what is open; this says why something is not, which is
+    the question that gets asked next.
+    """
+    have = frozenset(reached)
+    return tuple(need for need in MILESTONE_DAG[milestone_id].requires if need not in have)

@@ -31,9 +31,12 @@ from pokemon_agent.milestones import (
     ALL_EVENTS,
     DATA_PATH,
     EVENT_FLAG_BYTES,
+    MILESTONE_DAG,
     MILESTONES,
     MILESTONES_BY_ID,
     MilestoneTracker,
+    blocking,
+    frontier,
     milestone_for_event,
 )
 
@@ -346,6 +349,8 @@ def test_summary_on_a_blank_game():
         "furthest": None,
         "furthest_index": -1,
         "latest": [],
+        # Nothing done yet leaves exactly one thing that can be done.
+        "frontier": ["EVENT_GOT_STARTER"],
     }
 
 
@@ -366,6 +371,270 @@ def test_furthest_index_is_monotone_as_milestones_accumulate():
         index = make_tracker(events=reached).summary()["furthest_index"]
         assert index > previous
         previous = index
+
+
+# ===================================================================
+# The DAG and its frontier
+#
+# The ladder was a scoreboard read backwards. Read forwards it is a plan, and
+# the reason for writing that down is a measured failure: one 457-call session
+# spent 361 calls on `act` and 64 on `state`, called `route`, `frontier`, `calc`
+# and `progress` zero times each, and banked none of the 63 milestones in
+# fourteen hours. Twenty verbs over an open map is not a menu anyone orders
+# from. These tests pin the graph that shortens the menu.
+# ===================================================================
+
+
+def reached_through(last_id: str, *, without: Iterable[str] = ()) -> set[str]:
+    """Every ladder id up to and including *last_id*, minus *without*."""
+    stop = MILESTONES_BY_ID[last_id].ladder_index
+    return {m.id for m in MILESTONES if m.ladder_index <= stop} - set(without)
+
+
+#: Where the fourteen-hour run actually sat: inside Mt. Moon, one badge, eight
+#: rungs banked. Every frontier example below is anchored here so the numbers
+#: mean something rather than being invented positions.
+AT_MT_MOON = reached_through("BADGE_BOULDER", without=["EVENT_GOT_TOWN_MAP"])
+
+
+def test_every_ladder_milestone_is_a_node_in_the_graph():
+    assert set(MILESTONE_DAG) == {m.id for m in MILESTONES}
+    assert all(MILESTONE_DAG[m.id].id == m.id for m in MILESTONES)
+
+
+def test_no_edge_names_a_milestone_that_is_not_on_the_ladder():
+    """A typo in a precondition would silently seal a milestone off forever.
+
+    An unknown id can never appear in a RAM snapshot, so its dependant would
+    sit permanently off the frontier with nothing to explain why.
+    """
+    for node in MILESTONE_DAG.values():
+        for edge in node.requires + node.excludes:
+            assert edge in MILESTONES_BY_ID, f"{node.id} points at unknown {edge}"
+
+
+def test_preconditions_only_ever_point_backwards_along_the_ladder():
+    """Acyclicity, proved by the cheapest available witness.
+
+    The ladder is already a total order, so if every edge runs from a lower
+    index to a higher one the graph cannot contain a cycle -- and ladder order
+    is a valid topological order, which is what lets `frontier` be one pass.
+    """
+    for node in MILESTONE_DAG.values():
+        here = MILESTONES_BY_ID[node.id].ladder_index
+        for need in node.requires:
+            assert MILESTONES_BY_ID[need].ladder_index < here, f"{node.id} <- {need}"
+
+
+def test_the_graph_has_exactly_one_root():
+    roots = [node.id for node in MILESTONE_DAG.values() if not node.requires]
+    assert roots == ["EVENT_GOT_STARTER"]
+
+
+def test_every_milestone_is_reachable_from_the_root():
+    """No node is stranded behind a precondition set that can never all hold.
+
+    Walking the graph the way the frontier does -- take everything open, mark
+    it done, look again -- has to end with all 63, or some rung is unwinnable.
+    Fossils are the one exception the graph knows about, so this walk takes
+    both sides of that fork rather than either.
+    """
+    have: set[str] = set()
+    while True:
+        opened = [m.id for m in MILESTONES if m.id not in have and not blocking(m.id, have)]
+        if not opened:
+            break
+        have.update(opened)
+    assert have == {m.id for m in MILESTONES}
+
+
+def test_effects_are_written_for_a_reader_not_for_a_parser():
+    for node in MILESTONE_DAG.values():
+        for effect in node.effects:
+            assert effect == effect.strip() and effect
+            assert "_" not in effect, f"{node.id} effect reads like an identifier"
+
+
+# -------------------------------------------------------------------
+# The frontier
+# -------------------------------------------------------------------
+
+
+def test_a_milestone_with_unmet_preconditions_is_not_on_the_frontier():
+    """The whole point: 63 goals, and the game only permits a few of them.
+
+    Misty is open from Mt. Moon -- the road there is walkable. The Cascade
+    Badge is not, because it is downstream of beating her, and neither is
+    anything behind Cut. Offering those is how a run spends fourteen hours
+    walking toward something the game will not let it do.
+    """
+    open_ids = {m.id for m in frontier(AT_MT_MOON)}
+
+    assert "EVENT_BEAT_MISTY" in open_ids
+    assert "BADGE_CASCADE" not in open_ids
+    assert blocking("BADGE_CASCADE", AT_MT_MOON) == ("EVENT_BEAT_MISTY",)
+    assert "EVENT_BEAT_ERIKA" not in open_ids  # Celadon is behind the Cut trees
+    assert "EVENT_HALL_OF_FAME_DEX_RATING" not in open_ids
+
+
+def test_the_frontier_shrinks_as_milestones_complete():
+    """Doing something that unlocks nothing must leave strictly less to do.
+
+    The Old Amber is that milestone: nothing on the ladder requires it. So it
+    is a clean measurement of the frontier as a set, with no unlocking to
+    confuse the count.
+    """
+    before = frontier(AT_MT_MOON)
+    after = frontier(AT_MT_MOON | {"EVENT_GOT_OLD_AMBER"})
+
+    assert "EVENT_GOT_OLD_AMBER" in {m.id for m in before}
+    assert len(after) == len(before) - 1
+    assert {m.id for m in after} == {m.id for m in before} - {"EVENT_GOT_OLD_AMBER"}
+
+
+def test_the_frontier_is_far_shorter_than_the_ladder_at_every_point():
+    """63 rungs is the menu the model collapsed under. This is the bound.
+
+    Walked greedily from a blank game to the Hall of Fame, the frontier never
+    exceeds a dozen and mostly sits near five.
+    """
+    have: set[str] = set()
+    sizes = []
+    while True:
+        open_now = frontier(have)
+        if not open_now:
+            break
+        sizes.append(len(open_now))
+        have.add(open_now[0].id)
+
+    assert have == {m.id for m in MILESTONES} - {"EVENT_GOT_HELIX_FOSSIL"}
+    assert max(sizes) <= 12
+    assert sum(sizes) / len(sizes) < 6
+
+
+def test_a_milestone_already_reached_is_never_offered_again():
+    assert "EVENT_BEAT_BROCK" in AT_MT_MOON
+    assert "EVENT_BEAT_BROCK" not in {m.id for m in frontier(AT_MT_MOON)}
+
+
+def test_the_frontier_comes_back_in_ladder_order():
+    indices = [m.ladder_index for m in frontier(AT_MT_MOON)]
+    assert indices == sorted(indices)
+
+
+def test_taking_one_fossil_takes_the_other_off_the_frontier_for_good():
+    """Red's one irreversible fork, and the reason `excludes` exists.
+
+    Without it the Helix would stay on the menu for the rest of the run,
+    permanently unreachable and permanently advertised -- exactly the lure the
+    frontier is meant to remove.
+    """
+    cleared = AT_MT_MOON | {"EVENT_BEAT_MT_MOON_EXIT_SUPER_NERD"}
+    both = {m.id for m in frontier(cleared)}
+    assert {"EVENT_GOT_DOME_FOSSIL", "EVENT_GOT_HELIX_FOSSIL"} <= both
+
+    took_dome = {m.id for m in frontier(cleared | {"EVENT_GOT_DOME_FOSSIL"})}
+    assert "EVENT_GOT_HELIX_FOSSIL" not in took_dome
+
+
+def test_a_field_move_needs_the_badge_as_well_as_the_hm():
+    """Gen 1 checks the badge, not the move, and Surge's gym door has a tree.
+
+    HM01 alone leaves Surge sealed; the join is what makes this a graph rather
+    than a chain, and getting it wrong would offer a gym that cannot be entered.
+    """
+    have_hm_only = reached_through(
+        "EVENT_SS_ANNE_LEFT", without=["EVENT_BEAT_MISTY", "BADGE_CASCADE"]
+    )
+    assert "EVENT_GOT_HM01" in have_hm_only and "BADGE_CASCADE" not in have_hm_only
+    assert blocking("EVENT_BEAT_LT_SURGE", have_hm_only) == ("BADGE_CASCADE",)
+    assert "EVENT_BEAT_LT_SURGE" not in {m.id for m in frontier(have_hm_only)}
+
+    assert blocking("EVENT_BEAT_LT_SURGE", have_hm_only | {"BADGE_CASCADE"}) == ()
+
+
+def test_victory_road_waits_for_all_eight_badges_and_for_strength():
+    """Route 23 posts a guard per badge, and the boulders will not move alone.
+
+    Marsh and Volcano are on their own branches -- neither is an ancestor of
+    the Earth Badge -- so a chain that only looked at the last badge would let
+    the model walk up Route 23 six badges short.
+    """
+    everything_but_blaine = reached_through(
+        "EVENT_BEAT_ROUTE22_RIVAL_2ND_BATTLE",
+        without=["EVENT_BEAT_BLAINE", "BADGE_VOLCANO", "EVENT_GOT_HELIX_FOSSIL"],
+    )
+    assert blocking("EVENT_VICTORY_ROAD_2_BOULDER_ON_SWITCH2", everything_but_blaine) == (
+        "BADGE_VOLCANO",
+    )
+
+
+def test_off_ladder_events_in_a_snapshot_do_not_disturb_the_frontier():
+    """`snapshot` only ever returns ladder ids, but callers hand in event sets.
+
+    An unknown id must be ignored rather than raising: a stray flag is not a
+    reason to stop answering the only question that shortens the menu.
+    """
+    noisy = AT_MT_MOON | {"EVENT_BEAT_MEWTWO", "EVENT_IN_SAFARI_ZONE"}
+    assert frontier(noisy) == frontier(AT_MT_MOON)
+
+
+def test_blocking_lists_only_what_is_still_outstanding():
+    assert blocking("EVENT_BEAT_GHOST_MAROWAK", set()) == (
+        "ITEM_SILPH_SCOPE",
+        "EVENT_BEAT_POKEMON_TOWER_RIVAL",
+    )
+    assert blocking("EVENT_GOT_STARTER", set()) == ()
+
+
+# -------------------------------------------------------------------
+# The frontier is a memory read, not a claim
+# -------------------------------------------------------------------
+
+
+def test_the_tracker_reads_the_frontier_out_of_ram():
+    """The loop must never grade its own homework.
+
+    Nothing in the plan table asserts that a milestone happened; the frontier
+    moves only because bits moved. Here the Boulder Badge bit and the Brock
+    event bit are set in a synthetic address space and the frontier changes as
+    a consequence of the read.
+    """
+    fresh = MilestoneTracker(make_tracker().reader)
+    assert [m.id for m in fresh.frontier()] == ["EVENT_GOT_STARTER"]
+
+    tracker = make_tracker(
+        events=[
+            "EVENT_GOT_STARTER",
+            "EVENT_BATTLED_RIVAL_IN_OAKS_LAB",
+            "EVENT_GOT_OAKS_PARCEL",
+            "EVENT_OAK_GOT_PARCEL",
+            "EVENT_GOT_POKEDEX",
+            "EVENT_BEAT_ROUTE22_RIVAL_1ST_BATTLE",
+            "EVENT_BEAT_BROCK",
+        ],
+        badge_bits=[0],
+    )
+    assert tracker.summary()["count"] == 8
+    assert tracker.summary()["frontier"] == [m.id for m in tracker.frontier()]
+    assert {m.id for m in tracker.frontier()} == {m.id for m in frontier(AT_MT_MOON)}
+
+
+def test_an_item_milestone_leaves_the_frontier_when_the_bag_says_so():
+    """Item rungs are read from the bag, so the frontier follows the bag.
+
+    The Lift Key is the only kind of postcondition here that a player can drop.
+    """
+    reached = reached_through("EVENT_FOUND_ROCKET_HIDEOUT", without=["EVENT_GOT_HELIX_FOSSIL"])
+    without_key = make_tracker(events=[i for i in reached if i.startswith("EVENT_")])
+    assert "ITEM_LIFT_KEY" not in without_key.snapshot()
+
+    with_key = make_tracker(
+        events=[i for i in reached if i.startswith("EVENT_")],
+        items=[74],
+    )
+    assert "ITEM_LIFT_KEY" in with_key.snapshot()
+    assert "ITEM_LIFT_KEY" not in {m.id for m in with_key.frontier()}
 
 
 # ===================================================================
