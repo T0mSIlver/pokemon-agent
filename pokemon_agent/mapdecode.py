@@ -40,11 +40,18 @@ off the east edge into Cerulean City. Against that, this decoder's walkable set
 has zero false positives and zero false negatives. The two floors of Route 4
 are joined only by one-way ledge hops at row 9, which is why they look like
 separate pockets until ledges are switched on.
+
+The same header also says where the map's four sides lead and, unlike
+`gamedata`'s connection table, at what offset -- see `decode_connections`. That
+too was placed by measurement: the connection block lives at 0xD370, not up by
+the warps, and every one of the 21 maps reachable from a save state agrees with
+`gamedata` on its directions, target maps and connected widths there.
 """
 
 from __future__ import annotations
 
-from typing import Callable, Dict, Set, Tuple
+from dataclasses import dataclass
+from typing import Callable, Dict, Optional, Set, Tuple
 
 from pokemon_agent.navigation import TILE_ID_OFFSET
 
@@ -60,6 +67,15 @@ WTILESETBLOCKS = 0xD52C
 WTILESETCOLL = 0xD530
 WNUMBEROFWARPS = 0xD3AE
 WWARPENTRIES = 0xD3AF  # y, x, destination warp id, destination map
+
+#: Which of the four sides have a connected map, as a bitmask.
+WMAPCONNECTIONS = 0xD370
+CONNECTION_BITS = {"east": 0x01, "west": 0x02, "south": 0x04, "north": 0x08}
+
+#: Each direction owns a fixed 11-byte slot; the engine fills only the sides the
+#: bitmask names, so an unlisted slot holds whatever the last map left there.
+CONNECTION_SLOTS = {"north": 0xD371, "south": 0xD37C, "west": 0xD387, "east": 0xD392}
+CONNECTION_SLOT_SIZE = 11
 
 #: Three blocks of border on every side of the loaded map.
 MAP_BORDER = 3
@@ -170,6 +186,147 @@ def resolve_last_map(map_id: int, warp: dict, warps_by_map: dict[int, list[dict]
             if other["dest_map"] == map_id and other["dest_warp"] == warp["index"]:
                 return other_id, other["index"]
     return None, None
+
+
+@dataclass(frozen=True)
+class MapConnection:
+    """One side of the loaded map, and where stepping off it puts you.
+
+    The engine does not search for a landing tile: walking off an edge sets one
+    coordinate to a stored alignment and shifts the other by a stored delta, so
+    a whole edge slides onto the connected map at a fixed offset. Reproducing
+    that is the difference between knowing which pocket you arrive in and
+    guessing (see `pockets._connection_hops`).
+
+    `strip_from`/`strip_to` are the tiles of *this* map's edge the connection
+    actually covers, along the edge's axis (x for north/south, y for east and
+    west). They can be negative, because the strip is positioned in the block
+    map including its three-block border, and it may start inside that border.
+    Outside that range the edge is border blocks and there is nothing to walk
+    onto: Route 4's south edge is a 13-block strip at its west end, so its far
+    east corner -- x 81..89, sixty tiles away -- connects to nothing at all.
+    """
+
+    direction: str
+    map_id: int
+    y_align: int  # signed
+    x_align: int  # signed
+    strip_length: int  # in blocks, as stored
+    connected_width: int  # in player tiles, doubled from the header's blocks
+    strip_from: int  # first tile of this map's edge the strip covers
+    strip_to: int  # last, inclusive
+
+    @classmethod
+    def from_spec(cls, direction: str, spec: dict) -> "MapConnection":
+        """Rebuild one from the plain dict `connection_specs` hands out.
+
+        The routing graph carries these as data through several layers, and
+        keeping the arithmetic in one place is worth the round trip.
+        """
+        strip_from, strip_to = spec["strip"]
+        return cls(
+            direction=direction,
+            map_id=int(spec.get("map_id", 0)),
+            y_align=int(spec["y_align"]),
+            x_align=int(spec["x_align"]),
+            strip_length=int(spec.get("strip_length", 0)),
+            connected_width=int(spec["connected_width"]),
+            strip_from=int(strip_from),
+            strip_to=int(strip_to),
+        )
+
+    def landing(self, coord: Coord) -> Optional[Coord]:
+        """Where walking off this edge at `coord` puts you, or None.
+
+        None means `coord` is not on the connected strip, so the edge there is
+        border and the step is into a wall.
+
+        The connected map's *height* is not in the header, so a landing below
+        it is not rejected here. Whoever knows that map's terrain rejects it,
+        by finding no walkable tile there.
+        """
+        x, y = coord
+        along = x if self.direction in ("north", "south") else y
+        if not self.strip_from <= along <= self.strip_to:
+            return None
+        if self.direction in ("north", "south"):
+            landed = (x + self.x_align, self.y_align)
+        else:
+            landed = (self.x_align, y + self.y_align)
+        if landed[0] < 0 or landed[1] < 0:
+            return None
+        if landed[0] >= self.connected_width:
+            return None
+        return landed
+
+
+def decode_connections(read_u8: Callable[[int], int]) -> Dict[str, MapConnection]:
+    """The loaded map's connections, keyed by the edge you walk off.
+
+    Only the sides named by the bitmask are read. The other slots are stale --
+    Route 4's north slot still holds Route 3's north connection with a poisoned
+    first byte -- so trusting a slot because its map id looks plausible invents
+    a connection that is not there.
+    """
+    mask = read_u8(WMAPCONNECTIONS)
+    width_blocks = read_u8(WCURMAPWIDTH)
+    stride = width_blocks + MAP_BORDER * 2
+    out: Dict[str, MapConnection] = {}
+    for direction, bit in CONNECTION_BITS.items():
+        if not mask & bit:
+            continue
+        base = CONNECTION_SLOTS[direction]
+        strip_dest = _read_u16(read_u8, base + 3)
+        strip_length = read_u8(base + 5)
+        # The strip's position on this map is where the engine writes it into
+        # the block map, so the offset from wOverworldMap gives the column (for
+        # a north/south strip) or the row (east/west) it starts at, border
+        # included. Two blocks per player tile.
+        offset = strip_dest - WOVERWORLDMAP
+        row, column = divmod(offset, stride) if stride else (0, 0)
+        start_block = (column if direction in ("north", "south") else row) - MAP_BORDER
+        out[direction] = MapConnection(
+            direction=direction,
+            map_id=read_u8(base),
+            y_align=_signed(read_u8(base + 7)),
+            x_align=_signed(read_u8(base + 8)),
+            strip_length=strip_length,
+            connected_width=read_u8(base + 6) * 2,
+            strip_from=start_block * 2,
+            strip_to=(start_block + strip_length) * 2 - 1,
+        )
+    return out
+
+
+def connection_specs(
+    connections: Dict[str, MapConnection],
+    name_for_id: Callable[[int], Optional[str]],
+) -> Dict[str, dict]:
+    """Connections in the shape `pockets.PocketGraph` takes for `connections_for`.
+
+    The graph routes over map *names*, so the ids have to be translated here;
+    a connection whose id has no name is dropped rather than routed to "???".
+    """
+    out: Dict[str, dict] = {}
+    for direction, connection in connections.items():
+        name = name_for_id(connection.map_id)
+        if not name:
+            continue
+        out[direction] = {
+            "to_map": name,
+            "map_id": connection.map_id,
+            "y_align": connection.y_align,
+            "x_align": connection.x_align,
+            "strip": (connection.strip_from, connection.strip_to),
+            "strip_length": connection.strip_length,
+            "connected_width": connection.connected_width,
+        }
+    return out
+
+
+def _signed(value: int) -> int:
+    """An alignment is a two's-complement byte: Route 3 walks north at x - 50."""
+    return value - 256 if value > 127 else value
 
 
 def _read_u16(read_u8: Callable[[int], int], addr: int) -> int:

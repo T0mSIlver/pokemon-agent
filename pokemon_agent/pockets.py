@@ -27,6 +27,8 @@ from collections import deque
 from dataclasses import dataclass
 from typing import Callable, Collection, Dict, List, Mapping, Optional, Sequence, Set, Tuple
 
+from pokemon_agent import mapdecode
+
 Coord = Tuple[int, int]
 
 #: Where terrain is unknown, the whole map is one pocket and this is its index.
@@ -42,10 +44,13 @@ class PocketHop:
     """One map-to-map move, with the pocket it leaves from and the one it lands in.
 
     A warp knows the tile you step onto and where it puts you. A connection
-    knows neither: you walk off the side of the map, and which tile you land on
-    depends where along the edge you left. So `at` and `landing` are None for a
-    connection and `edge` names the side, the same split `world.Hop` already
-    makes.
+    knows the side you walk off, in `edge`, the same split `world.Hop` already
+    makes. Where the map header's offsets are available it knows tiles too: one
+    tile of the edge that reaches this pocket's landing, and that landing. They
+    stay None for a connection given only as a direction and a map name.
+
+    `at` is *a* way off the edge, not the only one or the nearest one. Any edge
+    tile of the pocket that lands in the same pocket does as well.
     """
 
     from_map: str
@@ -66,7 +71,12 @@ class PocketHop:
     def describe(self) -> str:
         where = f"{self.from_map}#{self.from_pocket} -> {self.to_map}#{self.to_pocket}"
         if self.edge:
-            return f"{where} (walk off the {self.edge} edge)"
+            if self.at is None or self.landing is None:
+                return f"{where} (walk off the {self.edge} edge)"
+            return (
+                f"{where} (walk off the {self.edge} edge at {list(self.at)}, "
+                f"landing {list(self.landing)})"
+            )
         if self.ledge:
             return f"{where} (one-way ledge at {list(self.at)}, landing {list(self.landing)})"
         return f"{where} (warp at {list(self.at)}, landing {list(self.landing)})"
@@ -291,10 +301,10 @@ class PocketGraph:
         door, so a warp-only graph answers "no route to Cerulean" while standing
         on the road to it. That was the first version of this file.
 
-        The connection carries no offset here, so which tile you land on is not
-        knowable from this data, and neither is which pocket it is in when the
-        far edge touches more than one. An earlier version guessed by taking
-        every edge-touching pocket, and produced this:
+        A connection given only as a direction and a map name says nothing about
+        which tile you land on, nor which pocket that is in when the far edge
+        touches more than one. Guessing by taking every edge-touching pocket
+        produced this:
 
             Route 4#1 -> Route 3   (walk off the south edge)
             Route 3   -> Route 4#4 (walk off the north edge)
@@ -302,19 +312,30 @@ class PocketGraph:
 
         Route 4's south edge is touched by pocket 1 in the west and pocket 4 in
         the far east corner, and the route hops between them as though walking
-        south and back north could move you sixty tiles sideways. It cannot;
-        Gen 1 connections line up at a fixed offset. That is a confident wrong
-        answer, which is the worst shape an answer takes here.
+        south and back north could move you sixty tiles sideways.
 
-        So an ambiguous landing yields no edge at all. Losing a route is a
-        detour; inventing one is a loop.
+        With offsets it does not have to guess. `mapdecode.decode_connections`
+        reads the map header's alignments, so each edge tile of this pocket
+        converts to the exact tile it lands on, and the hop names the pocket
+        that tile is in. The bogus middle hop above disappears for a better
+        reason than caution: Route 4's south strip is 13 blocks at the west
+        end, so x 81..89 is off the strip and lands nowhere at all.
+
+        Without offsets the old rule stands -- one candidate pocket or no edge.
+        Losing a route is a detour; inventing one is a loop.
         """
         out: List[PocketHop] = []
-        for edge, target in sorted((self._connections_for(map_name) or {}).items()):
+        for edge, spec in sorted((self._connections_for(map_name) or {}).items()):
+            target, offsets = _connection_spec(edge, spec)
             if not target or edge not in OPPOSITE:
                 continue
             if not self._touches_edge(map_name, pocket, edge):
                 continue
+            departures = self._edge_tiles(map_name, pocket, edge)
+            if offsets is not None and departures:
+                out.extend(self._offset_hops(map_name, pocket, target, offsets, departures))
+                continue
+            # No offsets, or no terrain to apply them to: the old rule.
             landing_pockets = self._pockets_on_edge(target, OPPOSITE[edge])
             if len(landing_pockets) != 1:
                 continue
@@ -328,6 +349,53 @@ class PocketGraph:
                 )
             )
         return out
+
+    def _offset_hops(
+        self,
+        map_name: str,
+        pocket: int,
+        target: str,
+        offsets: "mapdecode.MapConnection",
+        departures: List[Coord],
+    ) -> List[PocketHop]:
+        """One hop per pocket this pocket's edge tiles actually land in.
+
+        Usually that is one hop. It is none when every tile of the edge is off
+        the connection strip, which is the Route 4 east-corner case, and it is
+        two when a strip is wide enough to straddle a split on the far side --
+        which is a fact about the map, not an ambiguity to bail out on.
+        """
+        first_landing: Dict[int, Tuple[Coord, Coord]] = {}
+        for tile in sorted(departures):
+            landing = offsets.landing(tile)
+            if landing is None:
+                continue
+            to_pocket = self.pocket_at(target, landing)
+            if to_pocket is None:
+                # The strip says you land there and the tile is not walkable.
+                # That is a decode gap on the far side, not a route.
+                continue
+            first_landing.setdefault(to_pocket, (tile, landing))
+        return [
+            PocketHop(
+                from_map=map_name,
+                from_pocket=pocket,
+                to_map=target,
+                to_pocket=to_pocket,
+                at=tile,
+                landing=landing,
+                edge=offsets.direction,
+            )
+            for to_pocket, (tile, landing) in sorted(first_landing.items())
+        ]
+
+    def _edge_tiles(self, map_name: str, pocket: int, edge: str) -> List[Coord]:
+        """The tiles of this pocket that sit on that edge; empty if unknown."""
+        pieces = self.pieces(map_name)
+        if not pieces or pocket >= len(pieces):
+            return []
+        bounds = self._bounds(map_name)
+        return [tile for tile in pieces[pocket] if _on_edge(tile, edge, bounds)]
 
     def _touches_edge(self, map_name: str, pocket: int, edge: str) -> bool:
         pieces = self.pieces(map_name)
@@ -430,6 +498,25 @@ def _on_edge(tile: Coord, edge: str, bounds: Tuple[int, int]) -> bool:
     if edge == "west":
         return x == 0
     return x == width - 1
+
+
+def _connection_spec(edge: str, value) -> Tuple[Optional[str], Optional[mapdecode.MapConnection]]:
+    """Split a connection into its target map and its offsets, if it has any.
+
+    `gamedata`'s table gives a bare map name, and that is still accepted: this
+    graph has to answer for maps nobody has stood on, whose header nobody has
+    read. `mapdecode.connection_specs` gives the same name with the alignments
+    attached, and only then can a landing tile be named.
+    """
+    if isinstance(value, str):
+        return (value or None), None
+    if not isinstance(value, dict):
+        return None, None
+    target = value.get("to_map") or None
+    try:
+        return target, mapdecode.MapConnection.from_spec(edge, value)
+    except (KeyError, TypeError, ValueError):
+        return target, None
 
 
 def _coord(value) -> Optional[Coord]:
