@@ -30,6 +30,11 @@ ACTION_KEYS = {
     "hp",
 }
 
+#: What comes back instead on a frame no step can be taken from — a battle or an
+#: open box. The two walk fields go and one sentence says which frame took them,
+#: because an empty `moves` list is indistinguishable from being walled in.
+NO_STEP_KEYS = (ACTION_KEYS - {"moves", "run"}) | {"no_walk"}
+
 #: Facts about what the batch did. Nothing that tells the agent where to go.
 BATCH_KEYS = {"moved", "blocked_after", "here_before"}
 
@@ -90,6 +95,8 @@ class FakeEmulator:
         ]
         self.turn_pending = False
         self.fled = False
+        #: Whether the game comes to rest after a press. See `press_and_settle`.
+        self.settles = True
 
     def get_screen(self) -> Image.Image:
         # Vary the pixels with the frame counter so refreshed PNGs differ.
@@ -99,6 +106,13 @@ class FakeEmulator:
         self.pressed.append(button)
         if self.in_battle:
             self._press_in_battle(button)
+            self.frame_count += frames
+            return
+        if self.dialog_active:
+            # A d-pad press under an open box never reaches the player: in a text
+            # box it is swallowed, in a menu it moves the cursor. Measured on the
+            # real ROM -- two `walk_down` actions with Oak's dialog up left the
+            # player on (5,3), the tile they started on.
             self.frame_count += frames
             return
         delta = DIRECTIONS.get(button)
@@ -169,6 +183,18 @@ class FakeEmulator:
             self.battle_menu = "other"
         else:
             self.battle_menu = "other"
+
+    def press_and_settle(self, button: str, frames: int = 8) -> bool:
+        """Press, then let the game come to rest — or answer that it did not.
+
+        The same press-then-wait this fake always did; what is new is the answer.
+        `settles = False` is a game that is still moving when the batch hands
+        back, which on the real emulator is a warp or a cutscene in progress and
+        the one frame where the map name and the coordinates disagree.
+        """
+        self.press(button, frames)
+        self.tick(12)
+        return self.settles
 
     def tick(self, frames: int = 1) -> None:
         if self.turn_pending:
@@ -405,7 +431,7 @@ def test_a_dialog_it_cannot_read_says_so_once_not_twice(server_app):
     assert payload["mode"] == "dialog"
     assert payload["dialog"] is True
     assert "screen_text" not in payload
-    assert set(payload) == ACTION_KEYS
+    assert set(payload) == NO_STEP_KEYS
 
 
 def test_action_refreshes_both_frame_pngs(server_app):
@@ -838,16 +864,140 @@ def test_action_omits_the_step_for_an_interior_warp(server_app):
 
 
 def test_action_in_battle_reports_the_fight_not_the_overworld(server_app):
-    """Position and walk directions are meaningless on a battle screen."""
+    """Walk directions are meaningless on a battle screen. The position is not."""
     emulator = server_app.emulator
     emulator.in_battle = True
 
     payload = server_app.http.post("/action", json={"actions": ["press_a"]}).json()
 
     assert payload["battle"] is True
-    for dead in ("x", "y", "facing", "moves", "on_warp", "faces"):
+    for dead in ("moves", "run", "on_warp", "faces"):
         assert dead not in payload, f"{dead} should not be reported in battle"
     assert payload["hp"] == "20/22"
+
+
+def test_a_battle_frame_still_says_where_the_player_is_standing(server_app):
+    """The coordinates survive a battle, so blanking them threw away a fact.
+
+    Measured on the ROM: four wild encounters walked into in Mt. Moon 1F each
+    read the same tile during the fight as the overworld read after fleeing. The
+    payload used to drop them anyway, `poke act` rendered
+    `Mt Moon 1F (None,None) facing None`, and the model spent a `poke state` call
+    getting back what the answer already knew -- fifteen `act | state` pairs in
+    one 457-call session.
+    """
+    emulator = server_app.emulator
+    emulator.x, emulator.y = 15, 33
+    emulator.in_battle = True
+
+    payload = server_app.http.post("/action", json={"actions": ["press_a"]}).json()
+
+    assert (payload["x"], payload["y"]) == (15, 33)
+
+
+def test_a_battle_frame_refuses_facing_instead_of_reporting_a_stale_one(server_app):
+    """The one field a battle frame holds a wrong value for.
+
+    An encounter interrupts the step that started it, so the sprite facing byte
+    is still the direction from before that step: two of four measured battle
+    frames read "right" and "up" for steps that were walk_up and walk_down, and
+    the overworld came back facing up and down. A refusal costs one line; a
+    confident wrong direction costs a wrong turn.
+    """
+    server_app.emulator.in_battle = True
+
+    payload = server_app.http.post("/action", json={"actions": ["press_a"]}).json()
+
+    assert "facing" not in payload
+    assert payload["facing_unread"] == server.FACING_UNREAD_IN_BATTLE
+
+
+def test_a_battle_says_why_it_offers_no_walk_directions(server_app):
+    """An empty `moves` list and "you are in a battle" are not the same answer."""
+    server_app.emulator.in_battle = True
+
+    payload = server_app.http.post("/action", json={"actions": ["press_a"]}).json()
+
+    assert "moves" not in payload and "run" not in payload
+    assert payload["no_walk"] == server.NO_WALK_IN_BATTLE
+    assert "battle menu" in payload["no_walk"]
+
+
+def test_an_open_box_says_the_d_pad_will_not_reach_the_player(server_app):
+    """`moves` under an open box was a fact about the map, read as a fact about now.
+
+    Measured with Oak's dialog up: the payload offered `moves: ["down"]` and
+    `run down:4`, and `walk_down` moved nothing at all, because a d-pad press
+    under a box works the box.
+    """
+    server_app.emulator.dialog_active = True
+
+    payload = server_app.http.post("/action", json={"actions": ["press_a"]}).json()
+
+    assert "moves" not in payload and "run" not in payload
+    assert payload["no_walk"] == server.NO_WALK_IN_BOX
+    # The position is still knowable and still reported: only stepping is off.
+    assert (payload["x"], payload["y"]) == (5, 6)
+
+
+def test_a_batch_that_never_came_to_rest_says_so(server_app):
+    """A mid-transition frame is the one that pairs two maps in one answer.
+
+    Sampled ten frames into a gate warp on the real ROM, the reads say
+    `Route 2 (5,0)` -- Route 2's name with the gate's coordinates, while the tile
+    the player actually lands on is (3,11). Every press waits for the game to come
+    to rest first, so this is rare; when the wait gives up the answer has to say
+    what it is describing rather than let a cutscene frame read as a position.
+    `POST /load` has reported exactly this since it was written.
+    """
+    server_app.emulator.settles = False
+
+    payload = server_app.http.post("/action", json={"actions": ["walk_up"]}).json()
+
+    assert payload["settled"] is False
+
+
+def test_a_battle_frame_is_not_labelled_mid_transition(server_app):
+    """The settle watchdog never reports rest in a battle, so the flag says nothing.
+
+    It watches the walk counter and the sprite step vectors, and an encounter
+    freezes both mid-step: measured on the ROM it gave up on the entry frame and
+    on all five turns after it. Reporting that as "the map and the coordinates
+    may not belong together" would contradict the coordinates printed beside it,
+    which the same measurement showed are the tile the player is standing on.
+    """
+    emulator = server_app.emulator
+    emulator.in_battle = True
+    emulator.settles = False
+
+    payload = server_app.http.post("/action", json={"actions": ["press_a"]}).json()
+
+    assert payload["battle"] is True
+    assert "settled" not in payload
+
+
+def test_a_settled_batch_does_not_pay_for_the_word(server_app):
+    """Which is every batch but the rare one: a field that is always there is read once."""
+    payload = server_app.http.post("/action", json={"actions": ["walk_up"]}).json()
+
+    assert "settled" not in payload
+
+
+def test_a_walk_eaten_by_a_box_is_not_reported_as_blocked_ground(server_app):
+    """`blocked_after` is inferred from a position that did not change.
+
+    Under an open box nothing moves whatever the ground is, so the inference is
+    wrong every time: two `walk_down` presses into Oak's dialog came back
+    `moved: 0, blocked_after: 1` about a tile the player walks over daily. That
+    is the harness teaching the agent a wall that is not there.
+    """
+    server_app.emulator.dialog_active = True
+
+    payload = server_app.http.post("/action", json={"actions": ["walk_down", "walk_down"]}).json()
+
+    assert payload["moved"] == 0
+    assert "blocked_after" not in payload
+    assert payload["no_walk"] == server.NO_WALK_IN_BOX
 
 
 def test_a_until_dialog_end_is_refused_in_battle(server_app):

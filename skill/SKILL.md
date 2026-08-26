@@ -89,6 +89,9 @@ stood here 9 times before
 - `run` is how many tiles each direction goes before something stops you. `left:7` there means `poke act left:7` arrives in one call. Walking one tile and asking again is the slowest way to play and it costs you a turn of context for every tile.
 - `exits` is every map this one leads to and how to get there: a tile to walk onto, or an edge to walk off. A map whose only exit is the way you came is a dead end. Which one serves your goal is your call.
 - Extra lines appear only when they are true: facing something worth a button, standing on a warp, treading old ground, a dialog, a battle with what you can hit it with.
+- On a frame no step can be taken from — a battle, or any open box — there is no `run` line. In its place is one saying why, such as `no walking while a box is open: the d-pad works the box, not the player`. That is not "you are walled in": close the box or finish the fight and the ground is where it was.
+- Any field the harness could not read off the frame says so rather than printing a value. `(position unread)` means exactly that; it never prints `None`.
+- A line saying the game was still moving when the answer was read means the frame is mid-transition and the map name and the coordinates may belong to different maps. `poke act wait` and look again before believing any of it.
 
 `poke act --json` gives the whole object if a script needs it.
 
@@ -121,7 +124,7 @@ poke sim up:6 right:3
 
 It costs no game time and no button presses, and it names the exact step that would fail. Use it before any long batch across ground you have not walked. A batch that ends against a wall wastes every action after the first bump.
 
-Never write an unbounded loop. If you script several actions, give every loop a hard iteration cap and check that the player actually moved. **A blocked move succeeds and returns the same position**, because walls, NPCs and furniture all stop you silently, so `while position != target: step()` never ends. Cap it, and treat "position unchanged" as "that direction is blocked", not as "try again". The server rejects more than 60 action batches a minute for exactly this reason, and says so.
+Never write an unbounded loop. If you script several actions, give every loop a hard iteration cap and check that the player actually moved. **A blocked move succeeds and returns the same position**, because walls, NPCs and furniture all stop you silently, so `while position != target: step()` never ends. Cap it, and treat "position unchanged" as "that direction is blocked", not as "try again" — unless the answer carries a `no walking` line, which means a box or a battle ate the button and the ground was never the problem. The server rejects more than 60 action batches a minute for exactly this reason, and says so.
 
 Press A on things. Signs, NPCs, item balls, bookshelves, machines, the odd tile that looks different. Interacting is how you find items, learn where to go, and trigger the events that advance the story. A run that only walks will stall. Face a thing and `press_a`; if nothing happens you have lost one action.
 
@@ -156,12 +159,14 @@ The move list remembers where it was left last turn, and it wraps at both ends, 
 In battle the response says what you are fighting, what you can hit it with, and what the menu is showing:
 
 ```json
-{"mode":"battle","battle":true,"hp":"29/32","enemy":"Weedle L3 15/15 (Bug/Poison)","your_moves":["Scratch","Growl","Ember"],"menu":"moves","highlighted":"Ember"}
+{"mode":"battle","battle":true,"x":15,"y":33,"hp":"29/32","enemy":"Weedle L3 15/15 (Bug/Poison)","your_moves":["Scratch","Growl","Ember"],"menu":"moves","highlighted":"Ember"}
 ```
 
 - `your_moves`: the names `poke fight` will accept.
-- `menu`: which menu is open: `top` for FIGHT/PKMN/ITEM/RUN, `moves` for the move list, `other` for anything else.
+- `menu`: which menu is open: `top` for FIGHT/PKMN/ITEM/RUN, `moves` for the move list, `other` for anything else, which prints as `no battle menu up` because there is no cursor to name.
 - `highlighted`: the entry the cursor is on, so the one a bare `press_a` would pick.
+- `x` and `y`: where you are standing, which a battle does not change. You will be on that tile when the fight ends.
+- No `facing`. An encounter interrupts the step that started it, so the byte holding your direction is one step out of date until the battle ends, and the answer says so rather than naming a direction that may be wrong.
 
 Do not work the type chart out in your head. `poke calc` does the real damage arithmetic against whatever you are actually fighting:
 
