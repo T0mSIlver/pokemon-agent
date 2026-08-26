@@ -74,6 +74,31 @@ SCREEN_TEXT_LIMIT = 160
 #: restating the `dialog` flag printed beside it.
 DIALOG_PLACEHOLDER_PREFIX = "Dialog box visible"
 
+#: Why the payload carries no walk directions on a frame that cannot take a step.
+#: `moves` and `run` are answers to "where may I walk *now*", and on these two
+#: frames the d-pad never reaches the player: in a battle it drives the battle
+#: menu, and under an open box it works the box or is swallowed outright.
+#:
+#: Measured with Oak's dialog up: the payload offered `moves: ["down"]` and
+#: `run down:4`, two `walk_down` actions moved nothing, and the answer came back
+#: `moved: 0, blocked_after: 1` -- the harness reporting walkable ground as a
+#: wall. Saying which of the two it is costs one line and cannot be misread.
+NO_WALK_IN_BATTLE = "no walking in a battle: the d-pad drives the battle menu"
+NO_WALK_IN_BOX = "no walking while a box is open: the d-pad works the box, not the player"
+
+#: Why a battle frame reports coordinates but no facing.
+#:
+#: The coordinates are a fact there -- four wild encounters walked into in Mt.
+#: Moon 1F all read the same tile during the fight as the overworld read after
+#: fleeing. The facing byte is not: an encounter interrupts the step that started
+#: it, so 0xC109 still holds the direction from *before* that step. Two of those
+#: four battle frames said "right" and "up" for steps that were walk_up and
+#: walk_down, and the overworld came back facing up and down. Reporting the stale
+#: value would be the worst of the three things this payload can do with a field.
+#: Kept short on purpose: a battle runs several `act` calls and this line is paid
+#: on every one of them.
+FACING_UNREAD_IN_BATTLE = "facing unread in a battle: the byte is stale from before the encounter"
+
 
 #: Environment switch for the intervention loop, since the launcher scripts
 #: build a GameConfig they do not parameterise.
@@ -957,12 +982,33 @@ def _observation_summary(bundle: Optional[dict]) -> dict:
             summary["warp"] = hint
         break
 
-    # A battle screen has no position, no facing and no legal walk directions, and
-    # reporting empty ones reads as "nothing is possible". Report the fight instead:
-    # who you are fighting and what you can hit them with.
-    if summary["battle"]:
-        for key in ("x", "y", "facing", "moves", "on_warp", "warp", "faces"):
+    # A battle or an open box is not a frame you can step from, so the fields that
+    # answer "where may I walk now" go, and one line says which frame ate them. An
+    # empty `moves` list in their place reads as "nothing is possible", which is
+    # the failure this project keeps paying for.
+    #
+    # The coordinates are not one of those fields and are *not* dropped any more.
+    # wXCoord and wYCoord are untouched by either frame: four wild encounters
+    # walked into in Mt. Moon 1F each read the same tile during the fight that the
+    # overworld read back after fleeing. Blanking them made the answer well-formed
+    # and hollow -- `Mt Moon 1F (None,None) facing None` -- and the model spent a
+    # whole `poke state` call recovering what the answer already knew. One
+    # 457-call session shows that `act | state` pair fifteen times.
+    if summary["battle"] or summary["dialog"]:
+        for key in ("moves", "run"):
             summary.pop(key, None)
+        summary["no_walk"] = NO_WALK_IN_BATTLE if summary["battle"] else NO_WALK_IN_BOX
+
+    # In a battle the rest of the stepping fields go too -- they are read off a
+    # screen showing the fight -- and the fight takes their place: who you are
+    # against and what you can hit them with.
+    if summary["battle"]:
+        for key in ("on_warp", "warp", "faces"):
+            summary.pop(key, None)
+        # Facing goes with them, and says so: see FACING_UNREAD_IN_BATTLE. It is
+        # the one field here that a battle frame holds a *wrong* value for.
+        summary.pop("facing", None)
+        summary["facing_unread"] = FACING_UNREAD_IN_BATTLE
         enemy = (battle.get("enemy") or {}) if isinstance(battle, dict) else {}
         if enemy.get("species"):
             types = "/".join(enemy.get("types") or [])
@@ -1017,12 +1063,31 @@ def _annotate_batch_outcome(summary: dict, outcome: Optional[dict]) -> None:
     Without this the agent cannot tell a 16-step walk from one step and fifteen
     presses of its face against a tree.
     """
-    if not outcome or summary.get("battle"):
+    if not outcome:
         return
+    if summary.get("battle"):
+        # Including the settle flag, which says nothing on a battle frame: the
+        # watchdog watches the walk counter and the sprite step vectors, and an
+        # encounter freezes both mid-step, so it gives up on every battle press
+        # measured -- the entry frame and all five turns after it. The BATTLE
+        # lines already say what this frame is, and the coordinates beside them
+        # were measured as true, so the mid-transition caveat would be false.
+        return
+    # Before anything else, because it says the rest of the answer may not
+    # describe a resting frame at all. Every other field here is read off one.
+    if outcome.get("settled") is False:
+        summary["settled"] = False
     moved = outcome.get("moved")
     if moved is None:  # no walk actions in the batch — nothing to report
         return
     summary["moved"] = moved
+    if summary.get("dialog"):
+        # A walk that ends under an open box did not hit anything. `blocked_after`
+        # is inferred from a position that did not change, and while a box is up
+        # nothing moves whatever the ground is: two `walk_down` presses into Oak's
+        # dialog came back `blocked_after: 1` about a tile the player walks over
+        # every time. `no_walk` beside `moved: 0` says what actually stopped it.
+        return
     if outcome.get("blocked_after") is not None:
         summary["blocked_after"] = outcome["blocked_after"]
 
@@ -1464,8 +1529,12 @@ LEGACY_PRESS_FRAMES = 8
 LEGACY_WAIT_FRAMES = 12
 
 
-def _press_and_settle_or_wait(button: str) -> None:
+def _press_and_settle_or_wait(button: str) -> bool:
     """Press, then wait for the result to actually be observable.
+
+    Returns whether the game came to rest. False means the frame that follows is
+    mid-something and does not describe a resting place — see
+    ``_execute_action_batch_sync``, which carries that answer out to the payload.
 
     A fixed 20-frame wait returns while the game is still moving the player. A
     ledge hop takes about 40 frames, so the old cadence read the mid-air tile
@@ -1476,14 +1545,20 @@ def _press_and_settle_or_wait(button: str) -> None:
     hands control back rather than after a guess.
     """
     if hasattr(_emulator, "press_and_settle"):
-        _emulator.press_and_settle(button, LEGACY_PRESS_FRAMES)
-        return
+        return bool(_emulator.press_and_settle(button, LEGACY_PRESS_FRAMES))
     _emulator.press(button, LEGACY_PRESS_FRAMES)
     _emulator.tick(LEGACY_WAIT_FRAMES)
+    # An emulator that cannot tell when the game came to rest cannot report that
+    # it did not, which is exactly where it stood before settling existed.
+    return True
 
 
-def _execute_action_sync(action_str: str) -> None:
+def _execute_action_sync(action_str: str) -> bool:
     """Parse and execute a single action string on the emulator.
+
+    Returns whether the game was at rest afterwards. Only the pressing actions
+    can answer no; an explicit `wait_N` is a request for N frames and nothing
+    more, so it says nothing about what the game is in the middle of.
 
     Supported formats:
         press_X       — press button X for 10 frames, wait 20 frames
@@ -1508,30 +1583,28 @@ def _execute_action_sync(action_str: str) -> None:
                     break
             except Exception:
                 pass
-        return
+        return True
 
     # Split into tokens
     parts = action_str.split("_")
 
     if parts[0] == "press" and len(parts) >= 2:
         button = "_".join(parts[1:])
-        _press_and_settle_or_wait(button)
-        return
+        return _press_and_settle_or_wait(button)
 
     if parts[0] == "walk" and len(parts) >= 2:
-        _press_and_settle_or_wait(parts[1])
-        return
+        return _press_and_settle_or_wait(parts[1])
 
     if parts[0] == "hold" and len(parts) >= 3:
         button = "_".join(parts[1:-1])
         frames = int(parts[-1])
         _emulator.press(button, frames)
-        return
+        return True
 
     if parts[0] == "wait" and len(parts) == 2:
         frames = int(parts[1])
         _emulator.tick(frames)
-        return
+        return True
 
     raise ValueError(f"Unknown action format: {action_str}")
 
@@ -1576,11 +1649,12 @@ def _execute_action_batch_sync(actions: list[str]) -> dict:
     moved = 0
     blocked_after: Optional[int] = None
     walked_at_all = False
+    settled = True
     tile = _player_tile_sync() if any(_is_walk_action(item) for item in actions) else None
 
     for index, action_str in enumerate(actions, start=1):
         is_walk = _is_walk_action(action_str)
-        _execute_action_sync(action_str)
+        settled = _execute_action_sync(action_str) and settled
         executed += 1
         if not is_walk or tile is None:
             continue
@@ -1600,6 +1674,15 @@ def _execute_action_batch_sync(actions: list[str]) -> dict:
         "executed": executed,
         "moved": moved if walked_at_all else None,
         "blocked_after": blocked_after,
+        # Whether the game was still at rest when the batch handed back. A frame
+        # that is not is the one place the payload can pair one map's name with
+        # another map's coordinates: sampled ten frames into a gate warp, the
+        # reads say "Route 2 (5,0)" -- Route 2's name with the gate's tile, while
+        # the true landing is (3,11). `settle` normally hides that by waiting for
+        # the transition to finish; when it gives up, the answer has to say so
+        # instead of describing whatever it caught mid-flight. `/load` has
+        # reported exactly this since it was written.
+        "settled": settled,
     }
 
 

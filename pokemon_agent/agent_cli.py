@@ -315,7 +315,17 @@ def state_lines(state: dict) -> list[str]:
     player = state.get("player") or {}
     position = player.get("position") or {}
     map_name = (state.get("map") or {}).get("map_name") or "?"
-    lines = [f"{map_name} ({position.get('x')},{position.get('y')}) facing {player.get('facing')}"]
+    x, y = position.get("x"), position.get("y")
+    where = f"{map_name} "
+    where += f"({x},{y})" if x is not None and y is not None else "(position unread)"
+    # Same reason the action payload refuses it: an encounter interrupts the step
+    # that started it, so in a battle the facing byte is still the direction from
+    # before that step. Two of four measured battle frames read a direction the
+    # overworld disagreed with the moment the fight ended.
+    if (state.get("battle") or {}).get("in_battle"):
+        lines = [f"{where} facing unread in a battle"]
+    else:
+        lines = [f"{where} facing {player.get('facing') or 'unread'}"]
 
     party = state.get("party") or []
     if party:
@@ -412,8 +422,17 @@ def action_lines(payload: dict) -> str:
     Nothing is dropped from the API -- `--json` still prints the object and the
     Python client still reads every field. This is only what the shell prints.
     """
-    where = f"{payload.get('map')} ({payload.get('x')},{payload.get('y')})"
-    parts = [f"{where} facing {payload.get('facing')}"]
+    # Never `(None,None) facing None`. A missing field here means the server could
+    # not read it off this frame, and printing None as though it were a reading is
+    # the worst of the three things this line can do: a battle payload used to
+    # render `Mt Moon 1F (None,None) facing None`, which cost a whole `poke state`
+    # call to undo. Say the field is unread and the next call is about the game
+    # again rather than about the answer.
+    x, y = payload.get("x"), payload.get("y")
+    where = f"{payload.get('map') or 'map unread'} "
+    where += f"({x},{y})" if x is not None and y is not None else "(position unread)"
+    facing = payload.get("facing")
+    parts = [f"{where} facing {facing}" if facing else where]
 
     moved = payload.get("moved")
     if moved is not None:
@@ -425,9 +444,28 @@ def action_lines(payload: dict) -> str:
 
     lines = ["  ".join(parts)]
 
+    # Before anything read off the frame, because it says the frame is not one the
+    # game has come to rest on: mid-transition the map name and the coordinates
+    # can belong to two different maps.
+    if payload.get("settled") is False:
+        lines.append(
+            "the game was still moving when this was read - it is mid-transition, "
+            "so the map and the coordinates may not belong together. wait and look again"
+        )
+
     run = payload.get("run") or {}
     if run:
         lines.append("run " + " ".join(f"{d}:{n}" for d, n in run.items()))
+    # The two are mutually exclusive by construction: the server sends `no_walk`
+    # exactly on the frames where it drops `run`, and it is the reason it dropped
+    # them. Printing nothing there is what let a battle or a dialog look like a
+    # dead end.
+    if payload.get("no_walk"):
+        lines.append(str(payload["no_walk"]))
+    # Which field is missing from the first line, and why. Without it the line
+    # just stops after the coordinates and reads as though facing did not matter.
+    if payload.get("facing_unread"):
+        lines.append(str(payload["facing_unread"]))
     exits = payload.get("exits") or {}
     if exits:
         rendered = []
@@ -446,10 +484,17 @@ def action_lines(payload: dict) -> str:
     if payload.get("on_warp"):
         warp = payload.get("warp") or {}
         step = warp.get("step")
-        flags.append(f"on a warp to {warp.get('to')}" + (f", step {step}" if step else ""))
+        # A warp whose target map the reader could not name is still a warp worth
+        # knowing you are standing on; "on a warp to None" made it read as one
+        # that leads nowhere.
+        destination = f" to {warp['to']}" if warp.get("to") else " (destination unread)"
+        flags.append(f"on a warp{destination}" + (f", step {step}" if step else ""))
     if payload.get("here_before"):
         flags.append(f"stood here {payload['here_before']} times before")
-    if payload.get("dialog"):
+    # Not in a battle, where the flag is only saying that battle text is on
+    # screen: the BATTLE block below already says that, and "dialog open" next to
+    # it reads as an NPC talking mid-fight.
+    if payload.get("dialog") and not payload.get("battle"):
         flags.append("dialog open")
     if flags:
         lines.append("  ".join(flags))
@@ -459,8 +504,14 @@ def action_lines(payload: dict) -> str:
         lines.append(f"BATTLE vs {enemy}" if enemy else "BATTLE")
         if payload.get("your_moves"):
             lines.append("moves " + ", ".join(payload["your_moves"]))
-        if payload.get("menu"):
-            lines.append(f"menu {payload['menu']} on {payload.get('highlighted')}")
+        menu, highlighted = payload.get("menu"), payload.get("highlighted")
+        if menu == "other":
+            # `other` is the reader saying neither battle menu is up, so there is
+            # no cursor to name. It printed "menu other on None", which reads as a
+            # menu with a missing entry rather than as battle text on screen.
+            lines.append("no battle menu up - this frame is text or an animation")
+        elif menu:
+            lines.append(f"menu {menu} on {highlighted}" if highlighted else f"menu {menu}")
     if payload.get("screen_text"):
         lines.append(str(payload["screen_text"]))
     return "\n".join(lines)

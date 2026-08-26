@@ -304,6 +304,24 @@ def test_state_reports_a_battle(stub, capsys):
     assert "battle: Weedle L3 15/15" in capsys.readouterr().out
 
 
+def test_state_refuses_the_facing_it_reads_during_a_battle(stub, capsys):
+    """The tile is still true in a battle. The direction is not.
+
+    An encounter interrupts the step that started it, so the facing byte holds
+    the direction from before that step: two of four battle frames measured in
+    Mt. Moon read a direction the overworld disagreed with the moment the fight
+    ended. `poke act` refuses it; this is the same frame read a different way.
+    """
+    payload = dict(STATE_PAYLOAD)
+    payload["battle"] = {"in_battle": True, "enemy": {"species": "Weedle"}}
+    stub.route("GET", "/state", payload)
+
+    assert run(stub, "state") == 0
+    out = capsys.readouterr().out
+    assert "Pewter City (13,13) facing unread in a battle" in out
+    assert "facing left" not in out
+
+
 def test_state_names_the_moves_that_have_run_dry(stub, capsys):
     """`poke fight` was refused 12 times for a move with no PP left.
 
@@ -1028,6 +1046,98 @@ def test_a_battle_says_what_it_is_and_what_you_can_hit_it_with():
     assert "BATTLE vs Zubat L7" in line
     assert "Ember, Growl" in line
     assert "menu moves on Ember" in line
+
+
+#: What the server sends on a battle frame: the position it can still read, the
+#: fight, and a sentence wherever it dropped a field -- the walk directions,
+#: which no battle frame can take, and facing, which it holds a stale value for.
+BATTLE = {
+    "actions_executed": 1,
+    "map": "Mt Moon 1F",
+    "x": 15,
+    "y": 33,
+    "facing_unread": "facing unread in a battle: the byte is stale from before the encounter",
+    "exits": {"Route 4": [15, 35]},
+    "mode": "battle",
+    "dialog": True,
+    "battle": True,
+    "hp": "15/70",
+    "no_walk": "no walking in a battle: the d-pad drives the battle menu",
+    "enemy": "Geodude L10 28/28 (Rock/Ground)",
+    "your_moves": ["Scratch", "Ember"],
+    "menu": "other",
+}
+
+
+def test_a_battle_line_carries_the_position_the_payload_knows():
+    """Measured live: `Mt Moon 1F (None,None) facing None hp 39/73 exits Mt Mo…`.
+
+    The coordinates were in RAM the whole time -- a battle does not move the
+    player -- and this line printing None for them cost a `poke state` call to
+    recover, fifteen times in one 457-call session.
+    """
+    line = agent_cli.action_lines(BATTLE)
+
+    assert "Mt Moon 1F (15,33)" in line
+    assert "None" not in line
+    # And the field the server refused is named, rather than the line simply
+    # ending early as though facing had stopped mattering.
+    assert "facing unread in a battle" in line
+
+
+def test_a_frame_with_no_position_says_so_rather_than_printing_none():
+    """When the server really could not read one, say that. A null teaches nothing."""
+    line = agent_cli.action_lines({"map": "Mt Moon 1F", "hp": "15/70"})
+
+    assert "Mt Moon 1F (position unread)" in line
+    assert "None" not in line
+    # No facing either: an unread field is left out, not rendered as a reading.
+    assert "facing" not in line
+
+
+def test_the_reason_there_are_no_walk_directions_is_printed():
+    """Otherwise the line looks like an overworld frame with nowhere to go."""
+    line = agent_cli.action_lines(BATTLE)
+
+    assert "the d-pad drives the battle menu" in line
+    assert "run " not in line
+
+
+def test_battle_text_is_not_rendered_as_a_menu_with_a_missing_entry():
+    """`menu: other` is the reader saying no battle menu is up, so there is no
+    cursor to name. It used to print "menu other on None"."""
+    line = agent_cli.action_lines(BATTLE)
+
+    assert "no battle menu up" in line
+    assert "on None" not in line
+
+
+def test_a_battle_still_says_which_entry_the_cursor_is_on():
+    line = agent_cli.action_lines({**BATTLE, "menu": "moves", "highlighted": "Ember"})
+
+    assert "menu moves on Ember" in line
+
+
+def test_an_unsettled_frame_warns_before_the_position_is_believed():
+    """`settled: false` means the game was still moving when this was read.
+
+    Ten frames into a gate warp the reads say `Route 2 (5,0)`: one map's name
+    with another map's coordinates. The line has to arrive before anything read
+    off that frame, because everything else on it came from the same read.
+    """
+    line = agent_cli.action_lines({**WALK, "settled": False})
+
+    assert "still moving" in line
+    assert line.splitlines()[1].startswith("the game was still moving")
+
+
+def test_a_warp_whose_destination_is_unread_is_still_a_warp():
+    """ "on a warp to None" reads as a warp that leads nowhere, which is worse
+    than saying the destination could not be read."""
+    line = agent_cli.action_lines({**WALK, "on_warp": True, "warp": {"step": "up"}})
+
+    assert "on a warp (destination unread), step up" in line
+    assert "None" not in line
 
 
 def test_the_shaped_line_is_much_smaller_than_the_object():

@@ -50,6 +50,10 @@ WARP_STATES = ("route2_north_of_forest.state",)
 WARP_POSITION = (3, 11)
 WARP_TARGET_MAP = 47
 
+#: Mt. Moon 1F, a few steps inside the entrance. Wild encounters here land about
+#: one step in ten, which is what makes a battle frame cheap to reach on demand.
+ENCOUNTER_STATES = ("mtmoon_1f_arrived.state", "mt_moon_1f_entered.state")
+
 #: The full sweep walks every direction at every distinct resting position in
 #: saves/, which takes minutes. The default sample is enough to catch a rule
 #: that has gone wrong; raise it to re-run the whole corpus.
@@ -248,3 +252,48 @@ def test_ordinary_terrain_still_agrees_with_the_emulator(emulator, reader, corpu
     assert mismatches == []
     for start, direction, predicted, landed in ledge_landings:
         assert predicted == landed, f"ledge {direction} at {start}: said {predicted}, got {landed}"
+
+
+@needs_rom
+def test_a_battle_frame_reads_the_tile_the_player_is_standing_on(emulator, reader):
+    """The coordinates survive a wild battle, so a battle payload may report them.
+
+    The action payload used to drop x, y and facing on any battle frame, on the
+    grounds that a battle screen has no position, and `poke act` rendered
+    `Mt Moon 1F (None,None) facing None`. wXCoord and wYCoord are untouched by
+    the fight: this walks into an encounter, reads them off the battle frame,
+    flees, and reads the same tile back off the overworld.
+
+    Facing is deliberately not compared here — the same measurement run four
+    times showed the facing byte on a battle frame is the direction from *before*
+    the step the encounter interrupted, which is why the payload refuses to
+    report it. See ``server.FACING_UNREAD_IN_BATTLE``.
+    """
+    emulator.load_state(str(_pick(ENCOUNTER_STATES)))
+    emulator.settle()
+
+    for step in range(120):
+        if reader.read_battle()["in_battle"]:
+            break
+        emulator.press_and_settle(DIRECTIONS[step % 4])
+    else:
+        pytest.skip("no wild encounter in 120 steps — nothing to read a battle frame from")
+
+    on_the_battle_frame = reader.read_coordinates()
+
+    # RUN, and only ever press a direction with the top battle menu confirmed up.
+    # A direction pressed anywhere else lands on the overworld and turns the
+    # player, which is the comparison this test is trying to make.
+    for _ in range(60):
+        if not reader.read_battle()["in_battle"]:
+            break
+        if reader.at_battle_top_menu():
+            for button in ("down", "right", "a"):
+                emulator.press_and_settle(button)
+        else:
+            emulator.press_and_settle("b")
+    if reader.read_battle()["in_battle"]:
+        pytest.skip("could not flee — the comparison needs an overworld frame back")
+    emulator.settle()
+
+    assert reader.read_coordinates() == on_the_battle_frame

@@ -444,8 +444,13 @@ class Result:
     x: Optional[int] = None
     y: Optional[int] = None
     facing: Optional[str] = None
-    #: Directions that are walkable from where the player is standing.
+    #: Directions that are walkable from where the player is standing. Empty on a
+    #: frame that cannot take a step at all — read ``no_walk`` before concluding
+    #: anything from that, because "in a battle" and "walled in" look identical
+    #: from an empty list.
     directions: list[str] = field(default_factory=list)
+    #: Why there are no directions, when the frame is a battle or an open box.
+    no_walk: Optional[str] = None
     mode: Optional[str] = None
     dialog: bool = False
     in_battle: bool = False
@@ -474,6 +479,12 @@ class Result:
         return None if self.x is None or self.y is None else (self.x, self.y)
 
     @property
+    def _where(self) -> str:
+        """``(x,y)``, or a phrase saying it was not read. Never ``(None,None)``."""
+        position = self.position
+        return "(position unread)" if position is None else f"({position[0]},{position[1]})"
+
+    @property
     def blocked(self) -> bool:
         return self.blocked_after is not None
 
@@ -493,6 +504,7 @@ class Result:
             y=payload.get("y"),
             facing=payload.get("facing"),
             directions=list(payload.get("moves") or []),
+            no_walk=payload.get("no_walk"),
             mode=payload.get("mode"),
             dialog=bool(payload.get("dialog")),
             in_battle=bool(payload.get("battle")),
@@ -517,19 +529,21 @@ class Result:
 
     def __str__(self) -> str:
         if self.in_battle:
-            # Say the map, and say why there are no coordinates. A battle
-            # payload carries no x or y, so `.position` is None here and this
-            # line has no "(x,y) facing" in it. One session, unable to find
-            # `.position` — `__dict__` does not list a property and
-            # `inspect.getsource` raises on a dataclass `__repr__` — fell back
-            # to a regex over this string, and the regex quietly returned None
-            # the first time a Zubat appeared. Its 120-step search stopped at
-            # step 6 printing "no pos in: battle vs Zubat...".
+            # A battle payload carries the position now: the coordinates are the
+            # tile the player is standing on and will still be standing on when
+            # the fight ends. It did not, and one session — unable to find
+            # `.position`, since `__dict__` does not list a property and
+            # `inspect.getsource` raises on a dataclass `__repr__` — fell back to
+            # a regex over this string. The regex returned None the first time a
+            # Zubat appeared and its 120-step search stopped at step 6 printing
+            # "no pos in: battle vs Zubat...". So this line says where, every
+            # time, and says "position unread" rather than printing a None when
+            # the server could not read one.
             return (
-                f"battle on {self.map} vs {self.enemy or '?'} hp {self.hp}/{self.max_hp} "
-                "(no position while in battle)"
+                f"battle on {self.map} {self._where} vs {self.enemy or '?'} "
+                f"hp {self.hp}/{self.max_hp}"
             )
-        where = f"{self.map} ({self.x},{self.y}) facing {self.facing}"
+        where = f"{self.map} {self._where}" + (f" facing {self.facing}" if self.facing else "")
         moved = "" if self.moved is None else f" moved {self.moved}"
         blocked = "" if self.blocked_after is None else f" blocked after {self.blocked_after}"
         warp = " on a warp" if self.on_warp else ""

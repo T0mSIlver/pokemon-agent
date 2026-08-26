@@ -313,30 +313,64 @@ def test_a_plan_written_as_one_string_means_the_same_as_separate_tokens(stub, po
     ]
 
 
-def test_a_battle_result_says_the_map_and_why_it_has_no_coordinates():
-    """A battle payload carries no x or y, so `.position` is None here.
+def test_a_battle_result_says_where_the_player_is_standing():
+    """A battle payload carries x and y now: the battle does not move the player.
 
     One session could not find `.position` — `__dict__` does not list a
     property and `inspect.getsource` raises on a dataclass `__repr__` — and
     fell back to a regex over this string. The regex returned None the first
     time a Zubat appeared and its 120-step search stopped at step 6 printing
-    "no pos in: battle vs Zubat...".
+    "no pos in: battle vs Zubat...". The coordinates were readable on that
+    frame the whole time.
     """
     result = agent_api.Result.from_payload(
         {
             "actions_executed": 1,
             "map": "Mt Moon 1F",
+            "x": 15,
+            "y": 33,
             "mode": "battle",
             "battle": True,
             "hp": "22/73",
             "enemy": "Zubat L7 23/23 (Poison/Flying)",
+            "no_walk": "no walking in a battle: the d-pad drives the battle menu",
         }
     )
 
-    assert result.position is None
+    assert result.position == (15, 33)
     text = str(result)
-    assert "Mt Moon 1F" in text
-    assert "no position while in battle" in text
+    assert "Mt Moon 1F (15,33)" in text
+    assert "Zubat" in text
+    assert "None" not in text
+
+
+def test_a_result_with_no_position_says_so_rather_than_printing_none():
+    """A frame whose position could not be read is a refusal, not a coordinate.
+
+    `(None,None)` is a well-formed answer with a hole in it: it reads as a
+    reading, and the two things a caller does with it — parse it, or believe
+    it — both go wrong.
+    """
+    result = agent_api.Result.from_payload({"map": "Mt Moon 1F", "battle": True})
+
+    assert "position unread" in str(result)
+    assert "None,None" not in str(result)
+
+
+def test_no_walk_travels_with_the_empty_direction_list():
+    """`directions == []` alone cannot tell a battle from being walled in."""
+    result = agent_api.Result.from_payload(
+        {
+            "map": "Oak's Lab",
+            "x": 5,
+            "y": 3,
+            "dialog": True,
+            "no_walk": "no walking while a box is open: the d-pad works the box, not the player",
+        }
+    )
+
+    assert result.directions == []
+    assert "the d-pad works the box" in (result.no_walk or "")
 
 
 def test_saves_lists_the_named_ones(stub, poke):
