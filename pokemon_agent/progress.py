@@ -17,6 +17,13 @@ from typing import Any, Optional
 
 JsonDict = dict[str, Any]
 
+AUTO_SAVE_PREFIX = "auto__"
+
+#: How many autosaves to keep. At ~170 KB each and one per map change, objective
+#: change and battle, this is the difference between a bounded 50 MB and the
+#: 610 MB that filled the disk and killed a run mid-cave.
+DEFAULT_AUTO_SAVE_LIMIT = 300
+
 
 def slugify(value: str) -> str:
     return re.sub(r"[^a-z0-9]+", "-", value.lower()).strip("-") or "unknown"
@@ -25,8 +32,15 @@ def slugify(value: str) -> str:
 class ProgressMonitor:
     """Auto-save triggers and stuck detection over the observation stream."""
 
-    def __init__(self, *, data_dir: Path, trajectory_limit: int = 60) -> None:
+    def __init__(
+        self,
+        *,
+        data_dir: Path,
+        trajectory_limit: int = 60,
+        auto_save_limit: int = DEFAULT_AUTO_SAVE_LIMIT,
+    ) -> None:
         self.data_dir = data_dir
+        self.auto_save_limit = auto_save_limit
         self.recent_trajectory: deque[JsonDict] = deque(maxlen=trajectory_limit)
         self.last_objective_id: Optional[str] = None
         self.action_events_since_objective_change = 0
@@ -76,7 +90,34 @@ class ProgressMonitor:
                     ],
                 }
             )
+        if created:
+            self._prune_auto_saves(saves_dir)
         return created
+
+    def _prune_auto_saves(self, saves_dir: Path) -> None:
+        """Keep the newest autosaves and drop the rest.
+
+        A save is ~170 KB and one lands on every map change, objective change and
+        battle. Left alone that is a few hundred megabytes a day: this harness
+        accumulated 3,651 of them and filled the disk, which killed a run mid-cave
+        with `No space left on device` and cost four hours before anyone noticed.
+
+        Only ``auto__`` files are considered. A save someone named is a decision
+        and is never touched.
+        """
+        try:
+            autos = sorted(
+                saves_dir.glob(f"{AUTO_SAVE_PREFIX}*.state"),
+                key=lambda p: p.stat().st_mtime,
+                reverse=True,
+            )
+        except OSError:
+            return
+        for stale in autos[self.auto_save_limit :]:
+            try:
+                stale.unlink()
+            except OSError:
+                pass  # a save we cannot delete is not worth failing a turn over
 
     def detect_stuck(
         self,
