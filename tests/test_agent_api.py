@@ -344,6 +344,48 @@ def test_a_battle_result_says_where_the_player_is_standing():
     assert "None" not in text
 
 
+def test_a_battle_result_carries_the_priced_moves_and_what_is_coming_back():
+    result = agent_api.Result.from_payload(
+        {
+            "battle": True,
+            "map": "Mt Moon 1F",
+            "x": 15,
+            "y": 33,
+            "hp": "39/73",
+            "you": "Charmeleon L25",
+            "enemy": "Zubat L9 28/28 (Poison/Flying)",
+            "your_moves": ["Ember Fire 12PP 41-49 KO in 1", "Growl Normal 40PP no damage"],
+            "incoming": "Leech Life up to 1",
+        }
+    )
+
+    assert result.you == "Charmeleon L25"
+    assert result.battle_moves[0].endswith("KO in 1")
+    assert result.incoming == "Leech Life up to 1"
+    assert result.no_damage is None and result.locked_in is None
+
+
+def test_a_battle_result_prints_the_two_notes_that_predict_a_refusal():
+    """`locked_in` and `no_damage` both mean the next `fight` call is refused.
+
+    A script that reads only `str(result)` has to see them, or it retries the
+    same refusal -- which is what a run using Rage 77 times did.
+    """
+    result = agent_api.Result.from_payload(
+        {
+            "battle": True,
+            "map": "Mt Moon B2F",
+            "x": 11,
+            "y": 19,
+            "hp": "73/73",
+            "enemy": "Rattata L13 17/32 (Normal)",
+            "locked_in": "Rage has locked this Pokemon in: the game keeps attacking with it.",
+        }
+    )
+
+    assert "Rage has locked this Pokemon in" in str(result)
+
+
 def test_a_result_with_no_position_says_so_rather_than_printing_none():
     """A frame whose position could not be read is a refusal, not a coordinate.
 
@@ -447,6 +489,50 @@ def test_calc_picks_the_obvious_move(stub, poke):
     assert calc.best.move == "Scratch"
     assert calc.best.high == 11
     assert calc.threat == 12
+
+
+def test_the_obvious_move_is_never_one_with_no_pp(stub, poke):
+    """`best` used to rank the whole table, dry moves included.
+
+    So it named an Ember at 0 PP as the obvious pick and `poke fight ember` was
+    then refused -- 12 times in one run, whose auto-saved battle entries had a
+    dry damaging move in 54 of 106 frames.
+    """
+    stub.route(
+        "GET",
+        "/calc",
+        {
+            "enemy": {"species": "Zubat", "level": 9, "hp": 28, "types": ["Poison", "Flying"]},
+            "moves": [
+                {"move": "Ember", "damage": [39, 46], "turns_to_ko": None, "pp": 0},
+                {"move": "Rage", "damage": [8, 10], "turns_to_ko": 4, "pp": 20},
+                {"move": "Growl", "damage": [0, 0], "turns_to_ko": None, "pp": 39},
+            ],
+            "threat": 1,
+            "threat_move": "Leech Life",
+        },
+    )
+
+    calc = poke.calc()
+
+    assert calc.best.move == "Rage"
+    assert "out of PP" in str(calc.moves[0])
+    assert calc.moves[0].usable is False
+    assert calc.threat_move == "Leech Life"
+
+
+def test_a_table_with_nothing_usable_has_no_obvious_move(stub, poke):
+    stub.route(
+        "GET",
+        "/calc",
+        {
+            "enemy": {"species": "Zubat", "level": 9, "hp": 28, "types": ["Poison", "Flying"]},
+            "moves": [{"move": "Ember", "damage": [39, 46], "turns_to_ko": None, "pp": 0}],
+            "threat": 1,
+        },
+    )
+
+    assert poke.calc().best is None
 
 
 def test_progress_and_map_are_shaped(stub, poke):

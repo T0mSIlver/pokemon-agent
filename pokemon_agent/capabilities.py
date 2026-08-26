@@ -1256,9 +1256,17 @@ def frontier_payload(snapshot: dict, explored: Optional[dict], seen: Collection[
 # /calc
 # ---------------------------------------------------------------------------
 
-#: Gen 1 stats are DV- and EV-dependent and neither is in the enemy battle
-#: struct the reader exposes, so an unknown stat is estimated from the species'
-#: base stat at an average DV. Off by a few points, not by a factor.
+#: Fallback only. The Red reader now hands over the live ``battle_struct`` stats
+#: for both sides, which are the numbers the engine itself multiplies; this
+#: estimate exists for readers that cannot (FireRed) and for a battle frame read
+#: before the struct is populated.
+#:
+#: It is a bad estimate and the measurement says so. Across 123 auto-saved battle
+#: frames from one run it got 196 of 492 enemy stats wrong, because it can see
+#: neither DVs nor stat stages: a Geodude whose Defense the agent had just cut
+#: with Leer read 22 against an actual 14, a 57% overstatement of how well it
+#: resists. It is worse still on the player's side, where it cannot see the
+#: badge boost or Rage's accumulating Attack.
 DEFAULT_DV = 8
 
 
@@ -1299,27 +1307,45 @@ def _damage(attacker: dict, move_name: str, defender: dict) -> Optional[tuple[in
         return None
 
 
-def calc_payload(battle: dict, party: Sequence[dict], moves: Sequence[dict]) -> dict:
+def calc_payload(
+    battle: dict,
+    party: Sequence[dict],
+    moves: Sequence[dict],
+    active: Optional[dict] = None,
+) -> dict:
     """What each of the active Pokemon's moves would do, and what it faces.
 
     Damage is the honest Gen 1 range — the game rolls 217..255 out of 255 — so
     the pair is (worst roll, best roll), and ``turns_to_ko`` counts worst rolls.
+
+    *active* is the Pokemon on the field, read from ``wBattleMon``. It is the
+    right attacker and ``party[0]`` is only a stand-in for it: slot 0 is the
+    wrong Pokemon after a switch, and even before one its stats are the
+    unboosted party numbers rather than the ones the engine fights with.
+
+    A move with no PP left gets ``turns_to_ko: None``. Its damage stays on the
+    row, because "Ember would take 41 off it" is still true and still the reason
+    to go and restore the PP — but it is not a move that kills anything this
+    turn, and ranking it as though it were is a measured failure, not a
+    hypothetical one: across 106 auto-saved battle entries from one run, 54 of
+    them showed a damage range for a move the game would have refused.
     """
     if not battle.get("in_battle"):
         raise Conflict("Not in a battle. There is nothing to calculate against.")
     enemy_mon = battle.get("enemy") or {}
     if not enemy_mon.get("species"):
         raise Conflict("The enemy Pokemon is not readable yet — the battle is still starting.")
-    if not party:
+    if not (active or party):
         raise Conflict("No party Pokemon to attack with.")
 
-    attacker = _combatant(party[0])
+    attacker = _combatant(active or party[0])
     defender = _combatant(enemy_mon)
     enemy_hp = int(enemy_mon.get("hp") or 0)
 
     entries = []
     for move in moves:
         name = str(move.get("name") or "")
+        pp = move.get("pp")
         record = gamedata.move(name)
         if record is None:
             entries.append(
@@ -1330,12 +1356,12 @@ def calc_payload(battle: dict, party: Sequence[dict], moves: Sequence[dict]) -> 
                     "effectiveness": None,
                     "damage": [0, 0],
                     "turns_to_ko": None,
-                    "pp": move.get("pp"),
+                    "pp": pp,
                 }
             )
             continue
         rolled = _damage(attacker, name, defender) or (0, 0)
-        turns = math.ceil(enemy_hp / rolled[0]) if rolled[0] > 0 and enemy_hp > 0 else None
+        killable = rolled[0] > 0 and enemy_hp > 0 and pp != 0
         entries.append(
             {
                 "move": name,
@@ -1343,18 +1369,19 @@ def calc_payload(battle: dict, party: Sequence[dict], moves: Sequence[dict]) -> 
                 "power": record["power"],
                 "effectiveness": gamedata.effectiveness(record["type"], defender["types"]),
                 "damage": [rolled[0], rolled[1]],
-                "turns_to_ko": turns,
+                "turns_to_ko": math.ceil(enemy_hp / rolled[0]) if killable else None,
                 # Without this `calc` ranks a move at 0 PP as the best available
                 # and `poke fight` then refuses it. That happened 12 times.
-                "pp": move.get("pp"),
+                "pp": pp,
             }
         )
 
     threat = 0
+    threat_move = None
     for name in enemy_mon.get("moves") or ():
         rolled = _damage(defender, str(name), attacker)
-        if rolled is not None:
-            threat = max(threat, rolled[1])
+        if rolled is not None and rolled[1] > threat:
+            threat, threat_move = rolled[1], str(name)
 
     return {
         "moves": entries,
@@ -1365,6 +1392,10 @@ def calc_payload(battle: dict, party: Sequence[dict], moves: Sequence[dict]) -> 
             "types": list(enemy_mon.get("types") or []),
         },
         "threat": threat,
+        # Naming it costs eight bytes and turns "worst incoming: 21" from a
+        # number into something you can act on — a Water move on a Charmeleon is
+        # a reason to switch, 21 on its own is only a reason to count HP.
+        "threat_move": threat_move,
     }
 
 

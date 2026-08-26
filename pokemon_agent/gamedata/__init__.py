@@ -177,6 +177,18 @@ def damage_range(
     Every step truncates. Gen 1 has no split defensive stats: a special move
     attacks with the user's Special and is resisted by the target's Special.
     A move with no power (status moves) and an immunity both give (0, 0).
+
+    The range is the *non-critical* one. A Gen 1 critical hit substitutes twice
+    the level into the first line, so it lands near 1.8x the top of this range,
+    and its chance is the attacker's base Speed over 512 — 16% for a Charmeleon,
+    not a rounding error. Checked against the ROM: 42 single enemy hits driven
+    in-process all landed inside the predicted range, and the one measured
+    overshoot (26 against a predicted 15-18) was a crit. Widening the range to
+    cover crits would make it useless for "can this kill me"; this is the honest
+    common case, and the number to plan with.
+
+    Accuracy is not in here either. A 100%-accurate move in Gen 1 still misses
+    about 1 turn in 256.
     """
     entry = move(move_name)
     if entry is None:
