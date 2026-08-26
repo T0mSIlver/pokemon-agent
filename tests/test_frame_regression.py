@@ -103,6 +103,13 @@ CASES = {
 NO_SNAPSHOT_LABELS = ("outdoor_pallet_town", "battle_route1", "interior_oaks_lab")
 
 #: sha256 of the two PNGs each case writes, by label.
+#:
+#: Every `annotated` digest moved when the decoded floor started reaching the
+#: explored map, and only those: no `raw` frame changed. The mini-map inset used
+#: to draw a mosaic of the windows the player happened to have stood in, because
+#: `map_terrain` never survived the trip out of the emulator and `adopt_truth`
+#: had no caller that reached it. It now draws the map. Pallet Town went from
+#: "165 seen" to "360 seen", which is all of it.
 EXPECTED = {
     "battle_forest_dialog": {
         "raw": "ae3d4f0b9cae093df8642bf5b728926ee9b10dbdfd2317d73f4c763f6431e87e",
@@ -130,43 +137,43 @@ EXPECTED = {
     },
     "dialog_oaks_lab": {
         "raw": "5594e7427de1e25ed51a90e7fdee69b8acfe5592499ac5676056fd8956673b72",
-        "annotated": "b3b81373af8ce6608192e50ffdbdb61a2e196a556de508f67d4c3bd67a0e072c",
+        "annotated": "184d8d65e8a96f0b64f16dc7e40d9821e2bd20bb6193b95e82e41c487f32ca6f",
     },
     "dialog_pewter_gym": {
         "raw": "fa49560a15c71b6a2fc0e80e0ee96e7abe6d4c92ad2c23432766290fd681cb53",
-        "annotated": "1c72e2e0674f601551d00d455520139d296b163b42c903c102606978b9adfefa",
+        "annotated": "1e7017fb32b08f44bf8a7a052a0655087d5ce7e7bad483f17021d185dd424b14",
     },
     "dialog_viridian_city": {
         "raw": "8380d26edb13cca078bad53010e163cbab7df02560fc63c085e9e0a30520200b",
-        "annotated": "ce1be95e56efbcf22b2ca069f1a5b6261517087d3ecc65064ae74ee32f13e353",
+        "annotated": "c045a1817bb99f25968b53593d19df2516af7f866bced7bd1bb3fba5a21687c0",
     },
     "inset_forest_maze": {
         "raw": "7d501d471d776679de680531991015c7791748a751476ff4c67a447a16fdf6fb",
-        "annotated": "cea6cd6eef4a0fe937ed9b28fd0999abc243aeec0e706e770cc726530a054149",
+        "annotated": "172806b97f10085a8fa292c1af9ee3a6b7e57f7b379da7b3ee170902cc6e5f8c",
     },
     "inset_forest_mid": {
         "raw": "fb311377caf5c30683b9d9629e399fc95b3ae687b0a4d6c0d0c043584793d071",
-        "annotated": "9d98785c59e55f36becaf0f0a0133a2fb059d697cb0bea92a2e665868b8b47a1",
+        "annotated": "5ce2ffb818f7e2dca9b99821231fd52b586896da01ddeb448935c3ddd7d6a32c",
     },
     "inset_forest_north": {
         "raw": "2623ec9e1e7e515eaf873073d986528fca402cac5354b42279b4216a50613a3a",
-        "annotated": "1315c41e4b4a177214e43c4d38dfa3b48aa76c93315a0c1003988803290e6434",
+        "annotated": "28399e0085673fab2b6866b536504ae15924a042dc389abfceaf1e49aae8918e",
     },
     "interior_blues_house": {
         "raw": "5d3921a2ed2f1556c9a5f0c2cc5217bbbc7deeba8d8fccd44087582a122f50ec",
-        "annotated": "46517fcad1a64bcdaaac46e7db0685de1051a4303c188dc5a44f014e26421bc9",
+        "annotated": "d6c7dab06e74ad5968bc03e05a9a4a5b53cab6348365fd25918839b19aa777a0",
     },
     "interior_forest_gate_npcs": {
         "raw": "e929e0941a8ff371ba86e18982194eba0b443d18b43d2853f7bbe6ac418975c9",
-        "annotated": "efe1f88b38a54db8923c910e6e11d04c28a168844131d86c8fb56afdafb8526f",
+        "annotated": "79d69dd43f117560b04effa3d8f5ba0da90b63f798666d0b4dbb526cab818bf0",
     },
     "interior_north_gate_npcs": {
         "raw": "2eaf505ee4cdd31eb64400ac3332ec824a23840d4ac72a4d65a4cb6deb938371",
-        "annotated": "f5543f12bc7d5aaa44ce1c5c23b588df24e275cf6bc2f9175da2390dabe481d4",
+        "annotated": "255f9ba2018d89495551210cc2efbef036b5d9fd4155150fed4f712e6ffb4c2c",
     },
     "interior_oaks_lab": {
         "raw": "9c4698235d465a30133b3bdf0ff3123112670ba31b25e414923b04b38e6c04c6",
-        "annotated": "35a50077bd99da28e9e195cb0b9415356371045efeead20142f5bc16c0d996e3",
+        "annotated": "019c0471e0993c73bb54735bc2823d8b08569e75e60bfd546299b7a7ec4115e4",
     },
     "interior_oaks_lab__nosnap": {
         "raw": "9c4698235d465a30133b3bdf0ff3123112670ba31b25e414923b04b38e6c04c6",
@@ -174,23 +181,23 @@ EXPECTED = {
     },
     "interior_pewter_gym": {
         "raw": "6c15290ec11de0b5eb3bda876193fc1b17718c09febb87274bb36b79594e662f",
-        "annotated": "3a14fe91a15b21d7f10f77501511c6dd9f8825ce9c8243bab495880f5938d54b",
+        "annotated": "7e8a60cf08dc8f4bbee634a887554ee3cde0222aa56d6f81a463283809acc520",
     },
     "interior_pewter_museum": {
         "raw": "d5f519238eb8888d5449d6ec91e096447dfe8d79bdc87371269c5cf0302a4f11",
-        "annotated": "97c27edc2b2efe423e85ed774442190975b95004d9c6f80a6639ade03020393d",
+        "annotated": "872244e9622e05ee7b7ed8a26aeed32c162bf23c8171412ede54576d8838de2b",
     },
     "interior_pokecenter_npcs": {
         "raw": "9849d5cd3367daa0d1cb8cc6ee2dc5a67c2cd96f5b129194582ad78a6906eb54",
-        "annotated": "9ea2fd881b8405e2956b1117840d42e6e6ebd56e28c7fdecf4584ace0dbe767e",
+        "annotated": "fdb8ca5605587e49ad6488ba13ee1521c1db08e2fe54efe8c07a76421961e958",
     },
     "outdoor_pallet_charmander": {
         "raw": "302c807de4cc1fbd1540dc88b434126488d778c0841ff86a3147a429a9d05a0c",
-        "annotated": "667dce7d6f969da1ce13af57815826585e475f350c5f9b01df740804a23e2f29",
+        "annotated": "19659e8b680e24c8b38cf210bdea603252923e55cd26eb8411fba27514112b94",
     },
     "outdoor_pallet_town": {
         "raw": "8a67104dc40e9f8ec7dfe8b8b2d7aac6c9f095a4fb7f166532d70f6393be4a7c",
-        "annotated": "1b9adec4e96c58f597f05639a4b5e32034faeb4dc130b575aedc1d5998809dd7",
+        "annotated": "96502d9eecef53667a88ca0555a8e280aab0638265eabdec006cbce805ef9d13",
     },
     "outdoor_pallet_town__nosnap": {
         "raw": "8a67104dc40e9f8ec7dfe8b8b2d7aac6c9f095a4fb7f166532d70f6393be4a7c",
@@ -198,27 +205,27 @@ EXPECTED = {
     },
     "outdoor_pewter_city_npc": {
         "raw": "e0b97fbd11bad23252138b25958f799c3b7b4256fff442a722f4b919c674d8ed",
-        "annotated": "a2d101211ec9a67157a7218a970021be467d980b72936c4879513038e760607e",
+        "annotated": "4dc872e44ba3b8a5cab64fbcf2354c04ccb3cf3205a3b734f415f74d6ae376d5",
     },
     "outdoor_pewter_city_warps": {
         "raw": "dd3a3d165e1a85e8597448a277670c9419094b15d7f6913c2345548a7d6d7704",
-        "annotated": "2cf3305b1abfe3c44fb089c362831045ef8d4738283f9352f46c3d710e99bc88",
+        "annotated": "aeb3bfa20c5d18c919a4afa1bfdd2b6bc4fb243a2055e44afcc9496afe5c5231",
     },
     "outdoor_route2_on_warp": {
         "raw": "46cec23becb778d63036862d959e98bb9b3556cbc649a0a67167f97317d77806",
-        "annotated": "5b8ab04213c0f00ed3ef048f1e5ef9ef31d9dfbf6f08983a1ed55932b3cd98fa",
+        "annotated": "15feb3738c68d5c8712feaaa4078db9de541a34ce5f2f2d9d67d11c568dec05f",
     },
     "outdoor_route2_south": {
         "raw": "0debbf0194730f9ee1fd9facc2df4b91b33057125b8641b340e665999bf9a080",
-        "annotated": "b573cbac8467bda5e13cddd042699e15a9c7ec0d6a3d5fd5d515aec7475f140e",
+        "annotated": "a46166af4ddbe63ebea9b7ed30fce633a48fb031b0ca925c472e4f3ae8d9b41c",
     },
     "outdoor_route3_no_warps": {
         "raw": "e20fa6696f4a311f3fc3567a6448c99422c37ea56385cd4320b3396f9eafaaca",
-        "annotated": "29ffa2a3719f094e995c6a8a8c82d96f05d074817141fcf86a0b821e9b71bcb1",
+        "annotated": "1c7f97a69983a17560c04e2ab9c519ccb44ebcd3e30bf3e832ed5f3df5f5a7bc",
     },
     "outdoor_viridian_city": {
         "raw": "7afdf6a5a148d046ead1ade3929c63e96cbe9c69f7b0fa7c24861a21ca262774",
-        "annotated": "24f31aa313db50781171561d05058c3501506d73b419ba4b57a0407eddd8fc8a",
+        "annotated": "cd77f2ae94e4029ff90eefc821ce536253cf8cb6717d39d28b378368b728cd8f",
     },
 }
 

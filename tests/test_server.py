@@ -1774,12 +1774,36 @@ def test_goto_a_tile_it_is_already_on_walks_nothing(server_app):
     assert payload["actions_executed"] == 0
 
 
-def test_goto_stops_and_says_why_when_the_tile_is_walled_off(corridor_app):
-    payload = corridor_app.http.post("/goto", json={"x": 12, "y": 6}).json()
+def test_goto_looks_at_both_ends_of_the_corridor_before_calling_it_walled_off(corridor_app):
+    """The refusal comes after the looking, and it only comes once.
 
-    assert payload["arrived"] is False
-    assert payload["walked"] == 0
-    assert "no walkable path" in payload["stopped_because"]
+    (12, 6) is seven tiles east of a one-wide corridor, through solid rock. The
+    corridor's two ends run out of the live window, so at the start there IS
+    unseen ground — just none of it toward the goal. The old planner scored
+    every frontier by "does this step shrink Manhattan distance to the goal",
+    threw away everything scoring zero or less, and so refused on the first
+    call without moving. Correct here by luck, and by construction unable to
+    take the first step of any maze route that starts by going the wrong way.
+
+    So the walk now goes and looks: north end, south end, then a refusal that
+    is a fact rather than a guess. Twelve presses to settle a nine-tile
+    corridor, and — this is the part that matters — it terminates. Each call
+    ends somewhere new, and the refusal still names what IS reachable.
+    """
+    first = corridor_app.http.post("/goto", json={"x": 12, "y": 6}).json()
+    assert first["arrived"] is False
+    assert (first["x"], first["y"]) == (5, 2), "walked to the north end to look past it"
+    assert "edge of what has been seen and not a wall" in first["stopped_because"]
+
+    second = corridor_app.http.post("/goto", json={"x": 12, "y": 6}).json()
+    assert second["arrived"] is False
+    assert (second["x"], second["y"]) == (5, 10), "and then the south end"
+
+    third = corridor_app.http.post("/goto", json={"x": 12, "y": 6}).json()
+    assert third["arrived"] is False
+    assert third["walked"] == 0, "nothing left to look at, so nothing left to walk"
+    assert "no walkable path" in third["stopped_because"]
+    assert third["onward"]["kind"] == "walled-off"
 
 
 def test_goto_crosses_a_map_edge_toward_a_named_map(tmp_path, monkeypatch):

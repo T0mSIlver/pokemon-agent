@@ -707,3 +707,69 @@ def test_a_seam_survives_being_merged_with_the_remembered_map():
     assert path_within(merged_map, (10, 10), (10, 11)) is None
     reachable = set(frontier(merged_map, {(10, 10)}, (10, 10)))
     assert reachable == {(9, 9), (10, 9), (11, 9), (9, 10), (11, 10)}
+
+
+# ---------------------------------------------------------------------------
+# Warps are absorbing, and refused ground stays refused
+# ---------------------------------------------------------------------------
+
+
+#: A corridor with a ladder in the middle of it. Both ends are ordinary ground.
+LADDER_CORRIDOR = {
+    "width": 7,
+    "height": 1,
+    "walkable": {(x, 0) for x in range(7)},
+    "live": {(x, 0) for x in range(7)},
+    "warps": [{"x": 3, "y": 0}],
+}
+
+
+def test_a_route_never_crosses_a_warp_it_was_not_aiming_at():
+    """A warp is an edge in with no edge onward, so no plan goes through one.
+
+    Measured on Mt. Moon 1F: the shortest walk from the south entrance (14, 35)
+    to the ladder at (5, 5) is 89 steps and crosses the *other* ladder, at
+    (17, 11), on step 72. Walked, it spent 72 presses and ended on B1F, and
+    every /goto after that asked for (5, 5) on a floor with no such tile — a
+    refusal per call, forever, from the wrong map.
+    """
+    assert path_within(LADDER_CORRIDOR, (0, 0), (6, 0)) is None
+
+
+def test_the_warp_itself_is_still_somewhere_you_can_walk_to():
+    """Absorbing is not forbidden. A ladder is usually exactly where you meant to go."""
+    assert path_within(LADDER_CORRIDOR, (0, 0), (3, 0)) == ("walk_right",) * 3
+
+
+def test_standing_on_a_warp_does_not_strand_you_on_it():
+    """The player is often on one: a save loaded in a doorway, a cave mouth."""
+    assert path_within(LADDER_CORRIDOR, (3, 0), (0, 0)) == ("walk_left",) * 3
+
+
+def test_a_refused_tile_is_not_in_the_next_flood():
+    """Ground the game would not allow is held out, so the same plan cannot return.
+
+    The planner has no memory between rounds — it recomputes from scratch — so
+    without this it rebuilds the identical shortest path, walks into the
+    identical NPC and reports the identical refusal. Measured on Mt. Moon 1F at
+    40 presses a round, for as many rounds as anything kept asking.
+    """
+    room = [
+        [1, 1, 1],
+        [1, 0, 1],
+        [1, 1, 1],
+    ]
+    assert path_within(room, (0, 1), (2, 1)) == ("walk_up", "walk_right", "walk_right", "walk_down")
+    # (1, 0) is where the trainer is standing. Round the other way, then.
+    around = path_within(room, (0, 1), (2, 1), refused={(1, 0)})
+    assert around == ("walk_down", "walk_right", "walk_right", "walk_up")
+    # Both ways out refused is a refusal, not a worse path.
+    assert path_within(room, (0, 1), (2, 1), refused={(1, 0), (1, 2)}) is None
+
+
+def test_refusing_the_tile_you_stand_on_does_not_wall_you_in():
+    """A refusal is about somewhere you tried to go, never about where you are."""
+    assert path_within([[1, 1, 1]], (0, 0), (2, 0), refused={(0, 0)}) == (
+        "walk_right",
+        "walk_right",
+    )

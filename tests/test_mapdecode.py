@@ -322,3 +322,51 @@ def test_a_connection_to_a_map_with_no_name_is_dropped_rather_than_routed_to():
     )
 
     assert got == {}
+
+
+# ---------------------------------------------------------------------------
+# Getting the decoded floor to the people who need it
+# ---------------------------------------------------------------------------
+
+
+def test_the_decoded_floor_survives_the_trip_to_a_collision_map():
+    """Decoding it was never the problem — delivering it was.
+
+    `map_terrain` was assembled in the emulator's `_movement_components` and
+    then dropped: `LiveNavigationSnapshot` had no field for it, so `to_dict`
+    could not carry it and every consumer read `snapshot["map_terrain"]` as
+    None. Measured on a real save at Mt. Moon 1F's south entrance: 1144
+    walkable tiles decoded, 26 delivered. So `collision_from` never once took
+    its ground-truth branch and the explored map never adopted a floor —
+    /goto planned every route on a 90-tile window of a 40x36 map.
+
+    The wire shape is not the decoder's shape, because this payload is written
+    to disk and broadcast: a set and a coordinate-keyed dict both raise before
+    anything is sent. So it goes as pairs and rows, and this is the test that
+    the two ends agree about that.
+    """
+    import json
+
+    from pokemon_agent import capabilities
+    from pokemon_agent.navigation import LiveNavigationSnapshot, terrain_dict
+
+    read_u8, read_rom, _, _ = build_memory()
+    decoded = mapdecode.decode_map(read_u8, read_rom)
+    snapshot = LiveNavigationSnapshot(
+        map_id=59,
+        map_name="Mt Moon 1F",
+        player_position=(0, 0),
+        facing="down",
+        tileset="CAVERN",
+        window_top_left=(-4, -4),
+        terrain=[[0] * 10 for _ in range(9)],
+        map_terrain=terrain_dict(decoded),
+    ).to_dict()
+
+    json.dumps(snapshot)  # the payload is broadcast; a tuple key would raise here
+    collision = capabilities.collision_from(snapshot, None)
+
+    assert collision["ground_truth"] is True
+    assert collision["walkable"] == decoded["walkable"]
+    assert (collision["width"], collision["height"]) == (4, 2)
+    assert collision["tile_ids"] == decoded["tile_ids"], "and the seams can still be worked out"

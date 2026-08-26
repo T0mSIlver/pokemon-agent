@@ -27,6 +27,9 @@ from pokemon_agent import capabilities, world
 REPO_ROOT = Path(__file__).resolve().parents[1]
 
 DIRECTIONS = ("up", "down", "left", "right")
+
+#: North is up. `pathfinding.DIRECTIONS` is where this actually lives.
+DIRECTION_STEPS = {"up": (0, -1), "down": (0, 1), "left": (-1, 0), "right": (1, 0)}
 ADDR_JOY_IGNORE = 0xCD6B
 
 
@@ -432,6 +435,68 @@ def test_the_cave_ladder_at_the_edge_of_the_map_is_a_warp_not_a_wall(emulator, r
 
     emulator.press_and_settle("down")
     assert _where(reader)[0] == ROUTE_4
+
+
+@needs_rom
+def test_the_snapshot_carries_the_whole_decoded_floor(emulator, reader, corpus):
+    """The decoded map has to reach the planner, and for a while it did not.
+
+    `mapdecode` read all 1144 walkable tiles of Mt. Moon 1F out of WRAM, the
+    emulator assembled them into `_movement_components`, and then they were
+    dropped: `LiveNavigationSnapshot` had no field to put them in. So every
+    /goto and every /sim planned on the 90-tile live window of a 40x36 map,
+    `collision_from` never took its ground-truth branch, and the explored map
+    never adopted a floor — the store's `truth` key is absent from every map in
+    the run's `explored_maps.json`.
+    """
+    emulator.load_state(str(_state(corpus, LADDER_STATE)))
+    emulator.settle()
+    if _where(reader) != (59, LADDER_AT) or not _is_idle(emulator, reader):
+        pytest.skip(f"{LADDER_STATE} no longer starts on the ladder at {LADDER_AT}")
+
+    snapshot = emulator.get_navigation_snapshot(reader).to_dict()
+    collision = capabilities.collision_from(snapshot, None)
+
+    assert collision["ground_truth"] is True
+    assert (collision["width"], collision["height"]) == (40, 36)
+    assert len(collision["walkable"]) == 1144
+    assert len(collision["ledges"].blocked_pairs) == 131, "and the map-wide seams with it"
+
+
+@needs_rom
+def test_the_route_to_the_ladder_does_not_go_down_the_other_ladder(emulator, reader, corpus):
+    """The 89-step leg the harness could not walk, and why it could not.
+
+    From the south entrance at (14, 35) the shortest walk to the ladder at
+    (5, 5) is 89 steps, and step 72 of it lands on (17, 11) — Mt. Moon 1F's
+    *other* ladder down to B1F. Walked, that spent 72 presses and ended on the
+    wrong floor, after which every /goto asked for (5, 5) on a map with no such
+    tile and refused, at no cost and no progress, forever. Measured with a
+    scripted player and the perfect map: 80 presses, wrong floor, stalemate.
+
+    So a warp is absorbing — reachable, never routed through — and the route
+    that comes back is longer than the shortest one and is a route.
+    """
+    emulator.load_state(str(_state(corpus, LADDER_STATE)))
+    emulator.settle()
+    if _where(reader) != (59, LADDER_AT) or not _is_idle(emulator, reader):
+        pytest.skip(f"{LADDER_STATE} no longer starts on the ladder at {LADDER_AT}")
+
+    snapshot = emulator.get_navigation_snapshot(reader).to_dict()
+    collision = capabilities.collision_from(snapshot, None)
+    region = world.reachable_region(collision, LADDER_AT)
+    plan = region.actions_to((5, 5))
+
+    assert plan is not None, "the ladder is reachable on foot from the entrance"
+    here = LADDER_AT
+    walked = [here]
+    for action in plan:
+        dx, dy = DIRECTION_STEPS[action.replace("walk_", "")]
+        here = (here[0] + dx, here[1] + dy)
+        walked.append(here)
+    assert walked[-1] == (5, 5)
+    other_ladders = {(17, 11), (25, 15)}
+    assert not other_ladders & set(walked[:-1]), "no ladder is a tile on the way past"
 
 
 @needs_rom

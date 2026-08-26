@@ -94,6 +94,11 @@ class FakeWorld:
         self.width, self.height = width, height
         self.map_name, self.map_id = map_name, map_id
         self.warps = list(warps)
+        #: Ground the map calls walkable and the game will not let anyone onto:
+        #: an NPC standing in a doorway, a tile the decoder got wrong. It reads
+        #: as open in every snapshot and refuses every step. This is the gap the
+        #: planner has to survive, because no grid can hold it.
+        self.refuses: set[tuple[int, int]] = set()
         self.seen: set[tuple[int, int]] = set()
         self.known: set[tuple[int, int]] = set()
         self.remember = remember
@@ -167,10 +172,15 @@ class FakeWorld:
         for index, action in enumerate(actions):
             dx, dy = steps[action]
             target = (self.position[0] + dx, self.position[1] + dy)
-            if target not in self.walkable:
+            if target not in self.walkable or target in self.refuses:
                 blocked_after = index
                 break
             self.position = target
+            if target in self.warps:
+                # Stepping onto a warp leaves the map. Nothing after it is walked.
+                self.map_name, self.map_id = f"{self.map_name} (through)", self.map_id + 100
+                moved += 1
+                break
             self._look()
             moved += 1
         return {
@@ -483,3 +493,178 @@ def test_partial_progress_is_reported_as_progress():
 
     assert result["walked"] > 0
     assert result["stopped_because"].startswith(f"walked {result['walked']} toward [30, 5], then ")
+
+
+# ---------------------------------------------------------------------------
+# A plan that failed is not proposed again
+# ---------------------------------------------------------------------------
+
+
+def _knows_the_whole_floor(fake: FakeWorld) -> None:
+    """Every tile looked at and every walkable one remembered — a decoded floor.
+
+    This is what `mapdecode` now hands the planner on any map the player is
+    standing on, and it is the state requirement three is about: there is no
+    unseen ground left, so "walk at the unknown and find out" is not an answer
+    and the flood either reaches the tile or it does not.
+    """
+    fake.seen = {(x, y) for x in range(fake.width) for y in range(fake.height)}
+    fake.known = set(fake.walkable)
+
+
+def _ring(width: int, height: int) -> set[tuple[int, int]]:
+    """A rectangular loop of corridor: two ways round between any two tiles."""
+    return (
+        {(x, 0) for x in range(width)}
+        | {(x, height - 1) for x in range(width)}
+        | {(0, y) for y in range(height)}
+        | {(width - 1, y) for y in range(height)}
+    )
+
+
+def test_a_plan_the_game_refused_is_not_proposed_again():
+    """The blocked tile is remembered for the rest of the call, and routed around.
+
+    An NPC standing in a corridor reads as open ground in every snapshot, so
+    replanning from scratch produces the identical shortest path, walks into
+    the identical NPC and reports the identical refusal. Measured on Mt. Moon
+    1F: forty presses a round, at (30, 7), for as many rounds as anything kept
+    asking — and every one of those presses landed on ground already walked.
+
+    Here the ring gives a second way round, and one call is enough to find it.
+    """
+    fake = FakeWorld(_ring(7, 7), (0, 3), width=7, height=7)
+    _knows_the_whole_floor(fake)
+    fake.refuses = {(0, 1)}  # somebody is standing on the short way north
+
+    result = fake.walk_to(world=World({}), target_xy=(0, 0))
+
+    assert result["arrived"] is True, result["stopped_because"]
+    assert fake.position == (0, 0)
+    assert len(fake.batches) >= 2, "the first plan was refused, so there was a second"
+    assert fake.batches[0] != fake.batches[1], "and it was not the same plan again"
+    # Three tiles the short way, twenty-three the long way. It took the long way,
+    # which is the only way, rather than the short one over and over.
+    assert result["walked"] >= 20
+
+
+def test_a_refusal_with_no_way_round_is_still_a_refusal():
+    """Memory must not turn a wall into wandering. One try, then the same no.
+
+    The guarantee that has to survive every change here: a refusal names what
+    IS reachable, and nothing replaces it with a worse plan.
+    """
+    fake = FakeWorld(_corridor(20), (5, 5), width=20, height=11)
+    _knows_the_whole_floor(fake)
+    fake.refuses = {(6, 5)}  # the corridor is one wide, so this is the whole east
+
+    result = fake.walk_to(world=World({}), target_xy=(15, 5))
+
+    assert result["arrived"] is False
+    assert len(fake.batches) == 1, "tried once, learned, and did not try it again"
+    assert result["onward"]["kind"] == "walled-off"
+    assert "no walkable path" in result["stopped_because"]
+    assert f"tiles are reachable from {list(fake.position)}" in result["stopped_because"]
+
+
+# ---------------------------------------------------------------------------
+# A route that has to start by going the wrong way
+# ---------------------------------------------------------------------------
+
+
+#: A hook. The goal is eighteen tiles WEST; the only route runs east, south,
+#: and all the way back west along the bottom — and the one piece of unseen
+#: ground the player can reach is south, which is further from the goal than
+#: where they are standing.
+#:
+#: The live window is ten by nine, so from (20, 10) the whole visible pocket is
+#: the corridor x = 18..24 and the first four tiles of the leg going south. The
+#: rest is ground nobody has looked at, and the only way to any of it is the
+#: wrong way.
+HOOK = (
+    {(x, 10) for x in range(18, 25)}  # the visible corridor
+    | {(24, y) for y in range(10, 21)}  # south, off the bottom of the window
+    | {(x, 20) for x in range(2, 25)}  # the long way west
+    | {(2, y) for y in range(10, 21)}  # and back north to the goal at (2, 10)
+)
+
+
+def test_a_route_that_must_start_by_walking_away_from_the_goal_is_found():
+    """Greedy-on-Manhattan cannot take the first step of this route, ever.
+
+    The goal is due west and the only unseen ground reachable from the start is
+    due south — five tiles further from the goal than the tile the player is
+    standing on. The old scorer asked "does this frontier shrink the distance to
+    the goal" and dropped everything answering no, which left nothing to choose
+    from: it refused, walked nothing, and refused again the next call and the
+    next. That is hill climbing, and a maze is the shape hill climbing cannot
+    cross. Cost so far plus distance still to go has no such blind spot — the
+    only candidate is the one it picks, whichever way it lies.
+    """
+    fake = FakeWorld(HOOK, (20, 10), width=40, height=21)
+
+    result = fake.walk_to(world=World({}), target_xy=(2, 10))
+
+    assert fake.batches, "the old scorer had nothing to pick and so walked nothing"
+    assert fake.batches[0][0] == "walk_right", "the first step of the only route goes backwards"
+    assert result["walked"] > 0
+
+    # And the rest of it, one look per call, until the goal is in the window.
+    for _ in range(30):
+        if result["arrived"]:
+            break
+        result = fake.walk_to(world=World({}), target_xy=(2, 10))
+    assert result["arrived"] is True, result["stopped_because"]
+    assert fake.position == (2, 10)
+
+
+def test_the_unseen_ground_it_picks_is_the_one_with_least_journey_left():
+    """Cost so far plus distance still to go — A*'s estimate, not the last step's gain.
+
+    Both ends of this corridor run out of the window, so both are frontier.
+    The goal is east, so the east end wins: not because walking east is
+    progress, but because the whole journey through it is shorter.
+    """
+    fake = FakeWorld(_corridor(40), (20, 5), width=40, height=11)
+    fake.seen = {tile for tile in fake.seen if 18 <= tile[0] <= 22}
+    fake.known = {tile for tile in fake.known if 18 <= tile[0] <= 22}
+
+    fake.walk_to(world=World({}), target_xy=(35, 5))
+
+    assert set(fake.batches[0]) == {"walk_right"}
+
+
+# ---------------------------------------------------------------------------
+# Nothing routes through a ladder on the way past
+# ---------------------------------------------------------------------------
+
+
+def test_the_walk_does_not_cross_a_ladder_it_was_not_aiming_at():
+    """A warp in the corridor is the end of the corridor, not a tile in it.
+
+    Mt. Moon 1F, from the south entrance to the ladder at (5, 5): the shortest
+    walk is 89 steps and step 72 lands on the *other* ladder, at (17, 11).
+    Walked, that spent 72 presses and ended on B1F, after which every /goto
+    asked for (5, 5) on a floor that has no such tile and refused, forever, at
+    no cost and no progress. Measured: 80 presses, wrong floor, then a stalemate.
+    """
+    fake = FakeWorld(_corridor(20), (2, 5), width=20, height=11, warps=((10, 5),))
+    _knows_the_whole_floor(fake)
+
+    result = fake.walk_to(world=World({}), target_xy=(15, 5))
+
+    assert result["arrived"] is False
+    assert fake.position == (2, 5), "it did not set off down a corridor that ends in a hole"
+    assert result["onward"]["kind"] == "walled-off"
+
+
+def test_a_ladder_you_meant_to_reach_is_still_reachable():
+    """Absorbing is not forbidden: a cave ladder is usually the whole point."""
+    fake = FakeWorld(_corridor(20), (2, 5), width=20, height=11, warps=((10, 5),))
+    _knows_the_whole_floor(fake)
+
+    result = fake.walk_to(world=World({}), target_xy=(10, 5))
+
+    assert fake.position == (10, 5)
+    assert result["arrived"] is True
+    assert fake.map_name != "Test Map", "and stepping onto it took the ladder down"

@@ -95,10 +95,18 @@ def components(walkable: Collection[Coord], ledges: Optional[Mapping] = None) ->
     return from. One-way ledges become edges *between* pockets, which the graph
     walks in the one direction they go.
 
+    A tile-pair seam is the same problem in a third shape: two passable tiles
+    the tileset refuses to let you move between, either way round. Mt. Moon 1F
+    has 131 of them and they are the whole boundary between its upper floor and
+    its lower one — flooding across them merged 169 tiles into the main pocket
+    that no walk from it can reach. Measured: the seam-blind split said 1076
+    tiles, the flood that honours them reaches 907.
+
     Largest first, so pocket 0 is the main floor wherever there is one.
     """
     walk = set(walkable)
-    out = {tile: _neighbours(walk, tile) for tile in walk}
+    seams = _seams_of(ledges)
+    out = {tile: _neighbours(walk, tile, seams) for tile in walk}
     for start, landing in _ledge_pairs(ledges):
         if start in walk and landing in walk:
             out[start].append(landing)
@@ -151,9 +159,27 @@ def components(walkable: Collection[Coord], ledges: Optional[Mapping] = None) ->
     return found
 
 
-def _neighbours(walk: Set[Coord], tile: Coord) -> List[Coord]:
+def _neighbours(
+    walk: Set[Coord],
+    tile: Coord,
+    seams: Set[Tuple[Coord, Coord]] = frozenset(),  # type: ignore[assignment]
+) -> List[Coord]:
     x, y = tile
-    return [step for step in ((x + 1, y), (x - 1, y), (x, y + 1), (x, y - 1)) if step in walk]
+    return [
+        step
+        for step in ((x + 1, y), (x - 1, y), (x, y + 1), (x, y - 1))
+        if step in walk and (tile, step) not in seams and (step, tile) not in seams
+    ]
+
+
+def _seams_of(ledges: Optional[Mapping]) -> Set[Tuple[Coord, Coord]]:
+    """The adjacent tile pairs this map will not let anyone walk between.
+
+    They ride on the same object the ledges do — see `world.MovementEdges` —
+    because a seam belongs to neither of its two tiles and a set of walkable
+    tiles has nowhere to put it.
+    """
+    return set(getattr(ledges, "blocked_pairs", ()) or ())
 
 
 def _ledge_pairs(ledges: Optional[Mapping]):

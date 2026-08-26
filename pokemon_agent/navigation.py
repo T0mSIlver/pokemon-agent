@@ -105,6 +105,45 @@ def _coord_dict(coord: Optional[Coord]) -> Optional[Dict[str, int]]:
     return {"x": coord[0], "y": coord[1]}
 
 
+def terrain_dict(truth: Optional[Mapping[str, object]]) -> Optional[Dict[str, object]]:
+    """A decoded floor in a shape `json.dumps` accepts, or None if there is none.
+
+    `mapdecode.decode_map` answers in Python sets and coordinate-keyed dicts,
+    and this payload is written to disk and broadcast over a WebSocket, where
+    neither survives: a tuple key raises before anything is sent. So walkable
+    ground travels as ``[[x, y], ...]`` and tile ids as one row of ints per y,
+    which `world.movement_edges` and `capabilities.collision_from` both read.
+
+    Rows rather than a coordinate map because the whole floor now travels and
+    the difference is not small: 40x36 Mt. Moon 1F is 1440 tile ids, and as
+    ``{"x,y": id}`` pairs that is four times the bytes of the same ints in rows.
+    """
+    if not truth:
+        return None
+    width, height = int(truth.get("width") or 0), int(truth.get("height") or 0)
+    if not width or not height:
+        return None
+    tile_ids = truth.get("tile_ids") or {}
+    rows: List[List[int]] = []
+    if isinstance(tile_ids, Mapping):
+        rows = [[int(tile_ids.get((x, y), 0)) for x in range(width)] for y in range(height)]
+    elif isinstance(tile_ids, list):
+        # Already rows. Serialising a payload twice must not empty it out.
+        rows = [[int(tile) for tile in row] for row in tile_ids]
+    payload: Dict[str, object] = {
+        "map_id": truth.get("map_id"),
+        "tileset": truth.get("tileset"),
+        "width": width,
+        "height": height,
+        "walkable": sorted([int(x), int(y)] for x, y in truth.get("walkable") or ()),
+        "tile_ids": rows,
+    }
+    for key in ("warps", "connections"):
+        if truth.get(key) is not None:
+            payload[key] = truth[key]
+    return payload
+
+
 def _ascii_header(min_x: int, max_x: int) -> str:
     return "     " + "".join(str(x % 10) for x in range(min_x, max_x + 1))
 
@@ -234,6 +273,15 @@ class LiveNavigationSnapshot:
     warp_exit_directions: List[str] = field(default_factory=list)
     warp_exit_armed: bool = False
     warp_exit_note: Optional[str] = None
+    #: The whole floor decoded out of WRAM, not the window. `mapdecode` has
+    #: produced this since it was written and nothing could read it, because it
+    #: was assembled in `_movement_components` and then dropped on the way into
+    #: this dataclass — it had no field to land in. Every consumer of ground
+    #: truth reads `snapshot["map_terrain"]`, so the whole decoded-terrain path
+    #: was inert: `collision_from` never took its ground-truth branch and the
+    #: explored map never adopted a floor. Measured on `mt_moon_1f_entered`:
+    #: 1144 walkable tiles decoded, 26 delivered.
+    map_terrain: Optional[Dict[str, object]] = None
 
     @property
     def key(self) -> str:
@@ -334,6 +382,7 @@ class LiveNavigationSnapshot:
             "warp_exit_directions": self.warp_exit_directions,
             "warp_exit_armed": self.warp_exit_armed,
             "warp_exit_note": self.warp_exit_note,
+            "map_terrain": terrain_dict(self.map_terrain),
             "ascii": self.render_window_ascii(goal=goal),
             "ascii_legend": {
                 "P": "player",

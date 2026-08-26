@@ -871,6 +871,7 @@ class PyBoyEmulator(Emulator):
             warp_exit_directions=warp_exits,
             warp_exit_armed=warp_armed,
             warp_exit_note=warp_exit_note,
+            map_terrain=components["map_terrain"],
         )
         snapshot.interaction = _build_interaction_probe(
             snapshot,
