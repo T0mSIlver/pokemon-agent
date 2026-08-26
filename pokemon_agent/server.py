@@ -2753,7 +2753,17 @@ async def goto(req: GotoRequest):
     # twelve hours in a sealed pocket of Route 4 whose only ways out led back
     # into Mt. Moon, and every refusal it got named the tile it could not reach
     # rather than the three it could.
-    if result.get("onward"):
+    if summary.get("battle"):
+        # A wild encounter ended the walk, and everything computed after it was
+        # read off a battle frame. Mt. Moon rolls one about every ten steps, so
+        # most walks longer than fifteen tiles finish this way -- and each one was
+        # reporting `sealed: true, reachable_tiles: 1` about ground the player had
+        # just crossed. Say what actually happened instead.
+        payload["stopped_because"] = (
+            f"walked {result['walked']}, then a wild Pokemon appeared. "
+            "Finish the fight or flee, then ask again."
+        )
+    elif result.get("onward"):
         payload["onward"] = result["onward"]
     return payload
 

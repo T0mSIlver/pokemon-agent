@@ -70,6 +70,7 @@ class FakeEmulator:
         # was placed on one starts disarmed, exactly like a loaded save state.
         self.warp_armed = False
         self.in_battle = False
+        self.battle_after_steps = None  # trip a wild encounter mid-walk
         self.enemy = None
         #: Indices into wEventFlags that read as set, for the milestone ladder.
         self.event_bits: set[int] = set()
@@ -108,6 +109,11 @@ class FakeEmulator:
             if target not in self.walls:
                 self.x, self.y = target
                 self._apply_transition()
+                if self.battle_after_steps is not None:
+                    self.battle_after_steps -= 1
+                    if self.battle_after_steps <= 0:
+                        self.in_battle = True
+                        self.battle_after_steps = None
         self.frame_count += frames
 
     def _apply_transition(self) -> None:
@@ -2637,3 +2643,19 @@ def test_navigation_answers_again_once_the_battle_ends(server_app):
 
     server_app.emulator.in_battle = False
     assert server_app.http.get("/frontier").status_code == 200
+
+
+def test_a_walk_that_ends_in_an_encounter_says_so_rather_than_sealed(server_app):
+    # Mt. Moon rolls a wild encounter roughly every ten steps, so most walks
+    # longer than fifteen tiles finish in a battle. Everything computed after
+    # that point is read off a battle frame, and the old answer was
+    # `sealed: true, reachable_tiles: 1` about ground just walked across.
+    server_app.emulator.battle_after_steps = 2
+
+    response = server_app.http.post("/goto", json={"x": 5, "y": 1})
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["battle"] is True
+    assert "wild Pokemon appeared" in payload["stopped_because"]
+    assert "onward" not in payload, "a battle frame must not produce a reachability claim"
