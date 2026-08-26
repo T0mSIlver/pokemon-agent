@@ -2794,15 +2794,26 @@ def _current_map_name_sync() -> Optional[str]:
 
 
 def _player_coord_sync() -> Optional[tuple[int, int]]:
-    """Where the player is standing, for a router that answers per pocket."""
+    """Where the player is standing, for a router that answers per pocket.
+
+    `read_coordinates` returns a plain ``(x, y)``, not the ``{"x": .., "y": ..}``
+    the wire uses. Reading it the wire's way raised, the blanket except below
+    swallowed it, and `/route` quietly fell back to the map-keyed search for
+    every request -- which looks exactly like a router that found no pocket
+    route, and cost an hour of chasing the graph instead of its caller.
+    """
     if _reader is None:
         return None
     try:
-        coords = _reader.read_coordinates() or {}
-        x, y = coords.get("x"), coords.get("y")
-        return (int(x), int(y)) if x is not None and y is not None else None
-    except Exception:  # noqa: BLE001
+        coords = _reader.read_coordinates()
+    except Exception:  # noqa: BLE001 — a position read must not fail a request
         return None
+    if isinstance(coords, dict):
+        coords = (coords.get("x"), coords.get("y"))
+    if not isinstance(coords, (tuple, list)) or len(coords) != 2:
+        return None
+    x, y = coords
+    return (int(x), int(y)) if x is not None and y is not None else None
 
 
 def _pocket_graph() -> Optional[PocketGraph]:
