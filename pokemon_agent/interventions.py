@@ -28,6 +28,7 @@ settled it.
 
 from __future__ import annotations
 
+import re
 from collections import Counter
 from dataclasses import dataclass, field
 from typing import Any, Iterable, Mapping, Optional, Protocol, Sequence
@@ -681,6 +682,60 @@ class MapFacts:
                 at = haystack.rfind(lowered, 0, at)
         return best
 
+    def names_in(self, text: str) -> tuple[str, ...]:
+        """Every map this text names, in the order they appear.
+
+        :meth:`find_map` answers "what is this sentence about", which is the
+        wrong question for a paragraph of advice: a route names the map it
+        starts on, the map it passes through and the map it ends on, and a
+        checker has to know about all three. Whole words only, same as
+        :meth:`find_map`, and a name inside a longer one never counts — "Route 2"
+        must not match the "Route 2" inside "Route 24".
+        """
+
+        if not text:
+            return ()
+        haystack = text.lower()
+        found: list[tuple[int, str]] = []
+        for name in self._names:
+            lowered = name.lower()
+            at = haystack.find(lowered)
+            while at != -1:
+                if _standalone(haystack, at, len(lowered)):
+                    found.append((at, name))
+                    break
+                at = haystack.find(lowered, at + 1)
+        found.sort()
+        return tuple(name for _, name in found)
+
+    def resolve(self, fragment: str) -> Optional[str]:
+        """The one map a written name means, or ``None`` when it means several.
+
+        The archive is full of "Mt. Moon", which is four maps, and of "Mt Moon
+        Poke Center", which is one map spelled three ways. Punctuation and
+        spacing are normalised away; ambiguity is not. A fragment that could be
+        several maps returns ``None`` and the caller leaves the claim alone,
+        because refusing advice on a name the writer never disambiguated would
+        be punishing shorthand rather than catching an error.
+        """
+
+        wanted = _normalise_map_name(fragment)
+        if not wanted:
+            return None
+        exact = [name for name in self._names if _normalise_map_name(name) == wanted]
+        if len(exact) == 1:
+            return exact[0]
+        starts = [name for name in self._names if _normalise_map_name(name).startswith(wanted)]
+        return starts[0] if len(starts) == 1 else None
+
+
+def _normalise_map_name(text: str) -> str:
+    """A written map name reduced to what two spellings of it share."""
+
+    lowered = (text or "").lower().replace(".", " ").replace("é", "e")
+    lowered = lowered.replace("pokemon center", "pokecenter").replace("poke center", "pokecenter")
+    return " ".join(lowered.split())
+
 
 #: Loaded on first use, never at import time.
 _DEFAULT_MAPS: Optional[MapFacts] = None
@@ -765,6 +820,23 @@ def _observed(observation: Optional[Mapping[str, Any]]) -> dict[str, Any]:
         "position": position,
         "map_name": map_info.get("map_name") or snapshot.get("map_name") or "",
     }
+
+
+def standing_on(
+    observation: Optional[Mapping[str, Any]] = None, recent: Sequence[Receipt] = ()
+) -> str:
+    """The map the player is on, from the live frame or, failing that, receipts.
+
+    The same two sources :func:`harness_facts` resolves in the same order, named
+    so a caller that only needs the map does not have to build a fact list to
+    find out. ``""`` when neither source knows, which callers read as "cannot
+    check this".
+    """
+
+    live = _observed(observation)["map_name"]
+    if live:
+        return str(live)
+    return next((r.map_name for r in reversed(list(recent)) if r.map_name), "")
 
 
 def _collision(snapshot: Mapping[str, Any], explored: Mapping[str, Any]):
@@ -1104,6 +1176,321 @@ def build_prompt(
     return "\n".join(lines)
 
 
+# ---------------------------------------------------------------------------
+# Checking the answer, not just grounding the question.
+#
+# `harness_facts` grounds the prompt. Nothing used to check the reply, and the
+# reply is what reaches the player. Measured over the 35 interventions this
+# project has delivered (runs/20260825T224823Z-983b, interventions.jsonl):
+#
+#   * the 13 delivered before the facts block existed named 12 places that are
+#     not reachable the way they said — "exit Mt Moon 1F to Route 2 and walk
+#     west to Viridian City" (Mt Moon 1F's only exits are two warps to Route 4),
+#     "the Mt Moon B1F elevator" (there is none), "walk south on Route 3 to
+#     Viridian City" (Route 3 has no south edge);
+#   * the 22 delivered after it named real warps and real edges, every time.
+#
+# So the facts block did the heavy lifting and this is the backstop for the
+# next model that answers from a walkthrough anyway. It refuses only what the
+# map data contradicts outright, plus one distance rule that is policy and says
+# so, because dropping a correct message costs a detector firing and dropping a
+# wrong one saves several hundred presses.
+# ---------------------------------------------------------------------------
+
+#: How far ahead one message is allowed to point. Not a truth test — a scope
+#: test. Every message delivered after the facts block landed named nothing
+#: further than 3 hops off; the ungrounded ones before it averaged 5.4 and
+#: reached 8. A message naming somewhere 8 hops away is not steering the next
+#: few hundred presses, it is reciting a walkthrough.
+MAX_ADVICE_HOPS = 3
+
+#: "(14,35) -> Route 4", "warp (11,5) leads into the Mt Moon Pokecenter".
+#: The gap excludes "(" and ":" so a list — "(11,5), (18,5), (24,5): they warp
+#: into Mt Moon" — never binds its first tile to the destination of its last.
+#: Three tiles and one phrase is not a claim about any one of them.
+_ADVICE_WARP_RE = re.compile(
+    r"\((\d+)\s*,\s*(\d+)\)[^.;:\n(]{0,60}?"
+    r"(?:->|→|warps?\s+(?:you\s+)?(?:to|into)|leads?\s+(?:to|into)|"
+    r"takes\s+you\s+(?:to|into)|enters?)\s+(?:the\s+)?"
+    r"([A-Za-z][A-Za-z0-9.']*(?:\s+[A-Za-z0-9.'][A-Za-z0-9.']*){0,3})",
+    re.IGNORECASE,
+)
+
+_ADVICE_COORD_RE = re.compile(r"\((\d+)\s*,\s*(\d+)\)")
+
+#: Leaving this map for a named one: "the door to Route 2 is there", "you
+#: emerge on Route 1". Where a map's exits go is the one thing the game data
+#: knows completely, so a claim about them is provable either way — which is
+#: what makes this the rule a handoff is checked by, where the hop ceiling is
+#: lifted and a retrospective is allowed to name the far end of the run.
+_ADVICE_EXIT_RE = re.compile(
+    r"\b(exits?|exiting|leaves?|leaving|emerges?|outside|door|doorway)\b"
+    r"[^.;:\n]{0,30}?\b(?:to|on|onto|into)\s+(?:the\s+)?"
+    r"([A-Za-z][A-Za-z0-9.']*(?:\s+[A-Za-z0-9.'][A-Za-z0-9.']*){0,3})",
+    re.IGNORECASE,
+)
+
+#: A compass word aimed at a named map: "continue north toward Viridian City".
+#: Deliberately tight. The first version of this rule took every compass word
+#: and every map name within 60 characters of it, and on the archive that read
+#: "only 'down' and 'left' are available, so the east exit to Cerulean City is
+#: impossible" as a claim that Cerulean is west — 13 refusals on 22 messages
+#: that were right. Advice is prose; a compass word only binds to a
+#: destination when it is written as one, so the preposition and the name have
+#: to follow the direction with nothing but the step between them.
+_ADVICE_HEADING_RE = re.compile(
+    r"\b(north|south|east|west|up|down|left|right)\b"
+    r"[^.;:\n]{0,25}?\b(?:to|toward|towards|into|onto)\s+(?:the\s+)?"
+    r"([A-Za-z][A-Za-z0-9.']*(?:\s+[A-Za-z0-9.'][A-Za-z0-9.']*){0,3})",
+    re.IGNORECASE,
+)
+
+#: The compass word each direction can be written as. "left" and "west" are the
+#: same claim; the model writes both, sometimes in the same sentence.
+_COMPASS_EDGE = {
+    "north": "north",
+    "up": "north",
+    "south": "south",
+    "down": "south",
+    "east": "east",
+    "right": "east",
+    "west": "west",
+    "left": "west",
+}
+
+
+@dataclass(frozen=True)
+class FalseClaim:
+    """One sentence the map data contradicts, and what it says instead."""
+
+    kind: str  # "warp" | "bounds" | "edge" | "exit" | "distance"
+    said: str
+    truth: str
+
+    def __str__(self) -> str:
+        return f"{self.said} — {self.truth}"
+
+
+def _named_at(maps: MapFacts, fragment: str) -> Optional[str]:
+    """The map a captured fragment starts with, or ``None``.
+
+    The patterns grab a few words after "to" or "->" because a map name is one
+    to four of them and the sentence does not stop there: "to Route 2 and walk"
+    is what the regex hands over. Longest prefix first, so "Mt Moon Pokecenter"
+    is never mistaken for the four maps "Mt Moon" could mean.
+    """
+
+    words = (fragment or "").split()
+    for count in range(len(words), 0, -1):
+        found = maps.resolve(" ".join(words[:count]))
+        if found is not None:
+            return found
+    return None
+
+
+def _clause_before(text: str, at: int) -> str:
+    """The run of text back to the last clause break before *at*.
+
+    A colon is not a break here. "On Route 4: head for the east edge, which
+    exits into Cerulean City" is one clause with one subject, and cutting at the
+    colon throws away the only word that says which map is being described.
+    """
+
+    start = max(text.rfind(mark, 0, at) for mark in (".", ";", "\n"))
+    return text[start + 1 : at]
+
+
+def _warp_targets(maps: MapFacts, map_name: str) -> dict:
+    """``{(x, y): {destination, ...}}`` for one map's warps."""
+
+    out: dict = {}
+    for hop in maps.exits(map_name):
+        if hop.at is not None:
+            out.setdefault((int(hop.at[0]), int(hop.at[1])), set()).add(hop.to_map)
+    return out
+
+
+def _edges_to(maps: MapFacts, map_name: str) -> dict:
+    """``{neighbour: edge}`` for the maps this one touches along a side."""
+
+    return {
+        hop.to_map: hop.edge
+        for hop in maps.exits(map_name)
+        if hop.kind == "connection" and hop.edge
+    }
+
+
+def check_advice(
+    text: str,
+    *,
+    here: str,
+    maps: Optional[MapFacts] = None,
+    max_hops: int = MAX_ADVICE_HOPS,
+) -> tuple[FalseClaim, ...]:
+    """Every claim in *text* the game's own map data disproves.
+
+    *here* is the map the player is standing on. Advice is a plan, not a
+    sentence about one map, so a coordinate or a warp is checked against every
+    map the text names as well as against *here*: "on Route 4, the warp at
+    (11,5) enters the Mt Moon Pokecenter" is true even when it is written by
+    someone standing in Mt Moon 1F, and refusing it would be a bug in the
+    checker rather than a catch.
+
+    An empty result means nothing was disproved, which is not the same as
+    everything being right — a walk this cannot check is a walk it leaves
+    alone. Nothing here raises: a checkout without generated map data checks
+    nothing and says so by returning ``()``.
+    """
+
+    maps = maps if maps is not None else MapFacts.default()
+    if not maps.available or not text:
+        return ()
+
+    scope = [here] if here else []
+    scope += [name for name in maps.names_in(text) if name not in scope]
+    if not scope:
+        return ()
+
+    claims: list[FalseClaim] = []
+    seen: set[tuple[str, str]] = set()
+
+    def add(claim: FalseClaim) -> None:
+        key = (claim.kind, claim.said)
+        if key not in seen:
+            seen.add(key)
+            claims.append(claim)
+
+    # A warp tile is checked against the maps on the route, not only the maps
+    # the message spelled out in full. Intervention 34 wrote "on B1F, go to
+    # warp (27,3) -> Route 4" — true of Mt Moon B1F, which it named as "B1F",
+    # and refusing it for the abbreviation would be catching a typo, not an
+    # error. One hop off a named map is still somewhere the advice is about.
+    reachable = set(scope)
+    for name in scope:
+        reachable.update(hop.to_map for hop in maps.exits(name))
+    warps = {name: _warp_targets(maps, name) for name in sorted(reachable)}
+
+    for match in _ADVICE_WARP_RE.finditer(text):
+        tile = (int(match.group(1)), int(match.group(2)))
+        destination = _named_at(maps, match.group(3))
+        if destination is None:
+            continue  # A name that means several maps is not a checkable claim.
+        if any(destination in warps[name].get(tile, ()) for name in warps):
+            continue
+        elsewhere = sorted(
+            f"{name} {_coord_text(tile)} goes to {dest}"
+            for name in warps
+            for dest in warps[name].get(tile, ())
+        )
+        truth = (
+            "; ".join(elsewhere)
+            if elsewhere
+            else f"no map on this route has a warp on {_coord_text(tile)}"
+        )
+        add(FalseClaim("warp", match.group(0).strip(), truth))
+
+    sizes = {name: maps.dimensions(name) for name in scope}
+    if any(size is not None for size in sizes.values()):
+        for match in _ADVICE_COORD_RE.finditer(text):
+            tile = (int(match.group(1)), int(match.group(2)))
+            fits = [
+                name
+                for name, size in sizes.items()
+                if size is not None and tile[0] < size[0] and tile[1] < size[1]
+            ]
+            if fits:
+                continue
+            add(
+                FalseClaim(
+                    "bounds",
+                    _coord_text(tile),
+                    "off the edge of every map this message names ("
+                    + "; ".join(
+                        f"{name} is {size[0]}x{size[1]}"
+                        for name, size in sizes.items()
+                        if size is not None
+                    )
+                    + ")",
+                )
+            )
+
+    # Only the edges of the map the player is standing on. A destination the
+    # text merely passes through has its own edges, and judging a sentence
+    # about Mt Moon 1F by Cerulean City's edge table is how the first version
+    # of this rule refused a dozen correct messages.
+    edges = _edges_to(maps, here) if here else {}
+    for match in _ADVICE_HEADING_RE.finditer(text):
+        edge = _COMPASS_EDGE[match.group(1).lower()]
+        named = _named_at(maps, match.group(2))
+        # No edge to this map from here means the walk is not the claim being
+        # made — you get there by warp, or by way of somewhere else — and a
+        # direction that claims nothing cannot be wrong.
+        actual = edges.get(named) if named else None
+        if actual is None or actual == edge:
+            continue
+        add(
+            FalseClaim(
+                "edge",
+                match.group(0).strip(),
+                f"{named} is off the {actual} edge of {here}, not the {edge}",
+            )
+        )
+
+    if here:
+        onward = {hop.to_map for hop in maps.exits(here)}
+        for match in _ADVICE_EXIT_RE.finditer(text):
+            named = _named_at(maps, match.group(2))
+            if named is None or named == here or named in onward:
+                continue
+            # Whose exits are being described. "On Route 4: head for the east
+            # edge, which exits right into Cerulean City" is a true sentence
+            # written by someone standing on Route 3, and judging it by Route
+            # 3's exits refuses it. Where the clause names its own map, that
+            # map is the subject and this rule has nothing to say.
+            clause = _clause_before(text, match.start())
+            subject = maps.names_in(clause)
+            if subject and subject[-1] != here:
+                continue
+            add(
+                FalseClaim(
+                    "exit",
+                    match.group(0).strip(),
+                    f"{here} leads to {', '.join(sorted(onward))} and nowhere else",
+                )
+            )
+
+    if here:
+        for named in maps.names_in(text):
+            if named == here:
+                continue
+            route = maps.route(here, named)
+            if route is None:
+                add(
+                    FalseClaim(
+                        "distance",
+                        named,
+                        f"the map graph cannot reach it from {here} at all",
+                    )
+                )
+            elif len(route) > max_hops:
+                add(
+                    FalseClaim(
+                        "distance",
+                        named,
+                        f"{len(route)} hops from {here}, past the {max_hops} "
+                        "one message is allowed to point",
+                    )
+                )
+
+    return tuple(claims)
+
+
+def refusal_note(claims: Sequence[FalseClaim]) -> str:
+    """Why a message was not delivered, short enough to sit in a journal line."""
+
+    return "map data contradicts: " + "; ".join(str(claim) for claim in claims[:4])
+
+
 __all__ = [
     "Trigger",
     "Detector",
@@ -1120,6 +1507,11 @@ __all__ = [
     "build_prompt",
     "Fact",
     "MapFacts",
+    "FalseClaim",
+    "check_advice",
+    "refusal_note",
+    "MAX_ADVICE_HOPS",
+    "standing_on",
     "harness_facts",
     "format_facts",
     "FACT_BUDGET_CHARS",

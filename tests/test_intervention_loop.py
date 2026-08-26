@@ -536,3 +536,99 @@ def test_a_server_with_no_frame_yet_gives_nothing(monkeypatch):
     fake = types.SimpleNamespace(_runtime=None, _explored_maps=None, _supervisor=None)
     monkeypatch.setitem(sys.modules, "pokemon_agent.server", fake)
     assert live_observation() is None
+
+
+# ---------------------------------------------------------------------------
+# Refusing an answer the map data contradicts
+#
+# `harness_facts` grounds the prompt; until this, nothing checked the reply,
+# and the reply is what reaches the player. Twelve of the first thirteen
+# answers this loop ever delivered named somewhere unreachable the way they
+# said, and the player walked at each one.
+# ---------------------------------------------------------------------------
+
+#: Intervention 9's advice, from the archive, aimed at the map it was given on.
+INVENTED_GEOGRAPHY = (
+    "RETREAT. In Mt Moon 1F, walk up to the top wall, then keep walking LEFT "
+    "until you find the gap in the wall. You emerge on Route 1. Turn WEST and "
+    "walk straight about 45 tiles to Pallet Town, and heal there."
+)
+
+
+def in_mt_moon() -> list[Receipt]:
+    return [
+        receipt(seq, map_name="Mt Moon 1F", pos=(17, 15), **extra)
+        for seq, extra in enumerate(
+            ({}, {"exit_code": 1, "presses": 0}, {"exit_code": 1, "presses": 0})
+        )
+    ]
+
+
+async def test_an_answer_the_map_contradicts_never_reaches_the_player():
+    runner, log = make_runner(advise=lambda prompt: INVENTED_GEOGRAPHY)
+
+    record = await runner.after_batch(in_mt_moon(), total_presses=900)
+
+    assert record is not None
+    assert record.delivered is False
+    assert log["steers"] == []
+    assert any("Pallet Town" in claim for claim in record.refused)
+    assert record.error.startswith("map data contradicts: ")
+
+
+async def test_a_refusal_is_counted_apart_from_a_failure():
+    """Nothing broke. The thinker was wrong, and the two need different fixes."""
+
+    runner, _ = make_runner(advise=lambda prompt: INVENTED_GEOGRAPHY)
+
+    await runner.after_batch(in_mt_moon(), total_presses=900)
+
+    status = runner.status()
+    assert status["refused"] == 1
+    assert status["failed"] == 0
+    assert status["delivered"] == 0
+
+
+async def test_a_refused_answer_is_still_journalled_so_it_can_be_argued_with(tmp_path):
+    journal = tmp_path / "interventions.jsonl"
+    runner, _ = make_runner(advise=lambda prompt: INVENTED_GEOGRAPHY, journal_path=journal)
+
+    await runner.after_batch(in_mt_moon(), total_presses=900)
+
+    written = json.loads(journal.read_text(encoding="utf-8").strip())
+    assert written["delivered"] is False
+    assert written["answer"] == INVENTED_GEOGRAPHY
+    assert written["refused"]
+
+
+async def test_an_answer_the_map_agrees_with_goes_through_untouched():
+    grounded = (
+        "Walk south to the exit at (14,35) — it warps to Route 4. On Route 4, "
+        "the warp at (11,5) leads into the Mt Moon Pokecenter. Heal there."
+    )
+    runner, log = make_runner(advise=lambda prompt: grounded)
+
+    record = await runner.after_batch(in_mt_moon(), total_presses=900)
+
+    assert record is not None
+    assert record.delivered is True
+    assert record.refused == []
+    assert log["steers"] == [grounded]
+
+
+async def test_a_run_on_a_map_the_harness_cannot_name_checks_nothing():
+    """No map, no check — the same rule the facts follow, for the same reason."""
+
+    window = [
+        receipt(seq, map_name="", pos=None, **extra)
+        for seq, extra in enumerate(
+            ({}, {"exit_code": 1, "presses": 0}, {"exit_code": 1, "presses": 0})
+        )
+    ]
+    runner, log = make_runner(advise=lambda prompt: INVENTED_GEOGRAPHY)
+
+    record = await runner.after_batch(window, total_presses=900)
+
+    assert record is not None
+    assert record.delivered is True
+    assert log["steers"] == [INVENTED_GEOGRAPHY]

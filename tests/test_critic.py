@@ -50,6 +50,7 @@ from pokemon_agent.critic import (
     list_named_saves,
     map_brief,
     mentioned_map,
+    milestone_frontier,
     narration_lines,
     nearest_pokecenter,
     parse_actions,
@@ -61,6 +62,7 @@ from pokemon_agent.critic import (
     route_text,
     run_critic,
     session_mark_path,
+    strike_false_claims,
     tail_words,
     tool_calls_from_stream,
     trend_lines,
@@ -1826,3 +1828,84 @@ def test_the_word_ceiling_applies_when_reading_not_only_when_writing(tmp_path):
 
     # cap_words appends its own truncation notice, which is words too.
     assert len(got.split()) <= MAX_HANDOFF_WORDS + 20, "the ceiling is applied on read"
+
+# The body of the handoff, not only its goal line
+# ---------------------------------------------------------------------------
+
+
+def test_a_sentence_the_map_data_contradicts_is_struck_from_the_handoff():
+    """`check_next_goal` gatekeeps one line; the body was delivered verbatim.
+
+    The body becomes the next session's first user message, which is to say a
+    model reads it as ground truth and then spends a session acting on it. The
+    same map data that rejects a goal rejects a sentence.
+    """
+
+    text = (
+        "You spent 61% of the session in battle. "
+        "Exit Mt Moon 1F west to Route 2 and walk to Viridian City to heal.\n"
+        "- The Ember PP ran out at batch 40."
+    )
+
+    body, struck = strike_false_claims(text, from_map="Mt Moon 1F")
+
+    assert "61% of the session in battle" in body
+    assert "Ember PP ran out" in body
+    assert "Viridian City" not in body
+    assert struck == ["Exit Mt Moon 1F west to Route 2 and walk to Viridian City to heal."]
+
+
+def test_a_handoff_the_map_data_agrees_with_is_written_untouched():
+    text = "Take warp (27,3) to Route 4, then walk east to Cerulean City."
+    assert strike_false_claims(text, from_map="Mt Moon B1F") == (text, [])
+
+
+def test_naming_the_run_s_destination_is_not_a_false_claim():
+    """No hop ceiling on a handoff.
+
+    The ceiling in `check_advice` is for a message steering the next few hundred
+    presses, where naming somewhere eight warps off is the tell. A retrospective
+    naming the run's destination is doing its job.
+    """
+
+    text = "The run is heading for Cerulean City and is four maps short of it."
+    assert strike_false_claims(text, from_map="Pallet Town") == (text, [])
+
+
+def test_nothing_to_check_against_leaves_the_handoff_alone():
+    text = "Walk west to Cerulean City."
+    assert strike_false_claims(text, from_map="") == (text, [])
+    assert strike_false_claims("", from_map="Route 4") == ("", [])
+
+
+def test_the_open_milestones_are_the_dag_frontier_not_one_guessed_rung():
+    """The ladder is a line and the game is not.
+
+    On the session this was added for, the run was standing in Mt Moon with the
+    Boulder Badge won. `ladder_position` answered "Beat the rival on Route 22" —
+    four maps behind it, optional, and already walked past. The DAG knows what
+    is actually open, including the floor the run was standing on.
+    """
+
+    done = ["EVENT_GOT_STARTER", "EVENT_GOT_POKEDEX", "EVENT_BEAT_BROCK", "BADGE_BOULDER"]
+
+    open_now = milestone_frontier(done)
+
+    assert "Beat the Super Nerd guarding the Mt. Moon fossils" in open_now
+    assert len(open_now) > 1, "a frontier of one is a ladder with extra steps"
+    assert milestone_frontier([]) == ("Chose a starter Pokemon",)
+
+
+def test_the_frontier_reaches_the_digest_the_critic_reads():
+    facts = SessionFacts(
+        run_id="r",
+        session_index=1,
+        done=("BADGE_BOULDER",),
+        done_count=1,
+        frontier=("Beat the Super Nerd guarding the Mt. Moon fossils", "Defeated Misty"),
+    )
+
+    rendered = "\n".join(facts.lines())
+
+    assert "Open now (every milestone whose prerequisites are already met)" in rendered
+    assert "Defeated Misty" in rendered

@@ -50,7 +50,10 @@ from pokemon_agent.interventions import (
     InterventionPolicy,
     Trigger,
     build_prompt,
+    check_advice,
     harness_facts,
+    refusal_note,
+    standing_on,
 )
 from pokemon_agent.slots import SlotClient, SlotError, SlotLost, borrowed_slot
 
@@ -237,6 +240,10 @@ class InterventionRecord:
     facts: list[str] = field(default_factory=list)
     answer: str = ""
     delivered: bool = False
+    #: Claims :func:`check_advice` disproved against the map data. A non-empty
+    #: list means the answer was written but never reached the player, and the
+    #: text is still journalled so the refusal can be argued with.
+    refused: list[str] = field(default_factory=list)
     error: Optional[str] = None
     duration_seconds: Optional[float] = None
     slot_saved_tokens: Optional[int] = None
@@ -256,6 +263,7 @@ class InterventionRecord:
             "facts": list(self.facts),
             "answer": self.answer,
             "delivered": self.delivered,
+            "refused": list(self.refused),
             "error": self.error,
             "duration_seconds": self.duration_seconds,
             "slot_saved_tokens": self.slot_saved_tokens,
@@ -310,6 +318,10 @@ class InterventionRunner:
         self.history: deque[InterventionRecord] = deque(maxlen=HISTORY_LIMIT)
         self.fired: int = 0
         self.delivered: int = 0
+        #: Answers written but held back because the map data contradicted
+        #: them. Counted apart from `failed`: nothing broke, the thinker was
+        #: wrong, and the two need different fixes.
+        self.refused: int = 0
         self.failed: int = 0
         self.disabled_reason: Optional[str] = None
         self.slot_lost: Optional[dict[str, Any]] = None
@@ -356,6 +368,7 @@ class InterventionRunner:
             "busy": self._busy,
             "fired": self.fired,
             "delivered": self.delivered,
+            "refused": self.refused,
             "failed": self.failed,
             "remaining_this_session": self.policy.remaining(),
             "cooldown_presses": self.policy.cooldown_presses,
@@ -477,6 +490,15 @@ class InterventionRunner:
             self.last_error = record.error
             self.failed += 1
             return
+
+        claims = self._disproved(answer, receipts, observation)
+        if claims:
+            record.refused = [str(claim) for claim in claims]
+            record.error = refusal_note(claims)
+            self.refused += 1
+            _log(f"{trigger.name}: not delivering — {record.error}")
+            return
+
         try:
             assert self.deliver is not None
             await self.deliver(answer)
@@ -488,6 +510,36 @@ class InterventionRunner:
             return
         record.delivered = True
         self.delivered += 1
+
+    def _disproved(
+        self,
+        answer: str,
+        receipts: Sequence[Receipt],
+        observation: Optional[Mapping[str, Any]],
+    ) -> tuple:
+        """Claims in the answer the map data contradicts, if any.
+
+        Grounding the prompt is not the same as grounding the reply. Of the 13
+        interventions this project delivered before ``harness_facts`` existed,
+        12 named somewhere you cannot get to the way they said — Route 2 from
+        inside Mt Moon, an elevator in Mt Moon B1F, Viridian City south along
+        Route 3 — and each one cost the player several hundred presses walking
+        into a wall it had been told was a door. The facts block stopped that
+        happening; this is what catches it the next time a model answers from a
+        walkthrough anyway.
+
+        Same rule as :meth:`_facts`: it must never raise. A checker that cannot
+        run is a checker that disproves nothing, not one that blocks the run.
+        """
+
+        try:
+            here = standing_on(observation, receipts)
+            if not here:
+                return ()
+            return check_advice(answer, here=here)
+        except Exception as exc:  # noqa: BLE001
+            _log(f"could not check the answer: {type(exc).__name__}: {exc}")
+            return ()
 
     def _facts(
         self,
