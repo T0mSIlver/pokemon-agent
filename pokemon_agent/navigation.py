@@ -234,6 +234,11 @@ class LiveNavigationSnapshot:
     warp_exit_directions: List[str] = field(default_factory=list)
     warp_exit_armed: bool = False
     warp_exit_note: Optional[str] = None
+    #: The whole floor decoded from the game's own map data, when the frame
+    #: described one. `terrain` above is the 10x9 window; this is every tile.
+    #: None on a frame that is not a map -- a battle, a transition -- because an
+    #: empty floor reads as "walled in" and that is worse than saying nothing.
+    map_terrain: Optional[Dict[str, object]] = None
 
     @property
     def key(self) -> str:
@@ -334,6 +339,12 @@ class LiveNavigationSnapshot:
             "warp_exit_directions": self.warp_exit_directions,
             "warp_exit_armed": self.warp_exit_armed,
             "warp_exit_note": self.warp_exit_note,
+            # `map_terrain` is deliberately NOT here. It is a whole floor --
+            # 1,400 tiles and their ids on Mt Moon 1F -- and this dict is the
+            # wire format, where that would be several kilobytes on every
+            # response for something no caller reads directly. It travels
+            # in-process to the explored map instead, which persists it, and
+            # every consumer reads it back from there.
             "ascii": self.render_window_ascii(goal=goal),
             "ascii_legend": {
                 "P": "player",

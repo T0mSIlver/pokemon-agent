@@ -852,3 +852,61 @@ def test_an_unknown_map_labels_nothing_and_does_not_raise():
     from pokemon_agent.explored_map import _label_warps
 
     assert _label_warps("Not A Real Map", [(1, 2)]) == [{"x": 1, "y": 2}]
+
+
+def test_a_decoded_floor_is_adopted_whichever_shape_the_coordinates_arrive_in():
+    """The bug that made the whole feature a no-op in production.
+
+    `_as_coord` reads the wire's {"x": .., "y": ..}. A decoded floor is a set of
+    plain tuples and travels in-process, never over the wire, because a whole
+    floor is kilobytes per response. Reading only the first shape turned it into
+    an empty set and skipped adoption -- silently, with `record()` still
+    returning True. Every consumer went on running off 10x9 windows while the
+    decoder worked perfectly.
+    """
+    import tempfile
+    from pathlib import Path
+
+    from pokemon_agent.explored_map import ExploredMaps
+
+    with tempfile.TemporaryDirectory() as tmp:
+        store = ExploredMaps(Path(tmp) / "store.json")
+        snapshot = make_snapshot(player=(5, 5), terrain=terrain_for((1, 1), set()))
+        snapshot["map_terrain"] = {
+            "width": 4,
+            "height": 2,
+            "tileset": "OVERWORLD",
+            "walkable": {(0, 0), (1, 0), (2, 0)},  # plain tuples, not {"x": ..}
+            "tile_ids": {},
+        }
+
+        assert store.record(snapshot) is True
+        grid = store.grid(snapshot["map_id"]) or {}
+        assert grid["truth"] == {(0, 0), (1, 0), (2, 0)}
+
+
+def test_a_decoded_floor_survives_a_round_trip_through_the_file():
+    """A route crosses maps the player is not on, so this has to persist."""
+    import tempfile
+    from pathlib import Path
+
+    from pokemon_agent.explored_map import ExploredMaps
+
+    with tempfile.TemporaryDirectory() as tmp:
+        path = Path(tmp) / "store.json"
+        store = ExploredMaps(path)
+        snapshot = make_snapshot(player=(5, 5), terrain=terrain_for((1, 1), set()))
+        snapshot["map_terrain"] = {
+            "width": 4,
+            "height": 2,
+            "tileset": "OVERWORLD",
+            "walkable": {(0, 0), (1, 0)},
+            "tile_ids": {},
+        }
+        store.record(snapshot)
+        store.save()
+
+        reloaded = ExploredMaps(path)
+        grid = reloaded.grid(snapshot["map_id"]) or {}
+
+        assert grid["truth"] == {(0, 0), (1, 0)}

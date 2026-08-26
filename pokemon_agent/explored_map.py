@@ -183,6 +183,16 @@ def _label_warps(map_name: str, coords: Sequence[Coord]) -> List[Dict[str, objec
     return labelled
 
 
+def _tile_coord(value: object) -> Optional[Coord]:
+    """A coordinate from either shape: the wire's {x, y} or a plain (x, y)."""
+    if isinstance(value, (tuple, list)) and len(value) == 2:
+        try:
+            return int(value[0]), int(value[1])
+        except (TypeError, ValueError):
+            return None
+    return _as_coord(value)
+
+
 def _ledges_from(truth: dict) -> Dict[Tuple[int, int, str], Coord]:
     """Every ledge hop on a decoded map, worked out once and kept.
 
@@ -577,11 +587,18 @@ class ExploredMaps:
         # then left alone: the game's map data does not change, so re-adopting
         # every frame would only throw away the doors the window has since added.
         truth = snapshot.get("map_terrain") or {}
+        # `_as_coord` reads the wire's {"x": .., "y": ..}; a decoded floor is a
+        # set of plain tuples and travels in-process, so both shapes arrive here.
+        # Reading only the first turned the whole floor into an empty set, which
+        # skipped adoption without raising -- the same silent-empty failure as
+        # every other bug in this feature.
         truth_walkable = {
             coord
-            for coord in (_as_coord(item) for item in truth.get("walkable") or [])
+            for coord in (_tile_coord(item) for item in truth.get("walkable") or [])
             if coord is not None
         }
+        if truth.get("walkable") and not truth_walkable:
+            _log(f"map {map_id} carried a decoded floor that read as empty; not adopting")
         if truth_walkable and record.truth is None:
             record.adopt_truth(truth_walkable, int(truth["width"]), int(truth["height"]))
             record.ledges = _ledges_from(truth)

@@ -1121,7 +1121,11 @@ def _navigation_payload_sync() -> Optional[dict]:
     except Exception:
         return None
     payload = snapshot.to_dict()
-    _record_explored_map(payload)
+    # The decoded floor rides to the store in-process rather than over the wire:
+    # it is 1,400 tiles and their ids, which is kilobytes on every response for
+    # something no caller reads raw. The store persists it and consumers read it
+    # back from there.
+    _record_explored_map({**payload, "map_terrain": snapshot.map_terrain})
     return {"snapshot": payload}
 
 

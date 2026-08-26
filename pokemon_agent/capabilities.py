@@ -80,6 +80,23 @@ def _all_tiles(truth: dict) -> set[Coord]:
     return {(x, y) for y in range(height) for x in range(width)}
 
 
+def _stored_ledges(ledges: Any) -> dict:
+    """Ledges as the store keeps them, keyed the way `movement_edges` reads them.
+
+    The store keys by ``(x, y, direction)`` because that serialises; the edge
+    machinery keys by ``((x, y), direction)``.
+    """
+    if not isinstance(ledges, dict):
+        return {}
+    out = {}
+    for key, landing in ledges.items():
+        if isinstance(key, tuple) and len(key) == 3:
+            out[((int(key[0]), int(key[1])), str(key[2]))] = landing
+        elif isinstance(key, tuple) and len(key) == 2:
+            out[key] = landing
+    return out
+
+
 def collision_from(snapshot: dict, explored: Optional[dict] = None) -> dict:
     """Live walkability for the current map, in absolute coordinates.
 
@@ -111,10 +128,25 @@ def collision_from(snapshot: dict, explored: Optional[dict] = None) -> dict:
     has no such problem, and it makes every tile `seen`, so nothing downstream
     has to reason about unexplored ground on a map that is fully known.
     """
+    # The decoded floor, from the store where it persists. It does not travel on
+    # the wire -- a whole floor is kilobytes per response -- so a snapshot only
+    # carries it in-process, which is why both sources are read here.
     truth = snapshot.get("map_terrain") or {}
     ground_truth: set[Coord] = {
         found for found in (_coord(item) for item in truth.get("walkable") or ()) if found
     }
+    if not ground_truth and explored:
+        stored = explored.get("truth")
+        if stored:
+            ground_truth = {found for found in (_coord(item) for item in stored) if found}
+            truth = {
+                "width": explored.get("width") or 0,
+                "height": explored.get("height") or 0,
+                "walkable": ground_truth,
+                # Ledges were worked out when the map was decoded, because tile
+                # ids are only readable for the map the player is standing on.
+                "ledges": explored.get("ledges") or {},
+            }
 
     if ground_truth:
         walkable, seen = set(ground_truth), _all_tiles(truth)
@@ -152,11 +184,14 @@ def collision_from(snapshot: dict, explored: Optional[dict] = None) -> dict:
     # corridor. Route 4's east half is reachable *only* over one-way ledges, so
     # with them switched off the road to Cerulean looks like a wall.
     ledges = world_mod.ledge_edges(snapshot)
-    if truth.get("tile_ids"):
+    if truth.get("tile_ids") or truth.get("ledges"):
         map_wide = world_mod.movement_edges(
             {
                 "tileset": truth.get("tileset"),
-                "tile_ids": truth["tile_ids"],
+                "tile_ids": truth.get("tile_ids"),
+                # A store-sourced floor carries the ledges already worked out
+                # rather than the ids to work them out from.
+                "ledges": _stored_ledges(truth.get("ledges")),
             }
         )
         map_wide.update(ledges)  # the live frame still wins where they overlap
