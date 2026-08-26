@@ -25,6 +25,7 @@ from pokemon_agent.critic import (
     MAX_HANDOFF_WORDS,
     SALVAGED_REASONING_NOTICE,
     handoff_body,
+    handoff_path,
     read_handoff,
     write_handoff,
 )
@@ -2200,12 +2201,16 @@ async def test_truncated_reasoning_still_leaves_the_next_session_a_handoff(tmp_p
     await supervisor.wait_until_idle(timeout=25)
 
     snapshot = supervisor.state_snapshot()
-    handoff = read_handoff(workspace_dir)
     assert snapshot["status"] == "completed"
     assert snapshot["critique"]["salvaged"] is True
-    assert handoff.startswith(SALVAGED_REASONING_NOTICE)
-    assert "thought499" in handoff
-    assert len(handoff.split()) <= MAX_HANDOFF_WORDS
+    # The salvage lands on disk, marked. It is not what the next session reads:
+    # see critic.read_handoff, where the live one was 1,648 bytes of the critic
+    # counting words at itself.
+    written = handoff_path(workspace_dir).read_text(encoding="utf-8")
+    assert written.startswith(SALVAGED_REASONING_NOTICE)
+    assert read_handoff(workspace_dir) == ""
+    assert "thought499" in written
+    assert len(written.split()) <= MAX_HANDOFF_WORDS
     assert "critique salvaged" in system_labels(supervisor)
     assert supervisor.skill_path.read_bytes() == skill_before
 
@@ -2321,7 +2326,9 @@ async def test_a_salvaged_critique_reaches_the_snapshot_whole(tmp_path: Path):
     snapshot = supervisor.state_snapshot()
     text = snapshot["critique"]["text"]
     assert snapshot["critique"]["salvaged"] is True
-    assert text == read_handoff(workspace_dir)
+    # Whole in the snapshot for a post-mortem; withheld from the next session.
+    assert text == handoff_path(workspace_dir).read_text(encoding="utf-8").strip()
+    assert read_handoff(workspace_dir) == ""
     # The salvaged tail is marked, cut at a boundary, and never trails a bare "...".
     assert "truncated" in text
     assert "picking up at the next sentence" in text

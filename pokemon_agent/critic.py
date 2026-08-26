@@ -2594,10 +2594,34 @@ def handoff_body(text: str) -> str:
 
 
 def read_handoff(workspace_dir: Path) -> str:
+    """The previous session's retrospective, or nothing when there is not one.
+
+    Two things a reader has to be protected from, both measured on the live run.
+
+    A salvaged reasoning tail is not a retrospective. When the critic runs out
+    of output budget mid-thought the tail gets kept, honestly labelled, and
+    handed to the next session as the last thing it reads before acting. The
+    live one was 1,648 bytes of the critic counting words at itself --
+    "Most(1) costly(2) mistake(3)..." -- inside a first message that is only
+    about 2,100 bytes in total. So the majority of a new session's handoff was
+    a transcript of the critic failing to write one.
+
+    It still lands in `HANDOFF.md` for a post-mortem, which is what that file is
+    for. It just does not go to the model: the deterministic ground-truth block
+    beside it already carries the run's real facts, and no retrospective is a
+    smaller lie than a rambling one.
+
+    And the word ceiling only ever existed on the write path, so a hand-edited
+    or externally written file went in verbatim at any length. It is applied
+    here too.
+    """
     try:
-        return handoff_path(workspace_dir).read_text(encoding="utf-8").strip()
+        text = handoff_path(workspace_dir).read_text(encoding="utf-8").strip()
     except (OSError, UnicodeDecodeError):
         return ""
+    if text.startswith(SALVAGED_REASONING_NOTICE[:40]):
+        return ""
+    return cap_words(text)
 
 
 def write_handoff(workspace_dir: Path, text: str) -> Path:

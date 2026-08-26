@@ -45,6 +45,7 @@ from pokemon_agent.critic import (
     direction_claims,
     estimate_tokens,
     handoff_body,
+    handoff_path,
     ladder_position,
     list_named_saves,
     map_brief,
@@ -994,13 +995,18 @@ async def test_truncated_reasoning_is_salvaged_into_a_marked_handoff(tmp_path: P
     assert result.ok is True
     assert result.salvaged is True
     assert "Critic produced no text (stopReason=length, output=16384)." in (result.error or "")
-    handoff = read_handoff(workspace)
-    assert handoff.startswith(SALVAGED_REASONING_NOTICE)
+    # The salvage lands on disk for a post-mortem, marked for what it is.
+    written = handoff_path(workspace).read_text(encoding="utf-8")
+    assert written.startswith(SALVAGED_REASONING_NOTICE)
     # The tail of the reasoning is the part that was still being written.
-    assert "thought1999" in handoff
-    assert "thought0." not in handoff
-    assert "truncated" in handoff
-    assert len(handoff.split()) <= MAX_HANDOFF_WORDS
+    assert "thought1999" in written
+    assert "thought0." not in written
+    assert "truncated" in written
+    # But it is NOT what the next session reads. See read_handoff: the live one
+    # was 1,648 bytes of the critic counting words at itself, inside a first
+    # message of about 2,100.
+    assert read_handoff(workspace) == ""
+    assert len(written.split()) <= MAX_HANDOFF_WORDS
     assert (workspace / HANDOFF_PREVIOUS_FILENAME).read_text(encoding="utf-8").strip() == (
         "the previous critique"
     )
@@ -1778,3 +1784,45 @@ def test_the_exits_line_prints_the_star_legend_only_when_a_star_is_there():
     assert "Every way off Route 3: walk north -> Route 4." in plain
     assert "never stepped on" not in plain
     assert "Every way off Route 3 (* = never stepped on): walk north -> Route 4*." in marked
+
+
+# ---------------------------------------------------------------------------
+# What the next session is allowed to read
+# ---------------------------------------------------------------------------
+
+
+def test_a_salvaged_reasoning_tail_is_not_handed_to_the_next_session(tmp_path):
+    """Measured live: 1,648 bytes of the critic counting words at itself.
+
+    "Most(1) costly(2) mistake(3)..." arrived as the retrospective in a first
+    message of about 2,100 bytes, so most of a new session's handoff was a
+    transcript of the critic failing to write one. It stays in HANDOFF.md for
+    the post-mortem; it does not go to the model. The deterministic ground-truth
+    block beside it already carries the run's real facts.
+    """
+    write_handoff(
+        tmp_path,
+        SALVAGED_REASONING_NOTICE + "\n\nRecount the final version. Most(1) costly(2)",
+    )
+
+    assert read_handoff(tmp_path) == ""
+    assert "Most(1)" in handoff_path(tmp_path).read_text(encoding="utf-8")
+
+
+def test_an_ordinary_retrospective_still_comes_through(tmp_path):
+    write_handoff(tmp_path, "Walked into the Route 4 wall again. Take the Mt Moon route.")
+
+    assert "Route 4 wall" in read_handoff(tmp_path)
+
+
+def test_the_word_ceiling_applies_when_reading_not_only_when_writing(tmp_path):
+    """The cap lived only on the write path, so anything hand-edited went in whole."""
+    handoff_path(tmp_path).parent.mkdir(parents=True, exist_ok=True)
+    handoff_path(tmp_path).write_text(
+        " ".join(f"word{n}" for n in range(MAX_HANDOFF_WORDS * 3)), encoding="utf-8"
+    )
+
+    got = read_handoff(tmp_path)
+
+    # cap_words appends its own truncation notice, which is words too.
+    assert len(got.split()) <= MAX_HANDOFF_WORDS + 20, "the ceiling is applied on read"
