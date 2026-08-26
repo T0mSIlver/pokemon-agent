@@ -25,7 +25,7 @@ import time
 from collections import Counter
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, Awaitable, Callable, Iterable, Iterator, Optional
+from typing import Any, Awaitable, Callable, Iterable, Iterator, Mapping, Optional, Sequence
 
 from pokemon_agent.agent_cli import ActionError, expand_actions
 from pokemon_agent.bench.metrics import compute as compute_run_metrics
@@ -107,15 +107,26 @@ MAX_NEXT_GOAL_CHARS = 240
 MIN_NEXT_GOAL_CHARS = 8
 
 #: Whole-digest ceiling. ~4 chars per token is the usual rough conversion.
-DIGEST_TOKEN_BUDGET = 12_000
+#:
+#: The player's budget and the critic's are opposites. The player re-reads its
+#: context on all five hundred turns of a session, so every token it is given it
+#: pays for five hundred times. The critic reads once, at high effort, on a
+#: context that is thrown away when it finishes, so a digest three times larger
+#: costs one prompt. A five-hundred-turn session is a megabyte of JSONL; at
+#: twelve thousand tokens the critic was shown its last sixty tool calls out of
+#: eight hundred and had to infer the rest from narration. It no longer has to.
+DIGEST_TOKEN_BUDGET = 40_000
 CHARS_PER_TOKEN = 4
 DIGEST_CHAR_BUDGET = DIGEST_TOKEN_BUDGET * CHARS_PER_TOKEN
 
-RECENT_TOOL_CALLS = 60
-MAX_NARRATION_LINES = 40
-NOTES_CHAR_LIMIT = 4_000
+#: Tool calls and narration lines shown. Both are sampled across the whole
+#: session rather than taken off the end, so widening them widens the arc the
+#: critic can see and not just its tail.
+RECENT_TOOL_CALLS = 500
+MAX_NARRATION_LINES = 140
+NOTES_CHAR_LIMIT = 6_000
 TOP_TILES = 6
-CALL_LINE_LIMIT = 200
+CALL_LINE_LIMIT = 220
 #: Only the head of a tool result is scanned for the `/action` response body.
 RESULT_SCAN_LIMIT = 8_000
 
@@ -551,6 +562,364 @@ def read_notes(workspace_dir: Path, limit: int = NOTES_CHAR_LIMIT) -> str:
 
 
 # ---------------------------------------------------------------------------
+# Static world intelligence
+#
+# The player runs on a minimum-context diet because it pays for every token again
+# on each of five hundred turns. The critic runs once, on a context it throws
+# away, so the asymmetry is the point: it can be told far more than the agent it
+# is reviewing, as long as what it hands back stays short.
+#
+# This block is the part the transcripts said was missing. Nine sessions of
+# reasoning contain no case of the harness telling the agent something false
+# about the game, and a dozen cases of the agent inventing a compass direction
+# and then acting on it against a correct tool result. A critic with no geography
+# of its own can only repeat whichever of those it read. So it gets the real one:
+# ``pokemon_agent/data/game/world.json`` holds all 223 maps with their
+# dimensions, their edge connections and every warp's destination, and none of it
+# is a recollection.
+#
+# Everything here answers with nothing rather than raising. A critic that cannot
+# start is worse than a critic with less to say.
+# ---------------------------------------------------------------------------
+
+#: Warps named for one map before the rest collapse into a count.
+MAX_BRIEF_WARPS = 12
+#: Trainers and items named. Both are reasons to walk somewhere on purpose.
+MAX_BRIEF_TRAINERS = 8
+MAX_BRIEF_ITEMS = 8
+#: Encounter slots named, commonest first, so a level check has something to read.
+MAX_BRIEF_ENCOUNTERS = 5
+#: Hops printed for one route. Longer than this and the next session will not
+#: finish it anyway, so the tail is a count.
+MAX_ROUTE_HOPS = 8
+#: What a healing map is called in the world data.
+POKECENTER_MARK = "Pokecenter"
+
+#: Process-lifetime memo for everything read off disk or introspected once:
+#: the map graph, the game data, the milestone ladder, the CLI's verb list and
+#: ``scope``'s bucket classifier. All of it is static for the run's lifetime,
+#: and the critic is on the path between one session ending and the next
+#: starting, so none of it is worth reading twice.
+_LOOKUP_CACHE: dict[str, Any] = {}
+
+
+def _game_data() -> Any:
+    """``pokemon_agent.gamedata``, or ``None`` when the generated files are absent."""
+
+    if "gamedata" not in _LOOKUP_CACHE:
+        try:
+            from pokemon_agent import gamedata
+
+            gamedata.world()
+        except Exception:  # noqa: BLE001 — ungenerated data is missing data, not an error
+            _LOOKUP_CACHE["gamedata"] = None
+        else:
+            _LOOKUP_CACHE["gamedata"] = gamedata
+    return _LOOKUP_CACHE["gamedata"]
+
+
+def world_graph() -> Any:
+    """The static map graph, loaded once. ``None`` when it cannot be read."""
+
+    if "world" not in _LOOKUP_CACHE:
+        try:
+            from pokemon_agent.world import World
+
+            world = World.load()
+        except Exception:  # noqa: BLE001
+            world = None
+        _LOOKUP_CACHE["world"] = world if world is not None and len(world) else None
+    return _LOOKUP_CACHE["world"]
+
+
+def known_map_names() -> tuple[str, ...]:
+    """Every map name the game data knows, longest first for greedy matching."""
+
+    if "names" not in _LOOKUP_CACHE:
+        data = _game_data()
+        names = tuple(data.map_names()) if data is not None else ()
+        _LOOKUP_CACHE["names"] = tuple(sorted(names, key=len, reverse=True))
+    return _LOOKUP_CACHE["names"]
+
+
+def mentioned_map(text: str, exclude: Iterable[str] = ()) -> str:
+    """The map a goal is aiming at, or "".
+
+    The *last* map named wins, because a goal is written as a journey and the
+    destination is the end of it: "walk from Mt Moon B1F out to Route 4 and on to
+    Cerulean City" is a goal about Cerulean. Ties go to the longer name, so
+    "Cerulean Pokecenter" is never read as "Cerulean City", and every match is
+    bounded, so "Route 4" is never found inside "Route 44".
+
+    ``exclude`` drops maps that are not destinations - the one already stood on,
+    most of all, because routing a map to itself is a line with nothing in it.
+    """
+
+    haystack = (text or "").lower()
+    if not haystack:
+        return ""
+    skip = {one.lower() for one in exclude}
+    best, best_key = "", (-1, -1)
+    for name in known_map_names():
+        needle = name.lower()
+        if needle in skip:
+            continue
+        start = haystack.find(needle)
+        while start != -1:
+            before = haystack[start - 1] if start else " "
+            after = haystack[start + len(needle) : start + len(needle) + 1] or " "
+            if not before.isalnum() and not after.isalnum() and (start, len(needle)) > best_key:
+                best, best_key = name, (start, len(needle))
+            start = haystack.find(needle, start + 1)
+    return best
+
+
+def _hop_text(hop: Any) -> str:
+    """One map-to-map transition as an instruction rather than a record."""
+
+    if getattr(hop, "kind", "") == "connection":
+        return f"walk {hop.edge} to {hop.to_map}"
+    at = getattr(hop, "at", None)
+    where = f" ({at[0]},{at[1]})" if at is not None else ""
+    return f"warp{where} to {hop.to_map}"
+
+
+def route_text(source: str, target: str) -> str:
+    """``walk north to Route 4, then ...`` — the map graph's answer, not a memory.
+
+    Empty when either end is unknown or nothing connects them, which is itself
+    worth knowing: it means the next leg is not a walk.
+    """
+
+    world = world_graph()
+    if world is None or not source or not target or source == target:
+        return ""
+    try:
+        hops = world.route(source, target)
+    except Exception:  # noqa: BLE001
+        return ""
+    if not hops:
+        return ""
+    named = [_hop_text(hop) for hop in hops[:MAX_ROUTE_HOPS]]
+    rest = len(hops) - len(named)
+    return ", then ".join(named) + (f", then {rest} more hops" if rest > 0 else "")
+
+
+def nearest_pokecenter(source: str) -> tuple[str, int]:
+    """The closest map you can heal on, and how many hops away it is.
+
+    A thinking model with no ground truth invented a Poke Center in the wrong
+    city and sent a party at 10 HP backwards to reach it. This is the same
+    question, answered off the map graph instead.
+    """
+
+    world = world_graph()
+    if world is None or not source:
+        return "", 0
+    best, best_distance = "", -1
+    for name in world.map_names():
+        if POKECENTER_MARK not in name:
+            continue
+        try:
+            distance = world.distance(source, name)
+        except Exception:  # noqa: BLE001
+            distance = None
+        if distance is None:
+            continue
+        if best_distance < 0 or distance < best_distance:
+            best, best_distance = name, distance
+    return (best, best_distance) if best else ("", 0)
+
+
+@dataclass(frozen=True)
+class MapBrief:
+    """One map as the game defines it, not as the agent remembers it."""
+
+    name: str = ""
+    map_id: Optional[int] = None
+    size: Optional[tuple[int, int]] = None
+    #: ``("north", "Route 4")`` — walk off that edge and you are on that map.
+    connections: tuple[tuple[str, str], ...] = ()
+    #: ``(x, y, destination)``. A destination of "" is one the game picks at runtime.
+    warps: tuple[tuple[int, int, str], ...] = ()
+    trainers: tuple[str, ...] = ()
+    items: tuple[str, ...] = ()
+    encounter_rate: int = 0
+    encounters: tuple[str, ...] = ()
+
+    @property
+    def known(self) -> bool:
+        return bool(self.name)
+
+    def exits(self, stood_on: Iterable[tuple[int, int]] = ()) -> str:
+        """Every way off this map in one line, starring the ones never used.
+
+        The star is the whole value of the line. Three sessions and 720 presses
+        went into a pocket whose way out was a warp tile the agent never stepped
+        on, and no report it could read said which tiles those were. A star is a
+        character; spelling it out costs three tokens on a line that repeats it
+        eight times, and this line ships in the next session's first message.
+        """
+
+        visited = set(stood_on)
+        parts = [f"walk {edge} -> {target}" for edge, target in self.connections]
+        for x, y, target in self.warps[:MAX_BRIEF_WARPS]:
+            mark = "" if (x, y) in visited else "*"
+            parts.append(f"({x},{y}){mark} -> {target or 'runtime-chosen'}")
+        rest = len(self.warps) - min(len(self.warps), MAX_BRIEF_WARPS)
+        if rest > 0:
+            parts.append(f"+{rest} more warps")
+        return "; ".join(parts) if parts else "none in the map data"
+
+    def lines(self, stood_on: Iterable[tuple[int, int]] = ()) -> list[str]:
+        """The whole brief, for the digest rather than the handoff."""
+
+        if not self.known:
+            return []
+        shape = f"{self.size[0]}x{self.size[1]} tiles" if self.size else "size unknown"
+        rows = [f"- {self.name} (id={self.map_id}) {shape}.", f"- Exits: {self.exits(stood_on)}"]
+        if self.trainers:
+            rows.append(f"- Trainers standing here: {'; '.join(self.trainers)}.")
+        if self.items:
+            rows.append(f"- Items on the ground: {'; '.join(self.items)}.")
+        if self.encounters:
+            rows.append(
+                f"- Wild encounters ({self.encounter_rate}/256 per step): "
+                + ", ".join(self.encounters)
+                + "."
+            )
+        return rows
+
+
+def _trainer_text(entry: Mapping[str, Any]) -> str:
+    team = entry.get("team")
+    levels = ""
+    if isinstance(team, list) and team:
+        levels = " " + "/".join(
+            f"{one.get('species')} L{one.get('level')}" for one in team[:3] if isinstance(one, dict)
+        )
+    return f"{entry.get('trainer_class', '?')} at ({entry.get('x')},{entry.get('y')}){levels}"
+
+
+def _item_text(entry: Mapping[str, Any]) -> str:
+    kind = " (hidden)" if entry.get("hidden") else ""
+    return f"{entry.get('item', '?')}{kind} at ({entry.get('x')},{entry.get('y')})"
+
+
+def _brief_size(size: Any) -> Optional[tuple[int, int]]:
+    if isinstance(size, (list, tuple)) and len(size) == 2:
+        try:
+            return int(size[0]), int(size[1])
+        except (TypeError, ValueError):
+            return None
+    return None
+
+
+def map_brief(map_name: str) -> MapBrief:
+    """Everything the generated game data holds about one map. Never raises."""
+
+    data = _game_data()
+    if data is None or not map_name:
+        return MapBrief()
+    try:
+        entry = data.world().get(map_name)
+    except Exception:  # noqa: BLE001
+        entry = None
+    if not isinstance(entry, Mapping):
+        return MapBrief()
+
+    def safely(call: Callable[[], Any], default: Any) -> Any:
+        try:
+            return call() or default
+        except Exception:  # noqa: BLE001
+            return default
+
+    warps: list[tuple[int, int, str]] = []
+    for warp in entry.get("warps") or []:
+        if not isinstance(warp, Mapping):
+            continue
+        try:
+            warps.append((int(warp["x"]), int(warp["y"]), str(warp.get("to_map") or "")))
+        except (KeyError, TypeError, ValueError):
+            continue
+
+    trainers = safely(lambda: data.trainers(map_name), [])
+    items = safely(lambda: data.items(map_name), [])
+    encounters = safely(lambda: data.encounters(map_name), {})
+    grass = encounters.get("grass") if isinstance(encounters, Mapping) else None
+    slots = grass.get("slots") if isinstance(grass, Mapping) else None
+
+    return MapBrief(
+        name=map_name,
+        map_id=entry.get("map_id"),
+        size=_brief_size(entry.get("size")),
+        connections=tuple(
+            (str(edge), str(target))
+            for edge, target in (entry.get("connections") or {}).items()
+            if target
+        ),
+        warps=tuple(warps),
+        trainers=tuple(
+            _trainer_text(one) for one in trainers[:MAX_BRIEF_TRAINERS] if isinstance(one, Mapping)
+        ),
+        items=tuple(_item_text(one) for one in items[:MAX_BRIEF_ITEMS] if isinstance(one, Mapping)),
+        encounter_rate=int(grass.get("rate") or 0) if isinstance(grass, Mapping) else 0,
+        encounters=tuple(
+            f"{one.get('species')} L{one.get('level')}"
+            f" {round(100 * float(one.get('chance') or 0))}%"
+            for one in (slots or [])[:MAX_BRIEF_ENCOUNTERS]
+            if isinstance(one, Mapping)
+        ),
+    )
+
+
+def ladder_labels() -> tuple[dict[str, str], tuple[str, ...]]:
+    """``{milestone id: label}`` and the ladder in order. Empty when unscored."""
+
+    if "ladder" not in _LOOKUP_CACHE:
+        try:
+            from pokemon_agent.bench.metrics import load_ladder
+
+            entries = load_ladder()
+        except Exception:  # noqa: BLE001
+            entries = {}
+        ranked = sorted(
+            (entry for entry in entries.values() if entry.ladder_index is not None),
+            key=lambda entry: entry.ladder_index or 0,
+        )
+        _LOOKUP_CACHE["ladder"] = (
+            {entry.milestone_id: entry.label for entry in entries.values()},
+            tuple(entry.milestone_id for entry in ranked),
+        )
+    return _LOOKUP_CACHE["ladder"]
+
+
+def ladder_position(done: Iterable[str]) -> tuple[str, str]:
+    """``(highest rung reached, next rung to reach)`` as labels, either may be "".
+
+    The ladder is the run's actual objective and the receipts say exactly how far
+    up it the run is. A retrospective that names the next rung cannot repeat the
+    failure where one told a session to beat a gym leader it had already beaten.
+
+    "Next" means the next rung *above* the highest one reached, not the lowest
+    unreached one. Several rungs are optional and a run that walked past one has
+    not left work behind it; sending it back for the rival battle on Route 22
+    would be the same wrong instruction in the other direction.
+    """
+
+    labels, ordered = ladder_labels()
+    reached = {identifier for identifier in done if identifier in labels}
+    ranks = {identifier: rank for rank, identifier in enumerate(ordered)}
+    highest = max((ranks[one] for one in reached if one in ranks), default=-1)
+    top = next((one for one in ordered if ranks[one] == highest), "")
+    upcoming = next(
+        (one for one in ordered if ranks[one] > highest and one not in reached),
+        "",
+    )
+    return labels.get(top, ""), labels.get(upcoming, "")
+
+
+# ---------------------------------------------------------------------------
 # Ground truth off the run receipts
 #
 # Everything above this line is the model's account of the session, read back out
@@ -580,14 +949,19 @@ SAVES_DIRNAME = "saves"
 #: is a place the agent chose to come back to, so none is worth a token.
 AUTO_SAVE_PREFIX = "auto__"
 SAVE_SUFFIX = ".state"
-#: Named saves offered to the next session, newest first. Six is one line.
-MAX_HANDOFF_SAVES = 6
+#: Named saves offered to the next session, newest first. Four, not six: the
+#: point of the line is that the escape hatch exists at all - `./poke saves` had
+#: never been called once - and the two oldest names cost twelve tokens of a
+#: message that now also has to carry the map's exits.
+MAX_HANDOFF_SAVES = 4
 #: Milestone ids named before the rest collapse into "+n more".
 MAX_HANDOFF_MILESTONES = 4
 #: Tools named in the mix line.
 MAX_HANDOFF_TOOLS = 4
 #: Below this a revisited tile is just walking, not a trap.
 HOTSPOT_MIN_VISITS = 5
+#: At or below this share of max HP the handoff spends a line on where to heal.
+HURT_HP_FRACTION = 0.4
 #: Receipts store ``t`` rounded to the millisecond, and the mark stores the raw
 #: clock, so a receipt written microseconds after a session began can round to
 #: just before it and fall out of its own session. Widen the slice by one tick.
@@ -595,6 +969,12 @@ RECEIPT_TIME_EPSILON = 0.001
 
 FACTS_HEADING = "Ground truth from the run receipts"
 FACTS_DIGEST_HEADING = f"{FACTS_HEADING} (authoritative - do not contradict these)"
+
+#: The two blocks the model wrote itself. Both are headed as claims, because one
+#: retrospective on disk copied "machine INACCESSIBLE (confirmed)" out of NOTES.md
+#: and handed it on as fact; the agent healed at that machine 26 seconds later.
+NARRATION_HEADING = "Narration the agent wrote, oldest first - CLAIMS, not facts, and unverified"
+NOTES_HEADING = "NOTES.md as the agent left it - CLAIMS, not facts, and unverified"
 
 
 def _plural(count: int, noun: str, plural: str = "") -> str:
@@ -640,6 +1020,19 @@ class SessionFacts:
     tool_mix: tuple[tuple[str, int], ...] = ()
     saves: tuple[str, ...] = ()
 
+    # -- static ground truth, from the generated game data rather than the run --
+    #: Label of the highest ladder rung the run has reached, and of the next one.
+    rung_done: str = ""
+    rung_next: str = ""
+    #: Every way off the map the session ended on, marking the ones never used.
+    exits: str = ""
+    #: Where the goal is, as hops on the map graph, and what the goal was read as.
+    route_target: str = ""
+    route: str = ""
+    #: The way to the nearest healing map, carried only when the party is hurt.
+    heal_target: str = ""
+    heal_route: str = ""
+
     @property
     def presses_per_new_tile(self) -> Optional[float]:
         if not self.unique_positions or not self.session_presses:
@@ -654,15 +1047,21 @@ class SessionFacts:
             f"{_plural(self.total_presses, 'press', 'presses')} spent on it so far."
         ]
         if self.done:
-            named = list(self.done[:MAX_HANDOFF_MILESTONES])
-            rest = self.done_count - len(named)
-            listed = ", ".join(named) + (f" +{rest} more" if rest > 0 else "")
+            # The ladder's own labels, not the raw event ids. Four ids cost thirty
+            # tokens and told the next session nothing it could act on; the rung
+            # above the highest one reached is the whole of what it needed.
+            reached = (
+                f"highest rung: {self.rung_done}"
+                if self.rung_done
+                else ", ".join(self.done[:MAX_HANDOFF_MILESTONES])
+            )
             gained = (
                 "Gained last session: " + ", ".join(self.gained)
                 if self.gained
                 else "Nothing new last session"
             )
-            rows.append(f"- Already done ({self.done_count}): {listed}. {gained}.")
+            upcoming = f" Next rung: {self.rung_next}." if self.rung_next else ""
+            rows.append(f"- Done ({self.done_count}), {reached}. {gained}.{upcoming}")
 
         tail = f"ended on {self.ended_map or '?'} {_position(self.ended_pos)}"
         if self.ended_hp:
@@ -681,11 +1080,18 @@ class SessionFacts:
                     f"; {self.blocked_batches:,} of {self.session_batches:,} "
                     f"batches ({share}%) moved nothing"
                 )
+            # Whiteouts and reloads used to have a line of their own and were
+            # zero on almost every session that ever wrote one. They ride along
+            # here instead, and say nothing at all when there is nothing to say.
+            trouble = ""
+            if self.whiteouts or self.reloads:
+                trouble = f"; {self.whiteouts} whiteouts, {self.reloads} save reloads"
             rows.append(
                 f"- Walking: {self.unique_positions:,} distinct tiles from "
                 f"{self.position_samples:,} samples"
                 + (f" ({rate} presses per new tile)" if rate else "")
                 + blocked
+                + trouble
                 + "."
             )
 
@@ -695,12 +1101,25 @@ class SessionFacts:
                 f"stood on {self.hot_visits:,} times."
             )
 
-        if self.whiteouts or self.reloads:
-            rows.append(f"- Whiteouts: {self.whiteouts}. Save reloads: {self.reloads}.")
+        # The two lines that exist because every false belief in the transcripts
+        # was a compass direction the model invented and then acted on.
+        if self.exits:
+            rows.append(
+                f"- Every way off {self.ended_map or 'this map'} "
+                f"(* = never stepped on): {self.exits}."
+            )
+        if self.route:
+            rows.append(f"- Map graph says the way to {self.route_target}: {self.route}.")
+        if self.heal_route:
+            rows.append(f"- Party is hurt. Nearest heal is {self.heal_target}: {self.heal_route}.")
 
-        if self.tool_mix:
-            rendered = ", ".join(f"{name} x{count}" for name, count in self.tool_mix)
-            rows.append(f"- Tools it reached for: {rendered}.")
+        # `action` is every batch of buttons and the line above already counted
+        # those, so it is a fifth of this line saying nothing. What is worth a
+        # token is which of the other verbs it reached for at all.
+        beyond = [(name, count) for name, count in self.tool_mix if name != "action"]
+        if beyond:
+            rendered = ", ".join(f"{name} x{count}" for name, count in beyond)
+            rows.append(f"- Verbs beyond walking: {rendered}.")
 
         if self.saves:
             rows.append(
@@ -747,6 +1166,7 @@ def collect_session_facts(
     since_t: Optional[float] = None,
     session_index: int = 0,
     saves_limit: int = MAX_HANDOFF_SAVES,
+    goal: str = "",
 ) -> Optional[SessionFacts]:
     """Read the run back off disk. ``None`` when there is nothing to read.
 
@@ -814,12 +1234,42 @@ def collect_session_facts(
         (hot_map, x, y), hot_visits = visits.most_common(1)[0]
         hot_pos = (x, y)
 
+    # Static ground truth about where the run ended up. It costs no model call
+    # and no server call, so it reaches the next session even when the critic
+    # never ran at all - which is the path nine sessions on disk actually took.
+    done = tuple(dict.fromkeys([*earned, *baseline]))
+    rung_done, rung_next = ladder_position(done)
+    brief = map_brief(ended_map)
+    # Every tile of this map the *run* ever stood on, not just this session: a
+    # warp the run walked through six hours ago is not a warp it has never used.
+    stood_on = {
+        receipt.pos
+        for receipt in receipts
+        if receipt.pos is not None and receipt.map_name == ended_map
+    }
+    target = mentioned_map(goal, exclude=[ended_map])
+    route = route_text(ended_map, target) if target else ""
+    exits = brief.exits(stood_on) if brief.known else ""
+    if route and ", then " not in route and target in exits:
+        # One hop to somewhere the exits line already names, in the same words.
+        # The second copy is fifteen tokens of the next session's first message.
+        route = ""
+    # A party this low is one wild Zubat from a whiteout, and the last time a
+    # model was left to work out where to heal on its own it invented a Poke
+    # Center in the wrong city and walked there at 10 HP.
+    heal_target = heal_route = ""
+    if ended_hp and ended_hp[1] and ended_hp[0] / ended_hp[1] <= HURT_HP_FRACTION:
+        heal_target, _ = nearest_pokecenter(ended_map)
+        heal_route = route_text(ended_map, heal_target) if heal_target else ""
+        if not heal_route:
+            heal_target = ""
+
     return SessionFacts(
         run_id=record.run_id,
         session_index=session_index or 1,
         total_presses=metrics.total_presses,
-        done=tuple(dict.fromkeys([*earned, *baseline])),
-        done_count=len(dict.fromkeys([*earned, *baseline])),
+        done=done,
+        done_count=len(done),
         gained=tuple(dict.fromkeys(gained)),
         session_presses=session_presses,
         session_batches=batches,
@@ -837,6 +1287,726 @@ def collect_session_facts(
         hot_visits=hot_visits,
         tool_mix=tuple(tools.most_common(MAX_HANDOFF_TOOLS)),
         saves=list_named_saves(data_dir, saves_limit),
+        rung_done=rung_done,
+        rung_next=rung_next,
+        heal_target=heal_target,
+        heal_route=heal_route,
+        exits=exits,
+        route_target=target if route else "",
+        route=route,
+    )
+
+
+# ---------------------------------------------------------------------------
+# Session intelligence
+#
+# The facts block above is what the *next* session is told. This block is what
+# the *critic* is told, and it is deliberately much larger: measurements the
+# player never sees, about the session it just finished and the ones before it.
+#
+# Four things the transcripts said a retrospective could not be written without:
+# where the presses actually went (a histogram, not an impression), which
+# commands were repeated verbatim (thirteen identical `act right` calls in a
+# row, never once mentioned by the model), how this session compares with the
+# last few (three consecutive sessions repeated the same trapped walk), and what
+# was never reached for at all (`progress` at zero calls across nine sessions,
+# `saves` at zero while the save that would have escaped sat on disk).
+#
+# Every collector here returns an empty list rather than raising.
+# ---------------------------------------------------------------------------
+
+#: Sessions compared, newest last. Beyond this the table stops being readable.
+MAX_TREND_SESSIONS = 6
+#: Session start clocks kept in the mark file. One more than the table needs, so
+#: the oldest slice still has a boundary to end at.
+MAX_MARK_HISTORY = MAX_TREND_SESSIONS + 2
+#: Repeated commands named before the tail collapses into a count.
+MAX_REPEATED_COMMANDS = 8
+#: A command has to be repeated at least this often before it is a habit.
+MIN_REPEATS = 3
+#: Reachable-but-never-walked tiles named, nearest first.
+MAX_FRONTIER_TILES = 10
+#: Maps given a coverage line, busiest first.
+MAX_COVERAGE_MAPS = 6
+#: Guide sections offered for the current map.
+MAX_GUIDE_HITS = 4
+
+EXPLORED_STORE_FILENAME = "explored_maps.json"
+
+#: The verbs a stuck session most needs and least often reaches for. Sourced from
+#: the CLI parser when it can be, so a verb added there shows up here without an
+#: edit; the literal list is the fallback for when that introspection breaks.
+FALLBACK_VERBS = (
+    "act",
+    "calc",
+    "fight",
+    "frame",
+    "frontier",
+    "goto",
+    "guide",
+    "health",
+    "load",
+    "map",
+    "progress",
+    "route",
+    "run",
+    "save",
+    "saves",
+    "sim",
+    "state",
+)
+
+
+def cli_verbs() -> tuple[str, ...]:
+    """Every ``./poke`` subcommand, off the parser that defines them."""
+
+    if "verbs" not in _LOOKUP_CACHE:
+        found: tuple[str, ...] = ()
+        try:
+            from pokemon_agent.agent_cli import build_parser
+
+            for action in build_parser()._subparsers._group_actions:  # noqa: SLF001
+                choices = getattr(action, "choices", None)
+                if choices:
+                    found = tuple(sorted(choices))
+                    break
+        except Exception:  # noqa: BLE001 — a parser that moved is not a reason to fail
+            found = ()
+        _LOOKUP_CACHE["verbs"] = found or FALLBACK_VERBS
+    return _LOOKUP_CACHE["verbs"]
+
+
+def called_verbs(calls: Iterable[ToolCall]) -> Counter:
+    """How many times the session ran each ``./poke`` subcommand."""
+
+    counts: Counter[str] = Counter()
+    for call in calls:
+        parsed = poke_subcommand(call.command or "")
+        if parsed:
+            counts[parsed[0]] += 1
+    return counts
+
+
+def receipts_for(data_dir: Optional[Path], run_id: Optional[str]) -> tuple[Any, ...]:
+    """Every receipt in a run, or ``()``. The same read the facts block does."""
+
+    if data_dir is None or not run_id:
+        return ()
+    try:
+        return tuple(RunRegistry(Path(data_dir)).load(run_id).receipts)
+    except Exception:  # noqa: BLE001
+        return ()
+
+
+def _bucket_classifier() -> Optional[Callable[..., str]]:
+    """``scope.analysis.classify_receipt``, or ``None``.
+
+    ``scope`` is another agent's module and this one only reads it. Importing it
+    lazily means a rename there costs the critic a section, not a session.
+    """
+
+    if "classify" not in _LOOKUP_CACHE:
+        try:
+            from pokemon_agent.scope.analysis import classify_receipt
+        except Exception:  # noqa: BLE001
+            classify_receipt = None  # type: ignore[assignment]
+        _LOOKUP_CACHE["classify"] = classify_receipt
+    return _LOOKUP_CACHE["classify"]
+
+
+def waste_lines(receipts: Sequence[Any], since_t: Optional[float]) -> list[str]:
+    """Where the session's presses went, by bucket and by map.
+
+    The buckets are ``scope``'s, so an operator reading ``scope waste`` and a
+    critic reading this see the same split of the same presses. ``seen`` is
+    seeded from every receipt before the session, which is what makes
+    "productive" mean *new ground this session*, not new ground ever.
+    """
+
+    classify = _bucket_classifier()
+    if classify is None or not receipts:
+        return []
+    cutoff = None if since_t is None else since_t - RECEIPT_TIME_EPSILON
+    seen: set[tuple[str, int, int]] = set()
+    presses: Counter[str] = Counter()
+    per_map: dict[str, Counter[str]] = {}
+    for receipt in receipts:
+        tile = (
+            (receipt.map_name or "?", receipt.pos[0], receipt.pos[1])
+            if receipt.pos is not None
+            else None
+        )
+        in_session = cutoff is None or receipt.t >= cutoff
+        if receipt.presses > 0 and in_session:
+            try:
+                bucket = classify(receipt, seen, None)
+            except Exception:  # noqa: BLE001
+                bucket = "revisit"
+            presses[bucket] += receipt.presses
+            per_map.setdefault(receipt.map_name or "?", Counter())[bucket] += receipt.presses
+        if tile is not None:
+            seen.add(tile)
+
+    total = sum(presses.values())
+    if not total:
+        return []
+    rendered = ", ".join(
+        f"{bucket} {count:,} ({round(100 * count / total)}%)"
+        for bucket, count in presses.most_common()
+    )
+    rows = [f"- {total:,} presses this session: {rendered}."]
+    for name, counts in sorted(per_map.items(), key=lambda item: -sum(item[1].values()))[
+        :MAX_COVERAGE_MAPS
+    ]:
+        subtotal = sum(counts.values())
+        wasted = counts.get("revisit", 0) + counts.get("blocked", 0)
+        rows.append(
+            f"- {name}: {subtotal:,} presses, "
+            f"{round(100 * wasted / subtotal) if subtotal else 0}% of them revisiting "
+            f"ground it had already stood on or walking into a wall."
+        )
+    return rows
+
+
+def repeat_lines(calls: Sequence[ToolCall]) -> list[str]:
+    """Commands the session sent over and over, and its longest identical run.
+
+    SKILL.md says "if the same action fails three times, stop repeating it". One
+    session on disk sent thirteen consecutive identical `./poke act right` calls
+    and its own narration never mentions it. The model cannot see this about
+    itself; the critic can be handed it.
+    """
+
+    commands = [
+        " ".join(f"{verb} {' '.join(rest)}".split())
+        for verb, rest in (
+            parsed for parsed in (poke_subcommand(call.command or "") for call in calls) if parsed
+        )
+    ]
+    if not commands:
+        return []
+    counts = Counter(commands)
+    repeated = [(text, count) for text, count in counts.most_common() if count >= MIN_REPEATS]
+
+    longest_run, longest_text, run, previous = 0, "", 0, None
+    for command in commands:
+        run = run + 1 if command == previous else 1
+        previous = command
+        if run > longest_run:
+            longest_run, longest_text = run, command
+
+    pairs: Counter[tuple[str, str]] = Counter(zip(commands, commands[1:]))
+    rows: list[str] = []
+    if repeated:
+        rendered = ", ".join(
+            f"`{text}` x{count}" for text, count in repeated[:MAX_REPEATED_COMMANDS]
+        )
+        rows.append(
+            f"- {len(commands):,} poke commands, {len(counts):,} of them distinct. "
+            f"Sent most often: {rendered}."
+        )
+    if longest_run >= MIN_REPEATS:
+        rows.append(f"- Longest identical run: `{longest_text}` {longest_run} times back to back.")
+    cycles = [(pair, count) for pair, count in pairs.most_common(3) if count >= MIN_REPEATS]
+    if cycles:
+        rendered = ", ".join(f"`{one}` -> `{two}` x{count}" for (one, two), count in cycles)
+        rows.append(f"- Two-step cycles it kept re-entering: {rendered}.")
+    return rows
+
+
+def coverage_lines(
+    data_dir: Optional[Path],
+    *,
+    map_name: str,
+    map_id: Optional[int],
+    player: Optional[tuple[int, int]],
+    warps: Iterable[tuple[int, int, str]] = (),
+) -> list[str]:
+    """What the explored-map store knows about the map the session ended on.
+
+    Coverage is the cheap half; the expensive and useful half is the frontier —
+    walkable ground reachable from where it is standing that it has never walked
+    on. A session that reports "nowhere left to go" with sixty reachable unwalked
+    tiles under its feet has said something the receipts can contradict.
+    """
+
+    if data_dir is None or map_id is None:
+        return []
+    try:
+        from pokemon_agent.explored_map import ExploredMaps
+
+        store = ExploredMaps(Path(data_dir) / EXPLORED_STORE_FILENAME)
+        if not store.knows(map_id):
+            return []
+        grid = store.grid(map_id)
+        counts = store.coverage(map_id)
+    except Exception:  # noqa: BLE001
+        return []
+    if not isinstance(grid, dict) or not isinstance(counts, dict):
+        return []
+
+    rows = [
+        f"- {map_name or map_id} explored: {counts.get('seen', 0)} of {counts.get('total', 0)} "
+        f"tiles seen ({counts.get('percent', 0)}%), {counts.get('walkable_seen', 0)} walkable, "
+        f"{counts.get('walked', 0)} actually walked on."
+    ]
+    walked = grid.get("walked") or set()
+    origin = player if player is not None else store.player_position(map_id)
+    if origin is not None:
+        try:
+            from pokemon_agent.world import frontier
+
+            reachable = frontier(grid, walked, origin)
+        except Exception:  # noqa: BLE001
+            reachable = ()
+        if reachable:
+            nearest = ", ".join(f"({x},{y})" for x, y in reachable[:MAX_FRONTIER_TILES])
+            rows.append(
+                f"- Reachable from ({origin[0]},{origin[1]}) and never walked on: "
+                f"{len(reachable)} tiles. Nearest first: {nearest}."
+            )
+        else:
+            rows.append(
+                f"- Nothing walkable and unwalked is reachable from "
+                f"({origin[0]},{origin[1]}). Every way on from here is a warp or an edge."
+            )
+    missed = [(x, y, target) for x, y, target in warps if (x, y) not in walked]
+    if missed:
+        rendered = ", ".join(f"({x},{y})->{target or '?'}" for x, y, target in missed)
+        rows.append(f"- Warp tiles on this map it never stood on: {rendered}.")
+    return rows
+
+
+@dataclass(frozen=True)
+class SessionSlice:
+    """One session of a run, measured off the receipts alone."""
+
+    index: int
+    presses: int = 0
+    batches: int = 0
+    blocked: int = 0
+    new_tiles: int = 0
+    milestones: int = 0
+    ended_map: str = ""
+
+    @property
+    def presses_per_new_tile(self) -> Optional[float]:
+        if not self.new_tiles or not self.presses:
+            return None
+        return round(self.presses / self.new_tiles, 1)
+
+    def line(self) -> str:
+        rate = self.presses_per_new_tile
+        blocked = round(100 * self.blocked / self.batches) if self.batches else 0
+        return (
+            f"- s{self.index}: {self.presses:,} presses, {self.new_tiles} tiles it had never "
+            f"stood on ({rate if rate is not None else 'n/a'} presses each), {blocked}% of "
+            f"batches moved nothing, +{self.milestones} milestones, ended on "
+            f"{self.ended_map or '?'}."
+        )
+
+
+def session_slices(receipts: Sequence[Any], starts: Sequence[tuple[int, float]]) -> list[Any]:
+    """Split a run's receipts by session start time and measure each slice.
+
+    ``starts`` comes off the session mark, which the harness stamps at every
+    session start and a crash cannot lose. The receipts themselves carry no
+    session marker: ``run_start`` is written once per *run*, and a run is nine
+    sessions long.
+    """
+
+    ordered = sorted(starts, key=lambda item: item[1])
+    if not ordered or not receipts:
+        return []
+    seen: set[tuple[str, int, int]] = set()
+    slices: list[SessionSlice] = []
+    bounds = [
+        (index, start, ordered[position + 1][1] if position + 1 < len(ordered) else float("inf"))
+        for position, (index, start) in enumerate(ordered)
+    ]
+    for index, start, stop in bounds:
+        presses = batches = blocked = fresh = milestones = 0
+        ended = ""
+        for receipt in receipts:
+            tile = (
+                (receipt.map_name or "?", receipt.pos[0], receipt.pos[1])
+                if receipt.pos is not None
+                else None
+            )
+            inside = start - RECEIPT_TIME_EPSILON <= receipt.t < stop
+            if inside:
+                presses += receipt.presses
+                milestones += len(receipt.milestones_new)
+                if receipt.is_action_batch:
+                    batches += 1
+                    if receipt.moved == 0:
+                        blocked += 1
+                if tile is not None:
+                    ended = receipt.map_name or ended
+                    if tile not in seen:
+                        fresh += 1
+            if tile is not None and receipt.t < stop:
+                seen.add(tile)
+        slices.append(
+            SessionSlice(
+                index=index,
+                presses=presses,
+                batches=batches,
+                blocked=blocked,
+                new_tiles=fresh,
+                milestones=milestones,
+                ended_map=ended,
+            )
+        )
+    return slices[-MAX_TREND_SESSIONS:]
+
+
+def trend_lines(receipts: Sequence[Any], starts: Sequence[tuple[int, float]]) -> list[str]:
+    """The last few sessions side by side, so "again" is a measurable word.
+
+    A retrospective that can say "you did this same thing last session and it did
+    not work" is worth more than one describing a single session in isolation.
+    """
+
+    slices = session_slices(receipts, starts)
+    if len(slices) < 2:
+        return []
+    rows = [one.line() for one in slices]
+    latest, previous = slices[-1], slices[-2]
+    if latest.presses_per_new_tile and previous.presses_per_new_tile:
+        change = latest.presses_per_new_tile - previous.presses_per_new_tile
+        direction = "worse" if change > 0 else "better"
+        rows.append(
+            f"- Presses per new tile went {direction} than last session "
+            f"({previous.presses_per_new_tile} -> {latest.presses_per_new_tile})."
+        )
+    return rows
+
+
+def guide_lines(map_name: str, read_slugs: Iterable[str]) -> list[str]:
+    """Guide sections about this map, and whether the session opened them."""
+
+    if not map_name:
+        return []
+    try:
+        from pokemon_agent import guides
+
+        hits = guides.search(map_name, limit=MAX_GUIDE_HITS)
+    except Exception:  # noqa: BLE001
+        return []
+    already = {str(one).lower() for one in read_slugs}
+    unread = [
+        f"`./poke guide {section.guide}/{section.slug}`"
+        for section in hits
+        if f"{section.guide}/{section.slug}".lower() not in already
+    ]
+    if not unread:
+        return []
+    return [f"- Guide sections about {map_name} it did not open: {', '.join(unread)}."]
+
+
+def untried_lines(
+    calls: Sequence[ToolCall],
+    *,
+    map_name: str = "",
+    facts: Optional[Any] = None,
+) -> list[str]:
+    """Verbs the session never called, and guide sections it never opened.
+
+    Across the nine sessions this was built from, ``progress`` was called zero
+    times, ``saves`` zero times and ``load`` zero times, while a save named
+    ``pewter_start`` sat on disk through three sessions of the trap it would have
+    escaped. Naming the untried verb in the handoff is what got ``load`` called
+    for the first time.
+    """
+
+    counts = called_verbs(calls)
+    if not counts:
+        # A session with no parsed commands at all has nothing to say here, and
+        # "it never called any of the seventeen verbs" is a sentence, not a fact.
+        return []
+    rows: list[str] = []
+    never = [verb for verb in cli_verbs() if not counts.get(verb)]
+    if never:
+        rows.append(f"- Verbs it never called this session: {', '.join(never)}.")
+    if counts:
+        rendered = ", ".join(f"{verb} x{count}" for verb, count in counts.most_common(10))
+        rows.append(f"- Verbs it did call: {rendered}.")
+    if facts is not None and getattr(facts, "saves", ()):
+        loaded = counts.get("load", 0)
+        rows.append(
+            f"- {len(facts.saves)} named saves are on disk and `./poke load` was called "
+            f"{loaded} time(s) this session."
+        )
+    read_slugs = [
+        rest[0]
+        for verb, rest in (
+            parsed for parsed in (poke_subcommand(call.command or "") for call in calls) if parsed
+        )
+        if verb == "guide" and rest
+    ]
+    rows.extend(guide_lines(map_name, read_slugs))
+    return rows
+
+
+# ---------------------------------------------------------------------------
+# Claims, checked
+#
+# A retrospective on disk copied "machine INACCESSIBLE (confirmed)" out of the
+# agent's own NOTES.md and handed it to the next session as ground truth. The
+# agent healed 10 -> 65 HP at that machine twenty-six seconds later. The word
+# "confirmed" in a model's notes confirms nothing; it is a claim, and the only
+# thing that settles a claim is a measurement or a lookup.
+#
+# So every checkable claim the model wrote gets checked here, before the critic
+# reads it, against the same generated map data the game was built from. A
+# coordinate is either a warp or it is not. A direction is either the edge the
+# map graph names or it is wrong.
+# ---------------------------------------------------------------------------
+
+#: Coordinates and directions checked. Both are bounded: the point is to catch
+#: the load-bearing claim, not to audit every sentence.
+MAX_CHECKED_COORDS = 14
+MAX_CHECKED_DIRECTIONS = 8
+#: How close a compass word has to sit to a map name to be read as a claim about
+#: reaching that map, rather than a step inside the map already stood on.
+DIRECTION_WINDOW = 40
+
+COMPASS = ("north", "south", "east", "west")
+
+_COORD_RE = re.compile(r"\((\d{1,3})\s*,\s*(\d{1,3})\)")
+_COMPASS_RE = re.compile(r"(?i)\b(north|south|east|west)\b")
+
+CLAIMS_HEADING = "Claims the agent made, checked against the map data"
+
+
+def coordinate_claims(
+    text: str,
+    map_name: str,
+    elsewhere: Iterable[str] = (),
+    limit: int = MAX_CHECKED_COORDS,
+) -> list[str]:
+    """Every ``(x,y)`` the model wrote about, answered from the map data.
+
+    One handoff on disk named the three B1F ladders as "the cave mouth out to
+    Route 4" and the two actual Route 4 doors as "descend to B1F - do not take
+    them". Every coordinate in it was in the world file, and every one of them
+    said the opposite.
+
+    Only the three answers worth a token are written: this tile is a warp, this
+    tile is a warp but on a different map the run has been on, this tile is not
+    on the map at all. A tile that is simply ordinary ground says nothing, and a
+    line per ordinary tile would bury the three that matter.
+    """
+
+    brief = map_brief(map_name)
+    if not brief.known or not text:
+        return []
+    warps = {(x, y): target for x, y, target in brief.warps}
+    others = {
+        (x, y): (name, target)
+        for name in elsewhere
+        if name and name != map_name
+        for x, y, target in map_brief(name).warps
+    }
+    width, height = brief.size or (0, 0)
+    rows: list[str] = []
+    for found in dict.fromkeys(_COORD_RE.findall(text)):
+        x, y = int(found[0]), int(found[1])
+        if (x, y) in warps:
+            rows.append(f"- ({x},{y}) IS a warp on {map_name}: it leads to {warps[(x, y)]}.")
+        elif width and height and not (0 <= x < width and 0 <= y < height):
+            rows.append(f"- ({x},{y}) is outside {map_name}, which is {width}x{height}.")
+        elif (x, y) in others:
+            name, target = others[(x, y)]
+            rows.append(
+                f"- ({x},{y}) is not a warp on {map_name}, but it is one on {name}, "
+                f"leading to {target}."
+            )
+        if len(rows) >= limit:
+            break
+    return rows
+
+
+def direction_claims(text: str, source: str, limit: int = MAX_CHECKED_DIRECTIONS) -> list[str]:
+    """Compass words written next to a map name, checked against the map graph.
+
+    This is the failure the transcripts are full of: the agent writes a bearing
+    from memory, acts on it, and overrides a correct tool result to do it. The
+    check is mechanical - the graph either has a connection on that edge or it
+    does not.
+    """
+
+    if not text or not source:
+        return []
+    rows: list[str] = []
+    seen: set[tuple[str, str]] = set()
+    for found in _COMPASS_RE.finditer(text):
+        word = found.group(1).lower()
+        window = text[max(0, found.start() - DIRECTION_WINDOW) : found.end() + DIRECTION_WINDOW]
+        target = mentioned_map(window, exclude=[source])
+        if not target or (word, target) in seen:
+            continue
+        seen.add((word, target))
+        route = route_text(source, target)
+        if not route:
+            rows.append(
+                f'- "{word} ... {target}": there is no route from {source} to {target} '
+                f"in the map data at all."
+            )
+        elif f"walk {word}" in route:
+            rows.append(f'- "{word} ... {target}": agrees with the map data ({route}).')
+        else:
+            rows.append(f'- "{word} ... {target}": WRONG. The map data says {route}.')
+        if len(rows) >= limit:
+            break
+    return rows
+
+
+def claim_lines(text: str, map_name: str, elsewhere: Iterable[str] = ()) -> list[str]:
+    """Every checkable claim in one body of the model's own prose."""
+
+    rows = coordinate_claims(text, map_name, elsewhere)
+    rows.extend(direction_claims(text, map_name))
+    return rows
+
+
+@dataclass(frozen=True)
+class Intel:
+    """Everything measured that the finished session was never shown."""
+
+    geography: tuple[str, ...] = ()
+    coverage: tuple[str, ...] = ()
+    waste: tuple[str, ...] = ()
+    repeats: tuple[str, ...] = ()
+    trend: tuple[str, ...] = ()
+    untried: tuple[str, ...] = ()
+    claims: tuple[str, ...] = ()
+
+    def sections(self) -> list[tuple[str, tuple[str, ...]]]:
+        """Heading and body per block, in the order the critic should read them."""
+
+        return [
+            ("Where it is, from the game's own map data (authoritative)", self.geography),
+            ("The map it is standing in, from the explored-map store", self.coverage),
+            ("Where the presses went (measured, bucketed)", self.waste),
+            ("Commands it repeated", self.repeats),
+            ("How this session compares with the ones before it", self.trend),
+            ("What it never reached for", self.untried),
+            (CLAIMS_HEADING, self.claims),
+        ]
+
+    def __bool__(self) -> bool:
+        return any(body for _, body in self.sections())
+
+
+def geography_lines(
+    *,
+    map_name: str,
+    targets: Iterable[str] = (),
+    stood_on: Iterable[tuple[int, int]] = (),
+    visited_maps: Iterable[str] = (),
+) -> list[str]:
+    """The static truth about where the run is and how to leave it.
+
+    This is the block that exists because of one specific failure: a model with
+    no ground truth invented a Poke Center in the wrong city and sent a party at
+    10 HP backwards to reach it. Every line here comes out of the generated world
+    data, so the critic never has to take the session's word for a direction.
+    """
+
+    brief = map_brief(map_name)
+    if not brief.known:
+        return []
+    rows = brief.lines(stood_on)
+    center, hops = nearest_pokecenter(map_name)
+    if center:
+        route = route_text(map_name, center)
+        rows.append(
+            f"- Nearest place to heal: {center}, {hops} hop(s) away"
+            + (f" — {route}." if route else ".")
+        )
+    for target in dict.fromkeys(one for one in targets if one and one != map_name):
+        route = route_text(map_name, target)
+        rows.append(
+            f"- Route to {target}: {route}."
+            if route
+            else f"- There is no route from {map_name} to {target} in the map data."
+        )
+    seen = set(visited_maps)
+    reachable = [target for _, target in brief.connections]
+    reachable += [target for _, _, target in brief.warps if target]
+    unvisited = [name for name in dict.fromkeys(reachable) if name not in seen]
+    if unvisited:
+        rows.append(f"- Maps one hop away this run has never been on: {', '.join(unvisited)}.")
+    return rows
+
+
+def collect_intel(
+    *,
+    data_dir: Optional[Path],
+    run_id: Optional[str] = None,
+    since_t: Optional[float] = None,
+    facts: Optional[Any] = None,
+    calls: Sequence[ToolCall] = (),
+    goal: str = "",
+    objective: str = "",
+    notes: str = "",
+    session_starts: Sequence[tuple[int, float]] = (),
+) -> Intel:
+    """Assemble every measurement the critic gets and the player never did.
+
+    Each block is collected independently and a block that raises is simply an
+    empty block: the critic must never be the reason a session fails to start.
+    """
+
+    map_name = getattr(facts, "ended_map", "") or ""
+    player = getattr(facts, "ended_pos", None)
+    receipts = receipts_for(data_dir, run_id)
+    stood_on = {
+        receipt.pos
+        for receipt in receipts
+        if receipt.pos is not None and (receipt.map_name or "") == map_name
+    }
+    visited_maps = {receipt.map_name for receipt in receipts if receipt.map_name}
+    brief = map_brief(map_name)
+    targets = [mentioned_map(goal), mentioned_map(objective)]
+
+    def guarded(call: Callable[[], list[str]]) -> tuple[str, ...]:
+        try:
+            return tuple(call())
+        except Exception:  # noqa: BLE001 — one dead block, not a dead critic
+            return ()
+
+    return Intel(
+        geography=guarded(
+            lambda: geography_lines(
+                map_name=map_name,
+                targets=targets,
+                stood_on=stood_on,
+                visited_maps=visited_maps,
+            )
+        ),
+        coverage=guarded(
+            lambda: coverage_lines(
+                data_dir,
+                map_name=map_name,
+                map_id=brief.map_id,
+                player=player,
+                warps=brief.warps,
+            )
+        ),
+        waste=guarded(lambda: waste_lines(receipts, since_t)),
+        repeats=guarded(lambda: repeat_lines(calls)),
+        trend=guarded(lambda: trend_lines(receipts, session_starts)),
+        untried=guarded(lambda: untried_lines(calls, map_name=map_name, facts=facts)),
+        claims=guarded(
+            lambda: claim_lines(
+                "\n".join([notes, *narration_lines(list(calls))]),
+                map_name,
+                visited_maps,
+            )
+        ),
     )
 
 
@@ -854,16 +2024,57 @@ def read_session_mark(workspace_dir: Path) -> JsonDict:
     return payload if isinstance(payload, dict) else {}
 
 
+def session_starts(mark: JsonDict, run_id: Optional[str] = None) -> tuple[tuple[int, float], ...]:
+    """``(session index, start clock)`` per session in the mark, oldest first.
+
+    Filtered to one run: sessions from a run that has been closed and replaced
+    cannot be compared with sessions from this one, because the receipts they
+    would be measured against belong to a different file.
+    """
+
+    rows: list[tuple[int, float]] = []
+    for entry in mark.get("history") or []:
+        if not isinstance(entry, dict):
+            continue
+        started = entry.get("started_t")
+        if not isinstance(started, (int, float)):
+            continue
+        if run_id and str(entry.get("run_id") or "") not in {"", run_id}:
+            continue
+        rows.append((int(entry.get("session_index") or 0), float(started)))
+    return tuple(sorted(rows, key=lambda item: item[1]))
+
+
 def write_session_mark(
     workspace_dir: Path, *, run_id: Optional[str], started_t: float, session_index: int
 ) -> None:
-    """Stamp this session into the workspace. Best effort, never raises."""
+    """Stamp this session into the workspace. Best effort, never raises.
 
-    payload = {
+    The mark also keeps the last few sessions' start clocks, because nothing else
+    on disk does. ``run_start`` is written once per *run* and a run is many
+    sessions long, so without this history the receipts cannot be cut into
+    sessions and "you did this same thing last session" is unmeasurable.
+    """
+
+    previous = read_session_mark(workspace_dir)
+    entry = {
         "run_id": run_id or "",
         "started_t": float(started_t),
         "session_index": int(session_index),
     }
+    history = [one for one in (previous.get("history") or []) if isinstance(one, dict)]
+    if not history and isinstance(previous.get("started_t"), (int, float)):
+        # First write after the upgrade: the mark already on disk is one session.
+        history = [
+            {
+                "run_id": str(previous.get("run_id") or ""),
+                "started_t": float(previous["started_t"]),
+                "session_index": int(previous.get("session_index") or 0),
+            }
+        ]
+    history = [one for one in history if one.get("started_t") != entry["started_t"]]
+    history.append(entry)
+    payload = {**entry, "history": history[-MAX_MARK_HISTORY:]}
     with contextlib.suppress(OSError):
         critic_debug_dir(workspace_dir).mkdir(parents=True, exist_ok=True)
         session_mark_path(workspace_dir).write_text(
@@ -888,6 +2099,9 @@ class DigestInput:
     calls: list[ToolCall] = field(default_factory=list)
     #: Receipts, not recollection. Rendered first and never trimmed.
     facts: Optional[SessionFacts] = None
+    #: Measurements and static game data the session itself never saw. A few
+    #: hundred tokens, rendered under the facts and never trimmed either.
+    intel: Optional[Intel] = None
 
 
 def build_digest(data: DigestInput, *, char_budget: int = DIGEST_CHAR_BUDGET) -> str:
@@ -910,18 +2124,21 @@ def build_digest(data: DigestInput, *, char_budget: int = DIGEST_CHAR_BUDGET) ->
     narration = narration_lines(data.calls)
     recent = call_lines(data.calls)
 
+    intel = data.intel or Intel()
+
     def render(narration_rows: list[str], recent_rows: list[str], notes: str) -> str:
         sections = [
             "# Finished session digest",
             _section(FACTS_DIGEST_HEADING, data.facts.lines() if data.facts else []),
+            *(_section(title, body) for title, body in intel.sections()),
             _section("Session", header),
             _section("Game state at the start of the session", format_game_state(data.start_state)),
             _section("Game state now", format_game_state(data.final_state)),
             _section("What it did (measured, not reported)", format_stats(stats)),
             _section("Explored-map coverage", format_map_summary(data.map_summary)),
-            _section("Narration the agent wrote, oldest first", narration_rows),
+            _section(NARRATION_HEADING, narration_rows),
             _section(f"Last {len(recent_rows)} tool calls, oldest first", recent_rows),
-            _section("NOTES.md as the agent left it", [notes] if notes else []),
+            _section(NOTES_HEADING, [notes] if notes else []),
         ]
         return "\n\n".join(section for section in sections if section).strip() + "\n"
 
@@ -954,9 +2171,30 @@ Below is a digest of what the finished session did: its goal, the game state bef
 measured statistics from its own tool calls, the map it explored, the narration it wrote, its
 last tool calls, and the notes file it maintains.
 
-The "{FACTS_DIGEST_HEADING}" block is measured, not remembered. Where it and the
-narration disagree, it wins, and a claim it contradicts is a claim you must not make. It is also
-handed to the next agent verbatim, above whatever you write, so do not restate what it says.
+You are given more than the agent had. Everything above the "Session" heading is measured or
+generated: receipts the server wrote after every batch, the game's own map data, the
+explored-map store, and a press-by-press split of where the buttons went. The agent saw none of
+it. Use it - most of what a stuck session needs is a number it could not see about itself.
+
+Ground truth beats narration, without exception. Where a measured block and the agent's own
+account disagree, the measurement wins and a claim it contradicts is a claim you must not make.
+The agent's narration is evidence of what it believed, not of what happened; every false belief
+found in these transcripts so far has been a compass direction the model invented and then acted
+on against a correct tool result. If the map data says an exit is north, it is north, however
+confidently the session argued otherwise.
+
+The narration and NOTES.md blocks are the agent's claims. They are not evidence. The word
+"confirmed" in them confirms nothing: one retrospective repeated "machine INACCESSIBLE
+(confirmed)" out of NOTES.md as though it were a finding, and the agent healed at that machine
+twenty-six seconds later. Never restate a claim as a fact. If you must mention one, say the
+agent believed it, and say what the check above found.
+
+Every direction, coordinate and destination you write must come from the map-data blocks, not
+from anything you know about Pokemon Red and not from the agent's account. If a place cannot be
+routed to from where the run is standing, do not name it.
+
+The "{FACTS_DIGEST_HEADING}" block is also handed to the next agent verbatim,
+above whatever you write, so do not restate what it says.
 
 The retrospective is the next agent's first instruction. Cover, in this order and with no
 preamble:
@@ -964,6 +2202,12 @@ preamble:
 1. The mistake that cost the most presses, cited with numbers from above.
 2. Concrete, checkable things to do differently, and what to do instead.
 3. Anything learned about this map worth carrying forward: exits, walls, ledges, encounters.
+
+Prefer, in that order: something the session repeated that the comparison block shows it also
+repeated last session; an exit, warp or route in the map data it never used; a tile the frontier
+says is reachable and unwalked; a verb it never called. A retrospective that says "you did this
+same thing last session and it did not work" is worth more than one describing this session
+alone.
 
 Hard constraints:
 - Aim for about {TARGET_HANDOFF_WORDS} words; {MAX_HANDOFF_WORDS} is the hard ceiling. Finish
@@ -981,6 +2225,13 @@ Finish with the goal for the next session, as the very last line, alone, exactly
 Judge that goal against the state AFTER this session, not the goal it was given. A goal the
 session already achieved is finished: name what comes next instead of repeating it. Keep it
 under {MAX_NEXT_GOAL_CHARS} characters, on one line, with nothing after it.
+
+The goal is checked against the map graph before it is used, and one that fails the check is
+thrown away. It fails if it names a map with no route from where the run is standing, or if it
+names a compass direction next to a map the graph reaches some other way. A goal saying "head
+south on Route 3 to Cerulean City" cost this run 5,618 presses; the harness had printed the
+correct two hops three seconds earlier. So: name a destination only if the map-data block above
+routes to it, and use that block's own wording for the direction.
 """
 
 #: Appended on the retry, where the first pass reasoned past its output ceiling.
@@ -1254,6 +2505,44 @@ def parse_next_goal(text: str) -> str:
         if candidate:
             found = candidate  # A restated goal later in the reply wins.
     return found
+
+
+def check_next_goal(goal: str, *, from_map: str) -> tuple[str, str]:
+    """``(goal to use, why it was rejected)``. An empty goal is one to drop.
+
+    The critic's goal is not advice, it is the next session's first line, and the
+    session acts on it in preference to a correct tool result three seconds old.
+    One that said "head south on Route 3 to Cerulean City" cost this run 5,618
+    presses while the harness had already printed the right two hops. So a goal
+    that names a place gets routed to before it is allowed to leave the building.
+
+    Two rejections, both mechanical:
+
+    * it names a map the graph cannot reach from where the run is standing;
+    * it names a compass direction beside a map the graph reaches another way.
+
+    A goal that names no map is not checkable and is left alone - the fallback for
+    a dropped goal is the objective engine, which is not free, so this refuses
+    only what it can prove wrong.
+    """
+
+    text = (goal or "").strip()
+    if not text or not from_map:
+        return text, ""
+    target = mentioned_map(text, exclude=[from_map])
+    if not target:
+        return text, ""
+    route = route_text(from_map, target)
+    if not route:
+        return "", f"names {target}, which the map graph cannot reach from {from_map}"
+    for found in _COMPASS_RE.finditer(text):
+        word = found.group(1).lower()
+        window = text[max(0, found.start() - DIRECTION_WINDOW) : found.end() + DIRECTION_WINDOW]
+        if mentioned_map(window, exclude=[from_map]) != target:
+            continue
+        if f"walk {word}" not in route:
+            return "", (f'says "{word}" about {target}, but the map graph says {route}')
+    return text, ""
 
 
 def handoff_path(workspace_dir: Path) -> Path:
@@ -1534,9 +2823,12 @@ class CriticResult:
 
     ok: bool
     text: str = ""
-    #: The critic's ``NEXT GOAL:`` line, or "" when it wrote none the parser trusts.
-    #: The supervisor uses it only when the operator has not named a goal of their own.
+    #: The critic's ``NEXT GOAL:`` line, or "" when it wrote none the parser trusts
+    #: or the map graph refused the one it wrote. The supervisor uses it only when
+    #: the operator has not named a goal of their own.
     next_goal: str = ""
+    #: Why a goal the critic did write was thrown away, for the operator to read.
+    next_goal_rejected: str = ""
     error: Optional[str] = None
     duration_seconds: float = 0.0
     digest: str = ""
@@ -1557,6 +2849,7 @@ async def run_critic(
     digest: str,
     provider: Optional[str] = None,
     model: Optional[str] = None,
+    from_map: str = "",
     thinking: str = DEFAULT_CRITIC_THINKING,
     timeout_seconds: float = DEFAULT_CRITIC_TIMEOUT_SECONDS,
     include_images: bool = True,
@@ -1655,10 +2948,14 @@ async def run_critic(
             return finish(ok=False, error=error)
         error = f"{error} Salvaged a partial handoff instead."
 
+    goal, rejected = check_next_goal(parse_next_goal(text), from_map=from_map)
+    if rejected:
+        error = f"{error + ' ' if error else ''}Dropped the NEXT GOAL: it {rejected}."
     result = finish(
         ok=True,
         text=text,
-        next_goal=parse_next_goal(text),
+        next_goal=goal,
+        next_goal_rejected=rejected,
         error=error,
         salvaged=salvaged,
     )

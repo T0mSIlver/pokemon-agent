@@ -3050,13 +3050,18 @@ async def test_the_first_message_carries_ground_truth_off_the_receipts(tmp_path:
     assert f"## {FACTS_HEADING}" in message
     assert f"Run {supervisor.run_id}, after session 1" in message
     assert "153 presses spent on it so far" in message
-    # What the run already has, so the next goal is never one it has already met.
-    assert "Already done (1): BADGE_BOULDER" in message
+    # What the run already has, so the next goal is never one it has already met -
+    # as the ladder's own label, which is an instruction, rather than an event id.
+    assert "Done (1), highest rung: Boulder Badge" in message
+    assert "Next rung: Beat the Super Nerd guarding the Mt. Moon fossils" in message
     # Where it got stuck, and how badly.
     assert "Most revisited tile: Route 3 (22,12), stood on 5 times" in message
     assert "5 of 7 batches (71%) moved nothing" in message
-    # Which verbs it reached for, and by omission which it did not.
-    assert "Tools it reached for: action x6, goto x1" in message
+    # Which verbs it reached for besides walking, and by omission which it did not.
+    assert "Verbs beyond walking: goto x1" in message
+    # Where the exits are, off the world file: every false belief in these
+    # transcripts has been a compass direction the model invented for itself.
+    assert "Every way off Route 3 (* = never stepped on): walk north -> Route 4" in message
     # The escape hatch it never lists for itself.
     assert "`./poke load <name>`: pewter_start." in message
     assert "auto__" not in message
@@ -3124,3 +3129,29 @@ async def test_the_digest_the_critic_reads_is_grounded_in_the_receipts(tmp_path:
     assert "authoritative - do not contradict these" in digest
     # The facts sit above the model's own account of the same session.
     assert digest.index(FACTS_DIGEST_HEADING) < digest.index("What it did (measured")
+
+
+@pytest.mark.asyncio
+async def test_the_digest_carries_intelligence_the_session_never_had(tmp_path: Path):
+    """The critic pays for its context once; the player pays for its own on all
+    five hundred turns. So the critic is told what the session could not afford
+    to be: the map's real exits, where the presses went, and what it repeated."""
+
+    supervisor, recorder = recorded_supervisor(tmp_path, critique=CRITIQUE_WITH_GOAL, settle=False)
+    workspace_dir = tmp_path / "workspace"
+
+    await supervisor.start(goal="Cross Route 3.", auto_continue=True, continue_delay_seconds=5)
+    assert await wait_for(lambda: supervisor.status == "running", timeout=15)
+    await record_a_stuck_session(recorder)
+    await supervisor.stop()
+    await supervisor.wait_until_idle(timeout=40)
+
+    digest = critic_prompt(workspace_dir)
+    # Geography off the world file, not off the model's memory of Kanto.
+    assert "walk north -> Route 4" in digest
+    # Presses bucketed the way `scope waste` buckets them.
+    assert "presses this session:" in digest
+    # Trainers standing on it, which is a reason to walk somewhere on purpose.
+    assert "Trainers standing here:" in digest
+    # And the measurements sit above the model's own account, not beside it.
+    assert digest.index("game's own map data") < digest.index("## Session")

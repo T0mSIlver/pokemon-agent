@@ -7,14 +7,18 @@ import pytest
 from pokemon_agent.bench.registry import RunRegistry
 from pokemon_agent.critic import (
     AUTO_SAVE_PREFIX,
+    CLAIMS_HEADING,
     CRITIC_RAW_FILENAME,
     CRITIC_RAW_PREVIOUS_FILENAME,
     DEBUG_DIRNAME,
     DIGEST_CHAR_BUDGET,
+    DIGEST_TOKEN_BUDGET,
+    EXPLORED_STORE_FILENAME,
     FACTS_DIGEST_HEADING,
     HANDOFF_FILENAME,
     HANDOFF_PREVIOUS_FILENAME,
     MAX_HANDOFF_WORDS,
+    NARRATION_HEADING,
     NEXT_GOAL_LABEL,
     NO_TEXT_ERROR,
     SALVAGED_REASONING_NOTICE,
@@ -22,28 +26,43 @@ from pokemon_agent.critic import (
     TARGET_HANDOFF_WORDS,
     CriticResult,
     DigestInput,
+    Intel,
     ToolCall,
     build_critic_command,
     build_digest,
     build_prompt,
     call_lines,
     cap_words,
+    check_next_goal,
     classify_call,
+    collect_intel,
     collect_session_facts,
     compute_behaviour_stats,
+    coordinate_claims,
+    coverage_lines,
     describe_no_text,
+    direction_claims,
     estimate_tokens,
+    ladder_position,
     list_named_saves,
+    map_brief,
+    mentioned_map,
     narration_lines,
+    nearest_pokecenter,
     parse_actions,
     parse_final_text,
     parse_next_goal,
     read_handoff,
     read_session_mark,
+    repeat_lines,
+    route_text,
     run_critic,
     session_mark_path,
     tail_words,
     tool_calls_from_stream,
+    trend_lines,
+    untried_lines,
+    waste_lines,
     write_handoff,
     write_session_mark,
 )
@@ -442,7 +461,7 @@ def test_digest_stays_under_the_token_budget_for_a_huge_session():
     )
 
     assert len(digest) <= DIGEST_CHAR_BUDGET
-    assert estimate_tokens(digest) <= 12_000
+    assert estimate_tokens(digest) <= DIGEST_TOKEN_BUDGET
     # trimming never costs the numbers
     assert "/action batches: 4000" in digest
 
@@ -1198,11 +1217,16 @@ def test_only_the_saves_the_agent_named_are_worth_a_token(tmp_path: Path):
 def test_the_session_mark_survives_a_process_that_did_not(tmp_path: Path):
     write_session_mark(tmp_path, run_id="20260825T224823Z-983b", started_t=1234.5, session_index=4)
 
-    assert read_session_mark(tmp_path) == {
-        "run_id": "20260825T224823Z-983b",
-        "started_t": 1234.5,
-        "session_index": 4,
-    }
+    mark = read_session_mark(tmp_path)
+    assert mark["run_id"] == "20260825T224823Z-983b"
+    assert mark["started_t"] == 1234.5
+    assert mark["session_index"] == 4
+    # And the history nothing else on disk keeps: `run_start` is written once per
+    # run, and a run is many sessions long, so without this the receipts cannot
+    # be cut into sessions and no comparison between them is possible.
+    assert mark["history"] == [
+        {"run_id": "20260825T224823Z-983b", "started_t": 1234.5, "session_index": 4}
+    ]
     assert read_session_mark(tmp_path / "nowhere") == {}
 
     session_mark_path(tmp_path).write_text("{not json", encoding="utf-8")
@@ -1221,11 +1245,23 @@ def test_the_facts_block_is_worth_its_tokens(tmp_path: Path):
     block = facts.render()
 
     # The whole point is that this is cheap. A briefing is a regression.
-    assert estimate_tokens(block) < 200
-    assert len(block.splitlines()) <= 9
+    #
+    # The ceiling moved from 200 tokens to 320 to buy three lines of static map
+    # data - every exit off the map it is standing on, the routed way to the map
+    # the goal names, and where to heal when the party is hurt. It is paid for by
+    # cutting the raw milestone-id list for the ladder's own labels, folding the
+    # whiteout counter into the walking line, and dropping the `action xN` count
+    # that the press total above it already implies.
+    assert estimate_tokens(block) < 320
+    assert len(block.splitlines()) <= 12
     # And that the next session can act on every line of it.
     assert "Most revisited tile: Route 3 (22,12), stood on 8 times." in block
     assert "`./poke load <name>`" in block
+    # Ladder labels, not event ids: "BADGE_BOULDER" is not an instruction.
+    assert "highest rung: Boulder Badge" in block
+    assert "Next rung: Beat the Super Nerd guarding the Mt. Moon fossils" in block
+    # And the geography, off the world file rather than off the model.
+    assert "Every way off Route 3 (* = never stepped on): walk north -> Route 4" in block
 
 
 def test_the_digest_puts_the_receipts_above_the_models_own_account(tmp_path: Path):
@@ -1247,8 +1283,13 @@ def test_the_digest_puts_the_receipts_above_the_models_own_account(tmp_path: Pat
 def test_the_critic_is_told_the_receipts_win(tmp_path: Path):
     prompt = build_prompt("# Finished session digest\n")
 
-    assert "it wins, and a claim it contradicts is a claim you must not make" in prompt
+    assert "the measurement wins and a claim it contradicts is a claim you must not make" in prompt
     assert "handed to the next agent verbatim" in prompt
+    # NOTES.md is the model talking about itself, and one retrospective on disk
+    # repeated "machine INACCESSIBLE (confirmed)" out of it as though that
+    # settled anything. The agent healed at that machine 26 seconds later.
+    assert "Never restate a claim as a fact" in prompt
+    assert "do not name it" in prompt
 
 
 def test_a_receipt_written_the_instant_a_session_began_belongs_to_it(tmp_path: Path):
@@ -1276,3 +1317,378 @@ def test_a_receipt_written_the_instant_a_session_began_belongs_to_it(tmp_path: P
 
     assert facts is not None
     assert facts.session_presses == 10
+
+
+# ---------------------------------------------------------------------------
+# Static world intelligence
+#
+# The player is on a minimum-context diet; the critic is not. These are the
+# lookups it gets that the session never had, and every one of them exists
+# because a transcript on disk shows the model getting that exact fact wrong
+# from memory and then acting on it.
+# ---------------------------------------------------------------------------
+
+
+def test_a_map_brief_is_the_game_data_not_a_recollection():
+    brief = map_brief("Route 3")
+
+    assert brief.known
+    assert brief.map_id == 14
+    assert brief.size == (70, 18)
+    assert ("north", "Route 4") in brief.connections
+    assert ("west", "Pewter City") in brief.connections
+    assert brief.trainers  # eight of them, and the session walked past every one
+    assert brief.encounter_rate == 20
+    assert map_brief("Kalos").known is False
+    assert map_brief("").lines() == []
+
+
+def test_the_exits_line_stars_the_ways_out_that_were_never_taken():
+    brief = map_brief("Mt Moon B1F")
+
+    exits = brief.exits(stood_on=[(25, 9)])
+
+    # 720 presses went into a pocket whose way out was a warp tile the agent
+    # never stepped on, and nothing it could read said which tiles those were.
+    assert "(25,9) -> Mt Moon 1F" in exits
+    assert "(27,3)* -> Route 4" in exits
+
+
+def test_a_route_is_hops_off_the_map_graph():
+    assert route_text("Mt Moon B1F", "Route 4") == "warp (27,3) to Route 4"
+    assert route_text("Route 4", "Cerulean City") == "walk east to Cerulean City"
+    assert route_text("Route 3", "Route 3") == ""
+    assert route_text("Route 3", "Nowhere") == ""
+
+
+def test_the_nearest_place_to_heal_is_looked_up_not_remembered():
+    """A model with no ground truth invented a Poke Center in the wrong city."""
+
+    name, hops = nearest_pokecenter("Route 3")
+
+    # Two hops north-then-warp, not the Pewter one the route came from.
+    assert name == "Mt Moon Pokecenter"
+    assert hops == 2
+    assert nearest_pokecenter("") == ("", 0)
+
+
+@pytest.mark.parametrize(
+    "text,expected",
+    [
+        # The destination is the end of the journey, not the start of it.
+        ("walk out of Route 4 and on to Cerulean City", "Cerulean City"),
+        # Longer names win a tie, so a building is never read as its town.
+        ("heal at the Cerulean Pokecenter", "Cerulean Pokecenter"),
+        # Bounded, so a longer route number is not found inside a shorter one.
+        ("head for Route 44", ""),
+        ("no map here at all", ""),
+    ],
+)
+def test_the_map_a_goal_is_aiming_at(text: str, expected: str):
+    assert mentioned_map(text, exclude=["Route 4"]) == expected
+
+
+def test_the_next_rung_is_the_one_above_the_highest_reached():
+    """Not the lowest unreached one: several rungs are optional.
+
+    A run that walked past the Route 22 rival has not left work behind it, and
+    sending it back for that battle is the same wrong instruction as telling it
+    to beat a gym leader it has already beaten.
+    """
+
+    done = ["EVENT_GOT_STARTER", "EVENT_BEAT_BROCK", "BADGE_BOULDER"]
+
+    reached, upcoming = ladder_position(done)
+
+    assert reached == "Boulder Badge"
+    assert upcoming == "Beat the Super Nerd guarding the Mt. Moon fossils"
+    assert ladder_position([])[0] == ""
+    assert ladder_position(["not-a-milestone"]) == ("", "Chose a starter Pokemon")
+
+
+# ---------------------------------------------------------------------------
+# Claims, checked
+# ---------------------------------------------------------------------------
+
+
+def test_a_coordinate_the_model_wrote_about_is_answered_by_the_map_file():
+    """One handoff called the B1F ladders the cave mouth and the Route 4 doors
+    ladders. Every coordinate in it was in the world file, saying the opposite."""
+
+    text = "the cave mouth out to Route 4 is (25,9); (27,3) descends to B1F; (99,99) is the wall"
+
+    rows = coordinate_claims(text, "Mt Moon B1F")
+
+    assert "- (25,9) IS a warp on Mt Moon B1F: it leads to Mt Moon 1F." in rows
+    assert "- (27,3) IS a warp on Mt Moon B1F: it leads to Route 4." in rows
+    assert "- (99,99) is outside Mt Moon B1F, which is 28x28." in rows
+
+
+def test_a_coordinate_from_another_map_is_named_as_such():
+    rows = coordinate_claims("the exit was (3,7)", "Mt Moon B1F", ["Mt Moon Pokecenter"])
+
+    assert rows == [
+        "- (3,7) is not a warp on Mt Moon B1F, but it is one on "
+        "Mt Moon Pokecenter, leading to Route 4."
+    ]
+    # Ordinary ground says nothing. A line per tile would bury the ones that matter.
+    assert coordinate_claims("standing at (12,12)", "Mt Moon B1F") == []
+
+
+def test_a_direction_the_model_wrote_is_checked_against_the_graph():
+    """The claim that cost this run 5,618 presses, and the one that did not."""
+
+    wrong = direction_claims("head south on Route 3 to Cerulean City", "Mt Moon B1F")
+    right = direction_claims("walk east from Route 4 into Cerulean City", "Route 4")
+
+    assert wrong == [
+        '- "south ... Cerulean City": WRONG. The map data says warp (27,3) to '
+        "Route 4, then walk east to Cerulean City."
+    ]
+    assert right == [
+        '- "east ... Cerulean City": agrees with the map data (walk east to Cerulean City).'
+    ]
+    assert direction_claims("go west, young man", "Route 3") == []
+
+
+def test_the_narration_and_the_notes_are_headed_as_claims():
+    """`machine INACCESSIBLE (confirmed)` was copied out of NOTES.md into a
+    handoff as ground truth. The agent healed at that machine 26 seconds later."""
+
+    digest = build_digest(
+        DigestInput(notes="machine INACCESSIBLE (confirmed)", calls=sample_calls())
+    )
+
+    assert "CLAIMS, not facts, and unverified" in digest
+    assert digest.count("CLAIMS, not facts, and unverified") == 2
+
+
+# ---------------------------------------------------------------------------
+# The goal the next session is started on
+# ---------------------------------------------------------------------------
+
+
+def test_a_goal_that_points_the_wrong_way_is_thrown_away():
+    """The critic's goal is not advice: it is the next session's first line, and
+    the session acts on it in preference to a correct tool result three seconds
+    old. This exact goal cost the run 5,618 presses."""
+
+    goal, problem = check_next_goal(
+        "head south on Route 3 to Cerulean City", from_map="Mt Moon B1F"
+    )
+
+    assert goal == ""
+    assert problem == (
+        'says "south" about Cerulean City, but the map graph says warp (27,3) to '
+        "Route 4, then walk east to Cerulean City"
+    )
+
+
+def test_a_goal_naming_somewhere_unreachable_is_thrown_away():
+    goal, problem = check_next_goal("get to Kalos", from_map="Route 3")
+    assert (goal, problem) == ("get to Kalos", "")
+
+    goal, problem = check_next_goal("get to Cinnabar Gym", from_map="Trade Center")
+    assert goal == ""
+    assert "cannot reach" in problem
+
+
+def test_a_goal_the_graph_agrees_with_or_cannot_check_is_left_alone():
+    routed = "take warp (27,3) to Route 4, then walk east to Cerulean City"
+    assert check_next_goal(routed, from_map="Mt Moon B1F") == (routed, "")
+
+    # No map named is nothing to check, and the fallback is not free.
+    local = "Press A on every sign in this room"
+    assert check_next_goal(local, from_map="Mt Moon B1F") == (local, "")
+    assert check_next_goal("", from_map="Mt Moon B1F") == ("", "")
+    assert check_next_goal("anything", from_map="") == ("anything", "")
+
+
+@pytest.mark.asyncio
+async def test_the_critic_drops_its_own_goal_when_the_map_graph_refuses_it(tmp_path: Path):
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+    script = make_fake_print_pi(
+        tmp_path,
+        text="You walked in circles.\n\nNEXT GOAL: head south on Route 3 to Cerulean City",
+    )
+
+    result = await run_critic(
+        pi_binary=str(script),
+        workspace_dir=workspace,
+        digest="# Finished session digest\n",
+        from_map="Mt Moon B1F",
+    )
+
+    # The handoff still lands - the prose is worth keeping - but the goal does not
+    # reach the next session, and the operator is told exactly why.
+    assert result.ok
+    assert result.next_goal == ""
+    assert "south" in result.next_goal_rejected
+    assert "Dropped the NEXT GOAL" in (result.error or "")
+    assert read_handoff(workspace).startswith("You walked in circles.")
+
+
+# ---------------------------------------------------------------------------
+# Session intelligence
+# ---------------------------------------------------------------------------
+
+
+def test_the_presses_are_split_into_buckets_the_agent_never_sees(tmp_path: Path):
+    data_dir = tmp_path / "data"
+    run_id = record_run(data_dir, pocket_receipts(1000.0))
+    receipts = RunRegistry(data_dir).load(run_id).receipts
+
+    rows = waste_lines(receipts, since_t=1000.0)
+
+    # One batch onto a new tile, seven more into the wall, then a `goto` that
+    # actually went somewhere. Four fifths of the session bought nothing.
+    assert rows[0] == "- 352 presses this session: blocked 280 (80%), productive 72 (20%)."
+    assert rows[1].startswith("- Route 3: 352 presses, 80% of them revisiting")
+    assert waste_lines((), since_t=None) == []
+
+
+def test_the_commands_it_repeated_are_counted_because_it_never_notices():
+    """SKILL.md says stop after three. One session sent thirteen in a row."""
+
+    calls = [action_call(["walk_right"], comment=f"probe {index}") for index in range(13)]
+    calls.append(action_call(["walk_up"], comment="try north"))
+
+    rows = repeat_lines(calls)
+
+    assert "`act walk_right` x13" in rows[0]
+    assert rows[1] == "- Longest identical run: `act walk_right` 13 times back to back."
+    assert repeat_lines([]) == []
+
+
+def test_sessions_are_compared_so_again_is_a_measurable_word(tmp_path: Path):
+    data_dir = tmp_path / "data"
+    receipts = [
+        {"t": 100.0, "presses": 20, "tool": "action", "map": "Route 3", "pos": [1, 1], "moved": 4},
+        {"t": 101.0, "presses": 20, "tool": "action", "map": "Route 3", "pos": [2, 1], "moved": 4},
+        # Second session: same ground, twice the buttons, nothing new.
+        {"t": 200.0, "presses": 40, "tool": "action", "map": "Route 3", "pos": [1, 1], "moved": 0},
+        {"t": 201.0, "presses": 40, "tool": "action", "map": "Route 3", "pos": [2, 1], "moved": 0},
+    ]
+    run_id = record_run(data_dir, receipts)
+    loaded = RunRegistry(data_dir).load(run_id).receipts
+
+    rows = trend_lines(loaded, [(1, 100.0), (2, 200.0)])
+
+    assert rows[0].startswith("- s1: 40 presses, 2 tiles it had never stood on (20.0 presses each)")
+    assert "- s2: 80 presses, 0 tiles it had never stood on" in rows[1]
+    assert "100% of batches moved nothing" in rows[1]
+    # One session is not a comparison.
+    assert trend_lines(loaded, [(1, 100.0)]) == []
+
+
+def test_the_verbs_it_never_called_are_named(tmp_path: Path):
+    """`progress` was called zero times across nine sessions; naming `saves` in a
+    handoff is what got `./poke load` called for the first time ever."""
+
+    rows = untried_lines([action_call(["walk_up"], comment="north")])
+
+    assert "- Verbs it never called this session: " in rows[0]
+    for verb in ("progress", "saves", "load", "goto", "frontier"):
+        assert verb in rows[0]
+    assert rows[1] == "- Verbs it did call: act x1."
+
+
+def test_the_explored_store_says_what_is_reachable_and_never_walked(tmp_path: Path):
+    store = tmp_path / EXPLORED_STORE_FILENAME
+    # A 4x1 corridor of Route 3, two tiles of which were actually walked.
+    store.write_text(
+        json.dumps(
+            {
+                "version": 1,
+                "current_map_id": 14,
+                "maps": {
+                    "14": {
+                        "map_name": "Route 3",
+                        "width": 4,
+                        "height": 1,
+                        "seen": ["f"],
+                        "walkable": ["f"],
+                        "walked": ["c"],
+                        "visits": {"0,0": 2, "1,0": 1},
+                        "player": [1, 0],
+                        "warps": [],
+                    }
+                },
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    rows = coverage_lines(
+        tmp_path,
+        map_name="Route 3",
+        map_id=14,
+        player=(1, 0),
+        warps=[(3, 0, "Route 4")],
+    )
+
+    # The store repairs the corridor up to Route 3's real size as it loads it,
+    # so the totals are the map's; the counts of what was seen are the store's.
+    assert rows[0].startswith("- Route 3 explored: 4 of ")
+    assert rows[0].endswith("4 walkable, 2 actually walked on.")
+    assert "Reachable from (1,0) and never walked on: 2 tiles" in rows[1]
+    assert "(2,0), (3,0)" in rows[1]
+    assert rows[2] == "- Warp tiles on this map it never stood on: (3,0)->Route 4."
+    assert coverage_lines(None, map_name="Route 3", map_id=14, player=None) == []
+
+
+def test_intel_is_collected_block_by_block_and_never_raises(tmp_path: Path):
+    """A dead block, never a dead critic: this must not be why a session cannot
+    start, whatever it is handed."""
+
+    intel = collect_intel(
+        data_dir=tmp_path / "nowhere",
+        run_id="20990101T000000Z-dead",
+        since_t=None,
+        facts=None,
+        calls=[],
+        goal="",
+    )
+
+    assert isinstance(intel, Intel)
+    assert not intel
+
+
+def test_the_digest_puts_the_measurements_above_the_models_account(tmp_path: Path):
+    data_dir = tmp_path / "data"
+    run_id = record_run(data_dir, pocket_receipts(1000.0))
+    facts = collect_session_facts(data_dir=data_dir, run_id=run_id, since_t=1000.0)
+    intel = collect_intel(
+        data_dir=data_dir,
+        run_id=run_id,
+        since_t=1000.0,
+        facts=facts,
+        calls=sample_calls(),
+        goal="Reach Cerulean City",
+        notes="the way out is west to Cerulean City, past the ladder at (99,99)",
+        session_starts=[(1, 900.0), (2, 1000.0)],
+    )
+
+    digest = build_digest(
+        DigestInput(goal="Cross Route 3.", calls=sample_calls(), facts=facts, intel=intel)
+    )
+
+    assert "Where it is, from the game's own map data (authoritative)" in digest
+    assert "walk north -> Route 4" in digest
+    assert (
+        "Route to Cerulean City: walk north to Route 4, then walk east to Cerulean City"
+    ) in digest
+    assert CLAIMS_HEADING in digest
+    assert "(99,99) is outside Route 3, which is 70x18." in digest
+    assert '"west ... Cerulean City": WRONG.' in digest
+    assert digest.index(FACTS_DIGEST_HEADING) < digest.index(CLAIMS_HEADING)
+    assert digest.index(CLAIMS_HEADING) < digest.index(NARRATION_HEADING)
+
+
+def test_the_critic_is_told_it_knows_more_than_the_agent_did():
+    prompt = build_prompt("# Finished session digest\n")
+
+    assert "You are given more than the agent had" in prompt
+    assert "same thing last session and it did not work" in prompt
+    assert "checked against the map graph before it is used" in prompt

@@ -773,6 +773,8 @@ class PiSupervisor:
         #: The previous session's receipts, read at start. Held in memory because
         #: :meth:`_initial_message` is called twice and the mark rotates between.
         self._previous_session_facts: Optional[Any] = None
+        #: The map the finished session ended on, for the goal's routing check.
+        self._critic_from_map = ""
         self._critic_process: Optional[asyncio.subprocess.Process] = None
         self._critic_cancelled = False
         self._critic_thinking_seq: Optional[int] = None
@@ -1280,9 +1282,11 @@ class PiSupervisor:
             self.token_budget = token_budget if token_budget > 0 else 0
         self._stage_workspace_helpers()
         self._session_start_context = await self._collect_critic_context()
+        # The goal first: the facts block routes to whatever map the goal names,
+        # off the static map graph, so it has to know the goal before it is read.
+        self.goal, self.goal_source = self._resolve_goal(self.operator_goal)
         # Before `_begin_run` rotates the mark, and before the prompt is built.
         self._previous_session_facts = self._load_previous_session_facts()
-        self.goal, self.goal_source = self._resolve_goal(self.operator_goal)
 
         initial_prompt = self._initial_message()
         self.default_prompt = initial_prompt
@@ -1903,6 +1907,7 @@ class PiSupervisor:
                 run_id=run_id,
                 since_t=float(started) if isinstance(started, (int, float)) else None,
                 session_index=int(mark.get("session_index") or 0),
+                goal=self.goal,
             )
         except Exception as exc:  # noqa: BLE001 — facts are a nicety, never a blocker
             self._push_recent_event(
@@ -1934,6 +1939,7 @@ class PiSupervisor:
                 run_id=self.run_id,
                 since_t=self._session_started_t,
                 session_index=recorder.sessions if recorder is not None else 1,
+                goal=self.goal,
             )
         except Exception as exc:  # noqa: BLE001
             self._push_recent_event(
@@ -1987,13 +1993,45 @@ class PiSupervisor:
             return {}
         return result if isinstance(result, dict) else {}
 
+    def _collect_intel(self, facts: Any, calls: list[Any], objective: str, notes: str) -> Any:
+        """Measurements and static game data the finished session never saw.
+
+        Bounded, off files, no model and no server in the loop. It is collected
+        for the critic's digest only: the handoff the next session reads stays
+        small, and the block that reaches it is the facts block, not this.
+        """
+
+        critic = _critic_module()
+        try:
+            return critic.collect_intel(
+                data_dir=self.data_dir,
+                run_id=self.run_id,
+                since_t=self._session_started_t,
+                facts=facts,
+                calls=calls,
+                goal=self.goal,
+                objective=objective,
+                notes=notes,
+                session_starts=critic.session_starts(
+                    critic.read_session_mark(self.workspace_dir), self.run_id
+                ),
+            )
+        except Exception as exc:  # noqa: BLE001 — a dead block, never a dead critic
+            self._push_recent_event("pi_critic_intel_failed", _truncate(str(exc), ERROR_TEXT_LIMIT))
+            return None
+
     def _build_critic_digest(self, end_context: JsonDict, status: str, reason: str) -> str:
         critic = _critic_module()
         start_context = self._session_start_context or {}
+        facts = self._current_session_facts()
+        calls = critic.tool_calls_from_stream(self.stream_entries)
+        objective = str(end_context.get("objective") or "")
+        notes = critic.read_notes(self.workspace_dir)
+        self._critic_from_map = getattr(facts, "ended_map", "") or ""
         return critic.build_digest(
             critic.DigestInput(
                 goal=self.goal,
-                objective=str(end_context.get("objective") or ""),
+                objective=objective,
                 turns_completed=self.turns_completed,
                 status=status,
                 status_reason=reason,
@@ -2001,9 +2039,10 @@ class PiSupervisor:
                 start_state=start_context.get("game_state"),
                 final_state=end_context.get("game_state"),
                 map_summary=end_context.get("map_summary"),
-                notes=critic.read_notes(self.workspace_dir),
-                calls=critic.tool_calls_from_stream(self.stream_entries),
-                facts=self._current_session_facts(),
+                notes=notes,
+                calls=calls,
+                facts=facts,
+                intel=self._collect_intel(facts, calls, objective, notes),
             )
         )
 
@@ -2179,6 +2218,9 @@ class PiSupervisor:
                     digest=self._build_critic_digest(end_context, terminal_status, terminal_reason),
                     provider=self.provider,
                     model=self.model,
+                    # Where the run is standing, so a goal naming somewhere the map
+                    # graph cannot reach from here is dropped before it is used.
+                    from_map=self._critic_from_map,
                     thinking=self.critic_thinking,
                     timeout_seconds=self.critic_timeout_seconds,
                     retry_enabled=self.critic_retry_enabled,
@@ -2276,6 +2318,16 @@ class PiSupervisor:
             await self._push_stream_system(
                 "next goal",
                 text=self.critic_next_goal,
+            )
+        elif result.next_goal_rejected:
+            # Loudly, and as a warning: the goal is the next session's first line
+            # and the objective engine is now what it will be started on instead.
+            await self._push_stream_system(
+                "next goal dropped",
+                text=(
+                    f"The critic's goal {result.next_goal_rejected}. Falling back to the objective."
+                ),
+                level="warn",
             )
 
     # `poke` exists because hand-built curl JSON was losing roughly 40% of the
