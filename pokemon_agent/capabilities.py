@@ -74,20 +74,36 @@ def collision_from(snapshot: dict, explored: Optional[dict] = None) -> dict:
 
     The live navigation window is only 10x9 tiles — enough to see the next step
     and nothing else — so what the map store has already learned fills in the
-    rest. Where the two disagree the live window wins: it is this frame, and the
-    store is memory. Sprites come from the live window only, because an NPC that
-    stood somewhere once is not standing there now.
+    rest. **Precedence is absolute: inside the window the live frame decides,
+    including its negatives.** A tile the store calls walkable and the frame
+    calls solid is solid; the store is memory, and it has held tiles nobody can
+    stand on — the mid-air tile a ledge jump was once sampled on. Beyond the
+    window there is nothing to check against, so those tiles travel as `live`
+    minus themselves: present in `walkable`, absent from `live`, and every
+    answer built on them says so.
+
+    Sprites come from the live window only, because an NPC that stood somewhere
+    once is not standing there now.
     """
     walkable: set[Coord] = set(explored.get("walkable") or ()) if explored else set()
 
+    live: set[Coord] = set()
     origin = _coord(snapshot.get("window_top_left")) or (0, 0)
     for local_y, row in enumerate(snapshot.get("terrain") or []):
         for local_x, tile in enumerate(row):
             coord = (origin[0] + local_x, origin[1] + local_y)
+            live.add(coord)
             if tile:
                 walkable.add(coord)
             else:
                 walkable.discard(coord)
+
+    # A ledge's landing is two tiles away because the tile between is one no
+    # player can stand on. That holds wherever the ledge was learned, so it
+    # outranks a store that remembers standing there.
+    ledges = world_mod.ledge_edges(snapshot)
+    for (start, _direction), landing in ledges.items():
+        walkable.discard(((start[0] + landing[0]) // 2, (start[1] + landing[1]) // 2))
 
     dimensions = snapshot.get("map_dimensions") or {}
     width = int(dimensions.get("width") or 0)
@@ -97,7 +113,34 @@ def collision_from(snapshot: dict, explored: Optional[dict] = None) -> dict:
         height = max((y for _, y in walkable), default=-1) + 1
 
     sprites = [found for found in (_coord(item) for item in snapshot.get("sprites") or ()) if found]
-    return {"width": width, "height": height, "walkable": walkable, "sprites": sprites}
+    return {
+        "width": width,
+        "height": height,
+        "walkable": walkable,
+        "sprites": sprites,
+        "live": live,
+        "ledges": ledges,
+    }
+
+
+def collision_basis(collision: dict) -> str:
+    """One line naming what an answer over this collision map is built from.
+
+    Every consumer prints this, because "reachable" means two different things
+    depending on which half of the map it came from, and the agent has no other
+    way to tell them apart.
+    """
+    live = set(collision.get("live") or ())
+    remembered = len([tile for tile in collision.get("walkable") or () if tile not in live])
+    ledges = len(collision.get("ledges") or ())
+    ledge_note = f", {ledges} one-way ledge jump(s) in view" if ledges else ""
+    if not remembered:
+        return f"the live {len(live)}-tile window only{ledge_note}"
+    return (
+        f"the live {len(live)}-tile window (fact, and it overrides the store where they "
+        f"overlap) plus {remembered} remembered tiles from the explored map "
+        f"(belief — nobody has looked at them this frame){ledge_note}"
+    )
 
 
 def warp_coords(snapshot: dict) -> list[Coord]:
@@ -295,7 +338,7 @@ def _leg_for_map(
         if plan is None:
             return None, (
                 f"no walkable path from {list(position)} to {list(target_xy)} on "
-                f"{observation['map_name']}"
+                f"{observation['map_name']}, checked against {collision_basis(collision)}"
             )
         return plan, None
 
@@ -328,7 +371,8 @@ def _leg_for_map(
             return None, (
                 f"the warp to {hop.to_map} at {list(hop.at)} is not reachable on foot from "
                 f"{list(position)} on {current}. A hop is a plan, not a guarantee — this "
-                "half of the map may be walled off from the other."
+                "half of the map may be walled off from the other. Checked against "
+                f"{collision_basis(collision)}."
             )
         return plan, None
 
@@ -339,13 +383,18 @@ def _leg_for_map(
     if goal is None:
         return None, (
             f"nothing on the {hop.edge} edge of {current} is reachable from {list(position)}. "
-            "A hop is a plan, not a guarantee — this half of the map may be walled off."
+            "A hop is a plan, not a guarantee — this half of the map may be walled off, and "
+            "a ledge you came down is not a way back up. Checked against "
+            f"{collision_basis(collision)}."
         )
     if position == goal:
         return [f"walk_{step}"], None
     plan = plan_within(collision, position, goal)
     if plan is None:
-        return None, f"no walkable path to the {hop.edge} edge of {current}"
+        return None, (
+            f"no walkable path to the {hop.edge} edge of {current}, checked against "
+            f"{collision_basis(collision)}"
+        )
     return [*plan, f"walk_{step}"], None
 
 
@@ -468,6 +517,13 @@ def simulate_payload(
         )
     except Exception as exc:  # noqa: BLE001 — an unknown token is the caller's mistake
         raise CapabilityError(str(exc)) from exc
+
+    notes = [hop.describe() for hop in result.hops]
+    if result.unverified_from is not None:
+        notes.append(
+            f"step {result.unverified_from} leaves the live window, so everything from "
+            "there on is read off the remembered map and may be stale."
+        )
     return {
         "end": list(result.end_pos),
         "facing": result.end_facing,
@@ -475,6 +531,23 @@ def simulate_payload(
         "blocked_at": result.blocked_at,
         "blocked_by": result.blocked_by,
         "warp_at": result.warp_at,
+        # A jump is not a block and not a step: one press, two tiles, no way
+        # back. Answering "blocked by wall" here is what taught the agent to
+        # walk into ledges to find out.
+        "hops": [
+            {
+                "at": hop.index,
+                "direction": hop.direction,
+                "from": list(hop.start),
+                "to": list(hop.landing),
+                "one_way": True,
+            }
+            for hop in result.hops
+        ],
+        "certain": result.certain,
+        "unverified_from": result.unverified_from,
+        "basis": collision_basis(collision),
+        "note": " ".join(notes) or None,
     }
 
 
@@ -484,17 +557,36 @@ def simulate_payload(
 
 
 def frontier_payload(snapshot: dict, explored: Optional[dict], seen: Collection[Coord]) -> dict:
-    """Reachable-but-unseen tiles on the current map, nearest first."""
+    """Reachable-but-unseen tiles on the current map, nearest first.
+
+    Reachable the way the game moves: a ledge is a one-way edge out, never an
+    edge back in. Split into what the live window vouches for and what is only
+    remembered, because a confidently wrong tile costs more than a missing one —
+    three sessions were spent walking at ground that was never reachable.
+    """
     position = _coord(snapshot.get("player_position"))
     if position is None:
         raise Conflict("No player position to explore from.")
     collision = collision_from(snapshot, explored)
-    tiles = world_mod.frontier(collision, seen, position)
+    detail = world_mod.frontier_detail(collision, seen, position)
+    confirmed = [tile.coord for tile in detail if tile.certain]
+    believed = len(detail) - len(confirmed)
+    note = f"{len(confirmed)} confirmed by the live window"
+    if believed:
+        note += (
+            f"; {believed} reached only across remembered ground, which is a belief and "
+            "not a fact — walk it and check rather than trusting it"
+        )
     return {
         "map": snapshot.get("map_name"),
         "from": list(position),
-        "tiles": [list(tile) for tile in tiles],
-        "count": len(tiles),
+        "tiles": [list(tile.coord) for tile in detail],
+        "count": len(detail),
+        "confirmed": [list(coord) for coord in confirmed],
+        "confirmed_count": len(confirmed),
+        "believed_count": believed,
+        "basis": collision_basis(collision),
+        "note": note,
     }
 
 
@@ -942,6 +1034,7 @@ __all__ = [
     "calc_payload",
     "canonical_map_name",
     "collision_from",
+    "collision_basis",
     "frontier_payload",
     "GAMEDATA_TOPICS",
     "gamedata_encounters",

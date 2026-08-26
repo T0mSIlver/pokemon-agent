@@ -13,13 +13,14 @@ Run Python with `./py`, not `python3`. The system interpreter has no packages; `
 
 ```python
 import poke
-s = poke.state()                          # .map .position .facing .lead .hp
-if poke.sim("up:6", "right:3").ok:        # would that plan work?
-    poke.walk("up:6", "right:3")          # walks it, splitting into legal batches
-poke.frontier()[:5]                       # tiles here you have never stood on
-poke.game.trainers("Pewter Gym")          # who is in there and what they have
-poke.game.encounters("Route 3").grass     # what appears in the grass
-poke.guide.search("mt moon")              # the walkthrough shelf
+
+s = poke.state()  # .map .position .facing .lead .hp
+if poke.sim("up:6", "right:3").ok:  # would that plan work?
+    poke.walk("up:6", "right:3")  # walks it, splitting into legal batches
+poke.frontier()[:5]  # tiles here you have never stood on
+poke.game.trainers("Pewter Gym")  # who is in there and what they have
+poke.game.encounters("Route 3").grass  # what appears in the grass
+poke.guide.search("mt moon")  # the walkthrough shelf
 ```
 
 A script that reads the guide, plans a route, checks it and walks it costs you one tool call and a few lines of output. Doing the same thing by hand costs thirty of each. Write the script.
@@ -76,6 +77,7 @@ Do not build curl by hand. A single missing closing quote makes bash reject the 
 Actions run in order. The response is small and tells you what you need to keep moving:
 
 - `x`, `y`, `facing`, `moves`: where you are and which directions are legal.
+- `run`: how many tiles each direction goes before something stops you. `{"left":7,"down":2}` means `left:7` arrives in one call. Use it. Walking one tile and asking again is the slowest way to play and it costs you a turn of context for every tile.
 - `hp`: your lead Pokemon, as `current/max`.
 - `mode`, `dialog`, `battle`: what kind of screen you are on.
 - `faces`: present only when the tile you face is worth a button: `object` is an NPC or item ball, `sign` is readable. **When you see `faces`, press A.**

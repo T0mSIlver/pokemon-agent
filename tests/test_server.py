@@ -21,6 +21,9 @@ ACTION_KEYS = {
     "y",
     "facing",
     "moves",
+    # How far each legal direction goes. `moves` alone was answered by stepping
+    # one tile and asking again, at a measured median of one tile per act call.
+    "run",
     "mode",
     "dialog",
     "battle",
@@ -375,6 +378,7 @@ def test_action_returns_a_tiny_payload(server_app):
         "y": 5,
         "facing": "left",
         "moves": ["up", "left"],
+        "run": {"up": 4, "left": 4},
         "mode": "overworld",
         "dialog": False,
         "battle": False,
@@ -2338,3 +2342,81 @@ def test_the_config_field_wins_over_the_environment(monkeypatch):
     config = server_mod.GameConfig(rom_path="x.gb", interventions_enabled=False)
 
     assert server_mod._interventions_flag(config) is False
+
+
+# ---------------------------------------------------------------------------
+# `run`: how far each direction goes
+#
+# `moves` says which directions are legal, and the model answered it by stepping
+# one tile and asking again -- 400 act calls at a median of one tile each over a
+# real session. Tool text is 98% of the prompt, so each of those tiles is paid for
+# twice. `run` turns "you may go left" into "you may go left seven".
+# ---------------------------------------------------------------------------
+
+
+from pokemon_agent import server  # noqa: E402
+
+
+def _snapshot(terrain, player, origin=(0, 0), sprites=()):
+    return {
+        "terrain": terrain,
+        "player_position": {"x": player[0], "y": player[1]},
+        "window_top_left": {"x": origin[0], "y": origin[1]},
+        "sprites": [{"x": x, "y": y} for x, y in sprites],
+    }
+
+
+OPEN_ROW = [[1, 1, 1, 1, 1, 1, 1]]
+
+
+def test_run_counts_open_ground_in_each_direction():
+    terrain = [[1] * 7 for _ in range(5)]
+    runway = server._runway(_snapshot(terrain, player=(3, 2)))
+    assert runway == {"up": 2, "down": 2, "left": 3, "right": 3}
+
+
+def test_run_stops_at_a_wall():
+    terrain = [[1, 1, 0, 1, 1]]
+    runway = server._runway(_snapshot(terrain, player=(0, 0)))
+    assert runway["right"] == 1
+
+
+def test_run_omits_a_direction_with_nowhere_to_go():
+    terrain = [[0, 1, 0]]
+    runway = server._runway(_snapshot(terrain, player=(1, 0)))
+    assert "left" not in runway and "right" not in runway
+
+
+def test_run_stops_at_a_sprite_because_npcs_block():
+    terrain = [[1, 1, 1, 1, 1]]
+    runway = server._runway(_snapshot(terrain, player=(0, 0), sprites=[(3, 0)]))
+    assert runway["right"] == 2
+
+
+def test_run_respects_the_window_origin():
+    terrain = [[1, 1, 1]]
+    runway = server._runway(_snapshot(terrain, player=(21, 40), origin=(20, 40)))
+    assert runway["right"] == 1
+
+
+def test_run_never_counts_past_the_window():
+    # Outside the live window the game has shown us nothing. Unknown is not
+    # walkable, and guessing there is how a confident wrong answer gets made.
+    terrain = [[1, 1, 1]]
+    runway = server._runway(_snapshot(terrain, player=(2, 0)))
+    assert "right" not in runway
+
+
+def test_run_is_empty_without_a_snapshot():
+    assert server._runway({}) == {}
+    assert server._runway({"terrain": []}) == {}
+
+
+def test_run_only_reports_directions_moves_already_calls_legal():
+    # The raw terrain grid and get_valid_moves disagree on purpose: the latter
+    # also applies the ledge and warp rules. A payload saying "you may not go
+    # right" beside "right goes 5" is two answers to one question.
+    terrain = [[1] * 7 for _ in range(5)]
+    snapshot = _snapshot(terrain, player=(3, 2))
+    snapshot["valid_moves"] = ["up", "left"]
+    assert server._runway(snapshot) == {"up": 2, "left": 3}

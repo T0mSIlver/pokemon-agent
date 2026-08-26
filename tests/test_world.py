@@ -13,8 +13,15 @@ from pathlib import Path
 import pytest
 
 from pokemon_agent.agent_cli import ActionError
-from pokemon_agent.navigation import LiveNavigationSnapshot
-from pokemon_agent.world import DEFAULT_WORLD_PATH, World, frontier, path_within, simulate
+from pokemon_agent.navigation import TILE_ID_OFFSET, LiveNavigationSnapshot
+from pokemon_agent.world import (
+    DEFAULT_WORLD_PATH,
+    World,
+    frontier,
+    frontier_detail,
+    path_within,
+    simulate,
+)
 
 FIXTURE = Path(__file__).parent / "fixtures" / "world_min.json"
 
@@ -384,3 +391,157 @@ def test_frontier_from_a_live_snapshot_window():
     assert (12, 12) not in tiles  # an NPC is standing there
     assert tiles[0] in {(10, 11), (12, 11), (11, 12)}
     assert len(tiles) == 6
+
+
+# ---------------------------------------------------------------------------
+# Ledges
+# ---------------------------------------------------------------------------
+
+#: pokered `data/tilesets/ledge_tiles.asm`, through the 0x8800 window PyBoy
+#: reports background tiles in: stand on 0x2C, press down into 0x37, jump.
+LEDGE_TOP = 0x2C + TILE_ID_OFFSET
+LEDGE_FACE = 0x37 + TILE_ID_OFFSET
+PLAIN = 0x01 + TILE_ID_OFFSET
+
+
+def ledge_window(player=(10, 10)) -> dict:
+    """A 3x5 window at (9, 9) whose middle row is a ledge you can only fall down.
+
+    Rows 9 and 10 are the shelf, row 11 is the ledge face — blocked collision,
+    exactly as the game reports it — and rows 12 and 13 are the ground below.
+    """
+    terrain = [
+        [1, 1, 1],  # y = 9
+        [1, 1, 1],  # y = 10, the shelf
+        [0, 0, 0],  # y = 11, the ledge itself
+        [1, 1, 1],  # y = 12, where a jump lands
+        [1, 1, 1],  # y = 13
+    ]
+    tile_ids = {}
+    for local_y in range(5):
+        for local_x in range(3):
+            coord = (9 + local_x, 9 + local_y)
+            tile_ids[coord] = {10: LEDGE_TOP, 11: LEDGE_FACE}.get(coord[1], PLAIN)
+    return {
+        "terrain": terrain,
+        "window_top_left": (9, 9),
+        "tileset": "OVERWORLD",
+        "tile_ids": tile_ids,
+        "player_position": player,
+    }
+
+
+def test_a_ledge_is_a_jump_of_two_tiles_and_not_a_wall():
+    result = simulate(["down"], ledge_window(), (10, 10), "up")
+
+    assert result.blocked_at is None
+    assert result.end_pos == (10, 12)  # two tiles for one press
+    assert result.trace == ((10, 10), (10, 12))  # never rests on the ledge
+    assert [(hop.index, hop.direction, hop.start, hop.landing) for hop in result.hops] == [
+        (0, "down", (10, 10), (10, 12))
+    ]
+    assert "one way" in result.hops[0].describe()
+
+
+def test_a_plan_keeps_walking_after_it_jumps():
+    result = simulate(["down:3"], ledge_window(), (10, 10), "up")
+
+    assert result.end_pos == (10, 13)
+    assert result.steps_taken == 2
+    assert result.blocked_at == 2  # the window runs out below y = 13
+    assert result.blocked_by == "edge"
+    assert len(result.hops) == 1
+
+
+def test_a_ledge_cannot_be_climbed_back_up():
+    result = simulate(["up"], ledge_window(player=(10, 12)), (10, 12), "down")
+
+    assert result.hops == ()
+    assert result.blocked_at == 0
+    assert result.blocked_by == "wall"
+    assert result.end_pos == (10, 12)
+
+
+def test_the_snapshots_own_ledge_hops_are_enough_without_tile_ids():
+    """The HTTP snapshot carries `ledge_hops` and no tile ids, and still jumps."""
+    over_the_wire = {
+        "terrain": ledge_window()["terrain"],
+        "window_top_left": (9, 9),
+        "player_position": {"x": 10, "y": 10},
+        "ledge_hops": {"down": {"x": 10, "y": 12}},
+    }
+
+    result = simulate(["down"], over_the_wire, (10, 10), "up")
+
+    assert result.end_pos == (10, 12)
+    assert len(result.hops) == 1
+
+
+def test_pathing_goes_down_a_ledge_but_never_up_one():
+    window = ledge_window()
+
+    assert path_within(window, (10, 10), (10, 13)) == ("walk_down", "walk_down")
+    # The only way back is around, and this window has no way around.
+    assert path_within(window, (10, 12), (10, 10)) is None
+    assert path_within(window, (10, 12), (10, 11)) is None
+
+
+def test_frontier_leaves_through_a_ledge_and_cannot_come_back_in():
+    below = {(10, 12), (10, 13), (9, 12), (9, 13), (11, 12), (11, 13)}
+
+    from_above = set(frontier(ledge_window(), {(10, 10)}, (10, 10)))
+    assert below <= from_above  # the ground below is reachable, by jumping
+
+    from_below = set(frontier(ledge_window(player=(10, 12)), {(10, 12)}, (10, 12)))
+    assert not any(y <= 11 for _, y in from_below)  # nothing above it is
+
+
+# ---------------------------------------------------------------------------
+# Live window versus remembered map
+# ---------------------------------------------------------------------------
+
+
+def merged(walkable, live, **extra) -> dict:
+    grid = {"width": 20, "height": 20, "walkable": set(walkable), "live": set(live)}
+    grid.update(extra)
+    return grid
+
+
+def test_a_step_out_of_the_live_window_is_flagged_as_memory():
+    row = {(x, 5) for x in range(10)}
+    collision = merged(row, {(x, 5) for x in range(4)})
+
+    result = simulate(["right:5"], collision, (0, 5), "right")
+
+    assert result.end_pos == (5, 5)
+    assert result.blocked_at is None
+    assert result.unverified_from == 3  # the step into (4, 5), which nobody saw
+    assert result.certain is False
+    # Everything inside the window is a fact and says so.
+    assert simulate(["right:2"], collision, (0, 5), "right").certain is True
+
+
+def test_frontier_says_which_tiles_the_window_vouches_for():
+    row = {(x, 5) for x in range(8)}
+    collision = merged(row, {(x, 5) for x in range(4)})
+
+    detail = frontier_detail(collision, {(0, 5)}, (0, 5))
+    certain = {tile.coord for tile in detail if tile.certain}
+    believed = {tile.coord for tile in detail if not tile.certain}
+
+    assert certain == {(1, 5), (2, 5), (3, 5)}
+    assert believed == {(4, 5), (5, 5), (6, 5), (7, 5)}
+    assert frontier(collision, {(0, 5)}, (0, 5)) == tuple(tile.coord for tile in detail)
+
+
+def test_a_tile_reached_only_across_memory_is_never_called_a_fact():
+    """One remembered tile in the middle makes everything past it a belief."""
+    row = {(x, 5) for x in range(6)}
+    # The window shows both ends and skips (2, 5) in between.
+    collision = merged(row, row - {(2, 5)})
+
+    detail = {tile.coord: tile.certain for tile in frontier_detail(collision, {(0, 5)}, (0, 5))}
+
+    assert detail[(1, 5)] is True
+    assert detail[(2, 5)] is False
+    assert detail[(3, 5)] is False  # in the window, but only reachable through memory

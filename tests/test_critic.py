@@ -1,19 +1,24 @@
 import json
+import os
 from pathlib import Path
 
 import pytest
 
+from pokemon_agent.bench.registry import RunRegistry
 from pokemon_agent.critic import (
+    AUTO_SAVE_PREFIX,
     CRITIC_RAW_FILENAME,
     CRITIC_RAW_PREVIOUS_FILENAME,
     DEBUG_DIRNAME,
     DIGEST_CHAR_BUDGET,
+    FACTS_DIGEST_HEADING,
     HANDOFF_FILENAME,
     HANDOFF_PREVIOUS_FILENAME,
     MAX_HANDOFF_WORDS,
     NEXT_GOAL_LABEL,
     NO_TEXT_ERROR,
     SALVAGED_REASONING_NOTICE,
+    SAVES_DIRNAME,
     TARGET_HANDOFF_WORDS,
     CriticResult,
     DigestInput,
@@ -24,18 +29,23 @@ from pokemon_agent.critic import (
     call_lines,
     cap_words,
     classify_call,
+    collect_session_facts,
     compute_behaviour_stats,
     describe_no_text,
     estimate_tokens,
+    list_named_saves,
     narration_lines,
     parse_actions,
     parse_final_text,
     parse_next_goal,
     read_handoff,
+    read_session_mark,
     run_critic,
+    session_mark_path,
     tail_words,
     tool_calls_from_stream,
     write_handoff,
+    write_session_mark,
 )
 from pokemon_agent.pi_supervisor import iter_jsonl_records
 
@@ -682,13 +692,14 @@ async def test_a_critique_without_a_goal_line_reports_no_next_goal(tmp_path: Pat
 async def test_a_long_retrospective_reaches_the_handoff_whole(tmp_path: Path):
     workspace = tmp_path / "workspace"
     workspace.mkdir()
-    # Comfortably past the old 300-word cap, comfortably inside the new one.
+    # Long enough that the old 300-word cap would have chopped it mid-sentence,
+    # and still inside the current one, which is what the ceiling is for.
     body = "\n\n".join(
         f"{index}. Mistake {index}: you rammed the wall at (5,6) {index} times."
-        for index in range(60)
+        for index in range(20)
     )
     critique = f"{body}\n\nNEXT GOAL: Take the west path out of Viridian Forest."
-    assert 300 < len(critique.split()) < MAX_HANDOFF_WORDS
+    assert 200 < len(critique.split()) <= MAX_HANDOFF_WORDS
     fake_pi = make_fake_print_pi(tmp_path, text=critique)
 
     result = await run_critic(
@@ -1051,3 +1062,217 @@ def test_the_prompt_asks_for_the_answer_before_any_elaboration():
     assert "This is the second attempt." in retry
     assert "Do not deliberate" in retry
     assert f"{MAX_HANDOFF_WORDS} is the hard ceiling" in retry
+
+
+# ---------------------------------------------------------------------------
+# Ground truth off the receipts
+#
+# The critic used to be told only what the model said it did. One retrospective
+# on disk read the session's own narration and told the next session to go and
+# beat a gym leader the run had already beaten. These numbers come off
+# receipts.jsonl, which no agent writes to.
+# ---------------------------------------------------------------------------
+
+
+def record_run(data_dir: Path, receipts: list[dict], *, run_id: str = "") -> str:
+    """Write a run the way a live session would, and hand back its id."""
+
+    registry = RunRegistry(data_dir)
+    run_id = run_id or registry.start_run(
+        harness_sha="", config_hash="", start_checkpoint=None, goal="Cross Route 3.", model="fake"
+    )
+    for seq, payload in enumerate(receipts):
+        registry.append(run_id, {"seq": seq, **payload})
+    registry.close_all()
+    return run_id
+
+
+def pocket_receipts(start: float) -> list[dict]:
+    """The Route 3 pocket: 26 tiles, hundreds of presses, no progress."""
+
+    rows: list[dict] = [
+        {
+            "t": start - 1,
+            "presses": 0,
+            "tool": "run_start",
+            "milestone_count": 8,
+            "baseline_milestones": ["BADGE_BOULDER", "EVENT_BEAT_BROCK"],
+        }
+    ]
+    for index in range(8):
+        rows.append(
+            {
+                "t": start + index,
+                "presses": 40,
+                "tool": "action",
+                "map": "Route 3",
+                "pos": [22, 12],
+                "moved": 0,
+                "hp": [62, 62],
+                "party_size": 1,
+            }
+        )
+    rows.append(
+        {
+            "t": start + 9,
+            "presses": 32,
+            "tool": "goto",
+            "map": "Route 3",
+            "pos": [22, 8],
+            "moved": 32,
+            "hp": [62, 62],
+            "party_size": 1,
+        }
+    )
+    return rows
+
+
+def test_the_facts_are_read_off_the_receipts_not_the_narration(tmp_path: Path):
+    data_dir = tmp_path / "data"
+    run_id = record_run(data_dir, pocket_receipts(1000.0))
+
+    facts = collect_session_facts(data_dir=data_dir, run_id=run_id, since_t=1000.0, session_index=3)
+
+    assert facts is not None
+    assert facts.total_presses == 352
+    assert facts.session_presses == 352
+    assert facts.session_batches == 9
+    assert facts.blocked_batches == 8
+    assert facts.unique_positions == 2
+    assert facts.position_samples == 9
+    assert facts.hot_map == "Route 3"
+    assert facts.hot_pos == (22, 12)
+    assert facts.hot_visits == 8
+    assert facts.ended_map == "Route 3"
+    assert facts.ended_pos == (22, 8)
+    assert facts.ended_hp == (62, 62)
+    assert facts.tool_mix == (("action", 8), ("goto", 1))
+    # The baseline is what stops a retrospective ordering a badge it already has.
+    assert facts.done == ("BADGE_BOULDER", "EVENT_BEAT_BROCK")
+    assert facts.gained == ()
+    assert "run_start" not in dict(facts.tool_mix)
+
+
+def test_a_session_that_pressed_nothing_says_so_rather_than_claiming_the_run(tmp_path: Path):
+    data_dir = tmp_path / "data"
+    run_id = record_run(data_dir, pocket_receipts(1000.0))
+
+    facts = collect_session_facts(data_dir=data_dir, run_id=run_id, since_t=9_999.0)
+
+    assert facts is not None
+    # The run's own total is still the run's own total: only the slice is empty.
+    assert facts.total_presses == 352
+    assert facts.session_presses == 0
+    assert facts.session_batches == 0
+    assert "0 presses over 0 batches" in "\n".join(facts.lines())
+
+
+def test_a_run_that_cannot_be_read_is_a_run_with_no_facts(tmp_path: Path):
+    assert collect_session_facts(data_dir=tmp_path, run_id="20990101T000000Z-dead") is None
+    assert collect_session_facts(data_dir=tmp_path, run_id="") is None
+    assert collect_session_facts(data_dir=None, run_id="anything") is None
+
+
+def test_only_the_saves_the_agent_named_are_worth_a_token(tmp_path: Path):
+    saves = tmp_path / SAVES_DIRNAME
+    saves.mkdir()
+    for index, name in enumerate(["pewter_start", "before_mt_moon", "route3_ledge"]):
+        path = saves / f"{name}.state"
+        path.write_bytes(b"x")
+        os.utime(path, (1000 + index, 1000 + index))
+    for index in range(50):
+        auto = saves / f"{AUTO_SAVE_PREFIX}{index:06d}.state"
+        auto.write_bytes(b"x")
+        os.utime(auto, (2000 + index, 2000 + index))
+    (saves / "notes.txt").write_text("not a save", encoding="utf-8")
+
+    names = list_named_saves(tmp_path, limit=2)
+
+    # Newest first, autosaves excluded however new they are: 3,322 of them sat on
+    # disk beside `pewter_start` and none was a place the agent chose to return to.
+    assert names == ("route3_ledge", "before_mt_moon")
+    assert list_named_saves(tmp_path / "nowhere") == ()
+    assert list_named_saves(tmp_path, limit=0) == ()
+
+
+def test_the_session_mark_survives_a_process_that_did_not(tmp_path: Path):
+    write_session_mark(tmp_path, run_id="20260825T224823Z-983b", started_t=1234.5, session_index=4)
+
+    assert read_session_mark(tmp_path) == {
+        "run_id": "20260825T224823Z-983b",
+        "started_t": 1234.5,
+        "session_index": 4,
+    }
+    assert read_session_mark(tmp_path / "nowhere") == {}
+
+    session_mark_path(tmp_path).write_text("{not json", encoding="utf-8")
+    assert read_session_mark(tmp_path) == {}
+
+
+def test_the_facts_block_is_worth_its_tokens(tmp_path: Path):
+    data_dir = tmp_path / "data"
+    run_id = record_run(data_dir, pocket_receipts(1000.0))
+    saves = data_dir / SAVES_DIRNAME
+    saves.mkdir(parents=True)
+    for name in ["pewter_start", "before_mt_moon", "route3_ledge", "brock_beaten"]:
+        (saves / f"{name}.state").write_bytes(b"x")
+
+    facts = collect_session_facts(data_dir=data_dir, run_id=run_id, since_t=1000.0)
+    block = facts.render()
+
+    # The whole point is that this is cheap. A briefing is a regression.
+    assert estimate_tokens(block) < 200
+    assert len(block.splitlines()) <= 9
+    # And that the next session can act on every line of it.
+    assert "Most revisited tile: Route 3 (22,12), stood on 8 times." in block
+    assert "`./poke load <name>`" in block
+
+
+def test_the_digest_puts_the_receipts_above_the_models_own_account(tmp_path: Path):
+    data_dir = tmp_path / "data"
+    run_id = record_run(data_dir, pocket_receipts(1000.0))
+    facts = collect_session_facts(data_dir=data_dir, run_id=run_id, since_t=1000.0)
+
+    digest = build_digest(
+        DigestInput(goal="Cross Route 3.", notes="n" * 20_000, calls=[], facts=facts)
+    )
+
+    assert FACTS_DIGEST_HEADING in digest
+    assert digest.index(FACTS_DIGEST_HEADING) < digest.index("What it did (measured")
+    # Trimming eats the narration and the notes; it never eats the facts.
+    assert "Most revisited tile: Route 3 (22,12)" in digest
+    assert len(digest) <= DIGEST_CHAR_BUDGET
+
+
+def test_the_critic_is_told_the_receipts_win(tmp_path: Path):
+    prompt = build_prompt("# Finished session digest\n")
+
+    assert "it wins, and a claim it contradicts is a claim you must not make" in prompt
+    assert "handed to the next agent verbatim" in prompt
+
+
+def test_a_receipt_written_the_instant_a_session_began_belongs_to_it(tmp_path: Path):
+    """Receipts round `t` to the millisecond; the mark keeps the raw clock.
+
+    Without a tick of slack the first receipt of a session rounds to just before
+    the session started and drops out of its own slice, which shows up as a
+    session that pressed fewer buttons than it did.
+    """
+
+    data_dir = tmp_path / "data"
+    started = 1000.001_3
+    # Written after the session began, and rounds to before it: 1000.001 < 1000.0013.
+    first = round(started + 0.000_1, 3)
+    assert first < started
+    run_id = record_run(
+        data_dir,
+        [
+            {"t": first, "presses": 7, "tool": "action", "map": "Route 3"},
+            {"t": round(started + 5, 3), "presses": 3, "tool": "action", "map": "Route 3"},
+        ],
+    )
+
+    facts = collect_session_facts(data_dir=data_dir, run_id=run_id, since_t=started)
+
+    assert facts is not None
+    assert facts.session_presses == 10

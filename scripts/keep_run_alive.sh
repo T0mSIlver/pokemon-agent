@@ -5,6 +5,13 @@
 # Between the two, the supervisor reports 'critiquing' while it writes the
 # retrospective the next session reads; that counts as busy.
 #
+# 'idle' in the log below is the one status this script cannot cause: it is what a
+# freshly constructed supervisor says, so seeing it means the *server* restarted
+# and took a session with it. No retrospective was written for that session, and
+# none can be - the process that would have written it is gone. The supervisor
+# covers that case by reading its ground truth off the run receipts at start
+# instead of out of memory.
+#
 #   scripts/keep_run_alive.sh
 #   THINKING=low MODEL=llamacpp/qwen38-27b scripts/keep_run_alive.sh
 #
@@ -86,9 +93,18 @@ while true; do
     *)
       reason="$(printf '%s' "$snapshot" | read_field status_reason)"
       log "run is '$status' ($reason) - starting a fresh session"
-      if curl -sS -m 60 -X POST "$SERVER/supervisor/start" \
-        -H 'Content-Type: application/json' -d "$PAYLOAD" -o /dev/null; then
-        log "started"
+      # The response carries the goal the new session resolved to. On a restart
+      # that names no goal that is the last critique's NEXT GOAL line, so this is
+      # the one place a critic that silently stopped running shows up: the goal
+      # stops changing between rotations.
+      if started="$(curl -sS -m 60 -X POST "$SERVER/supervisor/start" \
+        -H 'Content-Type: application/json' -d "$PAYLOAD")"; then
+        goal="$(printf '%s' "$started" | python3 -c 'import json,sys
+try:
+    print(json.load(sys.stdin).get("supervisor", {}).get("goal", ""))
+except Exception:
+    print("")' 2>/dev/null)"
+        log "started${goal:+ - goal: $goal}"
         if [ "$GOAL_STICKY" != "1" ]; then
           # Every later start goes out without a goal, handing the choice to the
           # critic's NEXT GOAL line rather than repeating the opening shove.

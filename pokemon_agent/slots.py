@@ -34,9 +34,16 @@ DEFAULT_BASE_URL = "http://127.0.0.1:8090"
 DEFAULT_SLOT_ID = 0
 DEFAULT_TIMEOUT = 120.0
 
-#: A 140k-token context is gigabytes of quantised KV. Saving it is not instant,
-#: and the restore has to be given room to finish or we strand the player.
-SAVE_TIMEOUT = 600.0
+#: A save holds the model's only slot while it runs, so the player stops dead for
+#: however long we allow. Measured the hard way: a probe against the live server
+#: with a 600s budget stalled a run for three and a half minutes before it was
+#: killed. Keep the save short; it is an optimisation and skipping it costs a
+#: re-prefill.
+SAVE_TIMEOUT = 45.0
+
+#: A restore is different. By the time it runs the context exists only on disk,
+#: so cutting it short strands the run. Give it room.
+RESTORE_TIMEOUT = 600.0
 
 
 class SlotError(RuntimeError):
@@ -110,12 +117,31 @@ class SlotClient:
         self.model = model
         self.slot_id = slot_id
         self.timeout = timeout
+        #: Set once a save fails, so we stop paying for it. On this box the save
+        #: returns `500 Unable to save slot` (the KV cache is quantised to q8_0),
+        #: and retrying it every intervention would hold the player's only slot
+        #: for nothing each time.
+        self.save_unavailable: Optional[str] = None
 
     def _url(self, path: str, **params: str) -> str:
         if self.model:
             params = {"model": self.model, **params}
         query = urllib.parse.urlencode(params)
         return f"{self.base_url}{path}" + (f"?{query}" if query else "")
+
+    def _body(self, payload: Optional[dict]) -> Optional[dict]:
+        """Put the model in the body as well as the query string.
+
+        llama-server in router mode reads `?model=` on GET but not on POST: a
+        save with the model only on the query string comes back
+        `400 model name is missing from the request`. Both is harmless and the
+        one that works is not the one you would guess.
+        """
+        if payload is None:
+            payload = {}
+        if self.model and "model" not in payload:
+            payload = {**payload, "model": self.model}
+        return payload
 
     def _request(
         self,
@@ -173,12 +199,18 @@ class SlotClient:
         return False
 
     def save(self, filename: str) -> SaveResult:
-        payload = self._request(
-            self._url(f"/slots/{self.slot_id}", action="save"),
-            method="POST",
-            payload={"filename": filename},
-            timeout=SAVE_TIMEOUT,
-        )
+        if self.save_unavailable:
+            raise SlotError(f"slot save already failed once: {self.save_unavailable}")
+        try:
+            payload = self._request(
+                self._url(f"/slots/{self.slot_id}", action="save"),
+                method="POST",
+                payload=self._body({"filename": filename}),
+                timeout=SAVE_TIMEOUT,
+            )
+        except SlotError as error:
+            self.save_unavailable = str(error)[:200]
+            raise
         return SaveResult(
             filename=payload.get("filename", filename),
             n_saved=int(payload.get("n_saved", 0)),
@@ -190,8 +222,8 @@ class SlotClient:
         payload = self._request(
             self._url(f"/slots/{self.slot_id}", action="restore"),
             method="POST",
-            payload={"filename": filename},
-            timeout=SAVE_TIMEOUT,
+            payload=self._body({"filename": filename}),
+            timeout=RESTORE_TIMEOUT,
         )
         return RestoreResult(
             filename=payload.get("filename", filename),
@@ -204,6 +236,7 @@ class SlotClient:
         payload = self._request(
             self._url(f"/slots/{self.slot_id}", action="erase"),
             method="POST",
+            payload=self._body(None),
         )
         return int(payload.get("n_erased", 0))
 
@@ -216,22 +249,46 @@ def borrowed_slot(
     wait: float = 300.0,
     restore_attempts: int = 3,
     backoff: float = 2.0,
-) -> Iterator[SaveResult]:
+    allow_unsaved: bool = True,
+) -> Iterator[Optional[SaveResult]]:
     """Take the slot, run the body, put the context back.
 
-    Refuses to hand the slot over unless the save is confirmed non-empty, so a
-    failed save costs an intervention rather than the run. Restores on the way
-    out whether the body succeeded or raised, and retries before giving up.
+    The save is an optimisation, not a precondition. When it works the player's
+    context comes back in a couple of KV round-trips; when it does not, the
+    player re-prefills and we have paid a minute of wall clock for a thinking
+    turn we wanted anyway. On this box the save currently fails server-side
+    (``500 Unable to save slot``, most likely because the KV cache is quantised
+    to q8_0), and refusing to intervene over that would mean never intervening.
+
+    So with ``allow_unsaved`` a failed save yields ``None`` and skips both the
+    erase and the restore: nothing was stored, so there is nothing to strand.
+    With it off, a failed save raises and the body never runs.
+
+    Restores on the way out whether the body succeeded or raised, and retries
+    before giving up.
     """
 
     if not client.wait_idle(timeout=wait):
         raise SlotError(f"slot {client.slot_id} still busy after {wait:.0f}s")
 
-    saved = client.save(filename)
-    if saved.n_saved <= 0:
-        raise SlotError(
-            f"save of slot {client.slot_id} wrote {saved.n_saved} tokens; not proceeding"
-        )
+    try:
+        saved: Optional[SaveResult] = client.save(filename)
+    except SlotError:
+        if not allow_unsaved:
+            raise
+        saved = None
+    if saved is not None and saved.n_saved <= 0:
+        if not allow_unsaved:
+            raise SlotError(
+                f"save of slot {client.slot_id} wrote {saved.n_saved} tokens; not proceeding"
+            )
+        saved = None
+
+    if saved is None:
+        # Nothing on disk, so leave the slot alone. The player's cache is evicted
+        # by whatever runs next and re-prefills afterwards.
+        yield None
+        return
 
     client.erase()
     try:

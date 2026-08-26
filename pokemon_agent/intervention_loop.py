@@ -416,7 +416,10 @@ class InterventionRunner:
                 restore_attempts=self.slot_restore_attempts,
                 backoff=self.slot_backoff_seconds,
             ) as saved:
-                record.slot_saved_tokens = saved.n_saved
+                # None when the slot save is unavailable. The thinking session
+                # still runs; the player just re-prefills afterwards instead of
+                # having its KV cache handed back.
+                record.slot_saved_tokens = saved.n_saved if saved else 0
                 return advise(prompt)
 
         return await asyncio.get_running_loop().run_in_executor(None, borrow_and_think)

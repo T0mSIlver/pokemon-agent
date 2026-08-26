@@ -25,6 +25,7 @@ class FakeServer:
         self.restore_tokens = None  # None means "however many were saved"
         self.fail_restore_times = 0
         self.empty_body = False
+        self.last_post_body = None
 
     def slots(self):
         return [
@@ -92,6 +93,7 @@ def fake():
             state.calls.append(("POST", self.path))
             length = int(self.headers.get("Content-Length") or 0)
             payload = json.loads(self.rfile.read(length) or b"{}") if length else {}
+            state.last_post_body = payload
             try:
                 if "action=save" in self.path:
                     self._send(state.save(payload["filename"]))
@@ -174,9 +176,31 @@ class TestBorrowedSlot:
     def test_an_empty_save_never_gives_the_slot_away(self, client, fake):
         fake.save_tokens = 0
         with pytest.raises(SlotError, match="not proceeding"):
-            with borrowed_slot(client, "player.bin"):
+            with borrowed_slot(client, "player.bin", allow_unsaved=False):
                 pytest.fail("body must not run")
         assert not any("action=erase" in p for m, p in fake.calls if m == "POST")
+
+    def test_a_failed_save_still_runs_the_body_and_strands_nothing(self, client, fake):
+        # The save is an optimisation, not a precondition: without it the player
+        # re-prefills, which is a minute of wall clock, not a lost run. Refusing
+        # to intervene when the save fails would mean never intervening at all on
+        # a server whose KV cache cannot be serialised.
+        fake.save_tokens = 0
+        ran = False
+        with borrowed_slot(client, "player.bin") as saved:
+            ran = True
+            assert saved is None
+        assert ran
+        posts = [p for m, p in fake.calls if m == "POST"]
+        assert not any("action=erase" in p for p in posts)
+        assert not any("action=restore" in p for p in posts)
+
+    def test_the_model_goes_in_the_post_body_not_just_the_query(self, client, fake):
+        # llama-server in router mode reads ?model= on GET but not on POST.
+        client.save("player.bin")
+        body = fake.last_post_body
+        assert body["model"] == "qwen38-27b"
+        assert body["filename"] == "player.bin"
 
     def test_a_busy_slot_is_never_taken(self, client, fake):
         fake.processing = True

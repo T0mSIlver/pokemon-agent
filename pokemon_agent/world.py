@@ -504,6 +504,10 @@ def _as_grid(collision: object) -> _Grid:
 # ---------------------------------------------------------------------------
 
 
+#: Only ever used to say which way you cannot come back.
+_OPPOSITE = {"up": "down", "down": "up", "left": "right", "right": "left"}
+
+
 @dataclass(frozen=True)
 class LedgeHop:
     """One ledge jump inside a simulated plan.
@@ -557,10 +561,6 @@ class SimResult:
     def certain(self) -> bool:
         """Whether every step was decided by tiles the live window showed."""
         return self.unverified_from is None
-
-
-#: Only ever used to say which way you cannot come back.
-_OPPOSITE = {"up": "down", "down": "up", "left": "right", "right": "left"}
 
 
 def _direction_of(action: str) -> Optional[str]:

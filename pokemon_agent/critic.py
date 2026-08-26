@@ -588,6 +588,10 @@ MAX_HANDOFF_MILESTONES = 4
 MAX_HANDOFF_TOOLS = 4
 #: Below this a revisited tile is just walking, not a trap.
 HOTSPOT_MIN_VISITS = 5
+#: Receipts store ``t`` rounded to the millisecond, and the mark stores the raw
+#: clock, so a receipt written microseconds after a session began can round to
+#: just before it and fall out of its own session. Widen the slice by one tick.
+RECEIPT_TIME_EPSILON = 0.001
 
 FACTS_HEADING = "Ground truth from the run receipts"
 FACTS_DIGEST_HEADING = f"{FACTS_HEADING} (authoritative - do not contradict these)"
@@ -646,7 +650,7 @@ class SessionFacts:
         """The block as bullets. A row with nothing to say is not written."""
 
         rows = [
-            f"- Run {self.run_id or 'unknown'}, session {self.session_index or 1}. "
+            f"- Run {self.run_id or 'unknown'}, after session {self.session_index or 1}. "
             f"{_plural(self.total_presses, 'press', 'presses')} spent on it so far."
         ]
         if self.done:
@@ -707,8 +711,11 @@ class SessionFacts:
         return rows
 
     def render(self, heading: str = FACTS_HEADING) -> str:
+        """The block as it reaches the next session, under the same heading level
+        as the retrospective it sits above."""
+
         rows = self.lines()
-        return (f"### {heading}\n" + "\n".join(rows)) if rows else ""
+        return (f"## {heading}\n" + "\n".join(rows)) if rows else ""
 
 
 def list_named_saves(data_dir: Optional[Path], limit: int = MAX_HANDOFF_SAVES) -> tuple[str, ...]:
@@ -770,7 +777,8 @@ def collect_session_facts(
     # An empty slice means the mark is newer than every receipt — a session that
     # pressed nothing. Reporting the whole run there would be a lie; reporting
     # zero is the truth, so the slice stands as it is.
-    session = [one for one in receipts if since_t is None or one.t >= since_t]
+    cutoff = None if since_t is None else since_t - RECEIPT_TIME_EPSILON
+    session = [one for one in receipts if cutoff is None or one.t >= cutoff]
     # Newest first: the last rung reached is the one that says where the run is.
     earned = [item.milestone_id for item in reversed(metrics.attainments)]
 
@@ -857,6 +865,7 @@ def write_session_mark(
         "session_index": int(session_index),
     }
     with contextlib.suppress(OSError):
+        critic_debug_dir(workspace_dir).mkdir(parents=True, exist_ok=True)
         session_mark_path(workspace_dir).write_text(
             json.dumps(payload, sort_keys=True) + "\n", encoding="utf-8"
         )

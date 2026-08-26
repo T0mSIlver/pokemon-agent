@@ -17,6 +17,8 @@ from pokemon_agent.critic import (
     CRITIC_RAW_FILENAME,
     DEBUG_DIRNAME,
     DIGEST_CHAR_BUDGET,
+    FACTS_DIGEST_HEADING,
+    FACTS_HEADING,
     HANDOFF_FILENAME,
     HANDOFF_HEADING,
     HANDOFF_PREVIOUS_FILENAME,
@@ -2007,27 +2009,6 @@ async def test_a_failing_critic_keeps_the_old_handoff_and_still_ends_the_run(
     assert "critique failed" in system_labels(supervisor)
 
 
-@pytest.mark.asyncio
-async def test_an_operator_stop_skips_the_critique_so_it_returns_promptly(tmp_path: Path):
-    fake_pi = make_fake_rpc_server(tmp_path, critique=CRITIQUE, critique_delay=30.0)
-    workspace_dir = tmp_path / "workspace"
-    supervisor = make_supervisor(tmp_path, pi_binary=str(fake_pi))
-
-    await supervisor.start(
-        goal="Reach the next checkpoint.",
-        auto_continue=True,
-        continue_delay_seconds=5,
-    )
-    assert await wait_for(lambda: supervisor.turns_completed >= 1, timeout=10)
-
-    started = time.monotonic()
-    snapshot = await supervisor.stop()
-
-    assert time.monotonic() - started < 12
-    assert snapshot["status"] == "stopped"
-    assert not (workspace_dir / HANDOFF_FILENAME).exists()
-
-
 def test_the_watchdog_treats_critiquing_as_busy(tmp_path: Path):
     script = Path(__file__).resolve().parents[1] / "scripts" / "keep_run_alive.sh"
     text = script.read_text(encoding="utf-8")
@@ -2293,10 +2274,12 @@ async def test_a_long_thinking_block_survives_into_the_stream_and_transcript(tmp
 async def test_a_long_critique_reaches_the_snapshot_and_the_stream_whole(tmp_path: Path):
     body = "\n\n".join(
         f"{index}. Mistake {index}: you rammed the wall at (5,6) {index} times."
-        for index in range(60)
+        for index in range(20)
     )
     critique = f"{body}\n\nNEXT GOAL: Take the west path out of Viridian Forest."
-    assert len(critique.split()) > 300  # past the cap that used to chop it
+    # A retrospective that fills its budget still reaches the dashboard whole:
+    # the word cap is on what the critic is asked for, not on what is displayed.
+    assert 200 < len(critique.split()) <= MAX_HANDOFF_WORDS
     fake_pi = make_fake_rpc_server(tmp_path, critique=critique)
     workspace_dir = tmp_path / "workspace"
     supervisor = make_supervisor(tmp_path, pi_binary=str(fake_pi))
@@ -2826,3 +2809,318 @@ def test_a_workspace_interpreter_that_will_not_build_does_not_stop_the_run(
     STAGE_WORKSPACE_VENV(supervisor)
 
     assert "no python here" in capsys.readouterr().out
+
+
+# ---------------------------------------------------------------------------
+# Between-session handoff
+#
+# Nine sessions and four rotations on disk produced no HANDOFF.md and no
+# critic_last.jsonl. Every one of those rotations went through `stop()`, which
+# cancelled the critic on the reasoning that an operator stop has to return
+# promptly - and `/supervisor/start` refuses while a session is live, so there is
+# no rotation that does not go through `stop()` first. The tests below pin every
+# path a session can end on, because the bug was never in the critic.
+# ---------------------------------------------------------------------------
+
+
+async def end_by_completing(supervisor: PiSupervisor) -> None:
+    await supervisor.start(goal="Reach the next checkpoint.", auto_continue=False)
+    await supervisor.wait_until_idle(timeout=30)
+
+
+async def end_by_operator_stop(supervisor: PiSupervisor) -> None:
+    await supervisor.start(
+        goal="Reach the next checkpoint.", auto_continue=True, continue_delay_seconds=5
+    )
+    assert await wait_for(lambda: supervisor.status == "running", timeout=15)
+    await supervisor.stop()
+    await supervisor.wait_until_idle(timeout=30)
+
+
+async def end_by_idle_breaker(supervisor: PiSupervisor) -> None:
+    supervisor.max_idle_turns = 1
+    await supervisor.start(
+        goal="Reach the next checkpoint.", auto_continue=True, continue_delay_seconds=0
+    )
+    await supervisor.wait_until_idle(timeout=30)
+
+
+async def end_by_token_budget(supervisor: PiSupervisor) -> None:
+    supervisor.token_budget = 110_000
+    await supervisor.start(
+        goal="Reach the next checkpoint.", auto_continue=True, continue_delay_seconds=0
+    )
+    await supervisor.wait_until_idle(timeout=30)
+
+
+#: Every way a session ends: how to drive it there, the fake-pi flags that get it
+#: there, and the terminal status it lands on.
+ENDING_PATHS = {
+    "completed": (end_by_completing, {}, "completed"),
+    "operator-stop": (end_by_operator_stop, {"settle": False}, "stopped"),
+    "idle-breaker": (end_by_idle_breaker, {"include_write_tool": False}, "stuck"),
+    "token-budget": (end_by_token_budget, {"context_tokens": 120_000}, "completed"),
+    "crash": (end_by_completing, {}, "error"),
+}
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("path", sorted(ENDING_PATHS))
+async def test_every_way_a_session_ends_leaves_a_retrospective(
+    tmp_path: Path, monkeypatch, path: str
+):
+    drive, flags, expected_status = ENDING_PATHS[path]
+    events: list[dict] = []
+    fake_pi = make_fake_rpc_server(tmp_path, critique=CRITIQUE_WITH_GOAL, **flags)
+    workspace_dir = tmp_path / "workspace"
+
+    async def sink(event: dict) -> None:
+        events.append(event)
+
+    supervisor = make_supervisor(
+        tmp_path, pi_binary=str(fake_pi), event_sink=sink, stats_poll_seconds=0
+    )
+    if path == "crash":
+        # A session that ends by raising is still a session that ended.
+        async def explode(self) -> bool:
+            raise RuntimeError("pi died mid-turn")
+
+        monkeypatch.setattr(PiSupervisor, "_await_settle", explode)
+
+    await drive(supervisor)
+
+    assert supervisor.status == expected_status
+    assert read_handoff(workspace_dir) == CRITIQUE_WITH_GOAL
+    assert supervisor.critic_next_goal == CRITIC_GOAL
+    assert [event["type"] for event in events if event["type"].startswith("pi_critique")] == [
+        "pi_critique_start",
+        "pi_critique_ready",
+    ]
+    # The raw stream is kept whatever happened, so a bad critique is debuggable.
+    assert (workspace_dir / DEBUG_DIRNAME / CRITIC_RAW_FILENAME).is_file()
+
+
+@pytest.mark.asyncio
+async def test_an_operator_stop_returns_promptly_and_critiques_in_the_background(tmp_path: Path):
+    """Promptness and the retrospective were traded against each other for nothing.
+
+    `stop()` returns on a shielded wait, so the run loop stays alive under
+    `critiquing`, and the watchdog - which already treats `critiquing` as busy -
+    waits for it instead of starting a session over the top of it.
+    """
+
+    fake_pi = make_fake_rpc_server(
+        tmp_path, critique=CRITIQUE_WITH_GOAL, critique_delay=8.0, settle=False
+    )
+    workspace_dir = tmp_path / "workspace"
+    supervisor = make_supervisor(tmp_path, pi_binary=str(fake_pi), stats_poll_seconds=0)
+
+    await supervisor.start(
+        goal="Reach the next checkpoint.", auto_continue=True, continue_delay_seconds=5
+    )
+    assert await wait_for(lambda: supervisor.status == "running", timeout=15)
+
+    started = time.monotonic()
+    snapshot = await supervisor.stop()
+    elapsed = time.monotonic() - started
+
+    assert elapsed < 8.0
+    assert snapshot["status"] == "critiquing"
+    assert supervisor.is_running is True
+
+    await supervisor.wait_until_idle(timeout=40)
+    assert supervisor.status == "stopped"
+    assert read_handoff(workspace_dir) == CRITIQUE_WITH_GOAL
+
+
+@pytest.mark.asyncio
+async def test_a_server_shutdown_does_not_start_a_critic_it_cannot_finish(tmp_path: Path):
+    fake_pi = make_fake_rpc_server(tmp_path, critique=CRITIQUE_WITH_GOAL, settle=False)
+    workspace_dir = tmp_path / "workspace"
+    supervisor = make_supervisor(tmp_path, pi_binary=str(fake_pi), stats_poll_seconds=0)
+
+    await supervisor.start(
+        goal="Reach the next checkpoint.", auto_continue=True, continue_delay_seconds=5
+    )
+    assert await wait_for(lambda: supervisor.status == "running", timeout=15)
+
+    await supervisor.shutdown()
+    await supervisor.wait_until_idle(timeout=20)
+
+    assert supervisor.status == "stopped"
+    assert not (workspace_dir / HANDOFF_FILENAME).exists()
+    assert "critique start" not in system_labels(supervisor)
+
+
+@pytest.mark.asyncio
+async def test_a_critic_that_overruns_its_own_budget_is_abandoned(tmp_path: Path, monkeypatch):
+    monkeypatch.setattr(pi_supervisor_module, "CRITIC_OVERRUN_GRACE_SECONDS", 0.5)
+    fake_pi = make_fake_rpc_server(tmp_path, critique=CRITIQUE_WITH_GOAL)
+    supervisor = make_supervisor(tmp_path, pi_binary=str(fake_pi), critic_timeout_seconds=0.5)
+
+    async def never_returns(**kwargs):
+        await asyncio.sleep(60)
+
+    monkeypatch.setattr(pi_supervisor_module._critic_module(), "run_critic", never_returns)
+
+    await supervisor.start(goal="Reach the next checkpoint.", auto_continue=False)
+    await supervisor.wait_until_idle(timeout=25)
+
+    snapshot = supervisor.state_snapshot()
+    assert snapshot["status"] == "completed"
+    assert "overran" in snapshot["critique"]["error"]
+    assert "critique failed" in system_labels(supervisor)
+
+
+@pytest.mark.asyncio
+async def test_a_failed_critique_does_not_stop_the_next_session_from_starting(tmp_path: Path):
+    # `critique=None` exits non-zero: the retrospective is lost, the run is not.
+    fake_pi = make_fake_rpc_server(tmp_path, critique=None)
+    workspace_dir = tmp_path / "workspace"
+    supervisor = make_supervisor(tmp_path, pi_binary=str(fake_pi), critic_timeout_seconds=2.0)
+
+    await supervisor.start(goal="Reach the next checkpoint.", auto_continue=False)
+    await supervisor.wait_until_idle(timeout=25)
+    assert supervisor.state_snapshot()["critique"]["error"]
+
+    await supervisor.start(goal="Reach the next checkpoint.", auto_continue=False)
+    await supervisor.wait_until_idle(timeout=25)
+
+    assert supervisor.status == "completed"
+    assert len(prompt_commands(workspace_dir)) >= 2
+
+
+# ---------------------------------------------------------------------------
+# What the handoff carries
+# ---------------------------------------------------------------------------
+
+
+async def record_a_stuck_session(recorder: RunRecorder) -> None:
+    """Receipts shaped like the Route 3 pocket: many presses, almost no ground."""
+
+    await recorder.append(
+        tool="action",
+        presses=40,
+        map_name="Route 3",
+        pos=(22, 12),
+        moved=0,
+        hp=(62, 62),
+        party_size=1,
+    )
+    for _ in range(4):
+        await recorder.append(
+            tool="action",
+            presses=20,
+            map_name="Route 3",
+            pos=(22, 12),
+            moved=0,
+            hp=(62, 62),
+            party_size=1,
+        )
+    await recorder.append(
+        tool="goto",
+        presses=32,
+        map_name="Route 3",
+        pos=(22, 8),
+        moved=32,
+        hp=(62, 62),
+        party_size=1,
+    )
+
+
+@pytest.mark.asyncio
+async def test_the_first_message_carries_ground_truth_off_the_receipts(tmp_path: Path):
+    supervisor, recorder = recorded_supervisor(tmp_path, critique=CRITIQUE_WITH_GOAL)
+    workspace_dir = tmp_path / "workspace"
+    saves = tmp_path / "data" / "saves"
+    saves.mkdir(parents=True, exist_ok=True)
+    (saves / "pewter_start.state").write_bytes(b"x")
+    (saves / "auto__000123.state").write_bytes(b"x")
+
+    await supervisor.start(goal="Cross Route 3.", auto_continue=False)
+    await recorder.append(tool="action", presses=1, milestone_ids={"BADGE_BOULDER"})
+    await record_a_stuck_session(recorder)
+    await supervisor.wait_until_idle(timeout=30)
+
+    await supervisor.start(auto_continue=False)
+    await supervisor.wait_until_idle(timeout=30)
+
+    message = prompt_commands(workspace_dir)[-1]["message"]
+    assert message.startswith(CRITIC_GOAL)
+    assert f"## {FACTS_HEADING}" in message
+    assert f"Run {supervisor.run_id}, after session 1" in message
+    assert "153 presses spent on it so far" in message
+    # What the run already has, so the next goal is never one it has already met.
+    assert "Already done (1): BADGE_BOULDER" in message
+    # Where it got stuck, and how badly.
+    assert "Most revisited tile: Route 3 (22,12), stood on 5 times" in message
+    assert "5 of 7 batches (71%) moved nothing" in message
+    # Which verbs it reached for, and by omission which it did not.
+    assert "Tools it reached for: action x6, goto x1" in message
+    # The escape hatch it never lists for itself.
+    assert "`./poke load <name>`: pewter_start." in message
+    assert "auto__" not in message
+    # The critic's own words come after the facts, under their own heading.
+    assert message.index(FACTS_HEADING) < message.index(HANDOFF_HEADING)
+    assert CRITIQUE_WITH_GOAL in message
+
+
+@pytest.mark.asyncio
+async def test_ground_truth_survives_the_restart_that_takes_the_critic_with_it(tmp_path: Path):
+    """The second reason `HANDOFF.md` was missing, and the one `stop()` cannot fix.
+
+    When the server process dies mid-session, the run loop's teardown never runs
+    and no critic ever starts. A fresh `PiSupervisor` over the same workspace is
+    exactly what comes back up. The facts are read at *start*, off the receipts
+    and a mark file, so they cross that boundary even though nothing in memory
+    does.
+    """
+
+    fake_pi = make_fake_rpc_server(tmp_path, critique=CRITIQUE_WITH_GOAL)
+    workspace_dir = tmp_path / "workspace"
+
+    def build() -> PiSupervisor:
+        return PiSupervisor(
+            workspace_dir=workspace_dir,
+            server_url="http://127.0.0.1:8765",
+            pi_binary=str(fake_pi),
+            stats_poll_seconds=0,
+            critic_enabled=False,
+            run_recorder=RunRecorder(tmp_path / "data"),
+        )
+
+    killed = build()
+    await killed.start(goal="Cross Route 3.", auto_continue=False)
+    await killed.wait_until_idle(timeout=30)
+    await killed.run_recorder.append(
+        tool="action", presses=40, map_name="Route 3", pos=(22, 12), moved=0
+    )
+    assert not (workspace_dir / HANDOFF_FILENAME).exists()
+
+    restarted = build()
+    await restarted.start(goal="Cross Route 3.", auto_continue=False)
+    await restarted.wait_until_idle(timeout=30)
+
+    message = prompt_commands(workspace_dir)[-1]["message"]
+    assert f"## {FACTS_HEADING}" in message
+    assert "40 presses over 1 batch, ended on Route 3 (22,12)" in message
+    assert HANDOFF_HEADING not in message
+
+
+@pytest.mark.asyncio
+async def test_the_digest_the_critic_reads_is_grounded_in_the_receipts(tmp_path: Path):
+    supervisor, recorder = recorded_supervisor(tmp_path, critique=CRITIQUE_WITH_GOAL, settle=False)
+    workspace_dir = tmp_path / "workspace"
+
+    await supervisor.start(goal="Cross Route 3.", auto_continue=True, continue_delay_seconds=5)
+    assert await wait_for(lambda: supervisor.status == "running", timeout=15)
+    await record_a_stuck_session(recorder)
+    await supervisor.stop()
+    await supervisor.wait_until_idle(timeout=40)
+
+    digest = critic_prompt(workspace_dir)
+    assert FACTS_DIGEST_HEADING in digest
+    assert "Most revisited tile: Route 3 (22,12), stood on 5 times" in digest
+    assert "authoritative - do not contradict these" in digest
+    # The facts sit above the model's own account of the same session.
+    assert digest.index(FACTS_DIGEST_HEADING) < digest.index("What it did (measured")

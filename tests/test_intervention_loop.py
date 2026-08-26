@@ -203,16 +203,21 @@ async def test_the_slot_is_saved_freed_and_handed_back():
     assert log["steers"] == [ANSWER]
 
 
-async def test_a_save_that_wrote_nothing_costs_the_intervention_not_the_run():
+async def test_a_save_that_wrote_nothing_costs_a_reprefill_not_the_intervention():
+    # The save is an optimisation. On this box it fails server-side -- the KV
+    # cache is quantised to q8_0 and cannot be serialised -- so refusing to
+    # intervene without it would mean never intervening at all. Without a save
+    # the player re-prefills, which is wall clock, not a lost run.
     slot = RestoringSlot(saved_tokens=0)
     runner, log = make_runner(slot_client=slot)
 
-    record = await runner.after_batch(failing_pair(), total_presses=900)
+    await runner.after_batch(failing_pair(), total_presses=900)
 
-    assert "not proceeding" in (record.error or "")
-    assert "erase" not in slot.calls  # the slot was never given away
-    assert log["steers"] == []
-    assert runner.active is True  # a failed save is recoverable; nothing is disabled
+    assert log["steers"], "the intervention must still run and deliver"
+    # Nothing was stored, so nothing may be given away or restored.
+    assert "erase" not in slot.calls
+    assert "restore" not in slot.calls
+    assert runner.active is True
 
 
 async def test_a_long_answer_is_cut_to_one_instruction():

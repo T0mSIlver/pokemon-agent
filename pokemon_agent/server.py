@@ -703,6 +703,67 @@ def _warp_step_direction(coord: dict, dimensions: dict) -> Optional[str]:
     return None
 
 
+#: Directions, and the (dx, dy) they move. North is up: walk_up decreases y.
+_RUNWAY_STEPS = {"up": (0, -1), "down": (0, 1), "left": (-1, 0), "right": (1, 0)}
+
+
+def _runway(snapshot: dict) -> dict:
+    """How many tiles the player can walk in each direction before something stops it.
+
+    `moves` already says which directions are legal, and the model answers it by
+    stepping one tile and asking again: measured over a real session, 400 `act`
+    calls moved a median of one tile each. Every one of those tiles costs a tool
+    call and its response never leaves the context window, which is what actually
+    fills it -- images are 2% of the prompt, tool text is 98%.
+
+    So `moves` is the wrong fact. "You may go left" invites one step. "You may go
+    left seven" invites `left:7`. This is the same shape as `faces` and
+    `blocked_after`, both of which changed behaviour: a fact about where the
+    player is standing, arriving in the payload it already reads, rather than
+    advice it has to remember.
+
+    Counted over the live 10x9 collision window only, so the number is small,
+    always true, and never a guess about ground the game has not shown us.
+    """
+    terrain = snapshot.get("terrain")
+    if not terrain:
+        return {}
+    origin = snapshot.get("window_top_left") or {}
+    position = snapshot.get("player_position") or {}
+    ox, oy = origin.get("x"), origin.get("y")
+    px, py = position.get("x"), position.get("y")
+    if None in (ox, oy, px, py):
+        return {}
+
+    height = len(terrain)
+    width = len(terrain[0]) if height else 0
+    blocked = {(sprite.get("x"), sprite.get("y")) for sprite in snapshot.get("sprites") or []}
+
+    # Only directions `moves` already calls legal. The raw terrain grid and
+    # get_valid_moves disagree on purpose -- the latter also applies the ledge and
+    # warp rules -- and a payload that says "you may not go right" beside
+    # "right goes 5" is two answers to one question.
+    legal = set(snapshot.get("valid_moves") or _RUNWAY_STEPS)
+
+    runway: dict[str, int] = {}
+    for direction, (dx, dy) in _RUNWAY_STEPS.items():
+        if direction not in legal:
+            continue
+        steps = 0
+        x, y = px, py
+        while True:
+            x, y = x + dx, y + dy
+            col, row = x - ox, y - oy
+            if not (0 <= row < height and 0 <= col < width):
+                break  # past the window: unknown, not blocked, so stop counting
+            if not terrain[row][col] or (x, y) in blocked:
+                break
+            steps += 1
+        if steps:
+            runway[direction] = steps
+    return runway
+
+
 def _warp_exit_hint(snapshot: dict, coord: dict) -> dict:
     """Which way to step off the warp under you, and whether it will fire.
 
@@ -765,6 +826,12 @@ def _observation_summary(bundle: Optional[dict]) -> dict:
         lead = party[0] or {}
         if lead.get("max_hp"):
             summary["hp"] = f"{lead.get('hp')}/{lead.get('max_hp')}"
+
+    # How far each legal direction actually goes, so a clear stretch is one call
+    # rather than one call per tile. See _runway.
+    runway = _runway(snapshot)
+    if runway:
+        summary["run"] = runway
 
     # What press_a would hit. "object" is an NPC or item ball, "sign" is readable.
     # Anything else is scenery and not worth a button.

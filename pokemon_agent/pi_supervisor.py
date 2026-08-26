@@ -108,6 +108,10 @@ STREAM_CHUNK_SIZE = 65536
 #: Marks the between-session critic's own narration in the shared stream log.
 CRITIC_STREAM_PREFIX = "[critic] "
 CRITIC_HEARTBEAT_SECONDS = 15.0
+#: Slack on top of the critic's own timeout before the supervisor abandons it. The
+#: critic budgets its attempts; this covers everything around them, so a wedged
+#: subprocess cannot hold the next session hostage.
+CRITIC_OVERRUN_GRACE_SECONDS = 30.0
 ORPHAN_TOOL_RESULT_TEXT = (
     "Tool call interrupted: the supervisor stopped Pi before this tool returned a result."
 )
@@ -763,6 +767,12 @@ class PiSupervisor:
         self._current_cycle_has_tool_call = False
         self._consecutive_idle_turns = 0
         self._session_start_context: JsonDict = {}
+        #: Wall clock this session began at, which is what slices the run's
+        #: receipts into "what this session did" for the retrospective.
+        self._session_started_t: Optional[float] = None
+        #: The previous session's receipts, read at start. Held in memory because
+        #: :meth:`_initial_message` is called twice and the mark rotates between.
+        self._previous_session_facts: Optional[Any] = None
         self._critic_process: Optional[asyncio.subprocess.Process] = None
         self._critic_cancelled = False
         self._critic_thinking_seq: Optional[int] = None
@@ -1270,6 +1280,8 @@ class PiSupervisor:
             self.token_budget = token_budget if token_budget > 0 else 0
         self._stage_workspace_helpers()
         self._session_start_context = await self._collect_critic_context()
+        # Before `_begin_run` rotates the mark, and before the prompt is built.
+        self._previous_session_facts = self._load_previous_session_facts()
         self.goal, self.goal_source = self._resolve_goal(self.operator_goal)
 
         initial_prompt = self._initial_message()
@@ -1335,6 +1347,7 @@ class PiSupervisor:
         # After the stream reset, so the run the session joined is the first
         # thing in the log a watcher scrolls to.
         await self._begin_run()
+        self._mark_session_start()
         self._task = asyncio.create_task(self._run_loop(resume=False, force_single_turn=False))
         return self.state_snapshot()
 
@@ -1370,12 +1383,27 @@ class PiSupervisor:
         self._task = asyncio.create_task(self._run_loop(resume=True, force_single_turn=True))
         return self.state_snapshot()
 
-    async def stop(self) -> JsonDict:
+    async def stop(self, *, critique: bool = True) -> JsonDict:
+        """End the session. The retrospective still runs, in the background.
+
+        This used to cancel the critic outright, on the reasoning that an operator
+        stop has to return promptly and a retrospective is worth minutes only when
+        the watchdog is restarting. Both halves were true; the conclusion was not,
+        because ``/supervisor/start`` refuses while a session is live, so *every*
+        rotation goes through here first. Nine sessions and four rotations produced
+        no ``HANDOFF.md`` at all: this line was the reason.
+
+        Promptness is bought instead by the shielded wait below. The run loop keeps
+        running under ``critiquing``, this returns in at most six seconds, and the
+        watchdog already treats ``critiquing`` as busy. ``critique=False`` is for
+        :meth:`shutdown`, where the process is going away and a subprocess started
+        now would only be orphaned.
+        """
+
         self._stop_requested = True
-        # An operator stop must return promptly, so it also cancels the critic:
-        # a retrospective is worth minutes only when the watchdog is restarting.
-        self._critic_cancelled = True
-        await self._abort_critic()
+        self._critic_cancelled = not critique
+        if not critique:
+            await self._abort_critic()
         if self.is_running:
             self.status = "stopping"
             self.status_reason = "Stop requested by operator."
@@ -1391,7 +1419,10 @@ class PiSupervisor:
         if task is not None:
             with contextlib.suppress(asyncio.CancelledError, asyncio.TimeoutError):
                 await asyncio.wait_for(asyncio.shield(task), timeout=6)
-        if self.status not in {"stopped", "completed", "error", "stuck"}:
+        # `critiquing` is not a status to overwrite: the wait above timed out
+        # because the retrospective is still being written, and calling the run
+        # stopped here is what would let the watchdog start a session over it.
+        if self.status not in {"stopped", "completed", "error", "stuck", "critiquing"}:
             self.status = "stopped"
             self.status_reason = "Pi supervisor stopped."
         self.current_pid = None
@@ -1612,7 +1643,9 @@ class PiSupervisor:
         return dict(record)
 
     async def shutdown(self) -> None:
-        await self.stop()
+        """The server is going down. No critic: it would outlive its own parent."""
+
+        await self.stop(critique=False)
 
     async def wait_until_idle(self, timeout: float = 30.0) -> None:
         task = self._task
@@ -1840,19 +1873,98 @@ class PiSupervisor:
             return objective, GOAL_SOURCE_OBJECTIVE
         return FALLBACK_GOAL, GOAL_SOURCE_FALLBACK
 
+    @property
+    def data_dir(self) -> Optional[Path]:
+        """Where runs and saves live, or ``None`` on a supervisor with no recorder."""
+
+        recorder = self.run_recorder
+        return Path(recorder.data_dir) if recorder is not None else None
+
+    def _load_previous_session_facts(self) -> Optional[Any]:
+        """Read the finished session's receipts, before this one's mark replaces it.
+
+        Deliberately not the critic's job. The critic runs inside the session that
+        is ending, so a crash, a kill -9 or a server restart takes it with the
+        session and the next one starts blind - which is exactly what nine sessions
+        on disk did. This runs at *start*, off files, with no model in the loop, so
+        the ground truth reaches the next session down every path there is.
+        """
+
+        critic = _critic_module()
+        mark = critic.read_session_mark(self.workspace_dir)
+        recorder = self.run_recorder
+        run_id = str(mark.get("run_id") or "") or (
+            recorder.read_pointer() if recorder is not None else None
+        )
+        started = mark.get("started_t")
+        try:
+            return critic.collect_session_facts(
+                data_dir=self.data_dir,
+                run_id=run_id,
+                since_t=float(started) if isinstance(started, (int, float)) else None,
+                session_index=int(mark.get("session_index") or 0),
+            )
+        except Exception as exc:  # noqa: BLE001 — facts are a nicety, never a blocker
+            self._push_recent_event(
+                "pi_session_facts_failed", _truncate(str(exc), ERROR_TEXT_LIMIT)
+            )
+            return None
+
+    def _mark_session_start(self) -> None:
+        """Stamp this session into the workspace for whichever session comes next."""
+
+        critic = _critic_module()
+        recorder = self.run_recorder
+        self._session_started_t = time.time()
+        critic.write_session_mark(
+            self.workspace_dir,
+            run_id=self.run_id,
+            started_t=self._session_started_t,
+            session_index=recorder.sessions if recorder is not None else 1,
+        )
+
+    def _current_session_facts(self) -> Optional[Any]:
+        """The same receipts read for the session that is ending right now."""
+
+        critic = _critic_module()
+        recorder = self.run_recorder
+        try:
+            return critic.collect_session_facts(
+                data_dir=self.data_dir,
+                run_id=self.run_id,
+                since_t=self._session_started_t,
+                session_index=recorder.sessions if recorder is not None else 1,
+            )
+        except Exception as exc:  # noqa: BLE001
+            self._push_recent_event(
+                "pi_session_facts_failed", _truncate(str(exc), ERROR_TEXT_LIMIT)
+            )
+            return None
+
     def _initial_message(self) -> str:
-        """Goal first, then last session's retrospective when the critic left one.
+        """Goal, then measured ground truth, then last session's retrospective.
+
+        Three blocks in that order, and the middle one is why this is not just the
+        critic's text. The facts come off the receipts every time, so a session
+        that crashed, was killed or lost its server still tells the next one what
+        the run has cost and where it ended up. The retrospective is added when a
+        critic actually left one.
 
         This is the user turn, never the system prompt: ``skill/SKILL.md`` is the
         cached prefix and has to stay byte-identical across sessions.
         """
 
         critic = _critic_module()
-        goal = self.goal.strip() or FALLBACK_GOAL
+        blocks = [self.goal.strip() or FALLBACK_GOAL]
+        facts = self._previous_session_facts
+        if facts is not None:
+            rendered = facts.render()
+            if rendered:
+                blocks.append(rendered)
         handoff = critic.read_handoff(self.workspace_dir)
-        if not handoff:
-            return goal
-        return f"{goal}\n\n## {critic.HANDOFF_HEADING}\n\n{handoff}"
+        if handoff:
+            blocks.append(f"## {critic.HANDOFF_HEADING}\n\n{handoff}")
+        return "\n\n".join(blocks)
 
     # ------------------------------------------------------------------
     # Between-session critique
@@ -1891,6 +2003,7 @@ class PiSupervisor:
                 map_summary=end_context.get("map_summary"),
                 notes=critic.read_notes(self.workspace_dir),
                 calls=critic.tool_calls_from_stream(self.stream_entries),
+                facts=self._current_session_facts(),
             )
         )
 
@@ -2055,19 +2168,39 @@ class PiSupervisor:
         self._critic_heartbeat_task = asyncio.create_task(self._critic_heartbeat_loop(started))
         try:
             end_context = await self._collect_critic_context()
-            result = await critic.run_critic(
-                pi_binary=self.pi_binary,
-                workspace_dir=self.workspace_dir,
-                digest=self._build_critic_digest(end_context, terminal_status, terminal_reason),
-                provider=self.provider,
-                model=self.model,
-                thinking=self.critic_thinking,
-                timeout_seconds=self.critic_timeout_seconds,
-                retry_enabled=self.critic_retry_enabled,
-                retry_thinking=self.critic_retry_thinking,
-                event_sink=self._on_critic_event,
-                process_sink=lambda process: setattr(self, "_critic_process", process),
+            # `run_critic` budgets its own attempts, but everything around it -
+            # the context call, the digest, a pi that ignores SIGKILL - is outside
+            # that budget, and the next session cannot start until this returns.
+            # The wall clock is the backstop that makes "never blocks" true.
+            result = await asyncio.wait_for(
+                critic.run_critic(
+                    pi_binary=self.pi_binary,
+                    workspace_dir=self.workspace_dir,
+                    digest=self._build_critic_digest(end_context, terminal_status, terminal_reason),
+                    provider=self.provider,
+                    model=self.model,
+                    thinking=self.critic_thinking,
+                    timeout_seconds=self.critic_timeout_seconds,
+                    retry_enabled=self.critic_retry_enabled,
+                    retry_thinking=self.critic_retry_thinking,
+                    event_sink=self._on_critic_event,
+                    process_sink=lambda process: setattr(self, "_critic_process", process),
+                ),
+                timeout=self.critic_timeout_seconds + CRITIC_OVERRUN_GRACE_SECONDS,
             )
+        except asyncio.TimeoutError:
+            await self._abort_critic()
+            self.last_critique_error = (
+                f"Critic overran its own {self.critic_timeout_seconds:.0f}s budget; "
+                "abandoned so the next session can start."
+            )
+            await self._emit_major("pi_critique_failed", {"summary": self.last_critique_error})
+            await self._push_stream_system(
+                "critique failed",
+                text=f"{self.last_critique_error} Keeping the previous handoff.",
+                level="warn",
+            )
+            return
         except asyncio.CancelledError:
             await self._abort_critic()
             raise
