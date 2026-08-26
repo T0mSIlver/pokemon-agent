@@ -67,7 +67,7 @@ At the end, a Super Nerd guards two fossils and only one can be taken:
 
 Neither can be revived until the Cinnabar lab much later, and neither is necessary. Omastar has better Special; Kabutops has better Attack.
 
-Exit west onto Route 4, which is a short ledge run down to Cerulean. There is a hidden Rare Candy and a wild-grass patch with Ekans/Sandshrew, plus the back entrance to Cerulean Cave that stays locked until the Champion is beaten.
+Exit east onto Route 4, which is a short ledge run down to Cerulean. The exit is the warp at (27,3) on B1F: far east side, near the top. From Mt Moon 1F the doors back to Route 4 are at (14,35) and (15,35) instead, at the bottom. There is a hidden Rare Candy and a wild-grass patch with Ekans/Sandshrew, plus the back entrance to Cerulean Cave that stays locked until the Champion is beaten.
 
 ## Misty, Nugget Bridge and Bill
 <!-- slug: misty -->

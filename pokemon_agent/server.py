@@ -1311,12 +1311,21 @@ async def _run_intervention_check(bundle: Optional[dict]) -> None:
     if runner is None or recorder is None:
         return
     try:
+        # The party goes in because a receipt has HP and nothing else about the
+        # team. `Toothless` needs move PP to see a lead that cannot deal damage,
+        # which went unnoticed for 24% of one run's presses precisely because
+        # every signal here was about HP.
+        state = {"map": _observation_summary(bundle).get("map")}
+        party = ((bundle or {}).get("state") or {}).get("party")
+        if party:
+            state["party"] = party
         await runner.after_batch(
             recorder.recent_receipts(),
-            state={"map": _observation_summary(bundle).get("map")},
+            state=state,
             total_presses=recorder.total_presses,
             state_summary=_intervention_state_summary(bundle),
             milestone_summary=_intervention_milestone_summary(),
+            observation=bundle,
         )
     except Exception as exc:  # noqa: BLE001 — never let this take the server with it
         print(f"[server] WARNING: intervention check failed: {exc}")

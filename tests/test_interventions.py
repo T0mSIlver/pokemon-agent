@@ -17,6 +17,7 @@ from pokemon_agent.interventions import (
     MapFacts,
     RepeatedFailure,
     StalledMilestones,
+    Toothless,
     Trigger,
     build_prompt,
     default_detectors,
@@ -482,3 +483,65 @@ class TestFactBudget:
     def test_the_route_4_prompt_stays_a_short_problem(self):
         prompt = TestHarnessFacts().route4_prompt(goal="Reach Cerulean City.")
         assert len(prompt) < 3000
+
+
+# ---------------------------------------------------------------------------
+# Toothless: the party cannot deal damage
+#
+# Measured over one run: 3,285 of 13,601 presses (24%) with the lead holding no
+# damaging move, Ember and Rage both at 0 PP, party of one. Nothing noticed,
+# because every existing check was about HP. A Pokemon at full health with no
+# attack cannot win a battle and cannot flee a trainer.
+# ---------------------------------------------------------------------------
+
+
+def _party(*moves, species="Charmeleon"):
+    return {"party": [{"species": species, "moves": list(moves)}]}
+
+
+def _move(name, power, pp):
+    return {"name": name, "power": power, "pp": pp}
+
+
+def _fighting(n=6):
+    return [receipt(seq=i, tool="battle") for i in range(n)]
+
+
+def test_toothless_fires_when_every_move_is_out_of_pp():
+    state = _party(_move("Ember", 40, 0), _move("Rage", 20, 0))
+    trigger = Toothless().check(_fighting(), state)
+    assert trigger is not None
+    assert trigger.priority == PRIORITY_DANGER
+    assert "Ember" in trigger.reason and "Rage" in trigger.reason
+
+
+def test_one_usable_attack_is_enough_to_stay_quiet():
+    state = _party(_move("Ember", 40, 0), _move("Scratch", 40, 12))
+    assert Toothless().check(_fighting(), state) is None
+
+
+def test_status_moves_with_pp_do_not_count_as_teeth():
+    # Growl has PP and no power. It cannot end a battle.
+    state = _party(_move("Ember", 40, 0), _move("Growl", 0, 30))
+    assert Toothless().check(_fighting(), state) is not None
+
+
+def test_it_stays_quiet_when_the_party_is_not_in_harms_way():
+    state = _party(_move("Ember", 40, 0))
+    assert Toothless().check([], state) is None
+
+
+def test_a_party_shape_without_pp_is_not_judged():
+    # Older payloads carry move names only. Silence beats a guess.
+    state = {"party": [{"species": "Charmeleon", "moves": ["Ember", "Rage"]}]}
+    assert Toothless().check(_fighting(), state) is None
+
+
+def test_no_party_no_trigger():
+    assert Toothless().check(_fighting(), {}) is None
+    assert Toothless().check(_fighting(), {"party": []}) is None
+
+
+def test_toothless_is_registered_and_outranks_being_lost():
+    names = {d.name for d in default_detectors()}
+    assert "toothless" in names

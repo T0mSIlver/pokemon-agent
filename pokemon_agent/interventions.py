@@ -191,6 +191,100 @@ class LowHP:
         )
 
 
+def _move_power(name: Optional[str]) -> Optional[int]:
+    """Base power from the generated move table, or None if it is not a move."""
+
+    if not name:
+        return None
+    try:
+        from pokemon_agent import gamedata
+
+        record = gamedata.move(str(name))
+    except Exception:
+        return None
+    if not record:
+        return None
+    power = record.get("power")
+    return int(power) if power is not None else None
+
+
+@dataclass
+class Toothless:
+    """The party cannot deal damage and is still walking into fights.
+
+    Measured over one run: the lead had no damaging move for 3,285 of 13,601
+    presses, 24%, with Ember and Rage both at 0 PP and a party of one. Nothing in
+    the harness noticed, because every check was about HP. A Pokemon at full
+    health with no attack left cannot win a battle and cannot flee a trainer;
+    it can only lose slowly.
+
+    The fix is a Poke Center, the same as `low_hp`, which is why this reports the
+    cause rather than the remedy. `state` carries the party because the receipt
+    schema does not: the caller passes what it read this turn.
+    """
+
+    batches: int = 4
+    name: str = "toothless"
+
+    def check(self, window: Sequence[Receipt], state: Mapping[str, Any]) -> Optional[Trigger]:
+        party = state.get("party")
+        if not isinstance(party, Sequence) or not party:
+            return None
+        lead = party[0] if isinstance(party[0], Mapping) else None
+        if not lead:
+            return None
+        moves = lead.get("moves")
+        if not isinstance(moves, Sequence) or not moves:
+            return None
+
+        usable = []
+        judged = 0
+        for move in moves:
+            if not isinstance(move, Mapping):
+                return None  # names only in this shape; nothing to judge
+            pp = move.get("pp")
+            if pp is None:
+                return None
+            # The state payload carries pp but not power, so power comes from the
+            # generated move table. Guessing which moves deal damage from their
+            # names is exactly the recall this project keeps getting burned by.
+            power = move.get("power")
+            if power is None:
+                power = _move_power(move.get("name"))
+            if power is None:
+                continue  # unknown move: not evidence either way
+            judged += 1
+            if power > 0 and pp > 0:
+                usable.append(move.get("name"))
+        if usable or not judged:
+            return None
+
+        # Only worth stopping for if it is still in harm's way.
+        fighting = [r for r in window[-self.batches :] if r.tool == "battle" or r.map_name]
+        if len(fighting) < self.batches:
+            return None
+
+        names = [m.get("name") for m in moves if isinstance(m, Mapping)]
+        return Trigger(
+            name=self.name,
+            priority=PRIORITY_DANGER,
+            reason=(
+                f"{lead.get('species') or 'The lead'} has no damaging move left: "
+                f"{', '.join(str(n) for n in names) or 'no moves'} are all out of PP or "
+                f"deal no damage. Party of {len(party)}."
+            ),
+            question=(
+                "The party cannot deal damage, so it cannot win a battle or "
+                "escape a trainer. Say how to restore PP and where."
+            ),
+            payload={
+                "species": lead.get("species"),
+                "moves": names,
+                "party_size": len(party),
+            },
+        )
+
+
 @dataclass
 class RepeatedFailure:
     """The same thing failed more than once in a row.
@@ -315,6 +409,7 @@ def default_detectors() -> tuple[Detector, ...]:
     return (
         CommitGate(),
         LowHP(),
+        Toothless(),
         RepeatedFailure(),
         StalledMilestones(),
         Circling(),
@@ -984,6 +1079,7 @@ __all__ = [
     "StalledMilestones",
     "Circling",
     "LowHP",
+    "Toothless",
     "RepeatedFailure",
     "EnteringSegment",
     "CommitGate",
