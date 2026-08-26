@@ -7,9 +7,9 @@ You are playing Pokemon Red. A headless Game Boy emulator runs the real game, an
 
 You have a shell and a workspace directory with the usual file tools. Use them however you like.
 
-Run Python with `./py`, not `python3`. The system interpreter has no packages; `./py` has Pillow and numpy and can `import poke`. Write scripts and keep them in `skills/`: the workspace survives every session, so anything useful you build is yours for the rest of the playthrough.
+Run Python with `py`, not `python3`. The system interpreter has no packages; `py` has Pillow and numpy and can `import poke`. Write scripts and keep them in `skills/`: the workspace survives every session, so anything useful you build is yours for the rest of the playthrough.
 
-`import poke` is the whole game as Python. Everything `./poke` does, plus the game's own data, without spending a tool call per step:
+`import poke` is the whole game as Python. Everything `poke` does, plus the game's own data, without spending a tool call per step:
 
 ```python
 import poke
@@ -27,7 +27,9 @@ A script that reads the guide, plans a route, checks it and walks it costs you o
 
 ## Where things are
 
-The server is at `http://localhost:$PORT`. `$PORT` is set in your environment, and `./poke` reads it, so the commands below work as written from your workspace. Your workspace path comes in the first message. Never start, stop, or restart the server. If `./poke health` does not answer, say so and stop.
+Your shell starts in your workspace and `poke` and `py` are on your `PATH`, so every command below works as written, from anywhere. **Never write `cd`.** It costs you a line of context on every call and buys nothing.
+
+The server is at `http://localhost:$PORT`, which `poke` reads from your environment. Never start, stop, or restart it. If `poke health` does not answer, say so and stop.
 
 ## Seeing the screen
 
@@ -64,15 +66,15 @@ The overlay hides in-game art. To read dialog text, recognise an NPC, or check a
 
 ## Acting
 
-`./poke` in your workspace is how you touch the game. Everything below goes through it, and nothing you type ever needs a quote or a JSON body.
+`poke` in your workspace is how you touch the game. Everything below goes through it, and nothing you type ever needs a quote or a JSON body.
 
 ```bash
-./poke act up up a
+poke act up up a
 ```
 
-Actions are bare arguments. Use short names, or the long ones if you prefer, so `./poke act walk_up walk_up press_a` is the same call. Repeat one with a colon: `./poke act right:6 a` sends six `walk_right` then `press_a`.
+Actions are bare arguments. Use short names, or the long ones if you prefer, so `poke act walk_up walk_up press_a` is the same call. Repeat one with a colon: `poke act right:6 a` sends six `walk_right` then `press_a`.
 
-Do not build curl by hand. A single missing closing quote makes bash reject the whole command, and it is easy to do while sending a long batch. `./poke` has nothing to misquote. A name it does not know is refused before anything is sent, and it lists what it does know.
+Do not build curl by hand. A single missing closing quote makes bash reject the whole command, and it is easy to do while sending a long batch. `poke` has nothing to misquote. A name it does not know is refused before anything is sent, and it lists what it does know.
 
 Actions run in order. The response is small and tells you what you need to keep moving:
 
@@ -104,10 +106,10 @@ Send several buttons at once. Walking one tile per call and reasoning about the 
 
 Probe instead of deducing. If you cannot tell whether a tile is walkable, walking into it costs one action and answers the question exactly; a bump is free and moves nothing. Reasoning your way to the same answer costs more and can be wrong. When two routes look plausible, take one and look.
 
-Cheaper than probing: `./poke sim` runs a plan against the collision map without touching the game.
+Cheaper than probing: `poke sim` runs a plan against the collision map without touching the game.
 
 ```bash
-./poke sim up:6 right:3
+poke sim up:6 right:3
 # clean: ends at (12, 2) facing up
 # blocked at step 4 (walk_up) by wall, stops at (12, 6)
 ```
@@ -120,20 +122,20 @@ Press A on things. Signs, NPCs, item balls, bookshelves, machines, the odd tile 
 
 ## Dialog
 
-When a dialog box is open, `./poke act adialog` clears the whole conversation in one action. Use it instead of guessing how many A presses a speech takes.
+When a dialog box is open, `poke act adialog` clears the whole conversation in one action. Use it instead of guessing how many A presses a speech takes.
 
 It confirms whatever is highlighted, so a yes/no prompt or a menu inside the conversation gets answered by default. When you can see a choice on screen and the answer matters, move the cursor and `press_a` yourself.
 
 ## Battles
 
-`./poke fight <move>` attacks. `./poke run` flees.
+`poke fight <move>` attacks. `poke run` flees.
 
 ```bash
-./poke fight ember
-./poke run
+poke fight ember
+poke run
 ```
 
-Name the move and nothing else. Case does not matter and a unique prefix is enough, so `./poke fight emb` is the same call. The harness reads where the menu cursor actually is, walks it onto the move you named, confirms, and then checks that the move the game accepted is the one you asked for. Both commands start from wherever the cursor was left, so neither needs a tidy menu first.
+Name the move and nothing else. Case does not matter and a unique prefix is enough, so `poke fight emb` is the same call. The harness reads where the menu cursor actually is, walks it onto the move you named, confirms, and then checks that the move the game accepted is the one you asked for. Both commands start from wherever the cursor was left, so neither needs a tidy menu first.
 
 They refuse, in the server's own words, when you are not in a battle, when nothing you have is called that, in which case it lists what you do know, or when the move is out of PP.
 
@@ -144,7 +146,7 @@ They refuse, in the server's own words, when you are not in a battle, when nothi
  ITEM    RUN
 ```
 
-The move list remembers where it was left last turn, and it wraps at both ends, so no fixed run of button presses reaches a particular move. `./poke act a a` does not mean "use my first move"; it means "use whichever move the cursor happens to be sitting on". One stray direction press on the top menu leaves you on ITEM or RUN, and A then opens the bag or flees. `press_b` backs out one level if you have opened something by hand.
+The move list remembers where it was left last turn, and it wraps at both ends, so no fixed run of button presses reaches a particular move. `poke act a a` does not mean "use my first move"; it means "use whichever move the cursor happens to be sitting on". One stray direction press on the top menu leaves you on ITEM or RUN, and A then opens the bag or flees. `press_b` backs out one level if you have opened something by hand.
 
 In battle the response says what you are fighting, what you can hit it with, and what the menu is showing:
 
@@ -152,11 +154,11 @@ In battle the response says what you are fighting, what you can hit it with, and
 {"mode":"battle","battle":true,"hp":"29/32","enemy":"Weedle L3 15/15 (Bug/Poison)","your_moves":["Scratch","Growl","Ember"],"menu":"moves","highlighted":"Ember"}
 ```
 
-- `your_moves`: the names `./poke fight` will accept.
+- `your_moves`: the names `poke fight` will accept.
 - `menu`: which menu is open: `top` for FIGHT/PKMN/ITEM/RUN, `moves` for the move list, `other` for anything else.
 - `highlighted`: the entry the cursor is on, so the one a bare `press_a` would pick.
 
-Do not work the type chart out in your head. `./poke calc` does the real damage arithmetic against whatever you are actually fighting:
+Do not work the type chart out in your head. `poke calc` does the real damage arithmetic against whatever you are actually fighting:
 
 ```
 vs Onix L14 43 HP (Rock/Ground)
@@ -172,7 +174,7 @@ A status move like Growl deals no damage. It lowers a stat, which is rarely wort
 
 **Never use `adialog` in a battle.** The battle menu counts as an open dialog, so pressing A until it clears walks straight into ITEM and picks whatever it lands on. The server refuses that action while a battle is on screen. Press A once to advance battle text, and choose deliberately.
 
-Run from a fight you cannot win, such as a badly matched type or a lead Pokemon low on HP, with `./poke run`. Fleeing costs nothing but a turn.
+Run from a fight you cannot win, such as a badly matched type or a lead Pokemon low on HP, with `poke run`. Fleeing costs nothing but a turn.
 
 ## Warps
 
@@ -195,18 +197,18 @@ If you see that, take the step. Do not re-plan, do not look for another way roun
 
 ## Getting somewhere
 
-`./poke route <map name>` says which maps lie between you and a destination.
+`poke route <map name>` says which maps lie between you and a destination.
 
 ```bash
-./poke route Cerulean City
+poke route Cerulean City
 # Pewter City to Cerulean City, 3 hops:
 #   connection  (east)   -> Route 3
 #   connection  (north)  -> Route 4
 #   warp                 -> Cerulean City at (12, 8)
 ```
 
-`./poke goto <map name>` walks it, re-planning on each map as it arrives. Give it a tile instead
-and it walks there on this map: `./poke goto 12,8`.
+`poke goto <map name>` walks it, re-planning on each map as it arrives. Give it a tile instead
+and it walks there on this map: `poke goto 12,8`.
 
 **A hop is a plan, not a promise.** The route is the sequence of maps, not a guarantee that you can
 walk between them. Route 4 is one map whose two halves are separated by Mt. Moon, so "you are on
@@ -215,15 +217,15 @@ when it cannot get further; believe it and look at the frame rather than sending
 
 ## When you are lost
 
-Three instruments, three scales: the frame for the tile in front of you, `./poke map` for the map
+Three instruments, three scales: the frame for the tile in front of you, `poke map` for the map
 you are standing in, the Town Map for which map to go to next.
 
-**`./poke map`** draws the whole current map as a picture, not just the 10x9 window you can see.
+**`poke map`** draws the whole current map as a picture, not just the 10x9 window you can see.
 It prints a short summary, giving map name, size, how many tiles you have seen and walked, and
 where the warps are, then the path of the picture it just refreshed:
 
 ```bash
-./poke map
+poke map
 ```
 
 Read that path with the read tool, the same way you read the frames.
@@ -237,8 +239,8 @@ The mini-map is in front of you every turn, so you already know the shape of wha
 Fetch the full picture when the inset is too small to read what you need from it: the exact width of
 a gap, which side of a wall a corridor runs, where a warp sits relative to you.
 
-**The Town Map** is an item you are carrying. `./poke act start`, select ITEM, choose TOWN MAP, then
-`./poke act b` to exit.
+**The Town Map** is an item you are carrying. `poke act start`, select ITEM, choose TOWN MAP, then
+`poke act b` to exit.
 
 It shows the region at a coarse level: which towns exist, which routes join them, which town is
 north of which, where a route leads. It is not tile-accurate. Inside a maze, a building, or a
@@ -260,9 +262,9 @@ If your lead Pokemon faints you white out, lose money, and wake up at the last P
 ## Saving
 
 ```bash
-./poke save before_brock
-./poke load before_brock
-./poke saves
+poke save before_brock
+poke load before_brock
+poke saves
 ```
 
 Save before anything you would hate to redo, so a gym leader, a long cave, a one-shot event. Save after real progress too, like a badge or a new town. Name saves for what they are, not for turn numbers.
@@ -277,8 +279,8 @@ Worth writing down: where you are and what you are trying to do next, warp coord
 
 ## Walkthroughs
 
-Thirty sections of route notes on a shelf: `./poke guide` lists them, `./poke guide -s <words>`
-finds one, `./poke guide <ref>` reads it. Three routes that deliberately disagree, so you have to
+Thirty sections of route notes on a shelf: `poke guide` lists them, `poke guide -s <words>`
+finds one, `poke guide <ref>` reads it. Three routes that deliberately disagree, so you have to
 choose. `speedrun_glitchless` is fastest and skips everything optional, and assumes a starter and a
 caught Nidoran you may not have. `standard_playthrough` is an ordinary complete run.
 `battles` covers gym leaders and what beats them.
@@ -296,33 +298,33 @@ You do not need to re-read both frames after every action. The response tells yo
 
 Explore widely. Take the side path, walk the edge of the map, enter the building you have not entered. Unvisited ground is where items, shortcuts, and the next objective live. When you have no better idea, head somewhere you have not been rather than re-walking a route you already know.
 
-`./poke frontier` lists exactly that ground: tiles on this map you can reach and have never stood on, nearest first. When you catch yourself crossing the same ground twice, that list is the answer to "where have I not looked". Pick one and `./poke goto` it.
+`poke frontier` lists exactly that ground: tiles on this map you can reach and have never stood on, nearest first. When you catch yourself crossing the same ground twice, that list is the answer to "where have I not looked". Pick one and `poke goto` it.
 
-`./poke progress` says how far through the game you are, which rung of the ladder you last reached, and how many buttons it has taken. The count only moves when you actually advance the game, so a long stretch with no change means what you are doing is not working.
+`poke progress` says how far through the game you are, which rung of the ladder you last reached, and how many buttons it has taken. The count only moves when you actually advance the game, so a long stretch with no change means what you are doing is not working.
 
 Play until you reach the goal, or until you are genuinely blocked and have written down why. Then stop. The harness will send `continue`, which means keep playing from where you are.
 
 If the same action fails three times, stop repeating it. Something in your model of the map is wrong. Look at the raw frame, check which tiles the overlay marks blocked, try a different direction, or reconsider whether the thing you are walking toward is where you think it is.
 
-## The rest of `./poke`
+## The rest of `poke`
 
-- `./poke fight <move>`: attack with a named move. `./poke run` flees. Both under Battles above.
-- `./poke calc`: damage every move of yours would do right now. Under Battles.
-- `./poke sim <actions>`: try a plan against the collision map without spending it.
-- `./poke route <map>`: which maps lie between here and there. `./poke goto <map|x,y>` walks it.
-- `./poke frontier`: reachable tiles on this map you have never stood on.
-- `./poke progress`: milestones reached and buttons spent.
-- `./poke guide`: the walkthrough shelf. Under Walkthroughs.
-- `./poke state`: party with levels and HP, bag, badges, money, where you are. `--json` for everything.
-- `./poke map`: the whole current map as a picture. Under When you are lost.
-- `./poke frame`: the paths of the two workspace frames, so you know what to read.
-- `./poke frame --refresh fresh.png`: a screenshot taken now, fresher than the workspace files.
-- `./poke save <name>` / `./poke load <name>` / `./poke saves`: under Saving.
-- `./poke health`: is the server alive.
+- `poke fight <move>`: attack with a named move. `poke run` flees. Both under Battles above.
+- `poke calc`: damage every move of yours would do right now. Under Battles.
+- `poke sim <actions>`: try a plan against the collision map without spending it.
+- `poke route <map>`: which maps lie between here and there. `poke goto <map|x,y>` walks it.
+- `poke frontier`: reachable tiles on this map you have never stood on.
+- `poke progress`: milestones reached and buttons spent.
+- `poke guide`: the walkthrough shelf. Under Walkthroughs.
+- `poke state`: party with levels and HP, bag, badges, money, where you are. `--json` for everything.
+- `poke map`: the whole current map as a picture. Under When you are lost.
+- `poke frame`: the paths of the two workspace frames, so you know what to read.
+- `poke frame --refresh fresh.png`: a screenshot taken now, fresher than the workspace files.
+- `poke save <name>` / `poke load <name>` / `poke saves`: under Saving.
+- `poke health`: is the server alive.
 
 One batch is capped at 40 actions and 60 seconds of game time, and one action at 10 seconds. The
 server holds the emulator for a whole batch, so an enormous `wait_N` would take the game away from
-everything else. `./poke` refuses an over-budget batch before sending it and names the limit.
+everything else. `poke` refuses an over-budget batch before sending it and names the limit.
 
 Every subcommand exits non-zero when the server refuses, and prints the server's own words. Read
 them: a refusal is usually the harness telling you something specific about the game state, not a

@@ -2534,3 +2534,56 @@ def test_a_map_with_no_connections_still_lists_its_warps():
     exits = server._exits(snapshot)
     assert exits.get("Route 4") == [27, 3]
     assert not any(isinstance(v, str) for v in exits.values())
+
+
+# ---------------------------------------------------------------------------
+# Payload weight
+#
+# Tool text is 98% of the model's prompt, so a fat response is paid once when it
+# arrives and again on every turn afterwards. Two measured offenders: `/saves`
+# returned 71,017 bytes for 465 files, and `/health` reached 21,688 bytes on one
+# firing because it inlined a whole intervention answer.
+# ---------------------------------------------------------------------------
+
+
+def test_saves_is_capped_and_says_how_many_it_hid(server_app):
+    saves_dir = server_app.saves_dir
+    saves_dir.mkdir(parents=True, exist_ok=True)
+    for i in range(60):
+        (saves_dir / f"auto__{i:03d}.state").write_bytes(b"x")
+
+    payload = server_app.http.get("/saves").json()
+
+    assert payload["shown"] <= server.DEFAULT_SAVES_LIMIT
+    assert payload["count"] >= 60
+    assert payload["truncated"] is True
+
+
+def test_saves_can_hide_the_harnesss_own_autosaves(server_app):
+    saves_dir = server_app.saves_dir
+    saves_dir.mkdir(parents=True, exist_ok=True)
+    (saves_dir / "auto__001.state").write_bytes(b"x")
+    (saves_dir / "before_brock.state").write_bytes(b"x")
+
+    named = server_app.http.get("/saves?named=true").json()
+
+    names = {s["name"] for s in named["saves"]}
+    assert "before_brock" in names
+    assert not any(n.startswith("auto__") for n in names)
+
+
+def test_saves_returns_everything_when_asked(server_app):
+    saves_dir = server_app.saves_dir
+    saves_dir.mkdir(parents=True, exist_ok=True)
+    for i in range(50):
+        (saves_dir / f"auto__{i:03d}.state").write_bytes(b"x")
+
+    payload = server_app.http.get("/saves?limit=0").json()
+
+    assert payload["shown"] == payload["count"]
+    assert "truncated" not in payload
+
+
+def test_health_does_not_carry_a_whole_intervention_answer(server_app):
+    body = server_app.http.get("/health").content
+    assert len(body) < 4096, f"/health is {len(body)} bytes"

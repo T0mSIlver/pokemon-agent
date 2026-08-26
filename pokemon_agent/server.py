@@ -53,6 +53,7 @@ from pokemon_agent.intervention_loop import (
 from pokemon_agent.memory.red import MAP_NAMES, MOVE_NAMES
 from pokemon_agent.milestones import MilestoneTracker
 from pokemon_agent.pi_supervisor import NoLiveSessionError, PiSupervisor
+from pokemon_agent.progress import AUTO_SAVE_PREFIX
 from pokemon_agent.run_recorder import RunRecorder, receipt_from_batch
 from pokemon_agent.saves import (
     SaveNameError,
@@ -2501,21 +2502,46 @@ async def load_state(req: SaveRequest):
     return payload
 
 
+#: How many saves to return by default. The full list was 71 kB for 465 files --
+#: roughly 18,000 tokens for one `poke saves` call, and it had been 3,802 files
+#: before the autosaves were bounded. A save the agent might load is a recent one
+#: or one it named; the four hundred harness autosaves behind those are not a
+#: menu, they are a backup.
+DEFAULT_SAVES_LIMIT = 40
+
+
 @app.get("/saves")
-async def list_saves():
-    """List available save-state files."""
+async def list_saves(limit: int = DEFAULT_SAVES_LIMIT, named: bool = False):
+    """List save-state files, newest first.
+
+    `limit=0` returns everything, for an operator who genuinely wants the lot.
+    `named=true` drops the harness's own `auto__` checkpoints, which is what a
+    caller looking for somewhere to go back to actually wants.
+    """
     saves_dir = _saves_dir()
     try:
-        saves = [
-            {
-                "name": f.stem,
-                "file": f.name,
-                "size_bytes": f.stat().st_size,
-                "modified": f.stat().st_mtime,
-            }
-            for f in list_save_files(saves_dir)
-        ]
-        return {"saves": saves}
+        files = list_save_files(saves_dir)
+        if named:
+            files = [f for f in files if not f.name.startswith(AUTO_SAVE_PREFIX)]
+        files = sorted(files, key=lambda f: f.stat().st_mtime, reverse=True)
+        total = len(files)
+        shown = files if limit <= 0 else files[:limit]
+        payload = {
+            "saves": [
+                {
+                    "name": f.stem,
+                    "file": f.name,
+                    "size_bytes": f.stat().st_size,
+                    "modified": f.stat().st_mtime,
+                }
+                for f in shown
+            ],
+            "count": total,
+            "shown": len(shown),
+        }
+        if len(shown) < total:
+            payload["truncated"] = True
+        return payload
     except HTTPException:
         raise
     except Exception as e:

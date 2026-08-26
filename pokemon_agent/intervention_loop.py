@@ -326,8 +326,30 @@ class InterventionRunner:
 
         return bool(self.enabled and self.disabled_reason is None and self.advise and self.deliver)
 
+    #: Fields worth carrying in a liveness check. The full record holds the
+    #: prompt, the facts block and the whole answer, which took `/health` to
+    #: 21,688 bytes on one firing and left it at 2,531 of 3,256 bytes -- 78% of a
+    #: health check -- at rest. Everything omitted here is still on
+    #: `/dashboard/state`, in `records()`, and in the journal on disk.
+    LAST_SUMMARY_FIELDS = (
+        "at",
+        "trigger",
+        "priority",
+        "delivered",
+        "presses_at",
+        "duration_seconds",
+        "error",
+    )
+
     def status(self) -> dict[str, Any]:
         last = self.history[-1] if self.history else None
+        if last is not None:
+            full = last.to_dict()
+            last_summary: Optional[dict[str, Any]] = {
+                key: full[key] for key in self.LAST_SUMMARY_FIELDS if key in full
+            }
+        else:
+            last_summary = None
         return {
             "enabled": self.enabled,
             "active": self.active,
@@ -341,7 +363,7 @@ class InterventionRunner:
             "disabled_reason": self.disabled_reason,
             "slot_lost": dict(self.slot_lost) if self.slot_lost else None,
             "last_error": self.last_error,
-            "last": last.to_dict() if last else None,
+            "last": last_summary,
         }
 
     def records(self) -> list[dict[str, Any]]:

@@ -2488,6 +2488,19 @@ class PiSupervisor:
             stderr=asyncio.subprocess.PIPE,
             env={
                 **os.environ,
+                # The workspace on PATH, so `poke` and `py` resolve wherever the
+                # shell happens to be. Measured over six sessions: 718 of 2,248
+                # bash calls opened with `cd <96-character absolute path> &&`,
+                # 31% of them, because the agent could not rely on being anywhere
+                # in particular. That prefix is paid twice, once in the command
+                # and again when the command is echoed back.
+                # Appended, not prepended: the workspace is a directory the model
+                # writes to, and in front it could shadow `ls` or `grep` with
+                # something it saved. `poke` resolves either way -- the staged copy
+                # and the packaged entry point are the same code, and PORT and
+                # POKE_WORKSPACE below make them behave identically.
+                "PATH": f"{os.environ.get('PATH', '')}{os.pathsep}{self.workspace_dir}",
+                "POKE_WORKSPACE": str(self.workspace_dir),
                 **(
                     {"PORT": str(port)}
                     if (port := _server_port(self.server_url)) is not None
