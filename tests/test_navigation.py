@@ -5,6 +5,7 @@ from pokemon_agent.navigation import (
     TILE_ID_OFFSET,
     LiveNavigationSnapshot,
     ledge_hop_allows,
+    tile_pair_blocked_edges,
 )
 
 
@@ -549,3 +550,43 @@ def test_settle_does_not_stop_on_the_intermediate_tile_of_a_ledge_hop():
 
     assert emu.settle(max_frames=200, quiet_frames=10) is True
     assert emu.read_u8(ADDR_PLAYER_Y) == 48
+
+
+# ---------------------------------------------------------------------------
+# Tile pair collisions
+# ---------------------------------------------------------------------------
+
+
+def cave_tile_ids() -> dict[tuple[int, int], int]:
+    """Two floors of a cave: 0x20 above y = 1, 0x05 below, all of it passable."""
+    return {
+        (x, y): (0x20 if y < 1 else 0x05) + TILE_ID_OFFSET for y in range(2) for x in range(3)
+    }
+
+
+def test_a_cave_seam_is_found_once_and_written_one_way_round():
+    seams = tile_pair_blocked_edges("CAVERN", cave_tile_ids())
+
+    # One seam per column, each recorded as (upper, lower) and never twice.
+    assert seams == {((0, 0), (0, 1)), ((1, 0), (1, 1)), ((2, 0), (2, 1))}
+
+
+def test_the_same_tiles_make_no_seam_in_a_tileset_with_no_table():
+    assert tile_pair_blocked_edges("OVERWORLD", cave_tile_ids()) == set()
+    assert tile_pair_blocked_edges(None, cave_tile_ids()) == set()
+
+
+def test_a_cave_floor_with_no_boundary_in_it_has_no_seams():
+    flat = {(x, y): 0x05 + TILE_ID_OFFSET for y in range(3) for x in range(3)}
+
+    assert tile_pair_blocked_edges("CAVERN", flat) == set()
+
+
+def test_the_snapshot_publishes_its_seams_for_a_caller_that_has_no_tile_ids():
+    snapshot = make_snapshot()
+    snapshot.blocked_pairs = [((10, 10), (10, 11))]
+
+    payload = snapshot.to_dict()
+
+    assert payload["blocked_pairs"] == [{"a": {"x": 10, "y": 10}, "b": {"x": 10, "y": 11}}]
+    assert "blocked_pairs" in payload["movement_legend"]

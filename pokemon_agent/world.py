@@ -13,13 +13,25 @@ grid the live navigation layer already produces. They let a caller check a plan
 before spending it: where it stops, what stopped it, and which unseen ground is
 still reachable.
 
-Two rules the grid enforces, both learned the hard way:
+Four rules the grid enforces, all learned the hard way. The first three are
+facts about the *seam between two tiles*, which is why none of them can live in
+a per-tile walkability grid and all three arrive as edges instead:
 
 * **A ledge is a directed edge.** It reads as blocked collision, but
   `HandleLedges` runs before the collision check, so pressing into it jumps two
   tiles — and there is no way back up. Modelled as a one-way edge, never as an
   open tile, because undirected BFS across one is how a sealed 26-tile pocket
   got reported as an open route.
+* **A tile pair collision is a missing edge between two passable tiles.**
+  `CheckForTilePairCollisions` refuses the move both ways round, and the table
+  it reads has CAVERN and FOREST entries only. So the rule is invisible on the
+  overworld and decisive underground: in Mt. Moon it is the entire boundary
+  between the upper floor and the lower one, and a simulator that does not know
+  it walks straight through a wall the game will not let the player through.
+* **A warp exit is an edge that leaves the map.** Pressing it looks exactly
+  like walking into a wall — pokered only reaches the warp check *after* the
+  move has collided — so a cave ladder at the edge of the map reads as
+  "blocked by edge" to anything that stops at collision.
 * **The live window outranks the remembered map.** The 10x9 window is this
   frame; the explored-map store is memory, and memory of a tile the player was
   recorded on mid-jump is a tile nobody can stand on. Every tile the window
@@ -38,7 +50,7 @@ from pathlib import Path
 from typing import Collection, Dict, List, Mapping, Optional, Sequence, Set, Tuple
 
 from .agent_cli import expand_actions
-from .navigation import ledge_hop_allows, ledge_landing
+from .navigation import ledge_hop_allows, ledge_landing, tile_pair_blocked_edges
 from .pathfinding import DIRECTIONS, directions_to_actions
 
 Coord = Tuple[int, int]
@@ -282,12 +294,22 @@ class _Grid:
 
     Two things ride along with walkability. `live` is the set of tiles this
     frame actually showed us, so a caller can separate what it saw from what it
-    remembers. `ledges` holds the one-way jumps, keyed by the tile you stand on
-    and the direction you press, because a ledge is an edge of the graph and
-    not a property of a tile.
+    remembers. `ledges` is a `MovementEdges` holding the three per-seam facts —
+    one-way jumps, uncrossable tile pairs, warp exits — because none of them is
+    a property of a tile and a grid of tiles has nowhere to put them.
     """
 
-    __slots__ = ("width", "height", "origin", "walkable", "npcs", "live", "ledges")
+    __slots__ = (
+        "width",
+        "height",
+        "origin",
+        "walkable",
+        "npcs",
+        "live",
+        "ledges",
+        "seams",
+        "warp_exits",
+    )
 
     def __init__(
         self,
@@ -307,10 +329,31 @@ class _Grid:
         self.npcs = set(npcs)
         self.live: Set[Coord] = set(live or ())
         self.ledges: Dict[Tuple[Coord, str], Coord] = dict(ledges or {})
+        # The other two per-seam facts ride on the same object when there is
+        # one, so no caller has to grow an argument to pass them along.
+        self.seams: Set[Tuple[Coord, Coord]] = set(getattr(ledges, "blocked_pairs", ()) or ())
+        self.warp_exits: Set[Tuple[Coord, str]] = set(getattr(ledges, "warp_exits", ()) or ())
 
     def is_live(self, x: int, y: int) -> bool:
         """Whether this tile came from the current frame rather than memory."""
         return (x, y) in self.live
+
+    def seam_between(self, here: Coord, there: Coord) -> bool:
+        """Whether the tileset refuses the move between two adjacent tiles.
+
+        Symmetric, because `CheckForTilePairCollisions` tries the pair both ways
+        round: neither of the two tiles is the one doing the blocking.
+        """
+        return (here, there) in self.seams or (there, here) in self.seams
+
+    def is_warp_exit(self, coord: Coord, direction: str) -> bool:
+        """Whether pressing *direction* here fires the warp under the player.
+
+        Only ever true for a direction ordinary collision already refused —
+        pokered reaches its warp check after the move has collided — so this is
+        asked *after* `blocker`, never instead of it.
+        """
+        return (coord, direction) in self.warp_exits
 
     def ledge_from(self, coord: Coord, direction: str) -> Optional[Coord]:
         """Where pressing *direction* here lands after a ledge jump, if it does.
@@ -385,22 +428,67 @@ def _ledge_key(key: object) -> Optional[Tuple[Coord, str]]:
     return coord, str(direction)
 
 
-def ledge_edges(source: object) -> Dict[Tuple[Coord, str], Coord]:
-    """Every one-way ledge jump *source* knows about, as directed graph edges.
+class MovementEdges(Dict[Tuple[Coord, str], Coord]):
+    """The one-way ledge jumps, plus the two other facts about seams.
 
-    Keyed by the tile you stand on and the direction you press; the value is
-    where you land, which is two tiles away and never one. Three shapes are
-    read, in increasing order of authority:
+    It *is* the ledge mapping — ``{(tile, direction): landing}`` — and every
+    caller that only wants ledges can keep reading it as exactly that. Two more
+    sets ride along, because they are the same kind of thing and there is no
+    other way to hand them to a grid of tiles:
 
-    * a ``ledges`` mapping somebody already built,
-    * ``tile_ids`` plus ``tileset`` — every ledge in the live window, decided by
-      pokered's own tile-pair table through `navigation.ledge_hop_allows`,
-    * ``ledge_hops`` plus ``player_position`` — the jumps the emulator itself
-      published for the tile the player is on. The HTTP snapshot carries this
-      and not the tile ids, so it is the only ledge an over-the-wire caller
-      gets, and it is exactly the one a plan starts from.
+    * `blocked_pairs` — adjacent tiles the tileset will not let you move
+      between, in either direction, however passable both of them look.
+    * `warp_exits` — ``(tile, direction)`` where pressing the direction fires
+      the warp the player is standing on instead of colliding with a wall.
+
+    They travel here rather than as extra arguments so that a collision map
+    built by one module and simulated by another carries all three without
+    either module growing a parameter for them.
     """
-    edges: Dict[Tuple[Coord, str], Coord] = {}
+
+    __slots__ = ("blocked_pairs", "warp_exits")
+
+    def __init__(self, *args: object, **kwargs: object) -> None:
+        super().__init__(*args, **kwargs)  # type: ignore[arg-type]
+        self.blocked_pairs: Set[Tuple[Coord, Coord]] = set()
+        self.warp_exits: Set[Tuple[Coord, str]] = set()
+
+
+def _seam_pair(value: object) -> Optional[Tuple[Coord, Coord]]:
+    """Normalise ``{"a": ..., "b": ...}`` or ``[(x, y), (x, y)]`` into a pair."""
+    if isinstance(value, Mapping):
+        first, second = _coord(value.get("a")), _coord(value.get("b"))
+    elif isinstance(value, (list, tuple)) and len(value) == 2:
+        first, second = _coord(value[0]), _coord(value[1])
+    else:
+        return None
+    if first is None or second is None:
+        return None
+    return first, second
+
+
+def movement_edges(source: object) -> MovementEdges:
+    """Everything *source* knows about moving between two adjacent tiles.
+
+    Ledge jumps are keyed by the tile you stand on and the direction you press;
+    the value is where you land, which is two tiles away and never one. Shapes
+    are read in increasing order of authority:
+
+    * a ``ledges`` mapping somebody already built — including a `MovementEdges`,
+      whose seams and warp exits come across with it,
+    * ``tile_ids`` plus ``tileset`` — every ledge and every uncrossable seam in
+      the live window, decided by pokered's own tables through
+      `navigation.ledge_hop_allows` and `navigation.tile_pair_blocked_edges`,
+    * ``blocked_pairs``, ``ledge_hops`` and ``warp_exit_directions`` — what the
+      emulator itself published. The HTTP snapshot carries these and not the
+      tile ids, so over the wire they are the only ones there are, and they are
+      exactly the ones a plan starts from.
+
+    A warp exit is only taken when the snapshot says it is *armed*: the engine
+    arms a warp when the player walks onto it, and an unarmed one really does
+    behave like the wall it looks like.
+    """
+    edges = MovementEdges()
 
     explicit = _attribute(source, "ledges")
     if isinstance(explicit, Mapping):
@@ -409,6 +497,8 @@ def ledge_edges(source: object) -> Dict[Tuple[Coord, str], Coord]:
             target = _coord(landing)
             if found is not None and target is not None:
                 edges[found] = target
+        edges.blocked_pairs |= set(getattr(explicit, "blocked_pairs", ()) or ())
+        edges.warp_exits |= set(getattr(explicit, "warp_exits", ()) or ())
 
     tileset = _attribute(source, "tileset")
     tile_ids = _attribute(source, "tile_ids")
@@ -427,6 +517,12 @@ def ledge_edges(source: object) -> Dict[Tuple[Coord, str], Coord]:
                 neighbour = ids.get((coord[0] + dx, coord[1] + dy))
                 if ledge_hop_allows(tileset, direction, tile, neighbour):
                     edges[(coord, direction)] = ledge_landing(coord, direction)
+        edges.blocked_pairs |= tile_pair_blocked_edges(tileset, ids)
+
+    for item in _attribute(source, "blocked_pairs") or ():
+        pair = _seam_pair(item)
+        if pair is not None:
+            edges.blocked_pairs.add(pair)
 
     player = _coord(_attribute(source, "player_position"))
     hops = _attribute(source, "ledge_hops")
@@ -437,7 +533,21 @@ def ledge_edges(source: object) -> Dict[Tuple[Coord, str], Coord]:
             edges[(player, str(direction))] = _coord(landing) or ledge_landing(
                 player, str(direction)
             )
+    if player is not None and _attribute(source, "warp_exit_armed"):
+        for direction in _attribute(source, "warp_exit_directions") or ():
+            if direction in DIRECTIONS:
+                edges.warp_exits.add((player, str(direction)))
     return edges
+
+
+def ledge_edges(source: object) -> MovementEdges:
+    """`movement_edges` under the name its first caller knows it by.
+
+    The result is still a mapping of one-way ledge jumps and nothing about
+    reading it as one has changed; it just carries the other two per-seam facts
+    on the side now.
+    """
+    return movement_edges(source)
 
 
 def _as_grid(collision: object) -> _Grid:
@@ -547,7 +657,7 @@ class SimResult:
     end_facing: str
     steps_taken: int
     blocked_at: Optional[int]  # index into the plan, None if it ran clean
-    blocked_by: Optional[str]  # "wall" | "npc" | "edge"
+    blocked_by: Optional[str]  # "wall" | "npc" | "edge" | "tile_pair"
     warp_at: Optional[int]  # index at which the plan stepped onto a warp tile
     trace: Tuple[Coord, ...]
     hops: Tuple[LedgeHop, ...] = ()  # one-way ledge jumps the plan takes
@@ -592,7 +702,12 @@ def simulate(
 
     A ledge is checked before collision, exactly as `HandleLedges` is in the
     game, so a direction that reads as blocked but is a legal jump moves the
-    player two tiles and lands in `hops` rather than in `blocked_at`.
+    player two tiles and lands in `hops` rather than in `blocked_at`. A tile
+    pair collision is checked *with* collision and reported as
+    ``blocked_by="tile_pair"``: both tiles are passable and the step is not,
+    which "wall" would have described as terrain nobody can see. A warp exit is
+    checked after collision, exactly as `ExtraWarpCheck` is, so a cave ladder
+    that ordinary collision refuses lands in `warp_at` and not in `blocked_at`.
 
     Non-walking actions consume a step and change nothing. ``hold_<dir>_N``
     turns the player but its distance is not modelled, so it does not move
@@ -640,7 +755,15 @@ def simulate(
         if unverified_from is None and not grid.is_live(*target):
             unverified_from = index
         blocker = grid.blocker(*target)
+        if blocker is None and grid.seam_between(position, target):
+            blocker = "tile_pair"
         if blocker is not None:
+            # The engine only looks for a warp once the move has collided, so
+            # this is the same order and never turns a walkable step into one.
+            if grid.is_warp_exit(position, direction):
+                warp_at = index
+                steps_taken = index + 1
+                break
             blocked_at, blocked_by = index, blocker
             break
         position = target
@@ -709,6 +832,10 @@ def _bfs(grid: _Grid, start: Coord, *, goal: Optional[Coord] = None) -> _Flood:
             hop = grid.ledge_from(current, direction)
             step = hop if hop is not None else (current[0] + dx, current[1] + dy)
             if step in flood.previous or not grid.is_walkable(*step):
+                continue
+            # Two passable tiles the tileset will not let you move between are
+            # not connected, and a flood that crosses one invents a route.
+            if hop is None and grid.seam_between(current, step):
                 continue
             flood.previous[step] = (current, direction)
             flood.certain[step] = flood.certain[current] and grid.is_live(*step)
@@ -803,12 +930,14 @@ __all__ = [
     "Hop",
     "LedgeHop",
     "MapInfo",
+    "MovementEdges",
     "ReachableTile",
     "SimResult",
     "World",
     "frontier",
     "frontier_detail",
     "ledge_edges",
+    "movement_edges",
     "path_within",
     "simulate",
     "unseen_reachable_count",

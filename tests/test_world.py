@@ -19,6 +19,7 @@ from pokemon_agent.world import (
     World,
     frontier,
     frontier_detail,
+    movement_edges,
     path_within,
     simulate,
 )
@@ -545,3 +546,164 @@ def test_a_tile_reached_only_across_memory_is_never_called_a_fact():
     assert detail[(1, 5)] is True
     assert detail[(2, 5)] is False
     assert detail[(3, 5)] is False  # in the window, but only reachable through memory
+
+
+# ---------------------------------------------------------------------------
+# Cave seams and warp exits
+# ---------------------------------------------------------------------------
+
+#: pokered `data/tilesets/tile_pair_collisions.asm`: in CAVERN, 0x20 and 0x05
+#: are both passable and you cannot step from one to the other.
+CAVE_SHELF = 0x20 + TILE_ID_OFFSET
+CAVE_FLOOR = 0x05 + TILE_ID_OFFSET
+
+
+def cave_window(player=(10, 10), tileset: str = "CAVERN") -> dict:
+    """A 3x4 window at (9, 9): a shelf over a floor, with a seam between them.
+
+    Every tile is passable collision — the collision map has no idea there are
+    two floors here — so nothing but the tile pair says the boundary between
+    y = 10 and y = 11 cannot be crossed. This is Mt. Moon's shape, and walking
+    straight through it is what `sim` did.
+    """
+    tile_ids = {
+        (9 + local_x, 9 + local_y): CAVE_SHELF if local_y < 2 else CAVE_FLOOR
+        for local_y in range(4)
+        for local_x in range(3)
+    }
+    return {
+        "terrain": [[1, 1, 1] for _ in range(4)],
+        "window_top_left": (9, 9),
+        "tileset": tileset,
+        "tile_ids": tile_ids,
+        "player_position": player,
+    }
+
+
+def test_a_cave_seam_blocks_although_both_of_its_tiles_are_passable():
+    result = simulate(["down"], cave_window(), (10, 10), "down")
+
+    assert result.blocked_at == 0
+    # Not "wall": the tile below is open ground, and calling it a wall is what
+    # sent the agent looking for a way round something it could already see.
+    assert result.blocked_by == "tile_pair"
+    assert result.end_pos == (10, 10)
+
+
+def test_a_cave_seam_blocks_from_both_sides():
+    """`CheckForTilePairCollisions` tries the pair both ways round."""
+    result = simulate(["up"], cave_window(player=(10, 11)), (10, 11), "up")
+
+    assert (result.blocked_at, result.blocked_by) == (0, "tile_pair")
+
+
+def test_walking_along_one_cave_floor_is_untouched_by_the_seam():
+    result = simulate(["right", "left"], cave_window(), (10, 10), "right")
+
+    assert result.blocked_at is None
+    assert result.end_pos == (10, 10)
+
+
+def test_the_same_two_tiles_are_not_a_seam_outside_a_cave():
+    """The table has CAVERN and FOREST rows only, and nothing else may fire."""
+    result = simulate(["down"], cave_window(tileset="OVERWORLD"), (10, 10), "down")
+
+    assert result.blocked_at is None
+    assert result.end_pos == (10, 11)
+
+
+def test_the_snapshots_own_blocked_pairs_are_enough_without_tile_ids():
+    """The HTTP snapshot carries `blocked_pairs` and no tile ids."""
+    over_the_wire = {
+        "terrain": [[1, 1, 1] for _ in range(4)],
+        "window_top_left": (9, 9),
+        "player_position": {"x": 10, "y": 10},
+        "blocked_pairs": [{"a": {"x": 10, "y": 10}, "b": {"x": 10, "y": 11}}],
+    }
+
+    result = simulate(["down"], over_the_wire, (10, 10), "down")
+
+    assert (result.blocked_at, result.blocked_by) == (0, "tile_pair")
+    # ... and only that one seam: the tile beside it is still open.
+    assert simulate(["right"], over_the_wire, (10, 10), "right").blocked_at is None
+
+
+def test_pathing_and_frontier_never_cross_a_cave_seam():
+    window = cave_window()
+
+    assert path_within(window, (10, 10), (10, 12)) is None
+    reachable = set(frontier(window, {(10, 10)}, (10, 10)))
+    assert reachable == {(9, 9), (9, 10), (10, 9), (11, 9), (11, 10)}
+
+
+def warp_exit_window(*, armed: bool) -> dict:
+    """Standing on a cave ladder at the bottom edge of the map.
+
+    Collision calls the tile below blocked, because it is off the map. Pressing
+    down does not walk into it; it takes the ladder.
+    """
+    return {
+        "terrain": [[1, 1, 1], [0, 0, 0]],
+        "window_top_left": (9, 10),
+        "player_position": {"x": 10, "y": 10},
+        "warp_exit_directions": ["down"],
+        "warp_exit_armed": armed,
+    }
+
+
+def test_an_armed_warp_exit_is_a_warp_and_not_a_wall():
+    result = simulate(["down"], warp_exit_window(armed=True), (10, 10), "down")
+
+    assert result.warp_at == 0
+    assert result.blocked_at is None and result.blocked_by is None
+    assert result.steps_taken == 1
+    # The plan stops here: past a warp the player is on a map this call has no
+    # collision for.
+    assert result.end_pos == (10, 10)
+
+
+def test_an_unarmed_warp_exit_is_still_a_wall():
+    """The engine arms a warp when the player walks onto it, not before."""
+    result = simulate(["down"], warp_exit_window(armed=False), (10, 10), "down")
+
+    assert result.warp_at is None
+    assert (result.blocked_at, result.blocked_by) == (0, "wall")
+
+
+def test_a_warp_exit_answers_only_the_direction_that_fires_it():
+    window = warp_exit_window(armed=True)
+    window["terrain"] = [[0, 1, 0], [0, 0, 0]]
+
+    assert simulate(["left"], window, (10, 10), "left").warp_at is None
+    assert simulate(["left"], window, (10, 10), "left").blocked_at == 0
+    assert simulate(["down"], window, (10, 10), "down").warp_at == 0
+
+
+def test_a_seam_survives_being_merged_with_the_remembered_map():
+    """The shape `/sim` really runs on: window plus store, seams carried along.
+
+    `capabilities.collision_from` folds the window into the explored map and
+    hands on what `movement_edges` built, so this is the one path that has to
+    keep working — the object the emulator produced is long gone by then.
+    """
+    snapshot = {
+        "terrain": [[1, 1, 1] for _ in range(4)],
+        "window_top_left": (9, 9),
+        "player_position": {"x": 10, "y": 10},
+        # The whole row, as Mt. Moon has it: two floors, and no way between.
+        "blocked_pairs": [{"a": {"x": x, "y": 10}, "b": {"x": x, "y": 11}} for x in range(9, 12)],
+    }
+    remembered = {(x, y) for y in range(9, 13) for x in range(9, 12)}
+    merged_map = {
+        "width": 20,
+        "height": 20,
+        "walkable": remembered,
+        "live": remembered,
+        "ledges": movement_edges(snapshot),
+    }
+
+    assert simulate(["down"], merged_map, (10, 10), "down").blocked_by == "tile_pair"
+    # A store that remembers walking every tile cannot make two floors one.
+    assert path_within(merged_map, (10, 10), (10, 11)) is None
+    reachable = set(frontier(merged_map, {(10, 10)}, (10, 10)))
+    assert reachable == {(9, 9), (10, 9), (11, 9), (9, 10), (11, 10)}

@@ -2507,3 +2507,30 @@ def test_exits_respects_a_byte_budget_not_just_a_count():
     ]
     exits = server._exits(snapshot)
     assert len(_json.dumps(exits, separators=(",", ":"))) <= server.MAX_EXITS_BYTES
+
+
+def test_exits_names_edge_connections_not_only_warps():
+    # Route 4 reaches Cerulean City -- the goal -- by walking off its east edge,
+    # not through a door. The first version of `exits` read warps only, so it
+    # listed three ways back into Mt. Moon and nothing about the way out, while
+    # the run sat at x=19 of a 90-wide map for thousands of presses.
+    snapshot = {
+        "map_name": "Route 4",
+        "player_position": {"x": 19, "y": 6},
+        "warps": [],
+    }
+    exits = server._exits(snapshot)
+    assert exits.get("Cerulean City") == "east edge"
+    # And the warps are still there, after the edges.
+    assert "Mt Moon 1F" in exits
+
+
+def test_a_map_with_no_connections_still_lists_its_warps():
+    snapshot = {
+        "map_name": "Mt Moon B1F",
+        "player_position": {"x": 22, "y": 8},
+        "warps": [],
+    }
+    exits = server._exits(snapshot)
+    assert exits.get("Route 4") == [27, 3]
+    assert not any(isinstance(v, str) for v in exits.values())

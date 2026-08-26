@@ -34,19 +34,19 @@ def _find_saves_dir() -> Path | None:
 SAVES_DIR = _find_saves_dir()
 needs_rom = pytest.mark.skipif(SAVES_DIR is None, reason="no saves/PokemonRed.gb next to the repo")
 
-#: Route 2, standing on top of the ledge at (3, 46) facing the jump.
-LEDGE_STATES = (
-    "auto__20260825T121811Z__objective-change__route-2.state",
-    "auto__20260825T092014Z__objective-change__route-2.state",
-)
+#: What a live run drops into saves/ as it plays. Named saves are written on
+#: purpose and rarely; these arrive on their own, several per minute.
+AUTOSAVE_PREFIX = "auto__"
+
+#: Route 2, standing on top of the ledge at (3, 46) facing the jump. Named
+#: saves only: the two autosaves this used to name had both been rotated out of
+#: saves/ by the time anyone next ran it, and these tests skipped in silence.
+LEDGE_STATES = ("route2_from_forest.state",)
 LEDGE_POSITION = (3, 46)
 LEDGE_LANDING = (3, 48)
 
 #: Route 2, standing on the warp at (3, 11) into the forest gate (map 47).
-WARP_STATES = (
-    "route2_north_of_forest.state",
-    "auto__20260825T132653Z__objective-change__route-2.state",
-)
+WARP_STATES = ("route2_north_of_forest.state",)
 WARP_POSITION = (3, 11)
 WARP_TARGET_MAP = 47
 
@@ -73,6 +73,36 @@ def reader(emulator):
     from pokemon_agent.memory.red import PokemonRedReader
 
     return PokemonRedReader(emulator)
+
+
+@pytest.fixture(scope="module")
+def corpus(tmp_path_factory) -> list[Path]:
+    """A frozen copy of the save corpus, in the order the sweep walks it.
+
+    ``saves/`` is a live directory: the harness is normally playing while these
+    tests run, and it writes a fresh ``auto__<timestamp>__….state`` into it
+    every time something notable happens. Sweeping that directory made the
+    sample change between runs for reasons that had nothing to do with the
+    code — one autosave written on the morning of 2026-08-26 was enough to turn
+    a green sweep red — and it left `load_state` free to read a file that was
+    being rewritten underneath it. So the autosaves are left out, and what is
+    left is copied once: the corpus one run sweeps cannot change during it.
+    """
+    if SAVES_DIR is None:  # pragma: no cover — guarded by needs_rom
+        pytest.skip("no saves directory")
+    frozen = tmp_path_factory.mktemp("corpus")
+    states: list[Path] = []
+    for path in sorted(SAVES_DIR.glob("*.state")):
+        if path.name.startswith(AUTOSAVE_PREFIX):
+            continue
+        try:
+            copy = frozen / path.name
+            copy.write_bytes(path.read_bytes())
+        except OSError:  # a save being written right now is not a finding
+            continue
+        states.append(copy)
+    random.Random(20260825).shuffle(states)
+    return states
 
 
 def _pick(names: tuple[str, ...]) -> Path:
@@ -164,14 +194,13 @@ def test_each_direction_at_the_warp_does_what_the_snapshot_says(emulator, reader
 
 
 @needs_rom
-def test_ordinary_terrain_still_agrees_with_the_emulator(emulator, reader):
+def test_ordinary_terrain_still_agrees_with_the_emulator(emulator, reader, corpus):
     """Press all four directions at many real positions and compare.
 
     This is the regression net for the other two fixes: a ledge rule or a warp
     rule that over-fires shows up here as a direction the game refuses.
     """
-    states = sorted(SAVES_DIR.glob("*.state"))
-    random.Random(20260825).shuffle(states)
+    states = corpus
 
     seen: set[tuple[int, tuple[int, int]]] = set()
     mismatches: list[tuple] = []

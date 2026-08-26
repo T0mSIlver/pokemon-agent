@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import Dict, List, Optional, Tuple
+from typing import Dict, List, Mapping, Optional, Set, Tuple
 
 Coord = Tuple[int, int]
 MAP_COORDINATE_SYSTEM = "map_tile_absolute"
@@ -16,6 +16,16 @@ MAP_COORDINATE_NOTE = (
 #: so every tile id it hands us is the pokered tile id plus this offset.
 TILE_ID_OFFSET = 0x100
 
+#: pokered ``data/tilesets/tile_pair_collisions.asm``, both the land and the
+#: water table. Two adjacent tiles named here cannot be walked between *in
+#: either direction* — ``CheckForTilePairCollisions`` tries the pair both ways
+#: round — even though the collision map calls both of them passable. It is a
+#: property of the seam between two tiles, not of either tile, which is why no
+#: per-tile walkability grid can hold it.
+#:
+#: The table only has CAVERN and FOREST entries, so this rule is inert on the
+#: overworld and decisive inside a cave: in Mt. Moon it is the whole of what
+#: separates the upper floor from the lower one.
 TILE_PAIR_BLOCKERS: dict[str, set[frozenset[int]]] = {
     "CAVERN": {
         frozenset((288, 261)),
@@ -113,6 +123,33 @@ def tile_pair_allows(
     return frozenset((tile_a, tile_b)) not in blocked_pairs
 
 
+def tile_pair_blocked_edges(
+    tileset: Optional[str],
+    tile_ids: Mapping[Coord, int],
+) -> Set[Tuple[Coord, Coord]]:
+    """Every seam in *tile_ids* the tileset refuses to let you cross.
+
+    Returned as canonical ``(lower, higher)`` coordinate pairs, one per seam,
+    because the rule is symmetric: the game tries the pair both ways round, so
+    neither tile is the one doing the blocking.
+
+    Only right and down neighbours are visited — that reaches every adjacent
+    pair inside the window exactly once. Empty for every tileset with no entry
+    in `TILE_PAIR_BLOCKERS`, which is every tileset but CAVERN and FOREST.
+    """
+    seams: Set[Tuple[Coord, Coord]] = set()
+    if not TILE_PAIR_BLOCKERS.get(tileset or ""):
+        return seams
+    for coord, tile in tile_ids.items():
+        x, y = coord
+        for neighbour in ((x + 1, y), (x, y + 1)):
+            other = tile_ids.get(neighbour)
+            if other is None or tile_pair_allows(tileset, tile, other):
+                continue
+            seams.add((coord, neighbour))
+    return seams
+
+
 def ledge_hop_allows(
     tileset: Optional[str],
     direction: str,
@@ -191,6 +228,9 @@ class LiveNavigationSnapshot:
     tile_ids: Dict[Coord, int] = field(default_factory=dict)
     interaction: Optional[Dict[str, object]] = None
     ledge_hops: Dict[str, Coord] = field(default_factory=dict)
+    #: Adjacent tile pairs inside the window that cannot be walked between,
+    #: either way, however passable both tiles look. See `TILE_PAIR_BLOCKERS`.
+    blocked_pairs: List[Tuple[Coord, Coord]] = field(default_factory=list)
     warp_exit_directions: List[str] = field(default_factory=list)
     warp_exit_armed: bool = False
     warp_exit_note: Optional[str] = None
@@ -287,6 +327,10 @@ class LiveNavigationSnapshot:
                 direction: _coord_dict(landing)
                 for direction, landing in sorted(self.ledge_hops.items())
             },
+            "blocked_pairs": [
+                {"a": _coord_dict(first), "b": _coord_dict(second)}
+                for first, second in self.blocked_pairs
+            ],
             "warp_exit_directions": self.warp_exit_directions,
             "warp_exit_armed": self.warp_exit_armed,
             "warp_exit_note": self.warp_exit_note,
@@ -303,6 +347,11 @@ class LiveNavigationSnapshot:
                 "ledge_hops": (
                     "One-way ledge jumps. Legal even though the tile reads as blocked, "
                     "and they land two tiles away, not one."
+                ),
+                "blocked_pairs": (
+                    "Seams between two adjacent tiles that cannot be crossed either "
+                    "way, even though both tiles are passable and the ASCII map shows "
+                    "open floor across them. Cave floors are separated by these."
                 ),
                 "warp_exit_directions": (
                     "Directions that fire the warp the player is standing on. They are "

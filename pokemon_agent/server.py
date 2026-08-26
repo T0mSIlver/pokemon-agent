@@ -21,7 +21,7 @@ from collections import deque
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 from pathlib import Path
-from typing import Optional, Set
+from typing import Any, Optional, Set
 
 from fastapi import FastAPI, HTTPException, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
@@ -810,8 +810,10 @@ def _exits(snapshot: dict) -> dict:
 
         record = gamedata.world().get(map_name) or {}
         warps = record.get("warps") or []
+        connections = record.get("connections") or {}
     except Exception:
         warps = []
+        connections = {}
     if not warps:
         warps = [
             {**(w.get("coord") or w), "to_map": MAP_NAMES.get(w.get("target_map_id"))}
@@ -829,7 +831,17 @@ def _exits(snapshot: dict) -> dict:
             best[target] = (distance, x, y)
 
     ranked = sorted(best.items(), key=lambda item: item[1][0])[:MAX_EXITS]
-    exits: dict[str, list[int]] = {}
+    exits: dict[str, Any] = {}
+
+    # Edge connections first, because they are the ones that matter and the ones
+    # a warp list silently omits. Route 4 reaches Cerulean City -- the goal -- by
+    # walking off its east edge, not through a door, so the first version of this
+    # told the agent about three ways back into Mt. Moon and nothing about the way
+    # out. It sat at x=19 of a 90-wide map for thousands of presses.
+    for edge, target in sorted((connections or {}).items()):
+        if target:
+            exits[str(target)] = f"{edge} edge"
+
     for target, (_, x, y) in ranked:
         candidate = {**exits, target: [x, y]}
         if len(json.dumps(candidate, separators=(",", ":"))) > MAX_EXITS_BYTES:

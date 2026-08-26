@@ -21,6 +21,7 @@ from pokemon_agent.navigation import (
     ledge_hop_allows,
     ledge_landing,
     tile_pair_allows,
+    tile_pair_blocked_edges,
     warp_uses_front_tile_rule,
 )
 
@@ -803,6 +804,12 @@ class PyBoyEmulator(Emulator):
             warps=components["warps"],
             armed=components["standing_on_warp"],
         )
+        # Every tile in the window, not just the four around the player: a plan
+        # is simulated over the whole window, so every seam in it has to travel
+        # with it. Computing them here is what keeps `sim` from walking through
+        # the one that separates Mt. Moon's two floors.
+        tile_ids = self._tile_ids_for_window(coords, components["tilemap"])
+        blocked_pairs = sorted(tile_pair_blocked_edges(components["tileset"], tile_ids))
         snapshot = LiveNavigationSnapshot(
             map_id=map_info["map_id"],
             map_name=map_info["map_name"],
@@ -819,8 +826,9 @@ class PyBoyEmulator(Emulator):
             warps=components["warps"],
             signs=components["signs"],
             map_dimensions=components["map_dimensions"],
-            tile_ids=self._tile_ids_for_window(coords, components["tilemap"]),
+            tile_ids=tile_ids,
             ledge_hops=ledge_hops,
+            blocked_pairs=blocked_pairs,
             warp_exit_directions=warp_exits,
             warp_exit_armed=warp_armed,
             warp_exit_note=warp_exit_note,
