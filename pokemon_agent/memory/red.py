@@ -10,7 +10,7 @@ Gen 1 text uses a custom character encoding (0x50 = terminator,
 
 from __future__ import annotations
 
-from typing import Any, Dict, List
+from typing import Any, Dict, List, Optional
 
 from pokemon_agent.memory.reader import GameMemoryReader
 
@@ -73,6 +73,12 @@ ADDR_CURRENT_MENU_ITEM = 0xCC26  # wCurrentMenuItem — row (top menu) / 1-based
 ADDR_MAX_MENU_ITEM = 0xCC28  # wMaxMenuItem
 ADDR_PLAYER_MOVE_LIST_INDEX = 0xCC2E  # wPlayerMoveListIndex — 0-based, survives the menu closing
 ADDR_PLAYER_SELECTED_MOVE = 0xCCDC  # wPlayerSelectedMove — the move id the turn will actually use
+ADDR_PLAYER_BATTLE_STATUS_2 = 0xD063  # wPlayerBattleStatus2
+#: Bit 6 of wPlayerBattleStatus2. Measured, not read off a listing: a Rage
+#: confirmed in Mt. Moon B2F left D063 at 0x40 four frames later and the top
+#: battle menu never returned for the rest of the fight.
+USED_RAGE_BIT = 0x40
+ADDR_BATTLE_MON = 0xD014  # wBattleMon — the *active* battler, not party slot 0
 ADDR_BATTLE_MON_MOVES = 0xD01C  # wBattleMonMoves — the *active* battler, not party slot 0
 ADDR_BATTLE_MON_PP = 0xD02D  # wBattleMonPP, low 6 bits are the counter
 
@@ -1388,34 +1394,64 @@ class RedBlueMemoryReader(GameMemoryReader):
             "experience": (data[14] << 16) | (data[15] << 8) | data[16],
         }
 
-    def _read_enemy_battle_mon(self) -> Dict[str, Any]:
-        """Parse the live active enemy battle struct at ``wEnemyMon``.
+    def _read_battle_struct(self, base: int) -> Dict[str, Any]:
+        """Parse one live 29-byte Gen 1 ``battle_struct`` at *base*.
 
-        ``wEnemyMon`` uses Gen 1's ``battle_struct`` layout:
-        - level is at offset 14
-        - max HP starts at offset 15
-        - PP lives after the stats block
+        Layout (offsets from base), different from the 44-byte party struct::
 
-        This is different from the 44-byte party struct used in party data.
+          0:  species (1)
+          1:  current HP (2, big-endian)
+          3:  box level (1)
+          4:  status (1)
+          5:  type 1 (1)
+          6:  type 2 (1)
+          7:  catch rate (1)
+          8:  moves (4)
+          12: DVs (2)
+          14: level (1)
+          15: max HP (2)      17: attack (2)   19: defense (2)
+          21: speed (2)       23: special (2)
+          25: PP (4)
+
+        The stats block from offset 17 is the one the engine actually fights
+        with: it is the party stats *after* badge boosts and after every stat
+        stage the fight has applied. Reading it is the difference between a
+        damage calculation and a guess. Measured over 123 auto-saved battle
+        frames from one run: the player's Attack differed from the party struct
+        in **every one** of them (50 -> 56 from the Boulder Badge alone, and
+        54 -> 121 once Rage had built up), and re-deriving the enemy's stats
+        from base stats at an average DV was wrong for 196 of 492 reads, worst
+        case a Geodude whose Defense read 22 when Leer had already cut it to 14.
         """
-        data = self.emu.read_range(ADDR_ENEMY_MON, BATTLE_MON_SIZE)
-        species = self._decode_species(data[0])
+        data = self.emu.read_range(base, BATTLE_MON_SIZE)
 
-        moves: List[str] = []
-        for index in range(4):
-            move_id = data[8 + index]
-            if move_id != 0:
-                moves.append(MOVE_NAMES.get(move_id, f"???({move_id})"))
+        def word(offset: int) -> int:
+            return (data[offset] << 8) | data[offset + 1]
 
         return {
-            **species,
+            **self._decode_species(data[0]),
             "level": data[14],
-            "hp": (data[1] << 8) | data[2],
-            "max_hp": (data[15] << 8) | data[16],
+            "hp": word(1),
+            "max_hp": word(15),
             "status": self._decode_status(data[4]),
             "types": self._decode_types(data[5], data[6]),
-            "moves": moves,
+            "stats": {
+                "attack": word(17),
+                "defense": word(19),
+                "speed": word(21),
+                "special": word(23),
+            },
         }
+
+    def _read_enemy_battle_mon(self) -> Dict[str, Any]:
+        """The enemy side of the field. Moves are names: it has no PP worth showing."""
+        data = self.emu.read_range(ADDR_ENEMY_MON, BATTLE_MON_SIZE)
+        moves: List[str] = [
+            MOVE_NAMES.get(data[8 + index], f"???({data[8 + index]})")
+            for index in range(4)
+            if data[8 + index] != 0
+        ]
+        return {**self._read_battle_struct(ADDR_ENEMY_MON), "moves": moves}
 
     # -- public interface ---------------------------------------------------
 
@@ -1527,6 +1563,35 @@ class RedBlueMemoryReader(GameMemoryReader):
             for i, move_id in enumerate(ids)
             if move_id != 0
         ]
+
+    def read_battle_mon(self) -> Dict[str, Any]:
+        """The Pokemon *on the field* on your side, with the stats the game fights with.
+
+        ``read_party()[0]`` is not this Pokemon after a switch, and its stats are
+        not these stats even before one: the party struct holds the unboosted
+        numbers, and the engine copies them into ``wBattleMon`` and then applies
+        badge boosts and every stat stage of the fight. Damage arithmetic done
+        against the party struct is arithmetic about a Pokemon that is not in the
+        battle. See :meth:`_read_battle_struct` for what that cost.
+        """
+        return {**self._read_battle_struct(ADDR_BATTLE_MON), "moves": self.read_battle_moves()}
+
+    def battle_lock_in(self) -> Optional[str]:
+        """The move that has taken the turn away, or None if the menu is yours.
+
+        Gen 1 has several states in which the engine chooses for you and the top
+        battle menu simply never comes back: Rage, Thrash, Bide, a charging Sky
+        Attack, a Hyper Beam recharge. Only Rage is reported here, because Rage
+        is the only one this party could produce and this project does not put
+        an unmeasured RAM bit in a decision path.
+
+        It is the one worth reporting anyway. One run used Rage 77 times, and
+        every battle command after one spent 24 B presses failing to find a menu
+        and then got told the fight was probably over — which was not true.
+        """
+        if self.emu.read_u8(ADDR_PLAYER_BATTLE_STATUS_2) & USED_RAGE_BIT:
+            return "Rage"
+        return None
 
     def at_battle_top_menu(self) -> bool:
         """Is the FIGHT/PKMN/ITEM/RUN menu the thing on screen and taking input?

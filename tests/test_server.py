@@ -95,6 +95,9 @@ class FakeEmulator:
         ]
         self.turn_pending = False
         self.fled = False
+        #: The move that has taken the turn away, as `battle_lock_in` reports it.
+        #: On the real game a Rage means the top menu never comes back.
+        self.locked_in: str | None = None
         #: Whether the game comes to rest after a press. See `press_and_settle`.
         self.settles = True
 
@@ -289,8 +292,29 @@ class FakeReader:
     def read_battle_moves(self) -> list[dict]:
         return list(self.emulator.battle_moves)
 
+    def read_battle_mon(self) -> dict:
+        """The Pokemon on the field, with the stats the engine fights with.
+
+        Deliberately not `read_party()[0]`: on the real reader these are two
+        different structs holding two different sets of numbers, and the whole
+        point of this method is that the harness stopped confusing them.
+        """
+        return {
+            "species": "Bulbasaur",
+            "level": 8,
+            "hp": 20,
+            "max_hp": 22,
+            "status": "OK",
+            "types": ["Grass", "Poison"],
+            "stats": {"attack": 14, "defense": 13, "speed": 13, "special": 15},
+            "moves": list(self.emulator.battle_moves),
+        }
+
     def at_battle_top_menu(self) -> bool:
         return self.emulator.in_battle and self.emulator.battle_menu == "top"
+
+    def battle_lock_in(self) -> str | None:
+        return self.emulator.locked_in
 
     def at_battle_move_menu(self) -> bool:
         return self.emulator.in_battle and self.emulator.battle_menu == "moves"
@@ -923,6 +947,91 @@ def test_a_battle_says_why_it_offers_no_walk_directions(server_app):
     assert "battle menu" in payload["no_walk"]
 
 
+def test_a_battle_frame_prices_every_move_instead_of_naming_it(server_app):
+    """The move list used to be four bare names, which is not enough to choose.
+
+    `poke calc` had the numbers and was called **zero** times across one
+    457-call session, while the same run spent 501 battle commands fleeing and
+    49 of its 289 attacks on Growl and Leer, which deal no damage at all. So the
+    numbers moved into the payload the model already reads.
+    """
+    emulator = server_app.emulator
+    emulator.in_battle = True
+    emulator.enemy = PIDGEY
+
+    payload = server_app.http.post("/action", json={"actions": ["press_a"]}).json()
+
+    priced = {line.split()[0]: line for line in payload["your_moves"]}
+    assert set(priced) == {"Scratch", "Growl", "Ember"}
+    assert "Ember Fire 25PP" in priced["Ember"]
+    assert "KO in" in priced["Ember"]
+    # A status move has no range to report and says so rather than showing 0-0.
+    assert priced["Growl"] == "Growl Normal 40PP no damage"
+    # And the other half of the stay-or-run decision, beside `hp` in the same
+    # answer: the enemy's hardest hit, named.
+    assert payload["incoming"].startswith(("Tackle", "Gust"))
+    assert "up to" in payload["incoming"]
+
+
+def test_a_battle_frame_names_your_own_level_beside_the_enemy_s(server_app):
+    """The payload carried `hp` and never carried a level.
+
+    So the one comparison that decides whether a fight is winnable -- your level
+    against theirs -- could not be made without spending a `poke state` call. The
+    run this was measured on kept one Charmeleon at level 25 for seventeen hours
+    and whited out twice.
+    """
+    server_app.emulator.in_battle = True
+    server_app.emulator.enemy = PIDGEY
+
+    payload = server_app.http.post("/action", json={"actions": ["press_a"]}).json()
+
+    assert payload["you"] == "Bulbasaur L8"
+    assert payload["enemy"].startswith("Pidgey L5")
+
+
+def test_a_battle_frame_marks_the_effectiveness_only_when_it_is_not_one(server_app):
+    emulator = server_app.emulator
+    emulator.in_battle = True
+    emulator.enemy = {**PIDGEY, "species": "Paras", "types": ["Bug", "Grass"]}
+
+    payload = server_app.http.post("/action", json={"actions": ["press_a"]}).json()
+
+    priced = {line.split()[0]: line for line in payload["your_moves"]}
+    assert "x4" in priced["Ember"]  # Fire on Bug/Grass
+    assert "x" not in priced["Scratch"].removeprefix("Scratch")  # Normal on both
+
+
+def test_a_battle_frame_says_when_nothing_left_can_deal_damage(server_app):
+    """`interventions.Toothless`, said in the payload instead of out of band.
+
+    Of 106 auto-saved battle entries from one run, 46 -- 43% -- had no damaging
+    move with PP left on the field. The payload listed four move names and the
+    run kept walking into fights it could not win and could not flee.
+    """
+    emulator = server_app.emulator
+    emulator.in_battle = True
+    emulator.enemy = PIDGEY
+    emulator.battle_moves[0]["pp"] = 0  # Scratch
+    emulator.battle_moves[2]["pp"] = 0  # Ember, leaving only Growl
+
+    payload = server_app.http.post("/action", json={"actions": ["press_a"]}).json()
+
+    assert payload["no_damage"] == server.NO_DAMAGE_IN_BATTLE
+    assert "Ember Fire 0PP out of PP" in payload["your_moves"]
+
+
+def test_a_battle_frame_falls_back_to_bare_names_when_the_numbers_are_unreadable(server_app):
+    """A battle still starting has no enemy to price against. Names beat nothing."""
+    server_app.emulator.in_battle = True
+    server_app.emulator.enemy = {}
+
+    payload = server_app.http.post("/action", json={"actions": ["press_a"]}).json()
+
+    assert payload["your_moves"] == ["Scratch", "Growl", "Ember"]
+    assert "incoming" not in payload
+
+
 def test_an_open_box_says_the_d_pad_will_not_reach_the_player(server_app):
     """`moves` under an open box was a fact about the map, read as a fact about now.
 
@@ -1377,6 +1486,51 @@ def test_fight_reports_the_resulting_state_without_a_second_call(server_app):
     assert payload["battle"] is True
     assert payload["hp"] == "20/22"
     assert payload["menu"] == "top"  # the turn resolved and it is our move again
+
+
+def test_a_locked_in_pokemon_is_refused_before_any_button_is_spent(server_app):
+    """Rage takes the turn, and the old refusal said the fight was over instead.
+
+    Measured on the ROM: one Rage in Mt. Moon B2F and the top battle menu never
+    returned for the rest of the fight. Every battle command after it spent the
+    full 24 B presses hunting for a menu that does not exist and was then told
+    "the fight is already over ... press A to clear it", which is both false and
+    the wrong thing to do. One run chose Rage 77 times.
+    """
+    emulator = in_battle(server_app)
+    emulator.battle_menu = "other"
+    emulator.locked_in = "Rage"
+    emulator.pressed.clear()
+
+    response = server_app.http.post("/battle/fight", json={"move": "ember"})
+
+    assert response.status_code == 409
+    detail = response.json()["detail"]
+    assert "Rage has locked this Pokemon in" in detail
+    assert "No turn was spent." in detail
+    assert emulator.pressed == []
+
+
+def test_running_is_refused_the_same_way_and_says_so(server_app):
+    emulator = in_battle(server_app)
+    emulator.battle_menu = "other"
+    emulator.locked_in = "Rage"
+
+    response = server_app.http.post("/battle/run", json={})
+
+    assert response.status_code == 409
+    assert "no menu" in response.json()["detail"]
+
+
+def test_a_battle_frame_says_the_turn_has_been_taken_away(server_app):
+    emulator = server_app.emulator
+    emulator.in_battle = True
+    emulator.battle_menu = "other"
+    emulator.locked_in = "Rage"
+
+    payload = server_app.http.post("/action", json={"actions": ["press_a"]}).json()
+
+    assert payload["locked_in"] == server.locked_in_note("Rage")
 
 
 def test_fight_lists_the_real_moves_when_the_name_is_wrong(server_app):
@@ -2034,6 +2188,25 @@ def test_calc_names_the_enemy_and_the_worst_it_can_do(server_app):
         "types": ["Normal", "Flying"],
     }
     assert payload["threat"] > 0
+    # A number alone is a reason to count HP; the name is a reason to switch.
+    assert payload["threat_move"] in PIDGEY["moves"]
+
+
+def test_calc_will_not_promise_a_kill_from_a_move_with_no_pp(server_app):
+    # 54 of 106 auto-saved battle entries from one run had a damaging move at
+    # 0 PP, and this table ranked it as the best one available. The damage stays
+    # on the row -- it is why restoring the PP is worth the walk -- but a move
+    # the game refuses does not kill anything this turn.
+    server_app.emulator.in_battle = True
+    server_app.emulator.enemy = PIDGEY
+    server_app.emulator.battle_moves[2]["pp"] = 0
+
+    entries = server_app.http.get("/calc").json()["moves"]
+    ember = {entry["move"]: entry for entry in entries}["Ember"]
+
+    assert ember["pp"] == 0
+    assert ember["damage"][0] > 0
+    assert ember["turns_to_ko"] is None
 
 
 # ---------------------------------------------------------------------------

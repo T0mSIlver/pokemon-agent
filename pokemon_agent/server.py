@@ -99,6 +99,35 @@ NO_WALK_IN_BOX = "no walking while a box is open: the d-pad works the box, not t
 #: on every one of them.
 FACING_UNREAD_IN_BATTLE = "facing unread in a battle: the byte is stale from before the encounter"
 
+#: What the payload says when nothing on the field can hurt anything.
+#:
+#: This is `interventions.Toothless` said in the payload instead of out of band,
+#: and the reason to say it here is how ordinary the condition turned out to be:
+#: of 106 auto-saved battle entries from one run, **46** — 43% — had no damaging
+#: move with PP left on the field. The agent could not see it. `your_moves`
+#: listed four names, all four of which `poke fight` would either refuse or
+#: waste, and the run went on walking into fights for hours in a state where it
+#: could neither win one nor escape a trainer.
+NO_DAMAGE_IN_BATTLE = (
+    "no move with PP left does damage: this fight cannot be won and a trainer "
+    "cannot be escaped. Heal at a Pokecenter to restore PP."
+)
+
+
+def locked_in_note(move: str) -> str:
+    """Why there is no menu, when the engine has taken the turn.
+
+    Measured on the ROM: one Rage in Mt. Moon B2F and the top battle menu never
+    came back for the rest of the fight. Every battle command after it spent the
+    full 24 B presses of `_normalise_to_battle_menu_sync` and was then refused
+    with "the fight is already over" -- which was false, and sent the agent to
+    press A into a fight it thought had ended. One run used Rage 77 times.
+    """
+    return (
+        f"{move} has locked this Pokemon in: the game keeps attacking with it and gives "
+        "no menu, so no move can be chosen until it ends. Press A to play the turn out."
+    )
+
 
 #: Environment switch for the intervention loop, since the launcher scripts
 #: build a GameConfig they do not parameterise.
@@ -468,6 +497,12 @@ def _get_state_dict() -> dict:
     battle_menu = _battle_menu_sync(state)
     if battle_menu is not None:
         state["battle_menu"] = battle_menu
+    battle_mon = _battle_mon_sync(state)
+    if battle_mon is not None:
+        state["battle_mon"] = battle_mon
+    lock = _battle_lock_sync(state)
+    if lock is not None:
+        state["battle_lock"] = lock
     try:
         snapshot = _emulator.get_navigation_snapshot(_reader)
     except NotImplementedError:
@@ -487,6 +522,38 @@ def _battle_menu_sync(state: dict) -> Optional[dict]:
     if not ((state.get("battle") or {}).get("in_battle")):
         return None
     read = getattr(_reader, "read_battle_menu", None)
+    if read is None:
+        return None
+    try:
+        return read()
+    except Exception:  # noqa: BLE001 — perception must never fail a state read
+        return None
+
+
+def _battle_mon_sync(state: dict) -> Optional[dict]:
+    """The Pokemon on the field on your side, or None outside a battle.
+
+    Its stats are the ones the engine multiplies -- party stats plus badge
+    boosts plus every stat stage of this fight -- and its move list is the one
+    the move menu draws. Both differ from party slot 0, and the harness has been
+    doing its damage arithmetic against party slot 0 all along.
+    """
+    if not ((state.get("battle") or {}).get("in_battle")):
+        return None
+    read = getattr(_reader, "read_battle_mon", None)
+    if read is None:
+        return None
+    try:
+        return read()
+    except Exception:  # noqa: BLE001 — perception must never fail a state read
+        return None
+
+
+def _battle_lock_sync(state: dict) -> Optional[str]:
+    """The move that has taken the turn away, or None. See `locked_in_note`."""
+    if not ((state.get("battle") or {}).get("in_battle")):
+        return None
+    read = getattr(_reader, "battle_lock_in", None)
     if read is None:
         return None
     try:
@@ -944,6 +1011,70 @@ def _warp_exit_hint(snapshot: dict, coord: dict) -> dict:
     return hint
 
 
+def _battle_move_line(entry: dict) -> str:
+    """One move as the numbers that decide whether to use it.
+
+    ``Ember Fire 12PP 41-49 KO in 1`` — name, type, PP, the honest damage range
+    against the Pokemon actually on the other side, and how many worst-case
+    rolls that is. Effectiveness only when it is not 1x, because a multiplier of
+    one is the reader's default assumption anyway.
+    """
+    name = entry.get("move") or "?"
+    pp = entry.get("pp")
+    head = f"{name} {entry['type']}" if entry.get("type") else name
+    if pp is not None:
+        head += f" {pp}PP"
+    if pp == 0:
+        return f"{head} out of PP"
+    low, high = (entry.get("damage") or [0, 0])[:2]
+    if not high:
+        return f"{head} no damage"
+    effect = entry.get("effectiveness")
+    tail = "" if effect in (None, 1, 1.0) else f" x{effect:g}"
+    turns = entry.get("turns_to_ko")
+    if turns:
+        tail += " KO in 1" if turns == 1 else f" KO in {turns}"
+    return f"{head} {low}-{high}{tail}"
+
+
+def _battle_facts(state: dict) -> dict:
+    """The fight, priced: what each move does and what is coming back.
+
+    Everything here is what `GET /calc` answers, folded into the payload the
+    model already reads. It is folded in rather than left behind a verb because
+    the verb was never called: across one 457-call session `poke calc` was used
+    **zero** times, while the same run spent 501 battle commands fleeing and 49
+    of its 289 attacks on Growl and Leer, which deal no damage at all. A fact
+    that only arrives when asked for is a fact this agent does not have.
+
+    Returns ``{}`` on any frame the numbers cannot be trusted on -- a battle
+    still starting, a reader that cannot see the field -- so the caller falls
+    back to bare move names rather than to a wrong table.
+    """
+    battle = state.get("battle") or {}
+    party = state.get("party") or []
+    active = state.get("battle_mon") or (party[0] if party else None) or {}
+    moves = active.get("moves") or []
+    if not moves or not isinstance(moves[0], dict):
+        return {}
+    try:
+        payload = capabilities.calc_payload(battle, party, moves, active=active)
+    except Exception:  # noqa: BLE001 — perception must never fail a state read
+        return {}
+    entries = payload["moves"]
+    facts: dict = {"your_moves": [_battle_move_line(entry) for entry in entries]}
+    if not any(entry.get("turns_to_ko") for entry in entries):
+        if not any((entry.get("pp") != 0) and (entry.get("damage") or [0])[1] for entry in entries):
+            facts["no_damage"] = NO_DAMAGE_IN_BATTLE
+    threat, threat_move = payload.get("threat"), payload.get("threat_move")
+    if threat and threat_move:
+        # The other half of "should I stay in". Beside `hp` in the same payload
+        # this is a subtraction; as a separate `poke calc` call it is a decision
+        # the agent has to remember to make, and it never did.
+        facts["incoming"] = f"{threat_move} up to {threat}"
+    return facts
+
+
 def _observation_summary(bundle: Optional[dict]) -> dict:
     """Where the player is and what it may do next — the whole model-facing payload.
 
@@ -1045,6 +1176,18 @@ def _observation_summary(bundle: Optional[dict]) -> dict:
         # the one field here that a battle frame holds a *wrong* value for.
         summary.pop("facing", None)
         summary["facing_unread"] = FACING_UNREAD_IN_BATTLE
+        # The Pokemon on the field, not party slot 0: after a switch they are
+        # different Pokemon, with different moves and different stats.
+        active = state.get("battle_mon") or (party[0] if party else {}) or {}
+        # Your own species and level, beside the enemy's. `hp` is already in the
+        # payload and a level is not, so this is the missing half of "is this a
+        # fight I should take" -- and the run this was measured on never had it:
+        # a single Charmeleon sat at level 25 for seventeen hours, fled 501
+        # times, and whited out twice, and no payload it ever read said 25.
+        # Battle frames only: on the overworld it would be wallpaper, which is
+        # what `here_before` became before its threshold was raised.
+        if active.get("species"):
+            summary["you"] = f"{active['species']} L{active.get('level')}"
         enemy = (battle.get("enemy") or {}) if isinstance(battle, dict) else {}
         if enemy.get("species"):
             types = "/".join(enemy.get("types") or [])
@@ -1052,13 +1195,13 @@ def _observation_summary(bundle: Optional[dict]) -> dict:
                 f"{enemy['species']} L{enemy.get('level')} "
                 f"{enemy.get('hp')}/{enemy.get('max_hp')}" + (f" ({types})" if types else "")
             )
-        if party:
-            lead = party[0] or {}
-            raw_moves = lead.get("moves") or []
-            move_names = [m["name"] for m in raw_moves if isinstance(m, dict) and m.get("name")]
-            move_names = move_names or [m for m in raw_moves if isinstance(m, str)]
-            if move_names:
-                summary["your_moves"] = move_names
+        raw_moves = active.get("moves") or []
+        move_names = [m["name"] for m in raw_moves if isinstance(m, dict) and m.get("name")]
+        move_names = move_names or [m for m in raw_moves if isinstance(m, str)]
+        if move_names:
+            summary["your_moves"] = move_names
+        # Priced, where the numbers are readable. Replaces the bare names above.
+        summary.update(_battle_facts(state))
 
         # Which menu is open and which entry A would fire. Perception, not advice:
         # the move cursor remembers where it was last turn and wraps at both ends,
@@ -1068,6 +1211,9 @@ def _observation_summary(bundle: Optional[dict]) -> dict:
             summary["menu"] = menu["menu"]
         if menu.get("highlighted"):
             summary["highlighted"] = menu["highlighted"]
+        # And whether there will be a menu at all. See `locked_in_note`.
+        if state.get("battle_lock"):
+            summary["locked_in"] = locked_in_note(str(state["battle_lock"]))
 
     # Real on-screen words only. The reader falls back to a fixed placeholder --
     # "Dialog box visible (waiting for input)." -- when it cannot extract any, and
@@ -1802,6 +1948,17 @@ def _normalise_to_battle_menu_sync() -> int:
     B is inert on the top battle menu itself, so over-running this loop costs
     nothing: it only advances text and backs out of submenus.
     """
+    # Before spending anything: a locked-in Pokemon has no menu to find, so the
+    # 24 presses below are certain to be wasted and the message after them is
+    # certain to be wrong. Checked only when the menu is not already up, because
+    # the flag outlives the last turn of a Rage.
+    if not _reader.at_battle_top_menu():
+        locked = getattr(_reader, "battle_lock_in", lambda: None)()
+        if locked:
+            raise HTTPException(
+                status_code=409,
+                detail=locked_in_note(str(locked)) + " No turn was spent.",
+            )
     for pressed in range(BATTLE_NORMALISE_MAX_PRESSES):
         if _reader.at_battle_top_menu():
             return pressed
@@ -2980,12 +3137,14 @@ def _calc_inputs_sync() -> dict:
     battle = (_reader.read_battle() if _reader is not None else None) or {}
     party = (_reader.read_party() if _reader is not None else None) or []
     moves: list[dict] = []
+    active = None
     if battle.get("in_battle"):
         try:
             moves = _reader.read_battle_moves() or []
         except Exception:  # noqa: BLE001 — an unreadable move list is not a crash
             moves = []
-    return {"battle": battle, "party": party, "moves": moves}
+        active = _battle_mon_sync({"battle": battle})
+    return {"battle": battle, "party": party, "moves": moves, "active": active}
 
 
 @app.get("/calc")
@@ -2994,7 +3153,9 @@ async def calc():
     _ensure_emulator()
     inputs = await _run_emulator_sync(_calc_inputs_sync)
     try:
-        return capabilities.calc_payload(inputs["battle"], inputs["party"], inputs["moves"])
+        return capabilities.calc_payload(
+            inputs["battle"], inputs["party"], inputs["moves"], active=inputs["active"]
+        )
     except capabilities.CapabilityError as exc:
         raise _capability_error(exc) from exc
 

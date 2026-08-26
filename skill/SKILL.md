@@ -156,18 +156,27 @@ They refuse, in the server's own words, when you are not in a battle, when nothi
 
 The move list remembers where it was left last turn, and it wraps at both ends, so no fixed run of button presses reaches a particular move. `poke act a a` does not mean "use my first move"; it means "use whichever move the cursor happens to be sitting on". One stray direction press on the top menu leaves you on ITEM or RUN, and A then opens the bag or flees. `press_b` backs out one level if you have opened something by hand.
 
-In battle the response says what you are fighting, what you can hit it with, and what the menu is showing:
+In battle the response already carries the whole decision. You do not need another call to make it:
 
 ```
 Viridian Forest (15,33)  hp 29/32
 no walking in a battle: the d-pad drives the battle menu
 facing unread in a battle: the byte is stale from before the encounter
+you Charmander L11
 BATTLE vs Weedle L3 15/15 (Bug/Poison)
-moves Scratch, Growl, Ember
+moves Ember Fire 18PP 22-27 x2 KO in 1 | Scratch Normal 35PP 6-8 KO in 3 | Growl Normal 40PP no damage
+incoming Poison Sting up to 5
 menu moves on Ember
 ```
 
-- `moves` here is what `poke fight` will accept, not directions: there are no directions in a battle.
+- `you` and the enemy, each with its level. Put them side by side before deciding to fight a trainer. A single Pokemon five levels under the gym leader's loses whatever move you pick, and the fix is fought for on the way there, not in the gym.
+- `moves` is every move on the Pokemon **on the field**, with its type, its PP, the damage it would really do to the Pokemon really in front of you, and how many turns of worst-case rolls that is. Read the line, pick the move, name it. Do not work the type chart out in your head and do not guess at PP -- both are on the line.
+  - `x2`, `x4`, `x0.5` appear only when the multiplier is not 1.
+  - `no damage` is a status move. It lowers a stat and is rarely worth a turn against a wild Pokemon.
+  - `out of PP` means the game will refuse it. `poke fight` will too.
+- `incoming` is the enemy's hardest hit and what it is called. Compare it to your `hp`. That subtraction is the whole "stay in or run" decision.
+- `locked_in` means the engine has taken the turn. Rage keeps swinging on its own and gives you no menu until it ends, so `poke fight` and `poke run` both refuse; press A to play the turn out. Worth knowing before you pick Rage, because you cannot change your mind afterwards.
+- `no_damage` means nothing you have left does damage. You cannot win this fight and you cannot escape a trainer. Go to a Pokecenter -- that restores PP as well as HP.
 - `menu ... on ...` is which menu is open and which entry the cursor sits on, so the one a bare `press_a` would fire. `top` is FIGHT/PKMN/ITEM/RUN, `moves` is the move list, and anything else prints as `no battle menu up` because there is no cursor to name.
 - The coordinates are where you are standing, which a battle does not change. You will be on that tile when the fight ends.
 - No facing, and one line says why. An encounter interrupts the step that started it, so the byte holding your direction is one step out of date until the battle ends, and the answer says that rather than naming a direction that may be wrong.
@@ -175,23 +184,21 @@ menu moves on Ember
 
 `poke fight` and `poke run` answer in the same shape, with what they did on the line above it: `used Ember`, or `fled`.
 
-Do not work the type chart out in your head. `poke calc` does the real damage arithmetic against whatever you are actually fighting:
+`poke calc` prints the same table on demand, with the enemy's stats and yours as the game holds them mid-fight, so it also shows what Leer or Growl or Rage has changed:
 
 ```
 vs Onix L14 43 HP (Rock/Ground)
-  Bubble            28-34   KO in 2  x4
-  Tackle              4-6   cannot KO
-  Tail Whip           0-0   cannot KO
-  worst incoming: 21
+  Bubble            18PP  28-34   KO in 2  x4
+  Tackle            35PP   4-6    cannot KO
+  Tail Whip         30PP   0-0    cannot KO
+  worst incoming: 21 (Rock Throw)
 ```
 
-That is the exact Gen 1 formula with your stats, its stats, and the type multipliers, so the numbers are the game's own. `worst incoming` is the hardest hit it can land on you next turn: compare it to your `hp` before deciding to stay in.
-
-A status move like Growl deals no damage. It lowers a stat, which is rarely worth a turn against a wild Pokemon.
+**A wild Pokemon you can KO in one turn is free experience, and experience is the thing that stops you losing to the next gym.** Fleeing is for a fight you cannot win, not for every fight. One run fled 501 times, kept a single Pokemon at level 25 for seventeen hours, and whited out twice; sampling its own encounters showed a one-turn kill available in half of them. If `your_moves` says `KO in 1`, fight.
 
 **Never use `adialog` in a battle.** The battle menu counts as an open dialog, so pressing A until it clears walks straight into ITEM and picks whatever it lands on. The server refuses that action while a battle is on screen. Press A once to advance battle text, and choose deliberately.
 
-Run from a fight you cannot win, such as a badly matched type or a lead Pokemon low on HP, with `poke run`. Fleeing costs nothing but a turn.
+Run from a fight you cannot win — `incoming` close to your `hp`, nothing that damages it, a trainer's Pokemon far above your level — with `poke run`. Fleeing costs a turn and the experience you would have won.
 
 ## Warps
 
@@ -328,7 +335,7 @@ If the same action fails three times, stop repeating it. Something in your model
 ## The rest of `poke`
 
 - `poke fight <move>`: attack with a named move. `poke run` flees. Both under Battles above.
-- `poke calc`: damage every move of yours would do right now. Under Battles.
+- `poke calc`: the same move table the battle payload already carries, on demand. Under Battles.
 - `poke sim <actions>`: try a plan against the collision map without spending it.
 - `poke route <map>`: which maps lie between here and there. `poke goto <map|x,y>` walks it.
 - `poke frontier`: reachable tiles on this map you have never stood on.

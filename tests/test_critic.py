@@ -1829,6 +1829,7 @@ def test_the_word_ceiling_applies_when_reading_not_only_when_writing(tmp_path):
     # cap_words appends its own truncation notice, which is words too.
     assert len(got.split()) <= MAX_HANDOFF_WORDS + 20, "the ceiling is applied on read"
 
+
 # The body of the handoff, not only its goal line
 # ---------------------------------------------------------------------------
 

@@ -501,9 +501,22 @@ def action_lines(payload: dict) -> str:
 
     if payload.get("battle"):
         enemy = payload.get("enemy")
-        lines.append(f"BATTLE vs {enemy}" if enemy else "BATTLE")
-        if payload.get("your_moves"):
-            lines.append("moves " + ", ".join(payload["your_moves"]))
+        you = payload.get("you")
+        head = "BATTLE" + (f" {you}" if you else "")
+        lines.append(f"{head} vs {enemy}" if enemy else head)
+        # One move per line. They used to be four names on one comma-separated
+        # line, which is what a name list wants; each of them is now a priced
+        # row -- type, PP, damage, kill count -- and four of those run past a
+        # terminal width joined by commas.
+        for move in payload.get("your_moves") or []:
+            lines.append(f"  {move}")
+        # Labelled, because under a list of moves "Scratch up to 4" reads as a
+        # fifth move of yours rather than as the hit you are about to take.
+        if payload.get("incoming"):
+            lines.append(f"  incoming: {payload['incoming']}")
+        for key in ("no_damage", "locked_in"):
+            if payload.get(key):
+                lines.append(f"  {payload[key]}")
         menu, highlighted = payload.get("menu"), payload.get("highlighted")
         if menu == "other":
             # `other` is the reader saying neither battle menu is up, so there is
@@ -524,46 +537,34 @@ def cmd_act(args: argparse.Namespace, url: str) -> int:
     return EXIT_OK
 
 
-def battle_lines(payload: dict, headline: str) -> str:
-    """The battle verbs' answer as prose, the way `act` already answers.
+def _print_battle_result(payload: dict, as_json: bool) -> int:
+    """The same prose `poke act` prints, plus the move the server confirmed.
 
-    `/battle/fight` and `/battle/run` return `{"used"|"fled": ..., **summary}` --
-    the same observation object `/action` returns, one scalar heavier. `act`
-    stopped printing that object raw and these two never did: measured on a Mt
-    Moon B2F encounter, `poke run` printed 205 bytes of JSON where the prose
-    comes to 96, and a real fight frame (enemy, moves, menu) prints 428 raw
-    against 312. At 57 battle calls in the median session of the live run that
-    is the same waste `action_lines` exists to stop, on the verb the switch
-    missed.
+    These two commands printed the raw payload, alone among the commands here.
+    That was tolerable when a battle answer was four move names; the answer now
+    carries a priced table, and one run spent 790 battle commands on it.
     """
-    return f"{headline}\n{action_lines(payload)}" if headline else action_lines(payload)
+    if as_json:
+        print(compact(payload))
+        return EXIT_OK
+    used = payload.get("used")
+    if used:
+        print(f"used {used}" + ("  (cursor needed a retry)" if payload.get("retried") else ""))
+    elif "fled" in payload:
+        print("fled" if payload.get("fled") else "could not get away")
+    print(action_lines(payload))
+    return EXIT_OK
 
 
 def cmd_fight(args: argparse.Namespace, url: str) -> int:
     """Attack by name. The server does the menu work; this only carries the name."""
     payload = {"move": " ".join(args.move)}
     answer = fetch_json(url, "/battle/fight", method="POST", payload=payload)
-    if args.json:
-        print(compact(answer))
-        return EXIT_OK
-    # `used` is the move the game actually accepted, which is the whole reason
-    # the verb exists -- the cursor wraps, so the move you named and the move
-    # that fired are two different facts.
-    used = answer.get("used")
-    headline = f"used {used}" if used else ""
-    if answer.get("retried"):
-        headline += " (menu had moved; retried)"
-    print(battle_lines(answer, headline))
-    return EXIT_OK
+    return _print_battle_result(answer, args.json)
 
 
 def cmd_run(args: argparse.Namespace, url: str) -> int:
-    answer = fetch_json(url, "/battle/run", method="POST")
-    if args.json:
-        print(compact(answer))
-        return EXIT_OK
-    print(battle_lines(answer, "fled" if answer.get("fled") else "did not get away"))
-    return EXIT_OK
+    return _print_battle_result(fetch_json(url, "/battle/run", method="POST"), args.json)
 
 
 def cmd_state(args: argparse.Namespace, url: str) -> int:
@@ -650,12 +651,20 @@ def cmd_calc(args: argparse.Namespace, url: str) -> int:
         damage = move.get("damage") or [0, 0]
         effect = move.get("effectiveness")
         marker = "" if effect in (1, 1.0, None) else f"  x{effect:g}"
+        pp = move.get("pp")
         kos = move.get("turns_to_ko")
-        ko_text = f"  KO in {kos}" if kos else "  cannot KO"
-        print(f"  {move['move']:<16} {damage[0]:>3}-{damage[1]:<3}{ko_text}{marker}")
+        # PP first, because it decides whether the rest of the line is an option
+        # at all. The payload has carried it since the last time this was looked
+        # at and this print dropped it, so the table went on presenting a dry
+        # move as the best move: 54 of 106 auto-saved battle entries from one run
+        # had at least one, and `poke fight` refused 12 of them.
+        pp_text = "  --PP" if pp is None else f"  {pp:>2}PP"
+        ko_text = "  out of PP" if pp == 0 else (f"  KO in {kos}" if kos else "  cannot KO")
+        print(f"  {move['move']:<16}{pp_text} {damage[0]:>3}-{damage[1]:<3}{ko_text}{marker}")
     threat = payload.get("threat")
     if threat is not None:
-        print(f"  worst incoming: {threat}")
+        move = payload.get("threat_move")
+        print(f"  worst incoming: {threat}" + (f" ({move})" if move else ""))
     return EXIT_OK
 
 

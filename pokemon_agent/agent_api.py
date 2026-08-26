@@ -464,8 +464,20 @@ class Result:
     faces: Optional[str] = None
     screen_text: str = ""
     enemy: Optional[str] = None
-    #: Move names of the active Pokemon, when a battle is on screen.
+    #: The Pokemon on the field on your side, as ``"Charmeleon L25"``. The level
+    #: is the half of the fight-or-flee comparison the payload never carried.
+    you: Optional[str] = None
+    #: The active Pokemon's moves, each priced against what is on the other side:
+    #: ``"Ember Fire 12PP 41-49 x2 KO in 1"``. Names alone are not enough to pick.
     battle_moves: list[str] = field(default_factory=list)
+    #: The enemy's hardest hit and its name, ``"Leech Life up to 4"``.
+    incoming: Optional[str] = None
+    #: Set when nothing with PP left does damage: the fight cannot be won and a
+    #: trainer cannot be escaped.
+    no_damage: Optional[str] = None
+    #: Set when the engine has taken the turn — Rage keeps swinging and gives no
+    #: menu — so ``fight`` and ``run`` will both refuse until it ends.
+    locked_in: Optional[str] = None
     menu: Optional[str] = None
     highlighted: Optional[str] = None
     #: Only ``goto`` sets these three.
@@ -518,7 +530,11 @@ class Result:
             faces=payload.get("faces"),
             screen_text=payload.get("screen_text") or "",
             enemy=payload.get("enemy"),
+            you=payload.get("you"),
             battle_moves=list(payload.get("your_moves") or []),
+            incoming=payload.get("incoming"),
+            no_damage=payload.get("no_damage"),
+            locked_in=payload.get("locked_in"),
             menu=payload.get("menu"),
             highlighted=payload.get("highlighted"),
             walked=payload.get("walked"),
@@ -539,10 +555,17 @@ class Result:
             # "no pos in: battle vs Zubat...". So this line says where, every
             # time, and says "position unread" rather than printing a None when
             # the server could not read one.
-            return (
+            head = (
                 f"battle on {self.map} {self._where} vs {self.enemy or '?'} "
                 f"hp {self.hp}/{self.max_hp}"
             )
+            # Both of these are the reason a `fight` call is about to be refused.
+            # A script that only reads this line has to see them here or it
+            # retries the same refusal.
+            for note in (self.locked_in, self.no_damage):
+                if note:
+                    head += f"\n  {note}"
+            return head
         where = f"{self.map} {self._where}" + (f" facing {self.facing}" if self.facing else "")
         moved = "" if self.moved is None else f" moved {self.moved}"
         blocked = "" if self.blocked_after is None else f" blocked after {self.blocked_after}"
@@ -774,6 +797,7 @@ class MoveDamage:
     damage: tuple[int, int] = (0, 0)
     effectiveness: Optional[float] = None
     turns_to_ko: Optional[int] = None
+    pp: Optional[int] = None
     raw: dict = field(default_factory=dict)
 
     @property
@@ -784,10 +808,18 @@ class MoveDamage:
     def high(self) -> int:
         return self.damage[1]
 
+    @property
+    def usable(self) -> bool:
+        """Has PP left. A move at 0 PP is a number on a table, not a turn."""
+        return self.pp != 0
+
     def __str__(self) -> str:
         effect = "" if self.effectiveness in (1, 1.0, None) else f" x{self.effectiveness:g}"
+        pp = "" if self.pp is None else f" {self.pp}PP"
+        if self.pp == 0:
+            return f"{self.move}{pp} {self.low}-{self.high} out of PP{effect}"
         ko = f" KO in {self.turns_to_ko}" if self.turns_to_ko else " cannot KO"
-        return f"{self.move} {self.low}-{self.high}{ko}{effect}"
+        return f"{self.move}{pp} {self.low}-{self.high}{ko}{effect}"
 
 
 @dataclass
@@ -797,16 +829,24 @@ class Calc:
     enemy: Optional[Mon] = None
     moves: list[MoveDamage] = field(default_factory=list)
     threat: Optional[int] = None
+    threat_move: Optional[str] = None
     raw: dict = field(default_factory=dict)
 
     @property
     def best(self) -> Optional[MoveDamage]:
-        """Fastest kill, or hardest hit when nothing kills. The obvious pick."""
+        """Fastest kill, or hardest hit when nothing kills. The obvious pick.
 
-        if not self.moves:
+        Only among moves with PP. It used to rank the whole table, so it would
+        name a dry Ember as the obvious pick and `poke fight ember` would then
+        be refused -- which happened 12 times in one run, and 54 of 106
+        auto-saved battle entries had a dry damaging move for it to pick.
+        """
+
+        usable = [move for move in self.moves if move.usable]
+        if not usable:
             return None
         return min(
-            self.moves,
+            usable,
             key=lambda move: (move.turns_to_ko if move.turns_to_ko else 99, -move.high),
         )
 
@@ -821,18 +861,23 @@ class Calc:
                     damage=tuple(entry.get("damage") or (0, 0)),  # type: ignore[arg-type]
                     effectiveness=entry.get("effectiveness"),
                     turns_to_ko=entry.get("turns_to_ko"),
+                    pp=entry.get("pp"),
                     raw=entry,
                 )
                 for entry in payload.get("moves") or []
             ],
             threat=payload.get("threat"),
+            threat_move=payload.get("threat_move"),
             raw=payload,
         )
 
     def __str__(self) -> str:
         head = f"vs {self.enemy}" if self.enemy else "vs ?"
         lines = "\n".join(f"  {move}" for move in self.moves)
-        threat = f"\n  worst incoming: {self.threat}" if self.threat is not None else ""
+        threat = ""
+        if self.threat is not None:
+            named = f" ({self.threat_move})" if self.threat_move else ""
+            threat = f"\n  worst incoming: {self.threat}{named}"
         return f"{head}\n{lines}{threat}"
 
 

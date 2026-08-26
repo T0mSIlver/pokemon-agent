@@ -565,7 +565,8 @@ def test_the_battle_verbs_answer_in_prose_like_act_does(stub, capsys):
     assert not out.lstrip().startswith("{"), "no JSON object on the model-facing path"
     assert "Mt Moon B2F (24,11)" in out
     assert "BATTLE vs Zubat L12 32/32 (Poison/Flying)" in out
-    assert "moves Rage, Growl, Ember, Leer" in out
+    # One move per line now: each carries type, PP, real damage and a KO count.
+    assert "Rage" in out and "Ember" in out
 
 
 def test_fight_json_still_hands_a_script_the_whole_object(stub, capsys):
@@ -606,7 +607,19 @@ def test_a_flee_that_did_not_work_says_so(stub, capsys):
 
     assert run(stub, "run") == 0
 
-    assert capsys.readouterr().out.splitlines()[0] == "did not get away"
+    # Prose, like every other command here. These two printed the raw payload,
+    # which was fine for four move names and is not fine for a priced table.
+    out = capsys.readouterr().out
+    assert out.splitlines()[0] == "could not get away"
+    assert "Mt Moon B2F" in out
+
+
+def test_fight_still_hands_over_the_raw_payload_when_asked(stub, capsys):
+    stub.route("POST", "/battle/fight", {"used": "Ember", "battle": True, "hp": "29/32"})
+
+    assert run(stub, "fight", "ember", "--json") == 0
+
+    assert json.loads(capsys.readouterr().out)["used"] == "Ember"
 
 
 def test_fight_joins_a_multi_word_move(stub):
@@ -633,7 +646,20 @@ def test_run_posts_with_no_body_and_prints_the_outcome(stub, capsys):
 
     assert stub.requests[-1]["path"] == "/battle/run"
     assert stub.requests[-1]["body"] is None
-    assert capsys.readouterr().out.splitlines()[0] == "fled"
+    # One readouterr: it consumes, so a second call returns an empty buffer.
+    out = capsys.readouterr().out
+    assert out.splitlines()[0] == "fled"
+    assert "Route 1" in out
+
+
+def test_run_says_so_when_the_escape_failed(stub, capsys):
+    """A failed escape leaves you in the fight with a turn spent. "fled: false"
+    at the front of a JSON blob is easy to skim past; a line saying it is not."""
+    stub.route("POST", "/battle/run", {"fled": False, "battle": True, "map": "Route 1"})
+
+    assert run(stub, "run") == 0
+
+    assert "could not get away" in capsys.readouterr().out
 
 
 def test_run_outside_a_battle_reports_the_refusal(stub, capsys):
@@ -822,6 +848,7 @@ def test_calc_shows_damage_and_what_can_kill_you(stub, capsys):
                 },
             ],
             "threat": 21,
+            "threat_move": "Rock Throw",
         },
     )
     assert run(stub, "calc") == agent_cli.EXIT_OK
@@ -831,6 +858,52 @@ def test_calc_shows_damage_and_what_can_kill_you(stub, capsys):
     assert "KO in 2" in out
     assert "cannot KO" in out
     assert "worst incoming: 21" in out
+    assert "(Rock Throw)" in out  # what the 21 would arrive as
+
+
+def test_calc_prints_pp_and_refuses_to_offer_a_dry_move(stub, capsys):
+    """The payload has carried PP all along and this table printed none of it.
+
+    So `poke calc` went on presenting a move the game would refuse as the best
+    one available: 54 of 106 auto-saved battle entries from one run had at
+    least one, `poke fight` was refused 12 times, and a session spent four save
+    reloads on an Ember that had simply run out.
+    """
+    stub.route(
+        "GET",
+        "/calc",
+        {
+            "enemy": {"species": "Zubat", "level": 9, "hp": 28, "types": ["Poison", "Flying"]},
+            "moves": [
+                {
+                    "move": "Ember",
+                    "type": "Fire",
+                    "power": 40,
+                    "effectiveness": 1.0,
+                    "damage": [39, 46],
+                    "turns_to_ko": None,
+                    "pp": 0,
+                },
+                {
+                    "move": "Growl",
+                    "type": "Normal",
+                    "power": 0,
+                    "effectiveness": 1.0,
+                    "damage": [0, 0],
+                    "turns_to_ko": None,
+                    "pp": 39,
+                },
+            ],
+            "threat": 1,
+            "threat_move": "Leech Life",
+        },
+    )
+    assert run(stub, "calc") == agent_cli.EXIT_OK
+    out = capsys.readouterr().out
+    assert "0PP" in out and "39PP" in out
+    assert "out of PP" in out
+    # The damage stays on the row: it is the reason walking to a Pokecenter pays.
+    assert "39-46" in out
 
 
 def test_sim_names_the_step_that_would_hit_the_wall(stub, capsys):
@@ -1117,15 +1190,43 @@ def test_a_battle_says_what_it_is_and_what_you_can_hit_it_with():
         {
             **WALK,
             "battle": True,
+            "you": "Charmeleon L25",
             "enemy": "Zubat L7 23/23 (Poison/Flying)",
-            "your_moves": ["Ember", "Growl"],
+            "your_moves": ["Ember Fire 12PP 41-49 KO in 1", "Growl Normal 40PP no damage"],
+            "incoming": "Leech Life up to 1",
             "menu": "moves",
             "highlighted": "Ember",
         }
     )
-    assert "BATTLE vs Zubat L7" in line
-    assert "Ember, Growl" in line
+    assert "BATTLE Charmeleon L25 vs Zubat L7" in line
+    # One priced row per line: four of these joined by commas runs off a terminal.
+    assert "\n  Ember Fire 12PP 41-49 KO in 1\n" in line
+    assert "\n  Growl Normal 40PP no damage\n" in line
+    assert "incoming: Leech Life up to 1" in line
     assert "menu moves on Ember" in line
+
+
+def test_a_battle_that_cannot_be_won_says_so_where_the_moves_are_listed():
+    """`no_damage` and `locked_in` both mean the next `poke fight` will refuse.
+
+    Of 106 auto-saved battle entries from one run, 46 had no damaging move with
+    PP left, and the run kept walking into fights anyway.
+    """
+    line = agent_cli.action_lines(
+        {
+            **WALK,
+            "battle": True,
+            "enemy": "Zubat L7 23/23 (Poison/Flying)",
+            "your_moves": ["Ember Fire 0PP out of PP", "Growl Normal 40PP no damage"],
+            "no_damage": (
+                "no move with PP left does damage: this fight cannot be won and a "
+                "trainer cannot be escaped. Heal at a Pokecenter to restore PP."
+            ),
+            "menu": "top",
+        }
+    )
+    assert "out of PP" in line
+    assert "Pokecenter" in line
 
 
 #: What the server sends on a battle frame: the position it can still read, the
