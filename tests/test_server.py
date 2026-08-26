@@ -2923,3 +2923,43 @@ def test_exits_falls_back_to_manhattan_when_the_map_is_not_decoded():
 
     assert "Mt Moon B2F" in exits, "undecoded: every destination is still offered"
     assert "Mt Moon 1F" in exits
+
+
+def _battle_bundle(warps):
+    """A frame mid-fight, on a map that has somewhere to go once it is over."""
+    return {
+        "state": {
+            "map": {"map_name": "Mt Moon B2F"},
+            "player": {"position": {"x": 24, "y": 11}, "facing": "left"},
+            "party": [{"hp": 22, "max_hp": 73, "moves": [{"name": "Ember"}]}],
+            "battle": {"in_battle": True, "enemy": {"species": "Zubat", "level": 12}},
+        },
+        "navigation": {"snapshot": _warp_snapshot("Mt Moon B2F", (24, 11), warps)},
+    }
+
+
+def test_a_battle_drops_the_exits_list_with_the_other_walk_facts():
+    """`exits` answers "where may I walk", and a battle frame cannot answer it.
+
+    The strip that takes `moves`, `run`, `on_warp`, `warp` and `faces` away in a
+    battle forgot this one. Measured on a Mt Moon B2F encounter, the frame
+    printed `exits Mt Moon B1F (25, 9)` on the line under `no walking in a
+    battle`, which is 26 bytes of the payload contradicting itself -- 70 on
+    Route 4, on every frame of every fight. The exit has not moved, and the
+    first overworld answer after the fight names it again.
+    """
+    summary = server._observation_summary(_battle_bundle([(25, 9, 60)]))
+
+    assert summary["battle"] is True
+    assert summary["no_walk"] == server.NO_WALK_IN_BATTLE
+    assert "exits" not in summary
+
+
+def test_the_same_frame_out_of_battle_keeps_its_exits():
+    """The cut is about the battle, not about the map. Same tile, fight over."""
+    bundle = _battle_bundle([(25, 9, 60)])
+    bundle["state"]["battle"] = {"in_battle": False}
+
+    summary = server._observation_summary(bundle)
+
+    assert summary["exits"], "the way off the floor is the fact this payload is for"

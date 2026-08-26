@@ -158,15 +158,22 @@ The move list remembers where it was left last turn, and it wraps at both ends, 
 
 In battle the response says what you are fighting, what you can hit it with, and what the menu is showing:
 
-```json
-{"mode":"battle","battle":true,"x":15,"y":33,"hp":"29/32","enemy":"Weedle L3 15/15 (Bug/Poison)","your_moves":["Scratch","Growl","Ember"],"menu":"moves","highlighted":"Ember"}
+```
+Viridian Forest (15,33)  hp 29/32
+no walking in a battle: the d-pad drives the battle menu
+facing unread in a battle: the byte is stale from before the encounter
+BATTLE vs Weedle L3 15/15 (Bug/Poison)
+moves Scratch, Growl, Ember
+menu moves on Ember
 ```
 
-- `your_moves`: the names `poke fight` will accept.
-- `menu`: which menu is open: `top` for FIGHT/PKMN/ITEM/RUN, `moves` for the move list, `other` for anything else, which prints as `no battle menu up` because there is no cursor to name.
-- `highlighted`: the entry the cursor is on, so the one a bare `press_a` would pick.
-- `x` and `y`: where you are standing, which a battle does not change. You will be on that tile when the fight ends.
-- No `facing`. An encounter interrupts the step that started it, so the byte holding your direction is one step out of date until the battle ends, and the answer says so rather than naming a direction that may be wrong.
+- `moves` here is what `poke fight` will accept, not directions: there are no directions in a battle.
+- `menu ... on ...` is which menu is open and which entry the cursor sits on, so the one a bare `press_a` would fire. `top` is FIGHT/PKMN/ITEM/RUN, `moves` is the move list, and anything else prints as `no battle menu up` because there is no cursor to name.
+- The coordinates are where you are standing, which a battle does not change. You will be on that tile when the fight ends.
+- No facing, and one line says why. An encounter interrupts the step that started it, so the byte holding your direction is one step out of date until the battle ends, and the answer says that rather than naming a direction that may be wrong.
+- No `exits` line either. You cannot step anywhere from a battle frame; the first answer after the fight names them again.
+
+`poke fight` and `poke run` answer in the same shape, with what they did on the line above it: `used Ember`, or `fled`.
 
 Do not work the type chart out in your head. `poke calc` does the real damage arithmetic against whatever you are actually fighting:
 
@@ -199,8 +206,8 @@ The map only changes on that second step. If you land on a `W` and stop, you are
 
 When you are standing on a warp the response says so, and tells you where it goes and which way to step:
 
-```json
-{"on_warp": true, "warp": {"to": "Route 2", "step": "up"}}
+```
+on a warp to Route 2, step up
 ```
 
 If you see that, take the step. Do not re-plan, do not look for another way round.

@@ -27,6 +27,7 @@ from pokemon_agent.critic import (
     CriticResult,
     DigestInput,
     Intel,
+    SessionFacts,
     ToolCall,
     build_critic_command,
     build_digest,
@@ -43,6 +44,7 @@ from pokemon_agent.critic import (
     describe_no_text,
     direction_claims,
     estimate_tokens,
+    handoff_body,
     ladder_position,
     list_named_saves,
     map_brief,
@@ -1260,8 +1262,12 @@ def test_the_facts_block_is_worth_its_tokens(tmp_path: Path):
     # Ladder labels, not event ids: "BADGE_BOULDER" is not an instruction.
     assert "highest rung: Boulder Badge" in block
     assert "Next rung: Beat the Super Nerd guarding the Mt. Moon fossils" in block
-    # And the geography, off the world file rather than off the model.
-    assert "Every way off Route 3 (* = never stepped on): walk north -> Route 4" in block
+    # And the geography, off the world file rather than off the model. No legend
+    # here, because nothing on this line is starred: measured on the live run's
+    # session 6 the same line carried "(* = never stepped on)" over an exits
+    # string with no `*` in it, 22 bytes teaching a notation it does not use.
+    assert "Every way off Route 3: walk north -> Route 4" in block
+    assert "never stepped on" not in block
 
 
 def test_the_digest_puts_the_receipts_above_the_models_own_account(tmp_path: Path):
@@ -1692,3 +1698,83 @@ def test_the_critic_is_told_it_knows_more_than_the_agent_did():
     assert "You are given more than the agent had" in prompt
     assert "same thing last session and it did not work" in prompt
     assert "checked against the map graph before it is used" in prompt
+
+
+# ---------------------------------------------------------------------------
+# `handoff_body`: the retrospective minus the goal that travels on its own
+#
+# `parse_next_goal` lifts the line out, `check_next_goal` rules on it, and the
+# supervisor puts the survivor at the top of the first user message. Leaving it
+# in the file is right -- it is the post-mortem record -- and sending it a
+# second time is wrong three different ways, all of them measured on the live
+# run: duplicated when accepted, contradicting when an operator goal is in
+# force, and re-delivered when the check threw it away.
+# ---------------------------------------------------------------------------
+
+
+def test_handoff_body_drops_the_goal_line_and_keeps_the_retrospective():
+    text = (
+        "**Most costly mistake:** 408 `poke sim` calls re-tested the x=20 wall.\n"
+        "\n"
+        "**Do instead:** `poke goto 20 6`.\n"
+        "\n"
+        "NEXT GOAL: Walk east from (19,6) to Cerulean City."
+    )
+
+    body = handoff_body(text)
+
+    assert "NEXT GOAL" not in body
+    assert "408 `poke sim` calls" in body
+    assert "`poke goto 20 6`" in body
+    # Measured on the live run's HANDOFF.md: 1,094 bytes down to 1,008.
+    assert len(body) < len(text)
+
+
+def test_handoff_body_drops_a_goal_written_under_its_own_label():
+    """`parse_next_goal` accepts the split form, so this has to drop both lines.
+
+    Dropping the label alone would leave the goal behind as a bare imperative
+    sentence at the end of the retrospective, which is the same instruction with
+    nothing left to mark it as one.
+    """
+    text = "You re-swept Mt Moon B1F.\n\nNEXT GOAL:\nWalk east to Cerulean City."
+
+    body = handoff_body(text)
+
+    assert body == "You re-swept Mt Moon B1F."
+
+
+def test_handoff_body_leaves_a_retrospective_that_never_named_a_goal_alone():
+    text = "**Most costly mistake:** you re-swept B1F.\n\n**Do instead:** take (27,3)."
+
+    assert handoff_body(text) == text
+
+
+def test_handoff_body_keeps_the_truncation_marker():
+    """A shortened handoff has to keep saying that it was shortened."""
+    text = "The tail of some reasoning.\n\n_[truncated: 8593 earlier words not shown]_"
+
+    assert "_[truncated" in handoff_body(text)
+
+
+def test_handoff_body_survives_an_empty_handoff():
+    assert handoff_body("") == ""
+    assert handoff_body("NEXT GOAL: Walk east.") == ""
+
+
+def test_the_exits_line_prints_the_star_legend_only_when_a_star_is_there():
+    """22 bytes teaching a notation the sentence next to it does not use.
+
+    Measured on the live run's session 6: "Every way off Route 3 (* = never
+    stepped on): walk north -> Route 4; walk west -> Pewter City." Nothing was
+    starred, and the legend was paid for anyway, once per session.
+    """
+    facts = SessionFacts(exits="walk north -> Route 4", ended_map="Route 3")
+    plain = "\n".join(facts.lines())
+
+    starred = SessionFacts(exits="walk north -> Route 4*", ended_map="Route 3")
+    marked = "\n".join(starred.lines())
+
+    assert "Every way off Route 3: walk north -> Route 4." in plain
+    assert "never stepped on" not in plain
+    assert "Every way off Route 3 (* = never stepped on): walk north -> Route 4*." in marked
