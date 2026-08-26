@@ -16,7 +16,7 @@ import math
 import os
 import tempfile
 from pathlib import Path
-from typing import Dict, FrozenSet, Iterable, List, NamedTuple, Optional, Set, Tuple
+from typing import Dict, FrozenSet, Iterable, List, NamedTuple, Optional, Sequence, Set, Tuple
 
 from PIL import Image, ImageDraw, ImageFont
 
@@ -142,6 +142,45 @@ def canonical_maps() -> Dict[int, CanonicalMap]:
         table = {}
     _CANONICAL = table
     return _CANONICAL
+
+
+def _label_warps(map_name: str, coords: Sequence[Coord]) -> List[Dict[str, object]]:
+    """Attach each warp's destination, because eight bare coordinates say nothing.
+
+    On Mt Moon B1F this used to print
+
+        warps: (5,5) (13,27) (17,11) (21,17) (23,3) (25,9) (25,15) (27,3)
+
+    Seven of those are ladders further into the mountain and one, (27,3), is the
+    only way out, to Route 4, which connects east to Cerulean City -- the goal.
+    Nothing in that line distinguished them. The run spent 8,387 presses, 56% of
+    itself, inside Mt. Moon, stood on B1F thirty separate times, and never got
+    closer to (27,3) than (25,8).
+
+    The destination comes from the generated map table, so a warp the player has
+    seen but never taken is still named. Unknown stays unlabelled rather than
+    guessed.
+    """
+    try:
+        from pokemon_agent import gamedata
+
+        record = gamedata.world().get(map_name) or {}
+        known = {
+            (w.get("x"), w.get("y")): w.get("to_map")
+            for w in (record.get("warps") or [])
+            if w.get("to_map")
+        }
+    except Exception:
+        known = {}
+
+    labelled: List[Dict[str, object]] = []
+    for x, y in coords:
+        entry: Dict[str, object] = {"x": x, "y": y}
+        target = known.get((x, y))
+        if target:
+            entry["to"] = target
+        labelled.append(entry)
+    return labelled
 
 
 def _inside(coord: Coord, width: int, height: int) -> bool:
@@ -672,7 +711,7 @@ class ExploredMaps:
             "width": record.width,
             "height": record.height,
             "coverage": self.coverage(map_id),
-            "warps": [{"x": x, "y": y} for x, y in sorted(record.warps)],
+            "warps": _label_warps(record.map_name, sorted(record.warps)),
             "unexplored_nearest": self.unexplored_nearest(map_id, origin),
             "legend": dict(LEGEND),
         }

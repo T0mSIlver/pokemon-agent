@@ -184,6 +184,39 @@ def read_action_contexts(run_log: Optional[Path]) -> list[ActionContext]:
     return out
 
 
+def read_events(run_log: Optional[Path], type_name: str) -> list[tuple[float, dict[str, Any]]]:
+    """``(epoch, record)`` for every run-log entry of one type, oldest first.
+
+    Same trick as :func:`read_action_contexts`: filter the raw bytes on the type
+    string before parsing, so a thirty-megabyte log costs one scan plus a few
+    dozen small JSON parses rather than 200,000 large ones.
+    """
+
+    if run_log is None or not type_name:
+        return []
+    try:
+        raw = run_log.read_bytes()
+    except OSError:
+        return []
+    marker = f'"{type_name}"'.encode()
+    out: list[tuple[float, dict[str, Any]]] = []
+    for line in raw.split(b"\n"):
+        if marker not in line:
+            continue
+        try:
+            payload = json.loads(line)
+        except (json.JSONDecodeError, ValueError, UnicodeDecodeError):
+            continue
+        if not isinstance(payload, dict) or payload.get("type") != type_name:
+            continue
+        at = parse_timestamp(payload.get("timestamp"))
+        if at is None:
+            continue
+        out.append((at, payload))
+    out.sort(key=lambda item: item[0])
+    return out
+
+
 class ContextOracle:
     """Answers "was the game in a dialog or a battle at time *t*?".
 

@@ -545,3 +545,70 @@ def test_no_party_no_trigger():
 def test_toothless_is_registered_and_outranks_being_lost():
     names = {d.name for d in default_detectors()}
     assert "toothless" in names
+
+
+# ---------------------------------------------------------------------------
+# A standing condition must not mask an episodic one
+#
+# Measured over one run: all 13 interventions fired on `low_hp`, because HP sat
+# at 15-30% for 59% of the run and low_hp outranks circling -- which was itself
+# firing in 53 of the windows it lost. The detector aimed at the actual failure
+# never got a turn, and 0 milestones came of the 13 that did.
+# ---------------------------------------------------------------------------
+
+
+def _hurt_and_circling(n=60):
+    return [receipt(seq=i, pos=(i % 3, 0), hp=(9, 65), presses=8) for i in range(n)]
+
+
+def test_a_second_look_at_the_same_condition_yields_to_a_fresh_one():
+    window = _hurt_and_circling()
+    policy = InterventionPolicy(
+        detectors=(LowHP(), Circling(ratio=2.0, min_samples=10)),
+        cooldown_presses=0,
+    )
+
+    first = policy.evaluate(window)
+    assert first.name == "low_hp", "danger should win the first time"
+    policy.record(first, total_presses=100)
+
+    second = policy.evaluate(window)
+    assert second.name == "circling", "the answered condition must stop masking"
+
+
+def test_an_answered_detector_wins_again_once_its_condition_changed():
+    window = _hurt_and_circling()
+    policy = InterventionPolicy(
+        detectors=(LowHP(), Circling(ratio=2.0, min_samples=10)),
+        cooldown_presses=0,
+    )
+    policy.record(policy.evaluate(window), total_presses=100)
+    assert policy.evaluate(window).name == "circling"
+
+    policy.clear_answered("low_hp")
+    assert policy.evaluate(window).name == "low_hp"
+
+
+def test_when_everything_has_been_answered_the_most_urgent_still_wins():
+    # Silence would be worse: the run is still in trouble.
+    window = _hurt_and_circling()
+    policy = InterventionPolicy(
+        detectors=(LowHP(), Circling(ratio=2.0, min_samples=10)),
+        cooldown_presses=0,
+    )
+    policy.answered.update({"low_hp", "circling"})
+    assert policy.evaluate(window).name == "low_hp"
+
+
+def test_stalled_fires_inside_a_window_the_policy_actually_passes_it():
+    # The threshold is in presses and the window is in receipts. At 800 presses
+    # against a median 411-press window, this detector fired in 2% of the windows
+    # it was asked about, which is off, not strict.
+    policy = InterventionPolicy()
+    window = [receipt(seq=i, presses=4, pos=(i, 0)) for i in range(policy.window)]
+    spent = sum(r.presses for r in window)
+    assert spent >= StalledMilestones().presses, (
+        f"a full {policy.window}-receipt window carries {spent} presses, "
+        f"under the {StalledMilestones().presses}-press threshold"
+    )
+    assert StalledMilestones().check(window, {}) is not None

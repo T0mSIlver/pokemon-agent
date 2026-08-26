@@ -15,6 +15,13 @@ FOREST_SIZE = (34, 48)
 #: A real Viridian Forest warp, so a store round trip does not repair it away.
 FOREST_WARP = {"x": 2, "y": 0}
 
+
+def _coords(warps):
+    """Just the tiles. A warp also names where it goes; these tests are about
+    geometry and repair, and the label has its own test."""
+    return [(w["x"], w["y"]) for w in warps]
+
+
 CITY_ID = 1
 CITY_NAME = "Viridian City"
 
@@ -248,7 +255,7 @@ def test_a_transition_snapshot_is_rejected_instead_of_merged(tmp_path):
 
     summary = maps.summary(SCHOOL_ID)
     assert (summary["width"], summary["height"]) == (8, 8)
-    assert summary["warps"] == SCHOOL_WARPS
+    assert _coords(summary["warps"]) == _coords(SCHOOL_WARPS)
     assert summary["coverage"]["seen"] == 64
 
 
@@ -350,7 +357,7 @@ def test_loading_repairs_a_store_that_holds_impossible_geometry(tmp_path):
     assert SCHOOL_ID in maps.repairs
     summary = maps.summary(SCHOOL_ID)
     assert (summary["width"], summary["height"]) == (8, 8)
-    assert summary["warps"] == SCHOOL_WARPS
+    assert _coords(summary["warps"]) == _coords(SCHOOL_WARPS)
     assert summary["coverage"]["seen"] == 64  # the 1440 city tiles are gone
     assert maps.visited(SCHOOL_ID) == {(2, 7)}
     assert maps.dirty is True
@@ -514,7 +521,7 @@ def test_the_summary_is_shape_and_counts_with_no_grid_in_it(tmp_path):
     assert payload["map_name"] == FOREST_NAME
     assert (payload["width"], payload["height"]) == FOREST_SIZE
     assert payload["player"] == {"x": 5, "y": 5}
-    assert payload["warps"] == [FOREST_WARP]
+    assert _coords(payload["warps"]) == _coords([FOREST_WARP])
     assert payload["coverage"]["total"] == 34 * 48
     assert "ascii" not in payload
 
@@ -799,3 +806,35 @@ def test_a_store_written_before_counts_existed_migrates_to_one_each(tmp_path):
 # ---------------------------------------------------------------------------
 # Compass
 # ---------------------------------------------------------------------------
+
+
+# ---------------------------------------------------------------------------
+# A warp says where it goes
+#
+# `poke map` on Mt Moon B1F used to print eight bare coordinates. Seven were
+# ladders further into the mountain; (27,3) was the only way out, to Route 4,
+# which connects east to Cerulean City. The run spent 8,387 presses -- 56% of
+# itself -- inside Mt. Moon and never got closer to it than (25,8).
+# ---------------------------------------------------------------------------
+
+
+def test_a_warp_carries_its_destination():
+    from pokemon_agent.explored_map import _label_warps
+
+    labelled = _label_warps("Mt Moon B1F", [(27, 3), (17, 11)])
+    by_tile = {(w["x"], w["y"]): w.get("to") for w in labelled}
+    assert by_tile[(27, 3)] == "Route 4", "the one exit must name itself"
+    assert by_tile[(17, 11)] == "Mt Moon B2F", "and the ladders must name themselves"
+
+
+def test_an_unknown_warp_is_left_unlabelled_rather_than_guessed():
+    from pokemon_agent.explored_map import _label_warps
+
+    labelled = _label_warps("Mt Moon B1F", [(0, 0)])
+    assert labelled == [{"x": 0, "y": 0}]
+
+
+def test_an_unknown_map_labels_nothing_and_does_not_raise():
+    from pokemon_agent.explored_map import _label_warps
+
+    assert _label_warps("Not A Real Map", [(1, 2)]) == [{"x": 1, "y": 2}]

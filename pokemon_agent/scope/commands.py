@@ -13,19 +13,20 @@ from dataclasses import dataclass
 from typing import Any, Optional
 
 from pokemon_agent.bench.registry import Receipt, RunRecord, RunRegistry
-from pokemon_agent.scope import analysis, render
+from pokemon_agent.scope import analysis, beliefs, progression, render, truth
 from pokemon_agent.scope.discover import Paths, list_sessions, resolve_session
 from pokemon_agent.scope.runs import (
     ContextOracle,
     LadderProgress,
     ladder_progress,
     read_action_contexts,
+    read_events,
     read_json,
     receipts_between,
     resolve_run_id,
     run_metrics,
 )
-from pokemon_agent.scope.transcript import Call, Session, parse_session
+from pokemon_agent.scope.transcript import Call, Session, parse_session, parse_timestamp
 
 #: Rows a table prints before it collapses into "and N more". ``--full`` lifts it.
 DEFAULT_ROWS = 14
@@ -49,8 +50,13 @@ class Context:
     run_id: Optional[str] = None
     full: bool = False
     window: int = analysis.DEFAULT_WINDOW
+    #: Presses each side of a split or an intervention gets measured over.
+    span: int = progression.DEFAULT_INTERVENTION_SPAN
+    #: Where to cut the run for ``split``, e.g. ``press:7000`` or ``save:foo``.
+    at: Optional[str] = None
 
     _session: Optional[Session] = None
+    _sessions: Optional[list[Session]] = None
     _record: Optional[RunRecord] = None
     _oracle: Optional[ContextOracle] = None
 
@@ -82,6 +88,29 @@ class Context:
         if run_id is None:
             self._record = record
         return record
+
+    def run_sessions(self) -> list[Session]:
+        """Every transcript written while the current run was being played.
+
+        A workspace outlives a run — this one holds transcripts from two — so a
+        report about *this* run has to drop the ones whose steps never touched
+        it. Filtering on the run's own first and last receipt is the only clock
+        both halves of the data share. ``--session`` narrows it to one.
+        """
+
+        if self._sessions is not None:
+            return self._sessions
+        paths = list_sessions(self.paths.session_dir)
+        if self.session_id:
+            chosen = resolve_session(self.paths.session_dir, self.session_id)
+            paths = [chosen] if chosen is not None else []
+        sessions = [parse_session(path) for path in paths]
+        try:
+            low, high = progression.run_window(self.record())
+        except ScopeError:
+            low, high = float("-inf"), float("inf")
+        self._sessions = [session for session in sessions if _overlaps(session, low, high)]
+        return self._sessions
 
     def oracle(self) -> ContextOracle:
         if self._oracle is None:
@@ -129,6 +158,16 @@ def _outcome(call: Call) -> str:
 
 def _share(part: int, whole: int) -> str:
     return render.pct(part / whole) if whole else "0%"
+
+
+def _overlaps(session: Session, low: float, high: float) -> bool:
+    """Did any part of this transcript happen while the run was being played?"""
+
+    started = session.started_at
+    ended = session.ended_at if session.ended_at is not None else started
+    if started is None or ended is None:
+        return True
+    return started <= high and ended >= low
 
 
 def _sequence(tokens: tuple[str, ...]) -> str:
@@ -832,6 +871,487 @@ def command_diff(ctx: Context, run_a: str, run_b: str) -> tuple[list[str], dict[
         ],
     }
     return lines, payload
+
+
+# -- claims -------------------------------------------------------------------
+
+
+def command_claims(ctx: Context) -> tuple[list[str], dict[str, Any]]:
+    """What the model said was true, checked against the game's own data."""
+
+    sessions = ctx.run_sessions()
+    if not sessions:
+        raise ScopeError("no transcripts found for this run")
+    report = beliefs.claims_report(sessions, limit=30 if ctx.full else 10)
+
+    narration = _share(report.narrating_calls, report.total_calls)
+    lines = [
+        f"CLAIMS  run {ctx.record().run_id}  {len(sessions)} sessions"
+        f"  {report.checked} claims checked  {report.wrong} false",
+        "",
+        f"narration  {render.thousands(report.narrating_calls)}"
+        f" of {render.thousands(report.total_calls)} bash calls ({narration})"
+        " carry a # comment; that is the only place this model states a belief",
+        "",
+    ]
+    if not report.tallies:
+        lines.append("  nothing checkable was said. No coordinates, no map names.")
+    else:
+        lines += render.table(
+            ["claim", "checked", "true", "false", "wrong", "unchecked"],
+            [
+                [
+                    tally.kind,
+                    str(tally.checked),
+                    str(tally.true),
+                    str(tally.false),
+                    render.pct(tally.wrong_share),
+                    str(tally.unchecked),
+                ]
+                for tally in report.tallies
+            ],
+            align="lrrrrr",
+        )
+    if report.reasons:
+        lines += ["", "why the false ones were false"]
+        lines += render.table(
+            ["", ""],
+            [[why, str(count)] for why, count in report.reasons],
+            align="lr",
+        )
+    if report.offsets:
+        repeated = [(offset, count) for offset, count in report.offsets if count > 1]
+        visible, hidden = render.capped(repeated or report.offsets, 6)
+        lines += ["", "how far off, when it was off (claimed minus actual)"]
+        lines += render.table(
+            ["", ""],
+            [[f"({offset[0]:+d},{offset[1]:+d})", str(count)] for offset, count in visible],
+            align="lr",
+        )
+        if hidden:
+            lines.append(f"  ... and {hidden} more distinct offsets")
+    worst, hidden = render.capped(report.worst, ctx.row_limit)
+    if worst:
+        lines += ["", "the biggest misses"]
+        lines += render.table(
+            ["step", "map", "said", "claimed", "actual", "why"],
+            [
+                [
+                    str(claim.step),
+                    render.truncate(claim.map_name, 18),
+                    render.truncate(claim.said, 34),
+                    str(claim.claimed),
+                    str(claim.actual),
+                    render.truncate(claim.why, 24),
+                ]
+                for claim in worst
+            ],
+            align="rlllll",
+        )
+        if hidden:
+            lines.append(f"  ... and {hidden} more (--full)")
+    lines += [
+        "",
+        "a claim is only counted when the check is exact; ambiguous sentences are",
+        "unchecked, never guessed at. position = where it said it was standing before",
+        "the call, destination = where it said the call would end, both settled by the",
+        f"./poke reply. warp and map are settled against gamedata ({truth.known_maps()} maps).",
+    ]
+    payload = report.to_dict()
+    payload["run_id"] = ctx.record().run_id
+    return lines, payload
+
+
+# -- episodes -----------------------------------------------------------------
+
+
+def command_episodes(ctx: Context, map_name: Optional[str] = None) -> tuple[list[str], dict]:
+    """Presses per stay on a map, and the doors out that were never taken."""
+
+    record = ctx.record()
+    report = progression.episode_report(record)
+    if map_name:
+        return _episode_detail(ctx, report, map_name)
+
+    total = sum(stay.presses for stay in report.stays)
+    lines = [
+        f"EPISODES  run {record.run_id}  {len(report.episodes)} stays"
+        f"  {len(report.stays)} maps  {render.thousands(total)} presses",
+        "",
+    ]
+    stays, hidden = render.capped(report.stays, ctx.row_limit)
+    lines += render.table(
+        ["map", "stays", "presses", "med", "tiles", "of map", "new/100p"],
+        [
+            [
+                stay.map_name,
+                str(stay.episodes),
+                render.thousands(stay.presses),
+                render.thousands(stay.median_presses),
+                str(stay.tiles),
+                _share(stay.tiles, stay.map_tiles) if stay.map_tiles else "-",
+                f"{stay.yield_per_100:.1f}",
+            ]
+            for stay in stays
+        ],
+        align="lrrrrrr",
+    )
+    if hidden:
+        lines.append(f"  ... and {hidden} more maps (--full)")
+
+    pairs, pairs_hidden = render.capped(report.transitions, 8 if not ctx.full else None)
+    if pairs:
+        lines += ["", "map changes, most travelled first"]
+        lines += render.table(
+            ["", "", ""],
+            [[pair[0], "->  " + pair[1], f"x{count}"] for pair, count in pairs],
+            align="llr",
+        )
+        if pairs_hidden:
+            lines.append(f"  ... and {pairs_hidden} more edges (--full)")
+
+    untried, untried_hidden = render.capped(report.untried, ctx.row_limit)
+    lines += ["", "exits the game data lists that this run never took"]
+    if not untried:
+        lines.append("  none: every door out of every visited map was used at least once")
+    else:
+        lines += render.table(
+            ["", "", ""],
+            [[pair[0], "->  " + pair[1], ""] for pair in untried],
+            align="lll",
+        )
+        if untried_hidden:
+            lines.append(f"  ... and {untried_hidden} more (--full)")
+    lines += [
+        "",
+        "a stay is one unbroken run of receipts on one map. med = median presses per",
+        "stay: many short stays on the same map is bouncing, one long stay is a grind.",
+        "'of map' is tiles stood on over the tiles the game says the map has.",
+        "scope episodes <map> lists every stay on one map.",
+    ]
+    return lines, report.to_dict()
+
+
+def _episode_detail(
+    ctx: Context, report: progression.EpisodeReport, map_name: str
+) -> tuple[list[str], dict[str, Any]]:
+    """Every stay on one map, in order."""
+
+    wanted = map_name.lower()
+    names = sorted({episode.map_name for episode in report.episodes})
+    matches = [name for name in names if wanted in name.lower()]
+    if not matches:
+        raise ScopeError(
+            f"the run never stood on a map matching {map_name!r}; it visited: " + ", ".join(names)
+        )
+    chosen = matches[0]
+    episodes = [episode for episode in report.episodes if episode.map_name == chosen]
+    stay = next((item for item in report.stays if item.map_name == chosen), None)
+
+    lines = [
+        f"EPISODES  {chosen}  {len(episodes)} stays"
+        f"  {render.thousands(stay.presses if stay else 0)} presses"
+        f"  {stay.tiles if stay else 0} tiles"
+        + (f" of {stay.map_tiles}" if stay and stay.map_tiles else ""),
+        "",
+    ]
+    visible, hidden = render.capped(episodes, None if ctx.full else 20)
+    lines += render.table(
+        ["#", "seq", "presses", "entry", "exit", "new", "blocked", "left for"],
+        [
+            [
+                str(episode.index),
+                f"{episode.first_seq}-{episode.last_seq}",
+                render.thousands(episode.presses),
+                str(episode.entry or "-"),
+                str(episode.exit or "-"),
+                str(episode.new_tiles),
+                str(episode.blocked_batches),
+                render.truncate(episode.went_to or "(still here)", 20),
+            ]
+            for episode in visible
+        ],
+        align="rrrlllrl",
+    )
+    if hidden:
+        lines.append(f"  ... and {hidden} more stays (--full)")
+
+    known = truth.map_truth(chosen)
+    if known is not None and known.warps:
+        lines += ["", f"warps the game data puts on {chosen}"]
+        taken = {pair[1] for pair, _ in report.transitions if pair[0] == chosen}
+        lines += render.table(
+            ["at", "leads to", "went there"],
+            [
+                [str(warp.at), warp.to_map, "yes" if warp.to_map in taken else "NEVER"]
+                for warp in known.warps
+            ],
+            align="lll",
+        )
+        lines.append(
+            "  'went there' is whether the run ever made that map-to-map move, not"
+            " whether it used that exact tile: a receipt records where a warp put the"
+        )
+        lines.append(
+            "  player, never the tile it stepped from. NEVER is therefore certain; yes"
+            " may have gone through a different door to the same place."
+        )
+    barren = [episode for episode in episodes if episode.new_tiles == 0]
+    lines += [
+        "",
+        f"{len(barren)} of {len(episodes)} stays found no ground the run had not already"
+        f" stood on ({_share(sum(e.presses for e in barren), stay.presses if stay else 0)}"
+        " of this map's presses).",
+    ]
+    payload = {
+        "map": chosen,
+        "episodes": [episode.to_dict() for episode in episodes],
+        "stay": stay.to_dict() if stay else None,
+        "barren_episodes": len(barren),
+    }
+    return lines, payload
+
+
+# -- split --------------------------------------------------------------------
+
+#: How a marker names a moment. ``press:`` and ``seq:`` are positions in the
+#: run; the rest are events that can be named after the fact, which is the point
+#: — a change shipped at 03:14 is remembered as "when interventions went on".
+MARKER_HELP = "press:N  seq:N  session:N  map:NAME  save:NAME  intervention:N  time:HH:MM"
+
+#: Batches on the thinner side below which a split is noise. A healthy 400-press
+#: window on this run holds 100-130 batches, so a side in the low tens is a
+#: handful of mega-batches and a percentage change across it means nothing.
+MIN_TRUSTWORTHY_BATCHES = 50
+
+
+def _marker_time(ctx: Context, marker: str) -> float:
+    """Epoch seconds for a marker, or a ScopeError naming what was available."""
+
+    kind, _, value = marker.partition(":")
+    kind = kind.strip().lower()
+    value = value.strip()
+    if not value:
+        raise ScopeError(f"a marker needs a value: {MARKER_HELP}")
+    record = ctx.record()
+    receipts = [receipt for receipt in record.receipts if receipt.t]
+
+    if kind == "press":
+        wanted = _as_int(value, marker)
+        spent = 0
+        for receipt in receipts:
+            spent += receipt.presses
+            if spent >= wanted:
+                return receipt.t
+        raise ScopeError(f"the run has only spent {spent} presses, fewer than {wanted}")
+    if kind == "seq":
+        wanted = _as_int(value, marker)
+        for receipt in receipts:
+            if receipt.seq >= wanted:
+                return receipt.t
+        raise ScopeError(f"no receipt with seq >= {wanted}")
+    if kind == "session":
+        wanted = _as_int(value, marker)
+        for receipt in receipts:
+            if receipt.extra.get("session") == wanted:
+                return receipt.t
+        seen = sorted({r.extra.get("session") for r in receipts if r.extra.get("session")})
+        raise ScopeError(f"no receipts from session {wanted}; the run has sessions {seen}")
+    if kind == "map":
+        for receipt in receipts:
+            if receipt.map_name.lower() == value.lower():
+                return receipt.t
+        names = sorted({receipt.map_name for receipt in receipts if receipt.map_name})
+        raise ScopeError(f"the run never stood on {value!r}; it visited: " + ", ".join(names))
+    if kind == "save":
+        saves = read_events(ctx.paths.run_log, "save")
+        for at, payload in saves:
+            if str(payload.get("name") or "") == value:
+                return at
+        names = sorted({str(payload.get("name") or "") for _, payload in saves})
+        raise ScopeError(
+            f"no save called {value!r} in the run log; it holds {len(names)} names"
+            + (": " + ", ".join(names[:12]) if names else "")
+        )
+    if kind == "intervention":
+        wanted = _as_int(value, marker)
+        found = progression.find_injections(
+            ctx.run_sessions(), between=progression.run_window(record)
+        )
+        if not 1 <= wanted <= len(found):
+            raise ScopeError(f"this run has {len(found)} interventions, not a #{wanted}")
+        return found[wanted - 1][1].at or 0.0
+    if kind == "time":
+        return _clock_time(value, receipts)
+    raise ScopeError(f"unknown marker {marker!r}. Use one of: {MARKER_HELP}")
+
+
+def _as_int(value: str, marker: str) -> int:
+    try:
+        return int(value)
+    except ValueError as exc:
+        raise ScopeError(f"{marker!r} needs a whole number") from exc
+
+
+def _clock_time(value: str, receipts: list[Receipt]) -> float:
+    """``time:14:05`` is today on the run's clock; a full ISO stamp is absolute."""
+
+    if len(value) <= 5 and ":" in value:
+        anchor = receipts[0].t if receipts else time.time()
+        day = time.localtime(anchor)
+        hour, _, minute = value.partition(":")
+        try:
+            stamp = time.struct_time(
+                (day.tm_year, day.tm_mon, day.tm_mday, int(hour), int(minute), 0, 0, 0, -1)
+            )
+        except ValueError as exc:
+            raise ScopeError(f"{value!r} is not a HH:MM time") from exc
+        return time.mktime(stamp)
+    parsed = parse_timestamp(value)
+    if parsed is None:
+        raise ScopeError(f"{value!r} is not a time this can read")
+    return parsed
+
+
+def command_split(ctx: Context, marker: Optional[str] = None) -> tuple[list[str], dict[str, Any]]:
+    """The same run, before and after one moment in it."""
+
+    marker = marker or ctx.at
+    if not marker:
+        raise ScopeError(f"split needs a marker: scope split <marker>.  {MARKER_HELP}")
+    at = _marker_time(ctx, marker)
+    record = ctx.record()
+    span = None if ctx.full else ctx.span
+    report = progression.split_report(record, marker=marker, at=at, span=span)
+
+    scope_note = (
+        f"the {render.thousands(span)} presses either side" if span else "the whole run either side"
+    )
+    lines = [
+        f"SPLIT  run {record.run_id}  at {marker}  ({render.stamp(at)})",
+        f"       comparing {scope_note} of that moment",
+        "",
+    ]
+    rows = []
+    for name, heading, low, high, change in report.deltas():
+        rows.append(
+            [
+                heading,
+                _split_value(name, low),
+                _split_value(name, high),
+                "-" if change is None else f"{change:+.0%}",
+            ]
+        )
+    lines += render.table(["metric", "before", "after", "change"], rows, align="lrrr")
+    lines += [
+        "",
+        f"before  batches {report.before.first_seq}-{report.before.last_seq}",
+        f"after   batches {report.after.first_seq}-{report.after.last_seq}",
+    ]
+    thin = min(report.before.batches, report.after.batches)
+    if thin < MIN_TRUSTWORTHY_BATCHES:
+        lines.append(
+            f"  CAUTION: the thinner side is {thin} batches. Treat every change above as noise."
+        )
+    lines += [
+        "",
+        "new/1k press is tiles stood on for the first time per thousand presses, which is",
+        "the only output measure that does not need a milestone to move. --full drops the",
+        "press cap and compares the entire run either side instead.",
+    ]
+    return lines, report.to_dict()
+
+
+def _split_value(name: str, value: float) -> str:
+    if name in progression.SHARE_FIELDS:
+        return render.pct(value)
+    if float(value).is_integer():
+        return render.thousands(int(value))
+    return f"{value:,.1f}"
+
+
+# -- intervene ----------------------------------------------------------------
+
+
+def command_intervene(ctx: Context) -> tuple[list[str], dict[str, Any]]:
+    """Every intervention: what fired it, what it asked for, what changed."""
+
+    record = ctx.record()
+    report = progression.intervention_report(record, ctx.run_sessions(), span=ctx.span)
+
+    lines = [
+        f"INTERVENE  run {record.run_id}  {len(report.events)} delivered"
+        f"  measured over {render.thousands(report.span)} presses each side",
+        "",
+    ]
+    if not report.events:
+        lines.append("  no advice was pushed into any session of this run.")
+    else:
+        visible, hidden = render.capped(report.events, ctx.row_limit)
+        lines += render.table(
+            ["#", "at", "trigger", "asked", "did it", "hp", "new/1k", "advice"],
+            [
+                [
+                    str(event.index),
+                    render.clock(event.at),
+                    event.trigger or "?",
+                    event.asked_for or "-",
+                    _followed_word(event.followed),
+                    f"{event.hp_at:.0%}->{event.hp_best_after:.0%}",
+                    f"{event.before.new_per_1k:.0f}->{event.after.new_per_1k:.0f}",
+                    render.truncate(event.headline, 30),
+                ]
+                for event in visible
+            ],
+            align="rlllllll",
+        )
+        if hidden:
+            lines.append(f"  ... and {hidden} more (--full)")
+
+        followed = [event for event in report.events if event.followed is True]
+        asked_heal = [event for event in report.events if "heal" in event.headline.lower()]
+        healed = [event for event in asked_heal if event.healed]
+        better = [
+            event for event in report.events if event.after.new_per_1k > event.before.new_per_1k
+        ]
+        lines += [
+            "",
+            f"followed   {len(followed)} of {len(report.events)} moved in the direction asked"
+            " within the next 6 steps",
+            f"healed     {len(healed)} of {len(asked_heal)} that said 'heal' had the party"
+            f" back above its starting HP within {render.thousands(report.span)} presses",
+            f"new ground {len(better)} of {len(report.events)} covered more fresh tiles"
+            " after than before",
+            f"milestones {sum(event.after.milestones for event in report.events)} reached in"
+            " any of the after-windows",
+        ]
+
+    if report.standing:
+        lines += [
+            "",
+            f"how much of the run each detector was already firing on"
+            f" ({report.samples} sampled windows)",
+        ]
+        lines += render.table(
+            ["detector", "windows", "share"],
+            [[name, str(count), _share(count, report.samples)] for name, count in report.standing],
+            align="lrr",
+        )
+        lines.append("  a detector standing far above the number of interventions delivered is a")
+        lines.append("  signal the budget is throwing away, not a signal that is missing.")
+    lines += [
+        "",
+        "the trigger column is replayed, not recorded: the harness's own detectors from",
+        "pokemon_agent.interventions are re-run over the receipts up to that moment, so it",
+        "is the same rule that fired, evaluated on the same data.",
+    ]
+    return lines, report.to_dict()
+
+
+def _followed_word(followed: Optional[bool]) -> str:
+    if followed is None:
+        return "-"
+    return "yes" if followed else "NO"
 
 
 # -- runs / sessions listing --------------------------------------------------

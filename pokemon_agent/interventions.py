@@ -88,7 +88,13 @@ class StalledMilestones:
     about *why*. That is the thinking session's job.
     """
 
-    presses: int = 800
+    #: Presses, and it has to fit inside the policy's window, which is counted in
+    #: *receipts*. Measured over 212 real windows: the median 120-receipt window
+    #: holds 411 presses and only 5 of them ever reached 800, so at 800 this
+    #: detector -- the one aimed squarely at "the run is not progressing" -- fired
+    #: in 2% of the windows it was asked about. A threshold above the window is a
+    #: detector that is switched off, not a strict one.
+    presses: int = 400
     name: str = "stalled"
 
     def check(self, window: Sequence[Receipt], state: Mapping[str, Any]) -> Optional[Trigger]:
@@ -434,6 +440,10 @@ class InterventionPolicy:
 
     fired: list[tuple[int, str]] = field(default_factory=list)
 
+    #: Detectors already answered once. They stop winning until the caller says
+    #: their condition changed; see the note in :meth:`evaluate`.
+    answered: set[str] = field(default_factory=set)
+
     def evaluate(
         self,
         receipts: Sequence[Receipt],
@@ -458,10 +468,31 @@ class InterventionPolicy:
         ]
         if not candidates:
             return None
-        return max(candidates, key=lambda t: t.priority)
+
+        # A standing condition must not mask an episodic one. Measured over one
+        # run: all 13 interventions fired on `low_hp`, because HP sat at 15-30%
+        # for 59% of the run and `low_hp` outranks `circling`, which was firing in
+        # 53 of the windows it lost. The detector aimed at the actual failure
+        # never got a turn.
+        #
+        # So a detector that has already been answered stops winning until
+        # something changes. Repeating it says nothing new: the thinker was told
+        # about the low HP, it answered, and the HP is still low.
+        fresh = [t for t in candidates if t.name not in self.answered]
+        return max(fresh or candidates, key=lambda t: t.priority)
 
     def record(self, trigger: Trigger, total_presses: int) -> None:
         self.fired.append((total_presses, trigger.name))
+        self.answered.add(trigger.name)
+
+    def clear_answered(self, name: str) -> None:
+        """Let a detector win again, once its condition has actually changed.
+
+        The caller decides what "changed" means, because only it can see the
+        game: a party that healed, a map that was left, a command that finally
+        worked.
+        """
+        self.answered.discard(name)
 
     def remaining(self) -> int:
         return max(0, self.max_per_session - len(self.fired))

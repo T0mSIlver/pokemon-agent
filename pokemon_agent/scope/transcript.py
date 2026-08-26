@@ -368,6 +368,36 @@ class Step:
         return out
 
 
+@dataclass(frozen=True)
+class Injection:
+    """A user-role message that arrived after the session was already playing.
+
+    The goal prompt is the first one and is not an injection. Everything after
+    it was pushed in from outside while the model was mid-run: an intervention's
+    advice, an operator nudge, or the harness's own ``continue``. They are the
+    only record on disk that an intervention happened at all, so they are kept
+    with the step they landed after.
+    """
+
+    #: Index of the next assistant step, i.e. the first one that could react.
+    step: int
+    at: Optional[float]
+    text: str
+
+    @property
+    def is_continue(self) -> bool:
+        """``continue`` is the harness restarting a stalled turn, not advice."""
+
+        return self.text.strip().lower() in {"continue", "continue.", "go on"}
+
+    @property
+    def headline(self) -> str:
+        for line in self.text.splitlines():
+            if line.strip():
+                return line.strip()
+        return ""
+
+
 @dataclass
 class Session:
     """A whole transcript, parsed."""
@@ -380,6 +410,8 @@ class Session:
     thinking_level: str = ""
     goal: str = ""
     steps: list[Step] = field(default_factory=list)
+    #: User messages that arrived after the first one, oldest first.
+    injections: list[Injection] = field(default_factory=list)
     corrupt_lines: int = 0
     truncated_tail: bool = False
 
@@ -485,11 +517,17 @@ def parse_session(path: Path) -> Session:
         at = parse_timestamp(payload.get("timestamp"))
 
         if role == "user":
+            texts: list[str] = []
             for block in blocks:
                 if block.get("type") == "image":
                     pending_images.append(_image_ref(block, "user"))
-                elif block.get("type") == "text" and not session.goal:
-                    session.goal = str(block.get("text") or "").strip()
+                elif block.get("type") == "text":
+                    texts.append(str(block.get("text") or ""))
+            body = "\n".join(part for part in texts if part).strip()
+            if body and not session.goal:
+                session.goal = body
+            elif body:
+                session.injections.append(Injection(step=len(steps), at=at, text=body))
             continue
 
         if role == "assistant":

@@ -339,7 +339,12 @@ def map_lines(payload: dict) -> list[str]:
         lines.append(f"you: ({player.get('x')},{player.get('y')})")
     warps = payload.get("warps") or []
     if warps:
-        lines.append("warps: " + " ".join(f"({w.get('x')},{w.get('y')})" for w in warps))
+        # Name where each one goes. A list of bare coordinates cannot tell the
+        # ladder deeper into a cave from the one door out of it.
+        lines.append("warps:")
+        for w in warps:
+            target = w.get("to")
+            lines.append(f"  ({w.get('x')},{w.get('y')})" + (f" -> {target}" if target else ""))
     nearest = payload.get("unexplored_nearest")
     if nearest:
         lines.append(f"nearest unexplored: ({nearest.get('x')},{nearest.get('y')})")

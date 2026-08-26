@@ -14,12 +14,13 @@ import base64
 import json
 import struct
 import time
+from datetime import datetime, timezone
 from pathlib import Path
 
 import pytest
 
 from pokemon_agent.bench.registry import Receipt, RunRecord, RunRegistry
-from pokemon_agent.scope import analysis, commands, render
+from pokemon_agent.scope import analysis, beliefs, commands, progression, render, truth
 from pokemon_agent.scope.__main__ import main
 from pokemon_agent.scope.discover import (
     DATA_DIR_ENV,
@@ -914,6 +915,548 @@ def test_cli_session_and_loops_on_a_synthetic_workspace(tmp_path: Path, capsys) 
     assert "phases" in session_out
 
 
+# -- ground truth -------------------------------------------------------------
+
+
+def test_map_truth_reads_the_generated_tables() -> None:
+    known = truth.map_truth("Mt Moon B1F")
+    assert known is not None
+    assert (known.width, known.height) == (28, 28)
+    warp = known.warp_at(27, 3)
+    assert warp is not None and warp.to_map == "Route 4"
+    assert known.warp_at(0, 0) is None
+    assert "Route 4" in known.exits
+
+
+def test_a_map_the_game_does_not_have_is_unknown() -> None:
+    assert truth.map_truth("Mt Moon") is None
+    assert truth.map_truth("") is None
+    assert truth.known_maps() == 223
+
+
+def test_connections_count_as_exits() -> None:
+    route4 = truth.map_truth("Route 4")
+    assert route4 is not None
+    assert route4.connections.get("east") == "Cerulean City"
+    assert "Cerulean City" in route4.exits
+
+
+def test_hops_answer_the_same_question_poke_route_does() -> None:
+    path = truth.hops("Mt Moon B1F", "Cerulean City")
+    assert path is not None
+    assert path[0] == "Mt Moon B1F" and path[-1] == "Cerulean City"
+    assert "Route 4" in path
+    assert truth.hop_distance("Route 4", "Cerulean City") == 1
+
+
+def test_harness_verbs_are_asked_of_the_cli_not_hard_coded() -> None:
+    verbs = truth.harness_verbs()
+    assert {"act", "goto", "sim", "guide", "calc"} <= set(verbs)
+
+
+# -- beliefs: extraction ------------------------------------------------------
+
+
+def test_comment_of_takes_whole_line_comments_only() -> None:
+    assert beliefs.comment_of("# Left 4 to (5,10)\n./poke act left:4") == "Left 4 to (5,10)"
+    assert beliefs.comment_of("./poke act left  # not narration") == ""
+    assert beliefs.comment_of("# one\n# two\n./poke state") == "one two"
+
+
+def _claims_for(builder: TranscriptBuilder) -> list:
+    return beliefs.extract_claims(parse_session(builder.path))
+
+
+def test_a_destination_that_happened_is_true(tmp_path: Path) -> None:
+    builder = TranscriptBuilder(tmp_path / "s.jsonl")
+    builder.user("go")
+    builder.turn("# Left 4 to (5,10)\n./poke act left:4", act_result(5, 10, 4))
+    claims = [claim for claim in _claims_for(builder) if claim.kind == "destination"]
+    assert [claim.verdict for claim in claims] == [beliefs.TRUE]
+
+
+def test_walking_into_a_wall_is_named_as_the_reason(tmp_path: Path) -> None:
+    builder = TranscriptBuilder(tmp_path / "s.jsonl")
+    builder.user("go")
+    builder.turn("./poke act left", act_result(9, 10, 1))
+    blocked = json.dumps(
+        {"map": "Route 3", "x": 7, "y": 10, "moved": 2, "blocked_after": 2, "actions_executed": 4}
+    )
+    builder.turn("# Left 4 to (5,10)\n./poke act left:4", blocked)
+    claim = [c for c in _claims_for(builder) if c.kind == "destination"][-1]
+    assert claim.verdict == beliefs.FALSE
+    assert claim.why == beliefs.WHY_BLOCKED
+    assert claim.offset == (-2, 0)
+
+
+def test_a_map_change_under_a_batch_is_named_as_the_reason(tmp_path: Path) -> None:
+    builder = TranscriptBuilder(tmp_path / "s.jsonl")
+    builder.user("go")
+    builder.turn("./poke act up", act_result(17, 15, 1, map_name="Mt Moon 1F"))
+    builder.turn(
+        "# Up 4 to (17,11)\n./poke act up:4",
+        act_result(25, 9, 4, map_name="Mt Moon B1F"),
+    )
+    claim = [c for c in _claims_for(builder) if c.kind == "destination"][-1]
+    assert claim.verdict == beliefs.FALSE
+    assert claim.why == beliefs.WHY_MAP_CHANGED
+    assert claim.map_name == "Mt Moon B1F"
+
+
+def test_being_wrong_about_where_it_stood_is_named_as_the_reason(tmp_path: Path) -> None:
+    builder = TranscriptBuilder(tmp_path / "s.jsonl")
+    builder.user("go")
+    builder.turn("./poke act left", act_result(20, 12, 1))
+    builder.turn("# Left 4 to (12,12)\n./poke act left:4", act_result(16, 12, 4))
+    claim = [c for c in _claims_for(builder) if c.kind == "destination"][-1]
+    assert claim.verdict == beliefs.FALSE
+    assert claim.why == beliefs.WHY_MISPLACED
+
+
+def test_a_stated_position_is_checked_against_the_last_reply(tmp_path: Path) -> None:
+    builder = TranscriptBuilder(tmp_path / "s.jsonl")
+    builder.user("go")
+    builder.turn("./poke act left", act_result(20, 12, 1))
+    builder.turn("# Try up from (20,10)\n./poke act up", act_result(20, 11, 1))
+    builder.turn("# Try up from (20,11)\n./poke act up", act_result(20, 10, 1))
+    positions = [c for c in _claims_for(builder) if c.kind == "position"]
+    assert [c.verdict for c in positions] == [beliefs.FALSE, beliefs.TRUE]
+    assert positions[0].actual == (20, 12)
+
+
+def test_a_multi_leg_plan_is_unchecked_rather_than_guessed_at(tmp_path: Path) -> None:
+    builder = TranscriptBuilder(tmp_path / "s.jsonl")
+    builder.user("go")
+    builder.turn("./poke act left", act_result(20, 12, 1))
+    builder.turn(
+        "# Left 3 to (17,12), up 1 to (17,11), right 3 to (20,11)\n./poke act left:3",
+        act_result(17, 12, 3),
+    )
+    claim = [c for c in _claims_for(builder) if c.kind == "destination"][-1]
+    assert claim.verdict == beliefs.UNCHECKED
+    assert "multi-leg" in claim.why
+
+
+def test_two_movement_calls_on_one_line_are_not_checked(tmp_path: Path) -> None:
+    builder = TranscriptBuilder(tmp_path / "s.jsonl")
+    builder.user("go")
+    builder.turn("./poke act left", act_result(20, 12, 1))
+    builder.turn(
+        "# Walk round to (18,11)\n./poke act left:2; ./poke act up",
+        act_result(18, 12, 2),
+    )
+    assert not [c for c in _claims_for(builder) if c.kind == "destination"]
+
+
+def test_a_warp_claim_is_settled_against_the_game_data(tmp_path: Path) -> None:
+    builder = TranscriptBuilder(tmp_path / "s.jsonl")
+    builder.user("go")
+    builder.turn("./poke act up", act_result(20, 10, 1, map_name="Mt Moon B1F"))
+    builder.turn(
+        "# Head for the warp (27,3)\n./poke act up", act_result(20, 9, 1, map_name="Mt Moon B1F")
+    )
+    builder.turn(
+        "# The door at (2,2) leads out\n./poke act up", act_result(20, 8, 1, map_name="Mt Moon B1F")
+    )
+    warps = [c for c in _claims_for(builder) if c.kind == "warp"]
+    assert [c.verdict for c in warps] == [beliefs.TRUE, beliefs.FALSE]
+    assert warps[0].actual == "Route 4"
+    assert warps[1].why == beliefs.WHY_NO_SUCH_WARP
+
+
+def test_a_map_name_the_game_does_not_have_is_false(tmp_path: Path) -> None:
+    builder = TranscriptBuilder(tmp_path / "s.jsonl")
+    builder.user("go")
+    builder.turn('./poke route "Mt Moon"', "error 404")
+    builder.turn("./poke route Cerulean City", "1 hops")
+    builder.turn("./poke route $target", "?")
+    names = [c for c in _claims_for(builder) if c.kind == "map"]
+    assert [(c.claimed, c.verdict) for c in names] == [
+        ("Mt Moon", beliefs.FALSE),
+        ("Cerulean City", beliefs.TRUE),
+    ]
+
+
+def test_claims_report_tallies_and_ranks_the_worst(tmp_path: Path) -> None:
+    builder = TranscriptBuilder(tmp_path / "s.jsonl")
+    builder.user("go")
+    builder.turn("./poke act left", act_result(20, 12, 1))
+    builder.turn("# Left 4 to (16,12)\n./poke act left:4", act_result(16, 12, 4))
+    builder.turn("# Left 4 to (1,12)\n./poke act left:4", act_result(12, 12, 4))
+    report = beliefs.claims_report([parse_session(builder.path)])
+    assert report.checked == 2 and report.wrong == 1
+    assert report.narrating_calls == 2 and report.total_calls == 3
+    assert report.worst[0].claimed == (1, 12)
+    payload = report.to_dict()
+    assert payload["by_kind"][0]["kind"] == "destination"
+    assert json.dumps(payload)
+
+
+# -- episodes -----------------------------------------------------------------
+
+
+def _walk_dict(seq: int, map_name: str, x: int, y: int, **kwargs) -> dict:
+    payload = {
+        "seq": seq,
+        "t": 1_787_698_000.0 + seq,
+        "map": map_name,
+        "pos": [x, y],
+        "presses": 4,
+        "moved": 4,
+        "milestones_new": [],
+        "tool": "action",
+        "exit": 0,
+    }
+    payload.update(kwargs)
+    return payload
+
+
+def _walk(seq: int, map_name: str, x: int, y: int, **kwargs) -> Receipt:
+    return Receipt.from_dict(_walk_dict(seq, map_name, x, y, **kwargs))
+
+
+def _store(tmp_path: Path, run_id: str, rows: list[dict]) -> None:
+    registry = RunRegistry(tmp_path, fsync_every=0)
+    registry.start_run(
+        harness_sha="deadbeef",
+        config_hash="cfg",
+        model="test-model",
+        start_checkpoint=None,
+        goal="test goal",
+        run_id=run_id,
+        started_at=1_787_698_000.0,
+    )
+    for row in rows:
+        registry.append(run_id, row)
+
+
+def test_episodes_split_on_every_map_change() -> None:
+    record = make_record(
+        [
+            _walk(0, "Route 3", 1, 1),
+            _walk(1, "Route 3", 2, 1),
+            _walk(2, "Route 4", 5, 5),
+            _walk(3, "Route 3", 3, 1),
+        ]
+    )
+    report = progression.episode_report(record)
+    assert [episode.map_name for episode in report.episodes] == [
+        "Route 3",
+        "Route 4",
+        "Route 3",
+    ]
+    assert report.episodes[0].presses == 8
+    assert report.episodes[0].went_to == "Route 4"
+    assert report.episodes[-1].went_to == ""
+    assert dict(report.transitions)[("Route 3", "Route 4")] == 1
+
+
+def test_a_map_visited_twice_is_one_stay_row_and_two_episodes() -> None:
+    record = make_record(
+        [_walk(0, "Route 3", 1, 1), _walk(1, "Route 4", 5, 5), _walk(2, "Route 3", 1, 1)]
+    )
+    stays = {stay.map_name: stay for stay in progression.episode_report(record).stays}
+    assert stays["Route 3"].episodes == 2
+    assert stays["Route 3"].presses == 8
+    # The tile was only new the first time it was stood on.
+    assert stays["Route 3"].new_tiles == 1
+    assert stays["Route 3"].tiles == 1
+
+
+def test_untried_edges_name_the_doors_the_run_walked_past() -> None:
+    record = make_record([_walk(0, "Mt Moon B1F", 20, 10), _walk(1, "Mt Moon B2F", 25, 9)])
+    untried = progression.episode_report(record).untried
+    assert ("Mt Moon B1F", "Route 4") in untried
+    assert ("Mt Moon B1F", "Mt Moon B2F") not in untried
+
+
+def test_an_unknown_map_contributes_no_untried_edges() -> None:
+    record = make_record([_walk(0, "Nowhere At All", 1, 1)])
+    assert progression.episode_report(record).untried == ()
+
+
+# -- windows and splits -------------------------------------------------------
+
+
+def test_window_stats_ignore_receipts_that_pressed_nothing() -> None:
+    annotated = progression.annotate(
+        [_walk(0, "Route 3", 1, 1, presses=0, moved=None), _walk(1, "Route 3", 2, 1)]
+    )
+    stats = progression.window_stats("w", annotated)
+    assert stats.batches == 1 and stats.presses == 4
+    assert stats.new_tiles == 1
+
+
+def test_annotate_marks_a_tile_new_exactly_once() -> None:
+    annotated = progression.annotate(
+        [_walk(0, "Route 3", 1, 1), _walk(1, "Route 3", 1, 1), _walk(2, "Route 4", 1, 1)]
+    )
+    assert [fresh for _, fresh in annotated] == [True, False, True]
+
+
+def test_split_caps_each_side_at_the_press_budget() -> None:
+    receipts = [_walk(index, "Route 3", index, 1) for index in range(20)]
+    record = make_record(receipts)
+    report = progression.split_report(record, marker="seq:10", at=receipts[10].t, span=12)
+    assert report.before.presses >= 12 and report.after.presses >= 12
+    assert report.before.presses <= 16 and report.after.presses <= 16
+    assert report.before.last_seq == 9 and report.after.first_seq == 10
+
+
+def test_split_without_a_span_uses_the_whole_run() -> None:
+    receipts = [_walk(index, "Route 3", index, 1) for index in range(20)]
+    record = make_record(receipts)
+    report = progression.split_report(record, marker="seq:5", at=receipts[5].t, span=None)
+    assert report.before.batches == 5 and report.after.batches == 15
+    assert json.dumps(report.to_dict())
+
+
+def test_split_deltas_report_no_change_against_a_zero_baseline() -> None:
+    receipts = [_walk(index, "Route 3", index, 1) for index in range(4)]
+    record = make_record(receipts)
+    report = progression.split_report(record, marker="seq:2", at=receipts[2].t, span=None)
+    changes = {name: change for name, _, _, _, change in report.deltas()}
+    assert changes["milestones"] is None
+    assert changes["presses"] == 0.0
+
+
+# -- markers ------------------------------------------------------------------
+
+
+def _marker_context(tmp_path: Path, receipts, *, saves=()) -> commands.Context:
+    from pokemon_agent.scope.discover import Paths
+
+    debug = tmp_path / "ws" / "debug"
+    debug.mkdir(parents=True)
+    lines = [
+        json.dumps(
+            {
+                "type": "save",
+                "timestamp": datetime.fromtimestamp(at, tz=timezone.utc).isoformat(),
+                "name": name,
+            }
+        )
+        for name, at in saves
+    ]
+    (debug / "run_log.jsonl").write_text("\n".join(lines) + ("\n" if lines else ""))
+    _store(tmp_path, "run-a", receipts)
+    paths = Paths(workspace=tmp_path / "ws", data_dir=tmp_path)
+    return commands.Context(paths=paths, run_id="run-a")
+
+
+def test_markers_name_a_moment_in_several_ways(tmp_path: Path) -> None:
+    receipts = [
+        _walk_dict(index, "Route 3" if index < 5 else "Route 4", index, 1) for index in range(10)
+    ]
+    ctx = _marker_context(tmp_path, receipts, saves=[("before_change", receipts[7]["t"])])
+    assert commands._marker_time(ctx, "seq:5") == receipts[5]["t"]
+    assert commands._marker_time(ctx, "press:20") == receipts[4]["t"]
+    assert commands._marker_time(ctx, "map:Route 4") == receipts[5]["t"]
+    assert commands._marker_time(ctx, "save:before_change") == pytest.approx(
+        receipts[7]["t"], abs=1
+    )
+    assert commands._marker_time(ctx, "time:2026-08-25T22:48:23Z") > 0
+
+
+def test_an_unknown_marker_says_what_was_available(tmp_path: Path) -> None:
+    receipts = [_walk_dict(index, "Route 3", index, 1) for index in range(4)]
+    ctx = _marker_context(tmp_path, receipts, saves=[("kept", receipts[1]["t"])])
+    with pytest.raises(commands.ScopeError) as bad_map:
+        commands._marker_time(ctx, "map:Cerulean City")
+    assert "Route 3" in str(bad_map.value)
+    with pytest.raises(commands.ScopeError) as bad_save:
+        commands._marker_time(ctx, "save:missing")
+    assert "kept" in str(bad_save.value)
+    with pytest.raises(commands.ScopeError):
+        commands._marker_time(ctx, "elephant:3")
+    with pytest.raises(commands.ScopeError):
+        commands._marker_time(ctx, "press:")
+    with pytest.raises(commands.ScopeError):
+        commands._marker_time(ctx, "press:not-a-number")
+    with pytest.raises(commands.ScopeError):
+        commands._marker_time(ctx, "press:99999")
+
+
+# -- interventions ------------------------------------------------------------
+
+
+def test_injections_are_the_user_messages_after_the_first(tmp_path: Path) -> None:
+    builder = TranscriptBuilder(tmp_path / "s.jsonl")
+    builder.user("the goal")
+    builder.turn("./poke act up", act_result(1, 1, 1))
+    builder.user("HEAL NOW. Press left 4.")
+    builder.turn("./poke act left:4", act_result(1, 1, 4))
+    session = parse_session(builder.path)
+    assert session.goal == "the goal"
+    assert len(session.injections) == 1
+    assert session.injections[0].step == 1
+    assert session.injections[0].headline == "HEAL NOW. Press left 4."
+
+
+def test_find_injections_drops_continue_attachments_and_other_runs(tmp_path: Path) -> None:
+    builder = TranscriptBuilder(tmp_path / "s.jsonl")
+    builder.user("the goal")
+    builder.turn("./poke act up", act_result(1, 1, 1))
+    builder.user("continue")
+    builder.turn("./poke act up", act_result(1, 2, 1))
+    builder.user('<file name="/tmp/frame.png">')
+    builder.turn("./poke act up", act_result(1, 3, 1))
+    builder.user("Retreat and heal.")
+    session = parse_session(builder.path)
+    assert len(session.injections) == 3
+    found = progression.find_injections([session])
+    assert [item[1].headline for item in found] == ["Retreat and heal."]
+    assert progression.find_injections([session], between=(0.0, 1.0)) == []
+
+
+def test_replay_triggers_names_the_detector_the_harness_would_fire() -> None:
+    hurt = [_walk(index, "Mt Moon 1F", index, 1, hp=[10, 70]) for index in range(10)]
+    name, reason = progression.replay_triggers(hurt, hurt[-1].t)
+    assert name == "low_hp"
+    assert "10/70" in reason
+    assert progression.replay_triggers([], 0.0) == ("", "")
+
+
+def test_intervention_report_measures_both_sides_and_compliance(tmp_path: Path) -> None:
+    receipts = [_walk(index, "Mt Moon 1F", index, 1, hp=[10, 70]) for index in range(200)]
+    record = make_record(receipts)
+    builder = TranscriptBuilder(tmp_path / "s.jsonl")
+    builder.clock = receipts[0].t
+    builder.user("the goal")
+    for _ in range(4):
+        builder.turn("./poke act up", act_result(1, 1, 1))
+    builder.clock = receipts[100].t
+    builder.user("HEAL NOW. Walk left 8 tiles.")
+    builder.turn("./poke act left:8", act_result(1, 1, 8))
+    report = progression.intervention_report(record, [parse_session(builder.path)], span=40)
+    assert len(report.events) == 1
+    event = report.events[0]
+    assert event.trigger == "low_hp"
+    assert event.asked_for == "left"
+    assert event.followed is True
+    assert event.before.batches and event.after.batches
+    assert event.hp_at == pytest.approx(10 / 70)
+    assert not event.healed
+    assert report.samples > 0
+    assert dict(report.standing)["low_hp"] == report.samples
+    assert json.dumps(report.to_dict())
+
+
+def test_a_run_shorter_than_the_detector_window_is_sampled_zero_times() -> None:
+    short = make_record([_walk(index, "Route 3", index, 1) for index in range(10)])
+    report = progression.intervention_report(short, [])
+    assert report.samples == 0 and report.standing == ()
+
+
+def test_advice_that_names_no_direction_is_not_scored_for_compliance(tmp_path: Path) -> None:
+    receipts = [_walk(index, "Mt Moon 1F", index, 1) for index in range(10)]
+    builder = TranscriptBuilder(tmp_path / "s.jsonl")
+    builder.clock = receipts[0].t
+    builder.user("the goal")
+    builder.turn("./poke act up", act_result(1, 1, 1))
+    builder.clock = receipts[5].t
+    builder.user("Think about what you are doing.")
+    builder.turn("./poke state", "Route 3 (1,1)")
+    report = progression.intervention_report(make_record(receipts), [parse_session(builder.path)])
+    assert report.events[0].asked_for == ""
+    assert report.events[0].followed is None
+
+
+# -- the new commands end to end ----------------------------------------------
+
+
+def _new_command_workspace(tmp_path: Path) -> tuple[Path, list[str]]:
+    workspace = tmp_path / "ws"
+    (workspace / "pi-session").mkdir(parents=True)
+    (workspace / "debug").mkdir(parents=True)
+    builder = TranscriptBuilder(workspace / "pi-session" / "2026-08-26T00-00-00-000Z_aa.jsonl")
+    builder.clock = 1_787_698_000.0
+    builder.user("cross Mt Moon")
+    builder.turn(
+        "# Try up from (20,10)\n./poke act up", act_result(20, 12, 1, map_name="Mt Moon B1F")
+    )
+    builder.turn("# Up 4 to (20,8)\n./poke act up:4", act_result(20, 8, 4, map_name="Mt Moon B1F"))
+    builder.turn('./poke route "Mt Moon"', "error 404")
+    builder.user("HEAL NOW. Walk left 4.")
+    builder.turn("./poke act left:4", act_result(16, 8, 4, map_name="Mt Moon B1F"))
+    receipts = [
+        _walk_dict(index, "Mt Moon B1F" if index % 2 else "Mt Moon B2F", index, 1, hp=[10, 70])
+        for index in range(30)
+    ]
+    _store(tmp_path, "run-a", receipts)
+    (workspace / "debug" / "run_log.jsonl").write_text(
+        json.dumps(
+            {
+                "type": "save",
+                "timestamp": datetime.fromtimestamp(receipts[10]["t"], tz=timezone.utc).isoformat(),
+                "name": "before_change",
+            }
+        )
+        + "\n"
+    )
+    return workspace, ["--workspace", str(workspace), "--data-dir", str(tmp_path)]
+
+
+def test_cli_claims_reports_verdicts(tmp_path: Path, capsys) -> None:
+    _, common = _new_command_workspace(tmp_path)
+    assert main(["claims", *common]) == 0
+    out = capsys.readouterr().out
+    assert "CLAIMS" in out
+    assert "position" in out and "no such map" in out
+    assert len(out.splitlines()) <= 60
+
+
+def test_cli_episodes_reports_stays_and_untried_doors(tmp_path: Path, capsys) -> None:
+    _, common = _new_command_workspace(tmp_path)
+    assert main(["episodes", *common]) == 0
+    out = capsys.readouterr().out
+    assert "EPISODES" in out
+    assert "Mt Moon B1F  ->  Route 4" in out
+    assert main(["episodes", "Mt Moon B1F", *common]) == 0
+    detail = capsys.readouterr().out
+    assert "NEVER" in detail
+    assert "(27, 3)" in detail
+
+
+def test_cli_episodes_on_an_unvisited_map_lists_what_was_visited(tmp_path: Path, capsys) -> None:
+    _, common = _new_command_workspace(tmp_path)
+    assert main(["episodes", "Cerulean City", *common]) == 2
+    assert "Mt Moon B1F" in capsys.readouterr().err
+
+
+def test_cli_split_needs_a_marker_and_takes_one(tmp_path: Path, capsys) -> None:
+    _, common = _new_command_workspace(tmp_path)
+    assert main(["split", *common]) == 2
+    assert "marker" in capsys.readouterr().err
+    assert main(["split", "save:before_change", *common]) == 0
+    out = capsys.readouterr().out
+    assert "SPLIT" in out and "before_change" in out
+    assert "CAUTION" in out  # a 30-batch fixture is far too thin to read
+
+
+def test_cli_split_accepts_the_marker_as_a_flag(tmp_path: Path, capsys) -> None:
+    _, common = _new_command_workspace(tmp_path)
+    assert main(["split", "--at", "seq:10", *common]) == 0
+    assert "seq:10" in capsys.readouterr().out
+
+
+def test_cli_intervene_reports_the_advice_and_the_effect(tmp_path: Path, capsys) -> None:
+    _, common = _new_command_workspace(tmp_path)
+    assert main(["intervene", *common]) == 0
+    out = capsys.readouterr().out
+    assert "INTERVENE" in out
+    assert "low_hp" in out
+    assert "HEAL NOW" in out
+    assert len(out.splitlines()) <= 60
+
+
+def test_cli_new_commands_emit_valid_json(tmp_path: Path, capsys) -> None:
+    _, common = _new_command_workspace(tmp_path)
+    for argv in (["claims"], ["episodes"], ["intervene"], ["split", "seq:10"]):
+        assert main([*argv, "--json", *common]) == 0
+        assert isinstance(json.loads(capsys.readouterr().out), dict)
+
+
 # -- against the data actually on this disk -----------------------------------
 
 REAL = discover()
@@ -924,7 +1467,9 @@ needs_sessions = pytest.mark.skipif(not HAS_SESSIONS, reason="no session transcr
 needs_runs = pytest.mark.skipif(not HAS_RUNS, reason="no run store on this disk")
 
 SESSION_COMMANDS = ("tools", "loops", "context", "session")
-RUN_COMMANDS = ("waste", "timeline")
+RUN_COMMANDS = ("waste", "timeline", "episodes")
+#: Commands that need both halves of the data: the transcripts and the receipts.
+PAIRED_COMMANDS = ("claims", "intervene")
 
 #: A report that does not fit on a screen has failed at its only job.
 MAX_LINES = 60
@@ -1051,3 +1596,95 @@ def test_commands_module_exposes_a_handler_for_every_cli_command() -> None:
             assert hasattr(commands, "command_diff")
             continue
         assert hasattr(commands, f"command_{name}"), name
+
+
+@needs_sessions
+@needs_runs
+@pytest.mark.parametrize("command", PAIRED_COMMANDS)
+def test_real_paired_commands_are_short_and_clean(command: str, capsys) -> None:
+    assert main([command]) == 0
+    out = capsys.readouterr().out
+    assert out.strip()
+    assert len(out.splitlines()) <= MAX_LINES, f"{command} printed {len(out.splitlines())} lines"
+    assert "\x1b" not in out
+    assert not _looks_like_base64(out)
+    assert main([command, "--json"]) == 0
+    assert isinstance(json.loads(capsys.readouterr().out), dict)
+
+
+@needs_runs
+def test_real_episodes_detail_on_the_busiest_map(capsys) -> None:
+    assert main(["episodes", "--json"]) == 0
+    payload = json.loads(capsys.readouterr().out)
+    if not payload["stays"]:
+        pytest.skip("the real run has not stood on a named map yet")
+    busiest = payload["stays"][0]["map"]
+    assert main(["episodes", busiest]) == 0
+    out = capsys.readouterr().out
+    assert busiest in out
+    assert len(out.splitlines()) <= MAX_LINES
+    # Every episode is on the map that was asked for, and they run in order.
+    assert main(["episodes", busiest, "--json"]) == 0
+    detail = json.loads(capsys.readouterr().out)
+    seqs = [episode["first_seq"] for episode in detail["episodes"]]
+    assert seqs == sorted(seqs)
+    assert {episode["map"] for episode in detail["episodes"]} == {busiest}
+
+
+@needs_runs
+def test_real_split_at_a_press_count_balances_both_sides(capsys) -> None:
+    assert main(["waste", "--json"]) == 0
+    total = json.loads(capsys.readouterr().out)["overall"]["total_presses"]
+    if total < 2_000:
+        pytest.skip("the real run is too short to split")
+    assert main(["split", f"press:{total // 2}", "--span", "500"]) == 0
+    out = capsys.readouterr().out
+    assert "SPLIT" in out
+    assert len(out.splitlines()) <= MAX_LINES
+    assert main(["split", f"press:{total // 2}", "--span", "500", "--json"]) == 0
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["before"]["presses"] >= 500
+    assert payload["after"]["presses"] >= 500
+    assert payload["before"]["last_seq"] <= payload["after"]["first_seq"]
+
+
+@needs_runs
+def test_real_split_at_a_marker_that_is_not_there_explains_itself(capsys) -> None:
+    assert main(["split", "map:Indigo Plateau"]) == 2
+    assert "never stood on" in capsys.readouterr().err
+
+
+@needs_sessions
+def test_reading_claims_out_of_every_real_transcript_is_fast() -> None:
+    """Every transcript in the workspace, parsed and checked, on one budget."""
+
+    sessions = [parse_session(path) for path in list_sessions(REAL.session_dir)]
+    start = time.perf_counter()
+    report = beliefs.claims_report(sessions)
+    elapsed = time.perf_counter() - start
+    assert elapsed < 3.0, f"checking the claims took {elapsed:.2f}s"
+    assert report.total_calls > 0
+    for claim in report.worst:
+        assert claim.verdict == beliefs.FALSE
+        assert claim.why
+
+
+@needs_sessions
+def test_real_claims_never_convict_on_an_unknown_map() -> None:
+    """A map the game data does not have must read as unchecked, not as a lie."""
+
+    for session in (parse_session(path) for path in list_sessions(REAL.session_dir)):
+        for claim in beliefs.extract_claims(session):
+            if claim.kind == "warp" and claim.verdict != beliefs.UNCHECKED:
+                assert truth.map_truth(claim.map_name) is not None
+
+
+@needs_runs
+def test_real_episodes_account_for_every_press_on_a_named_map() -> None:
+    from pokemon_agent.scope.runs import resolve_run_id
+
+    record = RunRegistry(REAL.data_dir).load(resolve_run_id(REAL.data_dir, None))
+    report = progression.episode_report(record)
+    on_a_map = sum(item.presses for item in record.receipts if item.map_name)
+    assert sum(episode.presses for episode in report.episodes) == on_a_map
+    assert sum(stay.presses for stay in report.stays) == on_a_map
