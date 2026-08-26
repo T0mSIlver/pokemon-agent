@@ -2697,3 +2697,55 @@ def test_a_walk_that_ends_in_an_encounter_says_so_rather_than_sealed(server_app)
     assert payload["battle"] is True
     assert "wild Pokemon appeared" in payload["stopped_because"]
     assert "onward" not in payload, "a battle frame must not produce a reachability claim"
+
+
+def _b1f_snapshot(walkable, at):
+    """Mt Moon B1F with synthetic terrain but its own real warp table."""
+    return {
+        "player_position": {"x": at[0], "y": at[1]},
+        "map_name": "Mt Moon B1F",
+        "map_terrain": {"width": 28, "height": 28, "walkable": walkable, "tile_ids": {}},
+    }
+
+
+def test_exits_names_the_reachable_door_not_the_near_unreachable_one():
+    """The measured case: standing on Mt Moon B1F at (26,15), which is four pockets.
+
+    Ranking by Manhattan distance advertised the B2F staircase at (21,17) --
+    seven tiles away, in a different pocket, unreachable -- and hid (13,27),
+    twenty-five away and the way through. Two of the three exits it listed
+    there could not be walked to. This field exists to solve the Mt Moon
+    problem and was pointing at the wall.
+    """
+    # A corridor joining the two warps that really are in one pocket, and
+    # (21,17) stranded on an island the way the real floor strands it.
+    corridor = {(x, 15) for x in range(13, 27)} | {(x, 27) for x in range(13, 27)}
+    corridor |= {(13, y) for y in range(15, 28)}
+    island = {(21, 17)}
+
+    exits = server._exits(_b1f_snapshot(corridor | island, (26, 15)))
+
+    assert exits.get("Mt Moon 1F") == [25, 15], "the door in this pocket"
+    assert exits.get("Mt Moon B2F") == [13, 27], (
+        "the reachable B2F staircase, not the nearer one across a wall"
+    )
+
+
+def test_exits_drops_a_destination_whose_every_door_is_out_of_reach():
+    """Naming a door you cannot walk to is worse than naming none: it sends the agent."""
+    stranded = {(x, 15) for x in range(24, 28)}  # only (25,15) is reachable
+
+    exits = server._exits(_b1f_snapshot(stranded, (26, 15)))
+
+    assert exits.get("Mt Moon 1F") == [25, 15]
+    assert "Mt Moon B2F" not in exits, "every B2F door is in another pocket"
+
+
+def test_exits_falls_back_to_manhattan_when_the_map_is_not_decoded():
+    """Without terrain there is nothing better than distance, and it says so by degrading."""
+    snapshot = {"player_position": {"x": 26, "y": 15}, "map_name": "Mt Moon B1F"}
+
+    exits = server._exits(snapshot)
+
+    assert "Mt Moon B2F" in exits, "undecoded: every destination is still offered"
+    assert "Mt Moon 1F" in exits

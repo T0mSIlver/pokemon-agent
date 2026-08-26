@@ -62,7 +62,7 @@ from pokemon_agent.saves import (
     resolve_save_path,
     validate_save_name,
 )
-from pokemon_agent.world import World
+from pokemon_agent.world import World, reachable_region
 
 __version__ = "0.1.0"
 
@@ -783,6 +783,22 @@ MAX_EXITS = 4
 MAX_EXITS_BYTES = 120
 
 
+def _reachable_tiles(snapshot: dict, start: tuple[int, int]) -> Optional[dict]:
+    """Tile -> real step count, for everywhere the player can walk on this map.
+
+    None when the map has not been decoded, in which case a caller has nothing
+    better than Manhattan distance and should say so rather than pretend.
+    """
+    if not (snapshot.get("map_terrain") or {}).get("walkable"):
+        return None
+    try:
+        collision = capabilities.collision_from(snapshot, None)
+        region = reachable_region(collision, start)
+        return dict(region.distance)
+    except Exception:  # noqa: BLE001 — an exit list must never fail a request
+        return None
+
+
 def _exits(snapshot: dict) -> dict:
     """Where this map's warps go, nearest tile per destination.
 
@@ -828,13 +844,26 @@ def _exits(snapshot: dict) -> dict:
             for w in snapshot.get("warps") or []
         ]
 
+    # Which warps the player can actually walk to, from the decoded floor. A
+    # warp in another pocket of this map is not an exit, it is a wall with a
+    # door painted on it, and ranking by Manhattan distance advertised exactly
+    # those: standing on Mt Moon B1F at (26,15) this named the B2F staircase at
+    # (21,17), which is in a different pocket and unreachable, and suppressed
+    # (13,27), which is in the same pocket and is the way through. Two of the
+    # three exits it listed there could not be walked to.
+    reachable = _reachable_tiles(snapshot, (px, py))
+
     best: dict[str, tuple[int, int, int]] = {}
     for warp in warps:
         x, y = warp.get("x"), warp.get("y")
         target = warp.get("to_map")
         if x is None or y is None or not target or target == "???":
             continue
-        distance = abs(x - px) + abs(y - py)
+        if reachable is not None and (x, y) not in reachable:
+            continue
+        # Real steps where the flood measured them, Manhattan only as a
+        # fallback for a map nothing has decoded yet.
+        distance = reachable[(x, y)] if reachable is not None else abs(x - px) + abs(y - py)
         if target not in best or distance < best[target][0]:
             best[target] = (distance, x, y)
 
