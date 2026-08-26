@@ -2420,3 +2420,90 @@ def test_run_only_reports_directions_moves_already_calls_legal():
     snapshot = _snapshot(terrain, player=(3, 2))
     snapshot["valid_moves"] = ["up", "left"]
     assert server._runway(snapshot) == {"up": 2, "left": 3}
+
+
+# ---------------------------------------------------------------------------
+# `exits`: which maps this one leads to
+#
+# The agent spent ten hours inside Mt. Moon and made two saves on B2F, which
+# warps only back to B1F -- the optional fossil room, a dead end for progress --
+# while the way out sat on B1F at (27,3). `poke route` answers that instantly and
+# was called once in five hundred steps, which is the advisory pattern that has
+# failed every time here.
+#
+# This states what exists, never which one to take. That stays the model's call,
+# the same way `run` says how far each direction goes without saying which to walk.
+# ---------------------------------------------------------------------------
+
+
+def _warp_snapshot(map_name, player, warps):
+    return {
+        "map_name": map_name,
+        "player_position": {"x": player[0], "y": player[1]},
+        "warps": [{"coord": {"x": x, "y": y}, "target_map_id": target} for x, y, target in warps],
+    }
+
+
+def test_exits_names_each_destination_once_at_its_nearest_tile():
+    # Two staircases to the same floor: the near one is the useful fact.
+    snapshot = _warp_snapshot(
+        "Unknown Map", player=(10, 10), warps=[(12, 10, 1), (30, 30, 1), (11, 12, 2)]
+    )
+    exits = server._exits(snapshot)
+    assert len(exits) == 2
+    assert list(exits.values())[0] == [12, 10]
+
+
+def test_exits_are_ordered_nearest_first():
+    snapshot = _warp_snapshot(
+        "Unknown Map", player=(0, 0), warps=[(20, 0, 1), (2, 0, 2), (9, 0, 3)]
+    )
+    order = [coord[0] for coord in server._exits(snapshot).values()]
+    assert order == sorted(order)
+
+
+def test_exits_is_capped_so_a_hub_map_cannot_flood_the_payload():
+    warps = [(i, 0, i + 1) for i in range(12)]
+    snapshot = _warp_snapshot("Unknown Map", player=(0, 0), warps=warps)
+    assert len(server._exits(snapshot)) <= server.MAX_EXITS
+
+
+def test_exits_skips_warps_whose_destination_is_unknown():
+    snapshot = _warp_snapshot("Unknown Map", player=(0, 0), warps=[(1, 0, 9999)])
+    assert server._exits(snapshot) == {}
+
+
+def test_exits_is_empty_without_a_position():
+    assert server._exits({"map_name": "Unknown Map", "warps": []}) == {}
+    assert server._exits({}) == {}
+
+
+def test_exits_respects_a_byte_budget_not_just_a_count():
+    # Four of the longest map names come to 171 bytes and would push the action
+    # payload from 257 to 439. The payload is small so it can be read every turn.
+    import json as _json
+
+    from pokemon_agent import gamedata
+
+    longest = sorted(
+        {
+            d
+            for e in gamedata.world().values()
+            for w in (e.get("warps") or [])
+            if (d := w.get("to_map"))
+        },
+        key=len,
+        reverse=True,
+    )[:6]
+    snapshot = {
+        "map_name": "Unknown Map",
+        "player_position": {"x": 0, "y": 0},
+        "warps": [],
+    }
+    # Feed them through the snapshot fallback path with real names.
+    snapshot["warps"] = [
+        {"coord": {"x": i, "y": 0}, "target_map_id": None, "to_map": name}
+        for i, name in enumerate(longest)
+    ]
+    exits = server._exits(snapshot)
+    assert len(_json.dumps(exits, separators=(",", ":"))) <= server.MAX_EXITS_BYTES

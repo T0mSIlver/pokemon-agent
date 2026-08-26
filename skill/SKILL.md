@@ -78,6 +78,7 @@ Actions run in order. The response is small and tells you what you need to keep 
 
 - `x`, `y`, `facing`, `moves`: where you are and which directions are legal.
 - `run`: how many tiles each direction goes before something stops you. `{"left":7,"down":2}` means `left:7` arrives in one call. Use it. Walking one tile and asking again is the slowest way to play and it costs you a turn of context for every tile.
+- `exits`: every map this one leads to, and the nearest tile that gets you there. `{"Route 4":[27,3]}` means walking onto (27,3) puts you on Route 4. A map with one exit back the way you came is a dead end; leave. Which exit serves your goal is your call.
 - `hp`: your lead Pokemon, as `current/max`.
 - `mode`, `dialog`, `battle`: what kind of screen you are on.
 - `faces`: present only when the tile you face is worth a button: `object` is an NPC or item ball, `sign` is readable. **When you see `faces`, press A.**

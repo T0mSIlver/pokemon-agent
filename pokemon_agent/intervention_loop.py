@@ -35,6 +35,7 @@ from __future__ import annotations
 import asyncio
 import json
 import subprocess
+import sys
 import time
 import traceback
 from collections import deque
@@ -44,7 +45,13 @@ from pathlib import Path
 from typing import Any, Awaitable, Callable, Mapping, Optional, Sequence
 
 from pokemon_agent.bench.registry import Receipt
-from pokemon_agent.interventions import InterventionPolicy, Trigger, build_prompt
+from pokemon_agent.interventions import (
+    Fact,
+    InterventionPolicy,
+    Trigger,
+    build_prompt,
+    harness_facts,
+)
 from pokemon_agent.slots import SlotClient, SlotError, SlotLost, borrowed_slot
 
 #: The box the player runs on: llama-server in router mode, ``--parallel 1``.
@@ -86,6 +93,11 @@ SLOT_BACKOFF_SECONDS = 2.0
 Advise = Callable[[str], str]
 Deliver = Callable[[str], Awaitable[Any]]
 Notify = Callable[[Mapping[str, Any]], Awaitable[Any]]
+
+#: The live frame, the explored map and the current goal, for the facts that
+#: need more than the receipts. Returning ``None`` is a normal answer: the map
+#: graph half of the facts is computed without it.
+Observe = Callable[[], Optional[Mapping[str, Any]]]
 
 
 def _utc_now() -> str:
@@ -168,6 +180,46 @@ def pi_thinker(
     return advise
 
 
+def live_observation() -> Optional[dict[str, Any]]:
+    """The live frame, if this process happens to be the server holding one.
+
+    The loop runs in-process inside the API server, which is the only thing
+    that has the emulator, the explored-map store and the current objective.
+    The server cannot be imported from here — it imports this module — so this
+    reads one that is *already* loaded and takes nothing if there is none. In a
+    test or a CLI that is nothing at all; in a live run it is the frame's own
+    collision, which is what turns "where have I not looked" from a guess into
+    an answer.
+
+    Every step is guarded and every failure is the same failure: no live half,
+    map-graph facts only.
+    """
+
+    module = sys.modules.get("pokemon_agent.server")
+    if module is None:
+        return None
+    try:
+        runtime = getattr(module, "_runtime", None)
+        bundle = getattr(runtime, "live_bundle", None) or getattr(runtime, "latest_bundle", None)
+        if not isinstance(bundle, Mapping):
+            return None
+        observation: dict[str, Any] = dict(bundle)
+
+        snapshot = (bundle.get("navigation") or {}).get("snapshot") or {}
+        store = getattr(module, "_explored_maps", None)
+        map_id = snapshot.get("map_id")
+        if store is not None and map_id is not None:
+            observation["explored"] = store.grid(int(map_id))
+
+        goal = getattr(getattr(module, "_supervisor", None), "goal", "")
+        if isinstance(goal, str) and goal.strip():
+            observation["goal"] = goal.strip()
+        return observation
+    except Exception as exc:  # noqa: BLE001 — facts degrade, the run does not
+        _log(f"no live observation for the facts: {type(exc).__name__}: {exc}")
+        return None
+
+
 @dataclass
 class InterventionRecord:
     """One firing, and what the run did with it."""
@@ -179,6 +231,10 @@ class InterventionRecord:
     question: str
     presses_at: int
     payload: dict[str, Any] = field(default_factory=dict)
+    #: The harness facts the prompt carried, exactly as the thinker saw them.
+    #: An answer that contradicts one of these is a diagnosable failure rather
+    #: than a mystery, which is the whole reason they are journalled.
+    facts: list[str] = field(default_factory=list)
     answer: str = ""
     delivered: bool = False
     error: Optional[str] = None
@@ -197,6 +253,7 @@ class InterventionRecord:
             "question": self.question,
             "presses_at": self.presses_at,
             "payload": dict(self.payload),
+            "facts": list(self.facts),
             "answer": self.answer,
             "delivered": self.delivered,
             "error": self.error,
@@ -233,6 +290,7 @@ class InterventionRunner:
         slot_backoff_seconds: float = SLOT_BACKOFF_SECONDS,
         journal_path: Optional[Path] = None,
         notify: Optional[Notify] = None,
+        observe: Optional[Observe] = None,
     ) -> None:
         self.enabled = bool(enabled)
         self.policy = policy if policy is not None else InterventionPolicy()
@@ -245,6 +303,9 @@ class InterventionRunner:
         self.slot_backoff_seconds = float(slot_backoff_seconds)
         self.journal_path = Path(journal_path) if journal_path is not None else None
         self.notify = notify
+        # Defaults to whatever the running server has, and to nothing anywhere
+        # else. Pass one explicitly to pin it, including ``lambda: None``.
+        self.observe: Observe = observe if observe is not None else live_observation
 
         self.history: deque[InterventionRecord] = deque(maxlen=HISTORY_LIMIT)
         self.fired: int = 0
@@ -296,6 +357,8 @@ class InterventionRunner:
         total_presses: Optional[int] = None,
         state_summary: str = "",
         milestone_summary: str = "",
+        observation: Optional[Mapping[str, Any]] = None,
+        goal: str = "",
     ) -> Optional[InterventionRecord]:
         """Look at what the run just did, and stop it to think if it should.
 
@@ -331,7 +394,15 @@ class InterventionRunner:
         self._busy = True
         started = time.monotonic()
         try:
-            await self._run(trigger, record, receipts, state_summary, milestone_summary)
+            await self._run(
+                trigger,
+                record,
+                receipts,
+                state_summary,
+                milestone_summary,
+                observation,
+                goal,
+            )
         finally:
             self._busy = False
             record.duration_seconds = round(time.monotonic() - started, 2)
@@ -348,12 +419,17 @@ class InterventionRunner:
         receipts: Sequence[Receipt],
         state_summary: str,
         milestone_summary: str,
+        observation: Optional[Mapping[str, Any]] = None,
+        goal: str = "",
     ) -> None:
+        facts = self._facts(trigger, receipts, observation, goal)
+        record.facts = [fact.text for fact in facts]
         prompt = build_prompt(
             trigger,
             state_summary=state_summary or "(state unavailable)",
             recent=list(receipts),
             milestone_summary=milestone_summary,
+            facts=facts,
         )
         try:
             record.answer = await self._think(prompt, record)
@@ -390,6 +466,32 @@ class InterventionRunner:
             return
         record.delivered = True
         self.delivered += 1
+
+    def _facts(
+        self,
+        trigger: Trigger,
+        receipts: Sequence[Receipt],
+        observation: Optional[Mapping[str, Any]],
+        goal: str,
+    ) -> list[Fact]:
+        """What the harness itself knows about where the player is standing.
+
+        The one thing this must never do is raise: an intervention that dies
+        computing its own context is worse than one that fires with a thin
+        prompt, and thin is exactly what an empty list produces.
+        """
+
+        if observation is None:
+            try:
+                observation = self.observe()
+            except Exception as exc:  # noqa: BLE001
+                _log(f"observation failed, facts will use the map graph only: {exc}")
+                observation = None
+        try:
+            return harness_facts(trigger, recent=receipts, observation=observation, goal=goal)
+        except Exception as exc:  # noqa: BLE001
+            _log(f"could not compute the harness facts: {type(exc).__name__}: {exc}")
+            return []
 
     async def _think(self, prompt: str, record: InterventionRecord) -> str:
         """Run the thinking session, in the player's slot if there is one.
@@ -518,6 +620,8 @@ def build_slot_client(
 
 __all__ = [
     "ANSWER_LIMIT",
+    "Observe",
+    "live_observation",
     "DEFAULT_SLOT_BASE_URL",
     "DEFAULT_SLOT_FILENAME",
     "DEFAULT_SLOT_MODEL",

@@ -1,17 +1,29 @@
+from pathlib import Path
+
 from pokemon_agent.bench.registry import Receipt
 from pokemon_agent.interventions import (
+    FACT_BUDGET_CHARS,
+    FACTS_HEADER,
+    FACTS_INFERRED_HEADER,
+    FACTS_KNOWN_HEADER,
     PRIORITY_DANGER,
     PRIORITY_STUCK,
     Circling,
     CommitGate,
     EnteringSegment,
+    Fact,
     InterventionPolicy,
     LowHP,
+    MapFacts,
     RepeatedFailure,
     StalledMilestones,
+    Trigger,
     build_prompt,
     default_detectors,
+    format_facts,
+    harness_facts,
 )
+from pokemon_agent.world import World
 
 
 def receipt(seq=0, presses=8, map_name="Route 3", pos=(1, 1), **kw):
@@ -214,3 +226,259 @@ class TestPrompt:
         assert trigger is not None
         prompt = build_prompt(trigger, state_summary="x", recent=window)
         assert len(prompt) < 4000
+
+
+class TestHarnessFacts:
+    """The Route 4 firing, and the rules that came out of it.
+
+    A thinking session was asked to help a run at 10/65 HP on Route 4 and
+    answered "walk west ~18 tiles to Vermilion City's east gate ... then on to
+    Celadon via Route 24". Every geographic claim was wrong and it cost 146
+    seconds and 31 presses in the wrong direction, at 10 HP. The harness knew
+    the answer the whole time: Cerulean City is one hop east and has a Poke
+    Center. These tests pin the facts into the prompt so the next thinker
+    cannot be asked to remember them.
+    """
+
+    def route4_trigger(self):
+        window = [
+            receipt(seq=i, presses=8, map_name="Route 4", pos=(60 - i, 5), hp=(10, 65))
+            for i in range(6)
+        ]
+        trigger = LowHP().check(window, {})
+        assert trigger is not None
+        return trigger, window
+
+    def route4_prompt(self, **kwargs):
+        trigger, window = self.route4_trigger()
+        return build_prompt(
+            trigger,
+            state_summary="map: Route 4\nx: 60\ny: 5\nhp: 10/65",
+            recent=window,
+            **kwargs,
+        )
+
+    def test_the_route_4_firing_carries_the_route_the_harness_knew(self):
+        prompt = self.route4_prompt(goal="Cross Mt. Moon and emerge into Cerulean City.")
+
+        # The real map, not a remembered one: 90 tiles wide, exits east and south.
+        assert "Route 4 is 90 tiles wide and 18 tall" in prompt
+        assert "east edge (walk_right) -> Cerulean City" in prompt
+        # The healing answer, ranked rather than chosen for it.
+        assert "Cerulean Pokecenter 2 hops" in prompt
+        assert "Mt Moon Pokecenter 1 hop" in prompt
+        # The objective's own destination, routed.
+        assert "The objective names Cerulean City: 1 hop from Route 4" in prompt
+
+    def test_the_answer_it_gave_is_not_in_the_facts_it_now_gets(self):
+        prompt = self.route4_prompt(goal="Cross Mt. Moon and emerge into Cerulean City.")
+        for invented in ("Vermilion", "Celadon", "Route 24"):
+            assert invented not in prompt
+
+    def test_the_prompt_says_the_facts_outrank_the_model(self):
+        prompt = self.route4_prompt()
+        assert "authoritative" in prompt
+        assert "recollection of Pokemon Red" in prompt
+
+    def test_hop_counts_are_labelled_graph_distance_and_never_tiles(self):
+        """A hop is a plan, not a promise: Route 4's halves do not connect."""
+
+        prompt = self.route4_prompt()
+        assert FACTS_INFERRED_HEADER in prompt
+        head, tail = prompt.split(FACTS_INFERRED_HEADER, 1)
+        # Every hop count lives under the caveat, never in the measured half.
+        assert "hops" not in head
+        assert "Cerulean Pokecenter 2 hops" in tail
+
+    def test_measured_tiles_and_inferred_hops_are_kept_apart(self):
+        trigger, window = self.route4_trigger()
+        facts = harness_facts(trigger, recent=window)
+        assert [fact.known for fact in facts if "tiles wide" in fact.text] == [True]
+        assert [fact.known for fact in facts if "Poke Centers from" in fact.text] == [False]
+
+    def test_poke_centers_are_ranked_and_not_picked(self):
+        """Nearest by hop count is not always right — Mt Moon's hop re-enters the cave."""
+
+        maps = MapFacts()
+        ranked = maps.poke_centers("Route 4")
+        assert [name for _, name, _ in ranked] == [
+            "Mt Moon Pokecenter",
+            "Cerulean Pokecenter",
+            "Pewter Pokecenter",
+        ]
+        assert [distance for distance, _, _ in ranked] == [1, 2, 3]
+
+    def test_the_ranking_is_by_graph_distance_from_the_map_you_are_on(self):
+        """Different map, different answer — and ties are broken by name, not by luck."""
+
+        maps = MapFacts()
+        ranked = maps.poke_centers("Pallet Town")
+        assert [distance for distance, _, _ in ranked] == [3, 3, 5]
+        assert {name for _, name, _ in ranked[:2]} == {
+            "Cinnabar Pokecenter",
+            "Viridian Pokecenter",
+        }
+
+    def test_map_dimensions_come_from_the_data_not_from_a_guess(self):
+        maps = MapFacts()
+        assert maps.dimensions("Route 4") == (90, 18)
+        assert maps.dimensions("Not A Map") is None
+
+    def test_every_exit_is_listed_with_the_button_that_takes_it(self):
+        trigger, window = self.route4_trigger()
+        exits = next(
+            f.text for f in harness_facts(trigger, recent=window) if "Every exit" in f.text
+        )
+        assert "south edge (walk_down) -> Route 3" in exits
+        assert "warp (18,5) -> Mt Moon 1F" in exits
+
+    def test_the_goal_destination_is_the_last_map_the_goal_names(self):
+        maps = MapFacts()
+        goal = "Leave Pewter, cross Route 3 and Mt. Moon, and emerge into Cerulean City."
+        assert maps.find_map(goal) == "Cerulean City"
+        assert maps.find_map("nothing here names a map") is None
+
+    def test_a_goal_naming_no_map_gives_no_route_line(self):
+        prompt = self.route4_prompt(goal="Win the next fight and keep the party alive.")
+        assert "The objective names" not in prompt
+
+
+class TestFactsFromTheLiveFrame:
+    """The half of the facts that needs collision rather than the graph."""
+
+    def observation(self, walked=((2, 1), (3, 1))):
+        """A 5x2 room with one wall, as the live window reports it.
+
+        The store remembers walking two of its tiles, which is what makes the
+        rest of the room unwalked ground rather than a guess.
+        """
+
+        terrain = [[1, 1, 0, 1, 1], [1, 1, 1, 1, 1]]
+        return {
+            "state": {"map": {"map_name": "Route 4"}, "player": {"position": {"x": 2, "y": 1}}},
+            "navigation": {
+                "snapshot": {
+                    "map_name": "Route 4",
+                    "map_id": 15,
+                    "terrain": terrain,
+                    "window_top_left": {"x": 0, "y": 0},
+                    "player_position": {"x": 2, "y": 1},
+                    "map_dimensions": {"width": 5, "height": 2},
+                    "sprites": [],
+                }
+            },
+            "explored": {"width": 5, "height": 2, "walked": set(walked), "walkable": set()},
+        }
+
+    def test_unwalked_reachable_ground_is_counted_from_live_collision(self):
+        trigger = LowHP().check(
+            [receipt(seq=i, map_name="Route 4", pos=(2, 1), hp=(4, 40)) for i in range(6)], {}
+        )
+        assert trigger is not None
+        facts = harness_facts(trigger, recent=[], observation=self.observation())
+        line = next(f.text for f in facts if "never walked on" in f.text)
+        # Nine walkable tiles, two of them walked, and the wall is not one of them.
+        assert "7 tiles" in line
+        assert "nearest (1,1)" in line
+        assert "7 confirmed by this frame" in line
+
+    def test_ground_that_is_all_walked_says_so_rather_than_going_quiet(self):
+        walked = {(x, y) for y in range(2) for x in range(5)}
+        facts = harness_facts(
+            Trigger(name="stalled", priority=PRIORITY_STUCK, reason="r", question="q"),
+            recent=[],
+            observation=self.observation(walked=walked),
+        )
+        assert any("has already been walked" in fact.text for fact in facts)
+
+    def test_circling_carries_the_tiles_and_the_way_off_them(self):
+        window = [receipt(seq=i, map_name="Route 4", pos=(2, 1)) for i in range(50)]
+        window += [receipt(seq=100 + i, map_name="Route 4", pos=(3, 1)) for i in range(10)]
+        trigger = Circling(min_samples=10).check(window, {})
+        assert trigger is not None
+        facts = harness_facts(trigger, recent=window, observation=self.observation())
+        text = "\n".join(fact.text for fact in facts)
+        assert "Tiles you keep standing on: (2,1) x50, (3,1) x10" in text
+        assert "Unwalked walkable neighbours of (2,1)" in text
+        assert "walk_down to (2,0)" not in text  # (2,0) is the wall
+        assert "walk_left to (1,1)" in text
+
+    def test_a_broken_observation_costs_the_live_facts_and_nothing_else(self):
+        trigger, window = TestHarnessFacts().route4_trigger()
+        facts = harness_facts(trigger, recent=window, observation={"navigation": {"snapshot": 7}})
+        assert any("Route 4 is 90 tiles wide" in fact.text for fact in facts)
+        assert not any("never walked on" in fact.text for fact in facts)
+
+
+class TestRepeatedFailureFacts:
+    def test_the_error_text_itself_is_carried(self):
+        window = [
+            receipt(
+                seq=i,
+                map_name="Route 4",
+                tool="poke act",
+                exit_code=1,
+                extra={"error": "400: walk_left is not a known action", "actions": ["walk_left"]},
+            )
+            for i in range(2)
+        ]
+        trigger = RepeatedFailure().check(window, {})
+        assert trigger is not None
+        prompt = build_prompt(trigger, state_summary="x", recent=window)
+        assert "400: walk_left is not a known action" in prompt
+        assert "actions sent: walk_left" in prompt
+
+    def test_a_failure_with_no_recorded_error_adds_no_line(self):
+        window = [
+            receipt(seq=i, map_name="Route 4", tool="poke act", exit_code=1) for i in range(2)
+        ]
+        trigger = RepeatedFailure().check(window, {})
+        assert trigger is not None
+        prompt = build_prompt(trigger, state_summary="x", recent=window)
+        assert "failed with" not in prompt
+
+
+class TestFactsDegradeToOmission:
+    """A fact that cannot be computed is left out. A wrong one is what cost the run."""
+
+    def empty_maps(self):
+        return MapFacts(World.load(Path("/nonexistent/world.json")))
+
+    def test_missing_map_data_leaves_the_prompt_standing(self):
+        trigger, window = TestHarnessFacts().route4_trigger()
+        maps = self.empty_maps()
+        assert maps.available is False
+        assert harness_facts(trigger, recent=window, maps=maps) == []
+
+        prompt = build_prompt(trigger, state_summary="map: Route 4", recent=window, maps=maps)
+        assert FACTS_HEADER not in prompt
+        assert trigger.question in prompt
+        assert "map: Route 4" in prompt
+
+    def test_an_unknown_map_name_is_simply_not_described(self):
+        window = [receipt(seq=i, map_name="Nowhere", pos=(1, 1), hp=(3, 30)) for i in range(6)]
+        trigger = LowHP().check(window, {})
+        assert trigger is not None
+        assert harness_facts(trigger, recent=window) == []
+
+    def test_no_receipts_and_no_observation_is_not_an_error(self):
+        trigger = Trigger(name="stalled", priority=PRIORITY_STUCK, reason="r", question="q")
+        assert harness_facts(trigger) == []
+        assert format_facts([]) == ""
+
+
+class TestFactBudget:
+    def test_the_block_never_outgrows_its_budget(self):
+        facts = [Fact("x" * 120, known=bool(i % 2)) for i in range(40)]
+        for budget in (0, 200, 500, 900, FACT_BUDGET_CHARS):
+            assert len(format_facts(facts, budget=budget)) <= budget
+
+    def test_facts_are_dropped_from_the_end_not_the_front(self):
+        facts = [Fact("first fact"), Fact("second fact"), Fact("third fact")]
+        rendered = format_facts(facts, budget=len(FACTS_HEADER) + len(FACTS_KNOWN_HEADER) + 40)
+        assert "first fact" in rendered
+        assert "third fact" not in rendered
+
+    def test_the_route_4_prompt_stays_a_short_problem(self):
+        prompt = TestHarnessFacts().route4_prompt(goal="Reach Cerulean City.")
+        assert len(prompt) < 3000

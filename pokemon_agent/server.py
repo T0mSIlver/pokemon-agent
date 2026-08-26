@@ -764,6 +764,80 @@ def _runway(snapshot: dict) -> dict:
     return runway
 
 
+#: Destinations to name in the payload. Celadon has ten and a city's tenth
+#: doorway is noise, not navigation.
+MAX_EXITS = 4
+
+#: And a byte ceiling, because a count alone does not bound the cost: four of the
+#: longest map names in the game ("Fuchsia Bill's Grandpa's House" and friends)
+#: come to 171 bytes and push the payload from 257 to 439. The whole point of
+#: this payload is that it is small enough to read every turn.
+MAX_EXITS_BYTES = 120
+
+
+def _exits(snapshot: dict) -> dict:
+    """Where this map's warps go, nearest tile per destination.
+
+    The agent has spent ten hours inside Mt. Moon. It made two saves on B2F,
+    which warps only back to B1F -- the optional fossil room, a dead end for
+    progress -- while the way out sits on B1F at (27,3). The harness has known
+    that the whole time: `world.route` answers it instantly and `poke route` was
+    called once in five hundred steps.
+
+    That is the advisory pattern that has failed every time in this project, so
+    this states what exists rather than offering a lookup. It is deliberately
+    *not* a recommendation: it says a warp to Route 4 is at (27,3), not that the
+    player should take it. Which exit serves the goal stays the model's call, the
+    same way `run` reports how far each direction goes without saying which to
+    walk.
+
+    Nearest by Manhattan distance, since a warp the player can see the way to is
+    worth more than one on the far side of a wall.
+    """
+    position = snapshot.get("player_position") or {}
+    px, py = position.get("x"), position.get("y")
+    if px is None or py is None:
+        return {}
+
+    # The map's whole warp table, not the handful inside the 10x9 window. The
+    # window is why the first version of this was useless: standing on B1F it
+    # listed the two staircases in view and omitted the exit twelve tiles north,
+    # which is the only one that mattered. Static map data from the pokered
+    # decompilation is complete, constant, and already verified against the ROM.
+    map_name = snapshot.get("map_name")
+    try:
+        from pokemon_agent import gamedata
+
+        record = gamedata.world().get(map_name) or {}
+        warps = record.get("warps") or []
+    except Exception:
+        warps = []
+    if not warps:
+        warps = [
+            {**(w.get("coord") or w), "to_map": MAP_NAMES.get(w.get("target_map_id"))}
+            for w in snapshot.get("warps") or []
+        ]
+
+    best: dict[str, tuple[int, int, int]] = {}
+    for warp in warps:
+        x, y = warp.get("x"), warp.get("y")
+        target = warp.get("to_map")
+        if x is None or y is None or not target or target == "???":
+            continue
+        distance = abs(x - px) + abs(y - py)
+        if target not in best or distance < best[target][0]:
+            best[target] = (distance, x, y)
+
+    ranked = sorted(best.items(), key=lambda item: item[1][0])[:MAX_EXITS]
+    exits: dict[str, list[int]] = {}
+    for target, (_, x, y) in ranked:
+        candidate = {**exits, target: [x, y]}
+        if len(json.dumps(candidate, separators=(",", ":"))) > MAX_EXITS_BYTES:
+            break
+        exits = candidate
+    return exits
+
+
 def _warp_exit_hint(snapshot: dict, coord: dict) -> dict:
     """Which way to step off the warp under you, and whether it will fire.
 
@@ -832,6 +906,12 @@ def _observation_summary(bundle: Optional[dict]) -> dict:
     runway = _runway(snapshot)
     if runway:
         summary["run"] = runway
+
+    # Which maps this one leads to, and the nearest tile that gets there. See
+    # _exits: what exists, not which one to take.
+    exits = _exits(snapshot)
+    if exits:
+        summary["exits"] = exits
 
     # What press_a would hit. "object" is an NPC or item ball, "sign" is readable.
     # Anything else is scenery and not worth a button.

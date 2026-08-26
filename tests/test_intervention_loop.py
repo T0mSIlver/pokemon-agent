@@ -7,6 +7,8 @@ and what it does when the player's context does not come back.
 """
 
 import json
+import sys
+import types
 
 import pytest
 
@@ -14,6 +16,7 @@ from pokemon_agent.bench.registry import Receipt
 from pokemon_agent.intervention_loop import (
     InterventionRunner,
     build_thinking_command,
+    live_observation,
 )
 from pokemon_agent.interventions import (
     InterventionPolicy,
@@ -105,6 +108,9 @@ def make_runner(**kwargs) -> tuple[InterventionRunner, dict]:
         log["notices"].append(dict(payload))
 
     runner = InterventionRunner(
+        # Pinned so a test never picks up a frame another test left in the
+        # module table; the facts it grounds a prompt in are tested on purpose.
+        observe=kwargs.pop("observe", lambda: None),
         enabled=kwargs.pop("enabled", True),
         policy=kwargs.pop(
             "policy",
@@ -432,3 +438,101 @@ def test_the_thinking_session_runs_one_shot_with_no_tools_and_no_session():
 @pytest.mark.parametrize("flag", ["-ne", "-ns", "-nc", "-np", "--offline"])
 def test_the_thinking_session_keeps_the_headless_flags(flag):
     assert flag in build_thinking_command("/usr/bin/pi", "what now?")
+
+
+# ---------------------------------------------------------------------------
+# The facts the prompt is grounded in
+# ---------------------------------------------------------------------------
+
+
+def on_route_4() -> list[Receipt]:
+    """`failing_pair`, on the map the failure that started all this happened on."""
+
+    return [
+        receipt(seq, map_name="Route 4", pos=(60, 5), **extra)
+        for seq, extra in enumerate(
+            ({}, {"exit_code": 1, "presses": 0}, {"exit_code": 1, "presses": 0})
+        )
+    ]
+
+
+ROUTE_4_OBSERVATION = {
+    "state": {"map": {"map_name": "Route 4"}, "player": {"position": {"x": 60, "y": 5}}},
+    "objective": {"current": {"summary": "Cross Mt. Moon and emerge into Cerulean City."}},
+}
+
+
+async def test_the_prompt_is_grounded_in_what_the_harness_knows():
+    """The Route 4 firing: the map graph had the answer, so the prompt carries it."""
+
+    runner, log = make_runner(observe=lambda: ROUTE_4_OBSERVATION)
+
+    record = await runner.after_batch(on_route_4(), total_presses=900)
+
+    assert record is not None
+    prompt = log["prompts"][0]
+    assert "Route 4 is 90 tiles wide and 18 tall" in prompt
+    assert "east edge (walk_right) -> Cerulean City" in prompt
+    assert "Cerulean Pokecenter 2 hops" in prompt
+    assert "Vermilion" not in prompt
+
+
+async def test_the_journal_records_the_facts_the_answer_was_given(tmp_path):
+    """An answer that contradicts its own facts should be diagnosable afterwards."""
+
+    journal = tmp_path / "interventions.jsonl"
+    runner, log = make_runner(observe=lambda: ROUTE_4_OBSERVATION, journal_path=journal)
+
+    record = await runner.after_batch(on_route_4(), total_presses=900)
+
+    assert record is not None
+    assert any("Route 4 is 90 tiles wide" in fact for fact in record.facts)
+    written = json.loads(journal.read_text().splitlines()[0])
+    assert written["facts"] == record.facts
+
+
+async def test_an_observer_that_raises_costs_the_live_facts_and_nothing_else():
+    """With no frame there is still a map graph, and the receipts say which map."""
+
+    def explode():
+        raise RuntimeError("no emulator here")
+
+    runner, log = make_runner(observe=explode)
+
+    record = await runner.after_batch(on_route_4(), total_presses=900)
+
+    assert record is not None and record.delivered
+    assert "Route 4 is 90 tiles wide" in log["prompts"][0]
+
+
+def test_live_observation_is_nothing_when_no_server_is_running(monkeypatch):
+    monkeypatch.delitem(sys.modules, "pokemon_agent.server", raising=False)
+    assert live_observation() is None
+
+
+def test_live_observation_reads_the_server_that_is_already_loaded(monkeypatch):
+    """It never imports the server — the server imports this module."""
+
+    bundle = {
+        "state": {"map": {"map_name": "Route 4"}},
+        "navigation": {"snapshot": {"map_id": 15, "map_name": "Route 4"}},
+    }
+    fake = types.SimpleNamespace(
+        _runtime=types.SimpleNamespace(live_bundle=bundle, latest_bundle=None),
+        _explored_maps=types.SimpleNamespace(grid=lambda map_id: {"walked": {(1, 1)}}),
+        _supervisor=types.SimpleNamespace(goal="Get to Cerulean City and heal."),
+    )
+    monkeypatch.setitem(sys.modules, "pokemon_agent.server", fake)
+
+    observed = live_observation()
+
+    assert observed is not None
+    assert observed["explored"] == {"walked": {(1, 1)}}
+    assert observed["goal"] == "Get to Cerulean City and heal."
+    assert observed["state"] == bundle["state"]
+
+
+def test_a_server_with_no_frame_yet_gives_nothing(monkeypatch):
+    fake = types.SimpleNamespace(_runtime=None, _explored_maps=None, _supervisor=None)
+    monkeypatch.setitem(sys.modules, "pokemon_agent.server", fake)
+    assert live_observation() is None
