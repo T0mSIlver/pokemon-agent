@@ -99,6 +99,10 @@ class FakeWorld:
         #: as open in every snapshot and refuses every step. This is the gap the
         #: planner has to survive, because no grid can hold it.
         self.refuses: set[tuple[int, int]] = set()
+        #: A text box on screen. The d-pad works the box, so every walking
+        #: action in a batch presses a line of dialogue along and moves nobody —
+        #: and the map, which was never asked anything, is unchanged.
+        self.text_box = False
         self.seen: set[tuple[int, int]] = set()
         self.known: set[tuple[int, int]] = set()
         self.remember = remember
@@ -140,6 +144,7 @@ class FakeWorld:
             "state": {
                 "player": {"position": list(self.position), "facing": "down"},
                 "map": {"map_name": self.map_name, "map_id": self.map_id},
+                "dialog_active": self.text_box,
             },
             "navigation": {"snapshot": self.snapshot()},
         }
@@ -169,6 +174,14 @@ class FakeWorld:
         }
         moved = 0
         blocked_after = None
+        if self.text_box:
+            # Every press went to the box. `blocked_after` stays None because
+            # nothing was blocked: nothing was asked.
+            return {
+                "actions_executed": len(actions),
+                "outcome": {"moved": 0, "blocked_after": None},
+                "bundle": self.bundle(),
+            }
         for index, action in enumerate(actions):
             dx, dy = steps[action]
             target = (self.position[0] + dx, self.position[1] + dy)
@@ -548,11 +561,16 @@ def test_a_plan_the_game_refused_is_not_proposed_again():
     assert result["walked"] >= 20
 
 
-def test_a_refusal_with_no_way_round_is_still_a_refusal():
+def test_a_refusal_with_no_way_round_is_still_a_refusal_and_says_it_is_not_rock():
     """Memory must not turn a wall into wandering. One try, then the same no.
 
     The guarantee that has to survive every change here: a refusal names what
     IS reachable, and nothing replaces it with a worse plan.
+
+    What it may not do is call the obstacle rock. Nobody is standing in this
+    corridor except an NPC, and the corridor behind it is the map's own ground;
+    "walled off, this is a wall and not a gap in the map" would be a sentence
+    about terrain that the terrain does not support.
     """
     fake = FakeWorld(_corridor(20), (5, 5), width=20, height=11)
     _knows_the_whole_floor(fake)
@@ -562,8 +580,10 @@ def test_a_refusal_with_no_way_round_is_still_a_refusal():
 
     assert result["arrived"] is False
     assert len(fake.batches) == 1, "tried once, learned, and did not try it again"
-    assert result["onward"]["kind"] == "walled-off"
-    assert "no walkable path" in result["stopped_because"]
+    assert result["onward"]["kind"] == "blocked-by-a-body"
+    assert result["onward"]["blocked_at"] == [[6, 5]], "the tile the game refused, named"
+    assert result["onward"]["steps"] == 10, "and how far the goal is once it moves"
+    assert "is not rock" in result["stopped_because"]
     assert f"tiles are reachable from {list(fake.position)}" in result["stopped_because"]
 
 
@@ -668,3 +688,192 @@ def test_a_ladder_you_meant_to_reach_is_still_reachable():
     assert fake.position == (10, 5)
     assert result["arrived"] is True
     assert fake.map_name != "Test Map", "and stepping onto it took the ladder down"
+
+
+# ---------------------------------------------------------------------------
+# Mt Moon B2F: the floor /frontier and /goto answered two ways
+# ---------------------------------------------------------------------------
+#
+# Measured live, minutes apart, standing on (11, 19) with no battle running and
+# the floor fully decoded — 891 walkable tiles read out of the game's own map
+# data:
+#
+#     GET /frontier         -> 432 reachable tiles, and (5, 7) is one of them
+#     POST /goto {5, 7}     -> "no walkable path from [11, 19] to [5, 7] ...
+#                              Every tile bordering the ground you can reach has
+#                              been looked at and is solid, so this is a wall and
+#                              not a gap in the map. 1 tiles are reachable."
+#
+# One flood, 451 tiles; the other, one tile. They were never two floods. A
+# Rocket had a line of dialogue on screen, `/goto` pressed its plan into the
+# text box four rounds running, read "moved 0" as "the game refused that tile",
+# and took its own map apart one neighbour per round until nothing was left.
+#
+# `mt_moon_b2f_fossils.json` is that floor, captured off PokemonRed.gb at both
+# tiles that mattered, so these run in CI.
+
+
+@pytest.fixture(scope="module")
+def b2f() -> dict:
+    payload = json.loads((FIXTURES / "mt_moon_b2f_fossils.json").read_text(encoding="utf-8"))
+    for key in ("start", "at_the_fossils"):
+        truth = payload[key]["truth"]
+        truth["walkable"] = _unpack(truth["walkable"])
+        truth["warps"] = [{"at": tuple(warp["at"])} for warp in truth["warps"]]
+        payload[key]["map_terrain"] = truth
+    return payload
+
+
+LADDER_TO_B1F = (5, 7)
+
+
+def test_the_two_floods_over_mt_moon_b2f_were_always_the_same_flood(b2f):
+    """/frontier and /goto read one collision map with one function. Proof.
+
+    The contradiction was never in the pathfinding, and this is what rules it
+    out: same floor, same tile, `frontier_detail` and `reachable_region` reach
+    the identical 451 tiles and neither of them is missing the ladder.
+    """
+    snapshot = b2f["start"]
+    collision = capabilities.collision_from(snapshot, None)
+    start = capabilities._coord(snapshot["player_position"])
+
+    region = world_mod.reachable_region(collision, start)
+    frontier = {tile.coord for tile in world_mod.frontier_detail(collision, set(), start)}
+
+    assert start == (11, 19)
+    assert len(collision["walkable"]) == 891, "the whole decoded floor"
+    assert set(region.distance) == frontier
+    assert len(frontier) == 451
+    assert region.steps_to(LADDER_TO_B1F) == 32, "and the ladder is 32 steps away"
+
+
+def test_a_batch_the_text_box_swallowed_is_not_a_fact_about_the_floor():
+    """The bug itself, in miniature: four rounds of nothing became a wall.
+
+    A ring of corridor, so there is always somewhere else to go, and a text box
+    that opens as soon as the walk is under way. Before this, each round refused
+    the tile its plan wanted next — the trail says the player stopped on the
+    tile before it, so `_refused_tile` names it — and four of those seal a start
+    tile off from its own map. Then `_walled_off` reads the flood it was handed
+    and reports one reachable tile, sealed, "this is a wall".
+
+    Nothing there is a fact about the floor. The walk stops instead, and says
+    which screen ate the presses.
+    """
+    fake = FakeWorld(_ring(7, 7), (0, 3), width=7, height=7)
+    _knows_the_whole_floor(fake)
+    fake.text_box = True
+    look = fake.observe
+
+    async def observe() -> dict:
+        # The box opens on the first batch, not before it, so the up-front
+        # guard is not what this measures.
+        observation = await look()
+        observation["dialog"] = bool(fake.batches)
+        return observation
+
+    fake.observe = observe
+    result = fake.walk_to(world=World({}), target_xy=(0, 0))
+
+    assert result["arrived"] is False
+    assert len(fake.batches) == 1, "one batch was enough to learn the screen was not the map"
+    assert result["walked"] == 0
+    assert result["onward"] is None, "there is nothing onward to say about a text box"
+    assert "text box" in result["stopped_because"]
+    assert "press B" in result["stopped_because"]
+    assert "wall" not in result["stopped_because"]
+    assert "reachable" not in result["stopped_because"]
+
+
+def test_a_text_box_already_open_is_answered_before_a_button_is_pressed():
+    """The same guard /goto already had for a battle, for the other such screen.
+
+    68 presses went into a Rocket's dialogue on the way to `reachable_tiles: 1`.
+    None of them could ever have moved anybody.
+    """
+    fake = FakeWorld(_ring(7, 7), (0, 3), width=7, height=7)
+    _knows_the_whole_floor(fake)
+    fake.text_box = True
+
+    with pytest.raises(capabilities.Conflict) as refusal:
+        fake.walk_to(world=World({}), target_xy=(0, 0))
+
+    assert fake.batches == []
+    assert "text box is open" in refusal.value.detail
+    assert refusal.value.status == 409
+
+
+def test_a_battle_that_starts_mid_walk_refuses_nothing_and_says_so():
+    """Mt. Moon rolls a wild encounter about every ten steps.
+
+    Whatever the plan wanted next has not been tried — a battle frame is not
+    the map answering — so it must stay untried, and the walk must not go on
+    planning over a window that is showing a Zubat.
+    """
+    fake = FakeWorld(_corridor(40), (2, 5), width=40, height=11)
+    _knows_the_whole_floor(fake)
+    walk_the_batch = fake.act
+
+    async def act(actions):
+        result = await walk_the_batch(actions)
+        result["bundle"]["state"]["battle"] = {"in_battle": True}
+        return result
+
+    fake.act = act
+    result = fake.walk_to(world=World({}), target_xy=(30, 5))
+
+    assert len(fake.batches) == 1
+    assert result["onward"] is None
+    assert "a battle started" in result["stopped_because"]
+    assert result["stopped_because"].startswith(f"walked {result['walked']} toward [30, 5], then ")
+
+
+def test_two_fossil_balls_in_a_doorway_are_not_reported_as_rock(b2f):
+    """(13, 10), the far side of the same walk. The flood is right; the word was not.
+
+    Both fossils sit on (12, 6) and (13, 6) — the only two tiles under the only
+    passage north — so 66 tiles including the ladder really are unreachable
+    while they are there, and `/frontier` leaves them out too. What is wrong is
+    calling it a wall: take either fossil and the passage opens. Measured, the
+    old answer refused with `sealed: true` and pressed nothing, which is a
+    stalemate no later call could break, because nothing that could change the
+    game had happened by the time it refused.
+    """
+    snapshot = b2f["at_the_fossils"]
+    collision = capabilities.collision_from(snapshot, None)
+    start = capabilities._coord(snapshot["player_position"])
+    observation = {
+        "map_name": "Mt Moon B2F",
+        "map_id": 61,
+        "position": start,
+        "snapshot": snapshot,
+        "bundle": {},
+    }
+
+    region = world_mod.reachable_region(collision, start)
+    assert start == (13, 10)
+    assert region.steps_to(LADDER_TO_B1F) is None, "so the refusal itself stands"
+    assert len(region.order) == 386
+
+    plan, stop = capabilities._leg_for_map(
+        World({}),  # a tile target needs no map graph, and /goto hands in none
+        observation,
+        collision,
+        target_map=None,
+        target_xy=LADDER_TO_B1F,
+    )
+
+    assert plan is None
+    assert stop.onward["kind"] == "blocked-by-a-body"
+    assert stop.onward["blocked_at"] == [[12, 6], [13, 6]]
+    assert stop.onward["steps"] == 21, "how far the ladder is once one of them is gone"
+    assert "is not rock" in stop.reason
+    assert "this is a wall" not in stop.reason
+    # And the ladder down to B1F that IS reachable from here — one of the four
+    # on this floor. The old answer said "Nothing on this map leads anywhere
+    # from here", because a tile target hands `/goto` an empty map graph and
+    # the exit search gave up the moment the graph did not know the map.
+    assert {tuple(exit_["at"]) for exit_ in stop.onward["exits"]} == {(21, 17)}
+    assert "Nothing on this map leads anywhere" not in stop.reason
+    assert "somewhere unmapped at [21, 17], 87 steps" in stop.reason

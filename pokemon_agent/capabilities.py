@@ -274,7 +274,14 @@ def warp_coords(snapshot: dict) -> list[Coord]:
 
 
 def observation_from_bundle(bundle: Optional[dict]) -> dict:
-    """The few facts the walking loop needs, pulled out of a runtime bundle."""
+    """The few facts the walking loop needs, pulled out of a runtime bundle.
+
+    `dialog` and `battle` are two of them, because a d-pad press only reaches
+    the map when neither is up. With a text box open the d-pad works the box,
+    and every walking action in the batch moves nobody — which is not a fact
+    about terrain, and reading it as one is what sealed a 451-tile floor down
+    to a single tile. See `walk_to`.
+    """
     bundle = bundle or {}
     state = bundle.get("state") or {}
     snapshot = ((bundle.get("navigation") or {}).get("snapshot")) or {}
@@ -286,6 +293,11 @@ def observation_from_bundle(bundle: Optional[dict]) -> dict:
         "map_id": map_info.get("map_id", snapshot.get("map_id")),
         "position": position,
         "facing": player.get("facing") or snapshot.get("facing"),
+        # The same two keys `_observation_summary` reads, read the same way, so
+        # the walking loop and the payload can never disagree about which of
+        # them the game is showing.
+        "dialog": bool(state.get("dialog_active") or (state.get("dialog") or {}).get("active")),
+        "battle": bool((state.get("battle") or {}).get("in_battle")),
         "snapshot": snapshot,
         "bundle": bundle,
     }
@@ -656,7 +668,15 @@ def _reachable_exits(
     east edge is walled off, and these are the three doors and one edge that
     are not.
     """
-    hops = world.neighbours(here)
+    # A tile target needs no map graph, so `/goto {x, y}` hands one in empty and
+    # `here` is a map it has never heard of. The warps are in the snapshot
+    # either way. Without the graph they are doors to somewhere unnamed, which
+    # is still four ladders more than "nothing on this map leads anywhere from
+    # here" -- said, measured, on a Mt Moon floor with four of them.
+    try:
+        hops = world.neighbours(canonical_map_name(world, here))
+    except NotFound:
+        hops = ()
     by_tile = {tuple(hop.at): hop for hop in hops if hop.at is not None}
     exits: list[dict] = []
     for coord in warp_coords(snapshot):
@@ -724,15 +744,13 @@ def _walled_off(
     *,
     lead: str,
 ) -> _Stop:
-    """The refusal for ground that was looked at and is solid."""
+    """The refusal for ground that was looked at and is solid.
+
+    Only ever reached once `_standing_in_the_way` has said no: rock is what is
+    left after everything that can walk off on its own has been ruled out.
+    """
     here = observation["map_name"]
-    exits: list[dict] = []
-    try:
-        exits = _reachable_exits(
-            world, canonical_map_name(world, here), collision, observation["snapshot"], region
-        )
-    except NotFound:
-        pass
+    exits = _reachable_exits(world, here, collision, observation["snapshot"], region)
     onward = {
         "kind": "walled-off",
         "goal": goal,
@@ -755,6 +773,83 @@ def _walled_off(
     return _Stop(
         f"{lead} {sealed}. {len(region.order)} tiles are reachable from "
         f"{list(region.start)} on {here}.{onward_note}",
+        onward,
+    )
+
+
+def _standing_in_the_way(
+    world: world_mod.World,
+    goal: str,
+    candidates: Sequence[Coord],
+    observation: dict,
+    collision: dict,
+    region: world_mod.Region,
+    *,
+    enter: bool,
+    refused: Collection[Coord] = (),
+) -> Optional[_Stop]:
+    """The refusal for a goal that nothing but a body on the floor is keeping from us.
+
+    Two things get taken out of a flood that are not terrain. Sprites: the live
+    window blocks whatever an NPC or an item ball is standing on, and neither
+    is rock. `refused`: ground this call tried and the game would not allow,
+    held out so the same plan cannot come back — see `walk_to`.
+
+    Take both back and flood again. If the goal is reachable on the bare floor
+    then the map is not the problem and "this is a wall and not a gap in the
+    map" is a lie about it. Measured on Mt Moon B2F: the two fossil balls sit
+    on (12, 6) and (13, 6), the only two tiles under the only passage north,
+    and `/goto [5, 7]` from (13, 10) called them rock — pressing nothing, so
+    nothing could ever change, forever, across every later call.
+
+    Returns None when the bare floor cannot reach it either. Then it really is
+    a wall and `_walled_off` says so.
+    """
+    held = {found for found in (_coord(item) for item in collision.get("sprites") or ()) if found}
+    held |= {found for found in (_coord(item) for item in refused) if found}
+    held.discard(region.start)
+    if not held:
+        return None
+    bare_floor = {**collision, "sprites": (), "sprite_positions": ()}
+    bare = world_mod.reachable_region(bare_floor, region.start)
+    found = _cheapest(bare, list(candidates), enter=enter)
+    if found is None:
+        return None
+    _, _, steps = found
+    # Which of them is actually the door: a held tile with the region on one
+    # side of it and the ground only the bare floor reaches on the other. The
+    # beaten trainer standing in the middle of the room you are already in is a
+    # bystander, and naming him is noise. Measured: three sprites in view on Mt
+    # Moon B2F, two of them the doorway.
+    opened = set(bare.distance) - set(region.distance)
+    door = sorted(
+        tile
+        for tile in held
+        if any((tile[0] + dx, tile[1] + dy) in opened for dx, dy in DIRECTIONS.values())
+        and any((tile[0] + dx, tile[1] + dy) in region for dx, dy in DIRECTIONS.values())
+    )
+    here = observation["map_name"]
+    exits = _reachable_exits(world, here, collision, observation["snapshot"], region)
+    onward = {
+        "kind": "blocked-by-a-body",
+        "goal": goal,
+        "steps": steps,
+        "blocked_at": [list(tile) for tile in door] or [list(tile) for tile in sorted(held)],
+        "reachable_tiles": len(region.order),
+        "exits": exits,
+    }
+    named = ", ".join(str(tile) for tile in onward["blocked_at"])
+    onward_note = (
+        f" What is reachable from here: {_describe_exits(exits)}."
+        if exits
+        else " Nothing else on this map leads anywhere from here."
+    )
+    return _Stop(
+        f"{goal} is {steps} steps away over ground this floor really has, and the only way "
+        f"there runs through {named} — where something is standing. An NPC or an item ball "
+        f"is not rock: walk up to it and press A, or wait for it to move, then ask again. "
+        f"{len(region.order)} tiles are reachable from {list(region.start)} on "
+        f"{here} while it stays there.{onward_note}",
         onward,
     )
 
@@ -843,6 +938,18 @@ def _leg_for_map(
         if toward is not None:
             stand, unseen, plan = toward
             return plan, _go_look(str(list(target_xy)), stand, unseen, observation, len(plan))
+        body = _standing_in_the_way(
+            world,
+            str(list(target_xy)),
+            [target_xy],
+            observation,
+            collision,
+            region,
+            enter=True,
+            refused=refused,
+        )
+        if body is not None:
+            return None, body
         return None, _walled_off(
             world,
             str(list(target_xy)),
@@ -914,6 +1021,18 @@ def _leg_for_map(
     if look is not None:
         stand, unseen, plan = look
         return plan, _go_look(goal_name, stand, unseen, observation, len(plan))
+    body = _standing_in_the_way(
+        world,
+        goal_name,
+        [tuple(way.at) for way in warps] if warps else edge_goals,
+        observation,
+        collision,
+        region,
+        enter=bool(warps),
+        refused=refused,
+    )
+    if body is not None:
+        return None, body
     return None, _walled_off(
         world,
         goal_name,
@@ -1016,6 +1135,16 @@ async def walk_to(
     identical NPC and reported the identical refusal — measured on Mt. Moon 1F
     at 40 presses per round, forever.
 
+    That memory only ever holds tiles the *game* refused, which means the walk
+    has to be sure the game was even asked. A d-pad press with a text box or a
+    battle menu up goes to the box, and every walking action in the batch moves
+    nobody. Charging that to the terrain is how, on Mt Moon B2F at (11, 19)
+    with a Rocket's line of dialogue on screen, four rounds of it took a flood
+    that reaches 451 tiles — `/frontier` was listing them at the same moment —
+    down to `reachable_tiles: 1, sealed: true` and the sentence "this is a wall
+    and not a gap in the map". So the batch is checked against what the game is
+    showing, and one that never reached the map ends the walk instead.
+
     Never a step onto ground that was not planned over: the frontier tile is
     reached across known walkable tiles like any other goal.
     """
@@ -1028,6 +1157,14 @@ async def walk_to(
     if observation["position"] is None:
         raise Conflict(
             "The player has no position right now — probably mid-battle or mid-cutscene."
+        )
+    if observation.get("dialog"):
+        # The same guard the caller already has for a battle, for the other
+        # screen that eats the d-pad. Without it the walk presses a plan into a
+        # text box, moves nobody, and blames the floor. See the docstring.
+        raise Conflict(
+            f"A text box is open on {observation['map_name']}, so the d-pad works the box "
+            "and not the player. Close it — press B until it is gone — then ask again."
         )
 
     walked = 0
@@ -1113,6 +1250,23 @@ async def walk_to(
                 f"{list(target_xy)} is a warp, so walking onto it left {origin_map}: now on {where}"
                 if arrived
                 else f"left {origin_map} through a warp and is now on {where}"
+            )
+            onward = None
+            break
+        if observation["dialog"] or observation["battle"]:
+            # The rest of that batch went to a text box or a battle menu, and a
+            # press the map never saw says nothing about the map. Stop here,
+            # refuse nothing, and let the caller clear the screen: the tile the
+            # plan wanted next has not been tried yet and must stay untried.
+            stopped = (
+                "a battle started. Finish it or flee, then ask again."
+                if observation["battle"]
+                else (
+                    f"a text box opened on {observation['map_name']} at "
+                    f"{list(observation['position'])}, so the rest of the plan went to the box "
+                    "and not to the player. Close it — press B until it is gone — "
+                    "then ask again."
+                )
             )
             onward = None
             break
