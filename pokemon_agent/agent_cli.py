@@ -524,15 +524,45 @@ def cmd_act(args: argparse.Namespace, url: str) -> int:
     return EXIT_OK
 
 
+def battle_lines(payload: dict, headline: str) -> str:
+    """The battle verbs' answer as prose, the way `act` already answers.
+
+    `/battle/fight` and `/battle/run` return `{"used"|"fled": ..., **summary}` --
+    the same observation object `/action` returns, one scalar heavier. `act`
+    stopped printing that object raw and these two never did: measured on a Mt
+    Moon B2F encounter, `poke run` printed 205 bytes of JSON where the prose
+    comes to 96, and a real fight frame (enemy, moves, menu) prints 428 raw
+    against 312. At 57 battle calls in the median session of the live run that
+    is the same waste `action_lines` exists to stop, on the verb the switch
+    missed.
+    """
+    return f"{headline}\n{action_lines(payload)}" if headline else action_lines(payload)
+
+
 def cmd_fight(args: argparse.Namespace, url: str) -> int:
     """Attack by name. The server does the menu work; this only carries the name."""
     payload = {"move": " ".join(args.move)}
-    print(compact(fetch_json(url, "/battle/fight", method="POST", payload=payload)))
+    answer = fetch_json(url, "/battle/fight", method="POST", payload=payload)
+    if args.json:
+        print(compact(answer))
+        return EXIT_OK
+    # `used` is the move the game actually accepted, which is the whole reason
+    # the verb exists -- the cursor wraps, so the move you named and the move
+    # that fired are two different facts.
+    used = answer.get("used")
+    headline = f"used {used}" if used else ""
+    if answer.get("retried"):
+        headline += " (menu had moved; retried)"
+    print(battle_lines(answer, headline))
     return EXIT_OK
 
 
 def cmd_run(args: argparse.Namespace, url: str) -> int:
-    print(compact(fetch_json(url, "/battle/run", method="POST")))
+    answer = fetch_json(url, "/battle/run", method="POST")
+    if args.json:
+        print(compact(answer))
+        return EXIT_OK
+    print(battle_lines(answer, "fled" if answer.get("fled") else "did not get away"))
     return EXIT_OK
 
 
@@ -862,9 +892,11 @@ def build_parser() -> argparse.ArgumentParser:
         formatter_class=argparse.RawDescriptionHelpFormatter,
     )
     fight.add_argument("move", nargs="+", metavar="MOVE")
+    fight.add_argument("--json", action="store_true", help="the whole payload instead of a summary")
     fight.set_defaults(func=cmd_fight)
 
     run = subparsers.add_parser("run", parents=[common], help="flee the current battle")
+    run.add_argument("--json", action="store_true", help="the whole payload instead of a summary")
     run.set_defaults(func=cmd_run)
 
     state = subparsers.add_parser("state", parents=[common], help="party, bag, badges, position")

@@ -1032,7 +1032,14 @@ def _observation_summary(bundle: Optional[dict]) -> dict:
     # screen showing the fight -- and the fight takes their place: who you are
     # against and what you can hit them with.
     if summary["battle"]:
-        for key in ("on_warp", "warp", "faces"):
+        # `exits` goes with them. It is the same class of fact as `run` and
+        # `moves` -- an answer to "where may I walk" -- and the strip above
+        # forgot it: measured on a Mt Moon B2F encounter, the battle frame
+        # printed `exits Mt Moon B1F (25, 9)` one line under `no walking in a
+        # battle`, which is the payload contradicting itself. 26 bytes there,
+        # 70 on Route 4, on every frame of every fight. The exit has not moved
+        # and the overworld answer names it again the moment the fight ends.
+        for key in ("on_warp", "warp", "faces", "exits"):
             summary.pop(key, None)
         # Facing goes with them, and says so: see FACING_UNREAD_IN_BATTLE. It is
         # the one field here that a battle frame holds a *wrong* value for.

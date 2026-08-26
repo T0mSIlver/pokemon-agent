@@ -1104,10 +1104,13 @@ class SessionFacts:
         # The two lines that exist because every false belief in the transcripts
         # was a compass direction the model invented and then acted on.
         if self.exits:
-            rows.append(
-                f"- Every way off {self.ended_map or 'this map'} "
-                f"(* = never stepped on): {self.exits}."
-            )
+            # The legend only when a `*` is there to explain. Measured on the
+            # live run's session 6, the line read "Every way off Route 3 (* =
+            # never stepped on): walk north -> Route 4; walk west -> Pewter
+            # City." with nothing starred: 22 bytes teaching a notation the
+            # sentence does not use.
+            legend = " (* = never stepped on)" if "*" in self.exits else ""
+            rows.append(f"- Every way off {self.ended_map or 'this map'}{legend}: {self.exits}.")
         if self.route:
             rows.append(f"- Map graph says the way to {self.route_target}: {self.route}.")
         if self.heal_route:
@@ -2547,6 +2550,47 @@ def check_next_goal(goal: str, *, from_map: str) -> tuple[str, str]:
 
 def handoff_path(workspace_dir: Path) -> Path:
     return Path(workspace_dir) / HANDOFF_FILENAME
+
+
+def handoff_body(text: str) -> str:
+    """The retrospective without its ``NEXT GOAL:`` line.
+
+    The goal travels on its own: :func:`parse_next_goal` lifts it out,
+    :func:`check_next_goal` rules on it, and the supervisor puts the survivor at
+    the top of the first user message. The line stays in ``HANDOFF.md`` for the
+    post-mortem, and every one of the three ways it can then reach the model
+    again is worse than not sending it:
+
+    * accepted -- the same sentence twice in one message, 83 bytes of it, once
+      as the instruction and once as the last line the model reads;
+    * rejected -- ``check_next_goal`` threw it away for naming an unroutable map
+      or a direction the map graph contradicts, and shipping it anyway hands the
+      model the exact line the check exists to stop. That check's own docstring
+      prices one such goal at 5,618 presses;
+    * overridden -- an operator goal is in force and the file ends on a
+      different instruction, so the message contradicts itself.
+
+    Everything above the line is left alone, including a truncation marker.
+    """
+
+    lines = (text or "").splitlines()
+    kept: list[str] = []
+    dropping = False
+    for line in lines:
+        match = _NEXT_GOAL_RE.match(line)
+        if match is not None:
+            # `parse_next_goal` also accepts the label alone on its line with the
+            # goal underneath it, so keep dropping until the goal is gone too.
+            dropping = not _clean_goal_line(match.group(1))
+            continue
+        if dropping:
+            if not line.strip():
+                continue
+            dropping = False
+            if _clean_goal_line(line):
+                continue
+        kept.append(line)
+    return "\n".join(kept).strip()
 
 
 def read_handoff(workspace_dir: Path) -> str:

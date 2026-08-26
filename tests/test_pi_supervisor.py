@@ -24,6 +24,7 @@ from pokemon_agent.critic import (
     HANDOFF_PREVIOUS_FILENAME,
     MAX_HANDOFF_WORDS,
     SALVAGED_REASONING_NOTICE,
+    handoff_body,
     read_handoff,
     write_handoff,
 )
@@ -3061,13 +3062,18 @@ async def test_the_first_message_carries_ground_truth_off_the_receipts(tmp_path:
     assert "Verbs beyond walking: goto x1" in message
     # Where the exits are, off the world file: every false belief in these
     # transcripts has been a compass direction the model invented for itself.
-    assert "Every way off Route 3 (* = never stepped on): walk north -> Route 4" in message
+    # No star legend, because no exit here is starred: measured on the live run's
+    # session 6, that legend cost 22 bytes over a line with no `*` in it.
+    assert "Every way off Route 3: walk north -> Route 4" in message
     # The escape hatch it never lists for itself.
     assert "`./poke load <name>`: pewter_start." in message
     assert "auto__" not in message
     # The critic's own words come after the facts, under their own heading.
     assert message.index(FACTS_HEADING) < message.index(HANDOFF_HEADING)
-    assert CRITIQUE_WITH_GOAL in message
+    # Everything the critic wrote except its NEXT GOAL line, which is already
+    # the first line of this message. See `critic.handoff_body`.
+    assert handoff_body(CRITIQUE_WITH_GOAL) in message
+    assert "NEXT GOAL" not in message
 
 
 @pytest.mark.asyncio
@@ -3155,3 +3161,58 @@ async def test_the_digest_carries_intelligence_the_session_never_had(tmp_path: P
     assert "Trainers standing here:" in digest
     # And the measurements sit above the model's own account, not beside it.
     assert digest.index("game's own map data") < digest.index("## Session")
+
+
+@pytest.mark.asyncio
+async def test_the_first_message_does_not_hand_the_goal_over_twice(tmp_path: Path):
+    """The goal is block one. The handoff's own NEXT GOAL line is the same words.
+
+    Measured on the live run's HANDOFF.md, the line came to 83 bytes and said
+    exactly what the message already opened with -- once as the instruction and
+    once as the last thing the model reads before it acts.
+    """
+    fake_pi = make_fake_rpc_server(tmp_path)
+    workspace_dir = tmp_path / "workspace"
+    workspace_dir.mkdir(parents=True, exist_ok=True)
+    write_handoff(workspace_dir, CRITIQUE_WITH_GOAL)
+    supervisor = make_supervisor(tmp_path, pi_binary=str(fake_pi), critic_enabled=False)
+
+    await supervisor.start(
+        goal="Leave Pewter east onto Route 3 and reach Mt Moon.", auto_continue=False
+    )
+    await supervisor.wait_until_idle(timeout=10)
+
+    message = prompt_commands(workspace_dir)[0]["message"]
+
+    assert message.startswith("Leave Pewter east onto Route 3 and reach Mt Moon.")
+    assert "NEXT GOAL" not in message
+    assert message.count("Leave Pewter east onto Route 3 and reach Mt Moon.") == 1
+    # Everything the critic actually wrote still arrives.
+    assert "Stop re-entering the gym" in message
+    # And the file keeps the whole record for the post-mortem.
+    assert "NEXT GOAL:" in read_handoff(workspace_dir)
+
+
+@pytest.mark.asyncio
+async def test_an_operator_goal_is_not_contradicted_by_the_handoffs_own_goal(tmp_path: Path):
+    """Two instructions in one message is worse than a duplicated one.
+
+    An operator goal outranks the critic's, and the critic's used to arrive
+    anyway at the bottom of the same message. `check_next_goal` throws a goal
+    away for naming an unroutable map or a direction the map graph contradicts,
+    and that rejected goal took the same route back in; its docstring prices one
+    such goal at 5,618 presses.
+    """
+    fake_pi = make_fake_rpc_server(tmp_path)
+    workspace_dir = tmp_path / "workspace"
+    workspace_dir.mkdir(parents=True, exist_ok=True)
+    write_handoff(workspace_dir, CRITIQUE_WITH_GOAL)
+    supervisor = make_supervisor(tmp_path, pi_binary=str(fake_pi), critic_enabled=False)
+
+    await supervisor.start(goal="Heal at the Pewter Pokecenter first.", auto_continue=False)
+    await supervisor.wait_until_idle(timeout=10)
+
+    message = prompt_commands(workspace_dir)[0]["message"]
+
+    assert message.startswith("Heal at the Pewter Pokecenter first.")
+    assert "Leave Pewter east onto Route 3" not in message

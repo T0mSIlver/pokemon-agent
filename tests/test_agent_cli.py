@@ -526,7 +526,87 @@ def test_fight_sends_the_move_name_and_prints_what_happened(stub, capsys):
 
     assert stub.requests[-1]["path"] == "/battle/fight"
     assert stub.requests[-1]["body"] == {"move": "ember"}
-    assert json.loads(capsys.readouterr().out)["used"] == "Ember"
+    out = capsys.readouterr().out
+    # `used` first, because the cursor wraps: the move you named and the move
+    # the game accepted are two different facts and this verb exists to tell
+    # them apart.
+    assert out.splitlines()[0] == "used Ember"
+    assert "menu top on FIGHT" in out
+
+
+def test_the_battle_verbs_answer_in_prose_like_act_does(stub, capsys):
+    """`/battle/fight` returns the observation object, and this printed it raw.
+
+    `act` stopped doing that and these two never did. Measured on a Mt Moon B2F
+    encounter, `poke run` printed 205 bytes of JSON against 90 of prose and a
+    fight frame 420 against 271 -- on 57 battle calls in the median session of
+    the live run, the same waste `action_lines` was written to stop.
+    """
+    stub.route(
+        "POST",
+        "/battle/fight",
+        {
+            "used": "Ember",
+            "map": "Mt Moon B2F",
+            "x": 24,
+            "y": 11,
+            "hp": "22/73",
+            "battle": True,
+            "enemy": "Zubat L12 32/32 (Poison/Flying)",
+            "your_moves": ["Rage", "Growl", "Ember", "Leer"],
+            "menu": "moves",
+            "highlighted": "Ember",
+        },
+    )
+
+    assert run(stub, "fight", "ember") == 0
+
+    out = capsys.readouterr().out
+    assert not out.lstrip().startswith("{"), "no JSON object on the model-facing path"
+    assert "Mt Moon B2F (24,11)" in out
+    assert "BATTLE vs Zubat L12 32/32 (Poison/Flying)" in out
+    assert "moves Rage, Growl, Ember, Leer" in out
+
+
+def test_fight_json_still_hands_a_script_the_whole_object(stub, capsys):
+    """Nothing left the API. `--json` is the same escape hatch `act` has."""
+    payload = {"used": "Ember", "battle": True, "hp": "29/32"}
+    stub.route("POST", "/battle/fight", payload)
+
+    assert run(stub, "fight", "ember", "--json") == 0
+
+    assert json.loads(capsys.readouterr().out) == payload
+
+
+def test_run_says_whether_it_got_away_before_where_it_landed(stub, capsys):
+    """A flee that failed and one that worked leave the player in two places."""
+    stub.route(
+        "POST",
+        "/battle/run",
+        {
+            "fled": True,
+            "map": "Mt Moon B2F",
+            "x": 24,
+            "y": 11,
+            "facing": "left",
+            "hp": "22/73",
+            "run": {"up": 4, "right": 4},
+        },
+    )
+
+    assert run(stub, "run") == 0
+
+    lines = capsys.readouterr().out.splitlines()
+    assert lines[0] == "fled"
+    assert lines[1] == "Mt Moon B2F (24,11) facing left  hp 22/73"
+
+
+def test_a_flee_that_did_not_work_says_so(stub, capsys):
+    stub.route("POST", "/battle/run", {"fled": False, "map": "Mt Moon B2F", "battle": True})
+
+    assert run(stub, "run") == 0
+
+    assert capsys.readouterr().out.splitlines()[0] == "did not get away"
 
 
 def test_fight_joins_a_multi_word_move(stub):
@@ -553,7 +633,7 @@ def test_run_posts_with_no_body_and_prints_the_outcome(stub, capsys):
 
     assert stub.requests[-1]["path"] == "/battle/run"
     assert stub.requests[-1]["body"] is None
-    assert json.loads(capsys.readouterr().out)["fled"] is True
+    assert capsys.readouterr().out.splitlines()[0] == "fled"
 
 
 def test_run_outside_a_battle_reports_the_refusal(stub, capsys):

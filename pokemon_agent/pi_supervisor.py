@@ -1967,7 +1967,11 @@ class PiSupervisor:
             rendered = facts.render()
             if rendered:
                 blocks.append(rendered)
-        handoff = critic.read_handoff(self.workspace_dir)
+        # Without its NEXT GOAL line: block one above already is the goal, when
+        # the check passed. When it did not, the goal the check threw away must
+        # not walk back in as the last line of the message. See
+        # ``critic.handoff_body``.
+        handoff = critic.handoff_body(critic.read_handoff(self.workspace_dir))
         if handoff:
             blocks.append(f"## {critic.HANDOFF_HEADING}\n\n{handoff}")
         return "\n\n".join(blocks)
