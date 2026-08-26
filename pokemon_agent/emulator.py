@@ -683,9 +683,17 @@ class PyBoyEmulator(Emulator):
         return an empty floor: an empty floor reads as "walled in" downstream,
         which is the failure this project keeps paying for.
         """
+        from pokemon_agent.memory.red import MAP_NAMES  # imported here: red imports this module
+
         try:
             decoded = mapdecode.decode_map(self.read_u8, self.read_rom)
             decoded["warps"] = mapdecode.decode_warps(self.read_u8)
+            # Where each side of the map leads *and at what offset*. gamedata's
+            # table has the map name only, which is not enough to say which tile
+            # -- or which pocket -- walking off the edge puts you on.
+            decoded["connections"] = mapdecode.connection_specs(
+                mapdecode.decode_connections(self.read_u8), MAP_NAMES.get
+            )
         except mapdecode.DecodeFailed:
             return None
         except Exception:  # a bad read is not worth taking the whole snapshot down

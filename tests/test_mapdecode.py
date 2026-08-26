@@ -172,3 +172,132 @@ def test_an_ordinary_warp_passes_through_resolution_untouched():
     warp = {"index": 0, "at": (5, 5), "dest_warp": 2, "dest_map": 59}
 
     assert mapdecode.resolve_last_map(60, warp, {}) == (59, 2)
+
+
+# ---------------------------------------------------------------------------
+# Connections
+# ---------------------------------------------------------------------------
+
+#: The bytes at 0xD370 with each map loaded, copied off a save state rather than
+#: composed, so a wrong slot address or field order fails these tests the way it
+#: would fail the game. Every landing asserted below was also walked in PyBoy,
+#: and came out tile for tile.
+LIVE_HEADERS = {
+    "Route 4": {  # 45 blocks wide; south to Route 3, east to Cerulean City
+        "width_blocks": 45,
+        "mask": 0x05,
+        "slots": {
+            "south": [0x0E, 0x6B, 0x42, 0x4C, 0xC9, 0x0D, 0x23, 0x00, 0x32, 0x12, 0xC7],
+            "east": [0x03, 0x44, 0x48, 0x18, 0xC7, 0x0F, 0x14, 0x08, 0x00, 0x03, 0xC7],
+        },
+    },
+    "Route 3": {  # 35 blocks wide; north to Route 4, west to Pewter City
+        "width_blocks": 35,
+        "mask": 0x0A,
+        "slots": {
+            "north": [0x0F, 0xFA, 0x44, 0x04, 0xC7, 0x0D, 0x2D, 0x11, 0xCE, 0xB4, 0xC8],
+            "west": [0x02, 0x0B, 0x46, 0xE8, 0xC6, 0x0F, 0x14, 0x08, 0x27, 0x16, 0xC7],
+        },
+    },
+}
+
+
+def connection_memory(map_name, extra_slots=()):
+    """WRAM as the header sits once `map_name` is loaded."""
+    header = LIVE_HEADERS[map_name]
+    wram = {
+        mapdecode.WCURMAPWIDTH: header["width_blocks"],
+        mapdecode.WMAPCONNECTIONS: header["mask"],
+    }
+    for direction, values in dict(header["slots"], **dict(extra_slots)).items():
+        base = mapdecode.CONNECTION_SLOTS[direction]
+        for offset, value in enumerate(values):
+            wram[base + offset] = value
+    return lambda addr: wram.get(addr, 0)
+
+
+def test_only_the_directions_the_bitmask_names_are_read():
+    """Route 4's north slot really does still hold Route 3's connection.
+
+    The four slots are fixed and the engine fills only the sides the mask names,
+    so a decoder that trusts a slot because its map id looks plausible invents an
+    edge off the top of Route 4 that leads nowhere.
+    """
+    stale = list(LIVE_HEADERS["Route 3"]["slots"]["north"])
+    read_u8 = connection_memory("Route 4", extra_slots=[("north", stale)])
+
+    got = mapdecode.decode_connections(read_u8)
+
+    assert sorted(got) == ["east", "south"], "the mask reads 0x05: east and south"
+
+
+def test_walking_off_the_south_edge_keeps_x_and_takes_the_stored_row():
+    """Measured: Route 4 (9,17) pressed down lands on Route 3 (59,0)."""
+    got = mapdecode.decode_connections(connection_memory("Route 4"))["south"]
+
+    assert got.map_id == 14, "Route 3"
+    assert got.landing((9, 17)) == (59, 0)
+    assert got.landing((19, 17)) == (69, 0), "the whole edge slides by the same offset"
+
+
+def test_walking_off_the_east_edge_keeps_y_and_takes_the_stored_column():
+    """Measured: Route 4 (89,10) pressed right lands on Cerulean City (0,18)."""
+    got = mapdecode.decode_connections(connection_memory("Route 4"))["east"]
+
+    assert got.map_id == 3, "Cerulean City"
+    assert got.landing((89, 10)) == (0, 18)
+    assert got.landing((89, 13)) == (0, 21), "which is a different pocket of Cerulean"
+
+
+def test_an_alignment_over_127_is_a_step_backwards_rather_than_a_huge_one_forwards():
+    """Route 3's north x alignment is 0xCE.
+
+    Read unsigned that is 206 tiles east, off the end of a map 70 wide. Read
+    signed it is -50, and Route 3 (59,0) walking north lands on Route 4 (9,17),
+    which is where the emulator puts you.
+    """
+    got = mapdecode.decode_connections(connection_memory("Route 3"))["north"]
+
+    assert (got.x_align, got.y_align) == (-50, 17)
+    assert got.landing((59, 0)) == (9, 17)
+
+
+def test_a_tile_off_the_connection_strip_lands_nowhere():
+    """The bogus hop this whole change exists for.
+
+    Route 4's south side is a 13-block strip at the west end. Its far east
+    corner, x 81..89, is border, but taking every pocket that touches the edge
+    offered `Route 4#4 -> Route 3` from sixty tiles away.
+    """
+    got = mapdecode.decode_connections(connection_memory("Route 4"))["south"]
+
+    assert (got.strip_from, got.strip_to) == (-6, 19), "13 blocks, from three left of the map"
+    assert [got.landing((x, 17)) for x in (86, 87, 88, 89)] == [None] * 4
+    assert got.landing((4, 17)) == (54, 0), "the west end of the same edge still lands"
+
+
+def test_a_landing_past_the_end_of_the_connected_map_is_refused():
+    """Route 3 is 70 tiles wide, so nothing may land at x 90 on it."""
+    got = mapdecode.decode_connections(connection_memory("Route 4"))["south"]
+    over_long = mapdecode.MapConnection(**{**got.__dict__, "strip_to": 200})
+
+    assert over_long.landing((40, 17)) is None, "on the strip, off the map"
+
+
+def test_connection_specs_translate_ids_into_the_names_a_route_is_keyed_by():
+    names = {14: "Route 3", 3: "Cerulean City"}
+
+    got = mapdecode.connection_specs(
+        mapdecode.decode_connections(connection_memory("Route 4")), names.get
+    )
+
+    assert got["south"]["to_map"] == "Route 3"
+    assert mapdecode.MapConnection.from_spec("south", got["south"]).landing((9, 17)) == (59, 0)
+
+
+def test_a_connection_to_a_map_with_no_name_is_dropped_rather_than_routed_to():
+    got = mapdecode.connection_specs(
+        mapdecode.decode_connections(connection_memory("Route 4")), lambda _id: None
+    )
+
+    assert got == {}
