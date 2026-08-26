@@ -330,6 +330,7 @@ class _MapRecord:
         "visits",
         "warps",
         "player",
+        "truth",
     )
 
     def __init__(self, map_id: int, map_name: str = "") -> None:
@@ -339,6 +340,10 @@ class _MapRecord:
         self.height = 0
         self.seen: Set[Coord] = set()
         self.walkable: Set[Coord] = set()
+        # The floor as the game itself has it, once this map has been decoded.
+        # None means nobody has stood on this map yet, which is a different
+        # answer from "decoded and found empty" and has to stay distinguishable.
+        self.truth: Optional[Set[Coord]] = None
         # Tile -> how many separate arrivals. A tile stood on 24 times is the
         # single loudest signal that the agent is going in circles.
         self.visits: Dict[Coord, int] = {}
@@ -374,10 +379,34 @@ class _MapRecord:
             self.player = None
         return before - len(self.seen)
 
+    def adopt_truth(self, walkable: Set[Coord], width: int, height: int) -> None:
+        """Take the decoded floor as this map's terrain, discarding what was accumulated.
+
+        Replacing rather than merging is the point. `note` below is a monotone
+        union that cannot retract, which was the right call against phantom
+        walls and the wrong one against phantom *floor*: a tile corrected as
+        solid inside the 90-tile window went back to walkable the moment it left
+        it, and 44 such false doorways were measured on Mt Moon 1F alone. A wall
+        costs a detour; a floor costs a loop.
+
+        Every tile is `seen` afterwards, because a decoded floor holds no
+        unanswered questions.
+        """
+        self.width, self.height = width, height
+        self.truth = set(walkable)
+        self.walkable = set(walkable)
+        self.seen = {(x, y) for y in range(height) for x in range(width)}
+        self.visits = {
+            coord: count for coord, count in self.visits.items() if _inside(coord, width, height)
+        }
+        self.warps = {coord for coord in self.warps if _inside(coord, width, height)}
+
     def note(self, coord: Coord, *, passable: bool) -> None:
         # `seen` and `walkable` are both monotone unions: a tile seen passable
         # once stays passable, so a blocker that was only there for one frame
-        # cannot leave a permanent phantom wall behind.
+        # cannot leave a permanent phantom wall behind. Once `truth` is set this
+        # only adds doors and warp carpets, which are walkable without being in
+        # the tileset's collision list; it never contradicts the decoded floor.
         self.seen.add(coord)
         if passable:
             self.walkable.add(coord)
@@ -397,6 +426,11 @@ class _MapRecord:
                 [x, y, count] for (x, y), count in self.visits.items() if count > 1
             ),
             "warps": sorted([x, y] for x, y in self.warps),
+            # Kept apart from `walkable` so a later reader can still tell the
+            # decoded floor from the doors the live frame added on top of it.
+            "truth": _pack_rows(self.truth, self.width, self.height)
+            if self.truth is not None
+            else None,
         }
 
     @classmethod
@@ -408,6 +442,12 @@ class _MapRecord:
         record.height = int(payload.get("height") or 0)
         record.seen = _unpack_rows(payload.get("seen") or [], record.width)
         record.walkable = _unpack_rows(payload.get("walkable") or [], record.width)
+        # Absent in a store written before the map decoder existed, which is the
+        # honest answer there: that store never held ground truth.
+        packed_truth = payload.get("truth")
+        record.truth = (
+            _unpack_rows(packed_truth, record.width) if packed_truth is not None else None
+        )
         # A store written before visit counts existed carries only the walked
         # set. Migrate it — every known tile counts as one arrival — rather than
         # dropping a run's worth of accumulated map memory on the floor.
@@ -499,6 +539,22 @@ class ExploredMaps:
             dropped = record.resize(*size)
             if dropped:
                 _log(f"map {map_id} resized to {size[0]}x{size[1]}, dropping {dropped} tiles")
+
+        # The decoded floor, when this frame carried one. It is adopted once and
+        # then left alone: the game's map data does not change, so re-adopting
+        # every frame would only throw away the doors the window has since added.
+        truth = snapshot.get("map_terrain") or {}
+        truth_walkable = {
+            coord
+            for coord in (_as_coord(item) for item in truth.get("walkable") or [])
+            if coord is not None
+        }
+        if truth_walkable and record.truth is None:
+            record.adopt_truth(truth_walkable, int(truth["width"]), int(truth["height"]))
+            _log(
+                f"map {map_id} adopted decoded terrain: {len(truth_walkable)} walkable "
+                f"of {truth['width']}x{truth['height']}"
+            )
 
         # A sprite standing on a tile makes that tile read as blocked, so skip
         # those tiles rather than learning a wandering NPC as a wall.
