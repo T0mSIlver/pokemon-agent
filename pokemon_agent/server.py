@@ -53,6 +53,7 @@ from pokemon_agent.intervention_loop import (
 from pokemon_agent.memory.red import MAP_NAMES, MOVE_NAMES
 from pokemon_agent.milestones import MilestoneTracker
 from pokemon_agent.pi_supervisor import NoLiveSessionError, PiSupervisor
+from pokemon_agent.pockets import PocketGraph
 from pokemon_agent.progress import AUTO_SAVE_PREFIX
 from pokemon_agent.run_recorder import RunRecorder, receipt_from_batch
 from pokemon_agent.saves import (
@@ -2680,6 +2681,54 @@ def _current_map_name_sync() -> Optional[str]:
         return None
 
 
+def _player_coord_sync() -> Optional[tuple[int, int]]:
+    """Where the player is standing, for a router that answers per pocket."""
+    if _reader is None:
+        return None
+    try:
+        coords = _reader.read_coordinates() or {}
+        x, y = coords.get("x"), coords.get("y")
+        return (int(x), int(y)) if x is not None and y is not None else None
+    except Exception:  # noqa: BLE001
+        return None
+
+
+def _pocket_graph() -> Optional[PocketGraph]:
+    """A route graph over pockets, built from whatever the store has decoded.
+
+    Every map the player has stood on contributes its real terrain and its
+    ledges; the rest fall back to one pocket each, which is the old behaviour
+    for those maps and no worse. Cheap enough to build per request: the pieces
+    are flooded lazily and most routes touch a handful of maps.
+    """
+    if _explored_maps is None:
+        return None
+    from pokemon_agent import gamedata
+
+    world = gamedata.world()
+    by_name = {
+        name: map_id
+        for map_id, name in ((mid, MAP_NAMES.get(mid)) for mid in _explored_maps.map_ids())
+        if name
+    }
+
+    def terrain_for(name: str):
+        map_id = by_name.get(name)
+        return _explored_maps.terrain(map_id) if map_id is not None else None
+
+    def ledges_for(name: str):
+        map_id = by_name.get(name)
+        return _explored_maps.ledges_for(map_id) if map_id is not None else None
+
+    return PocketGraph(
+        lambda name: (world.get(name) or {}).get("warps") or [],
+        terrain_for,
+        lambda name: (world.get(name) or {}).get("connections") or {},
+        lambda name: (world.get(name) or {}).get("size"),
+        ledges_for,
+    )
+
+
 @app.get("/route")
 async def get_route(to: Optional[str] = None):
     """Hops from the current map to another, as a plan rather than as buttons."""
@@ -2688,8 +2737,11 @@ async def get_route(to: Optional[str] = None):
     current = await _run_emulator_sync(_current_map_name_sync)
     if not current:
         raise HTTPException(status_code=503, detail="The current map is not readable right now.")
+    position = await _run_emulator_sync(_player_coord_sync)
     try:
-        return capabilities.route_payload(world, current, to or "")
+        return capabilities.route_payload(
+            world, current, to or "", pockets=_pocket_graph(), at=position
+        )
     except capabilities.CapabilityError as exc:
         raise _capability_error(exc) from exc
 

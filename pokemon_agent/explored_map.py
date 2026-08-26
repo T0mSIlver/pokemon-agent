@@ -183,6 +183,24 @@ def _label_warps(map_name: str, coords: Sequence[Coord]) -> List[Dict[str, objec
     return labelled
 
 
+def _ledges_from(truth: dict) -> Dict[Tuple[int, int, str], Coord]:
+    """Every ledge hop on a decoded map, worked out once and kept.
+
+    Computed here rather than on demand because tile ids are only readable for
+    the map the player is standing on, and a route crosses maps they are not.
+    """
+    from pokemon_agent import world as world_mod
+
+    tile_ids = truth.get("tile_ids")
+    if not tile_ids:
+        return {}
+    edges = world_mod.movement_edges({"tileset": truth.get("tileset"), "tile_ids": tile_ids})
+    return {
+        (int(tile[0]), int(tile[1]), str(direction)): (int(landing[0]), int(landing[1]))
+        for (tile, direction), landing in edges.items()
+    }
+
+
 def _inside(coord: Coord, width: int, height: int) -> bool:
     return 0 <= coord[0] < width and 0 <= coord[1] < height
 
@@ -331,6 +349,7 @@ class _MapRecord:
         "warps",
         "player",
         "truth",
+        "ledges",
     )
 
     def __init__(self, map_id: int, map_name: str = "") -> None:
@@ -344,6 +363,11 @@ class _MapRecord:
         # None means nobody has stood on this map yet, which is a different
         # answer from "decoded and found empty" and has to stay distinguishable.
         self.truth: Optional[Set[Coord]] = None
+        # ``(x, y, direction) -> landing``. Kept because a route crosses maps
+        # the player is not standing on, and tile ids are only readable for the
+        # loaded one. Route 4's east half hangs off 169 of these, so a router
+        # without them calls the road to Cerulean a wall.
+        self.ledges: Dict[Tuple[int, int, str], Coord] = {}
         # Tile -> how many separate arrivals. A tile stood on 24 times is the
         # single loudest signal that the agent is going in circles.
         self.visits: Dict[Coord, int] = {}
@@ -431,6 +455,10 @@ class _MapRecord:
             "truth": _pack_rows(self.truth, self.width, self.height)
             if self.truth is not None
             else None,
+            "ledges": sorted(
+                [x, y, direction, landing[0], landing[1]]
+                for (x, y, direction), landing in self.ledges.items()
+            ),
         }
 
     @classmethod
@@ -448,6 +476,11 @@ class _MapRecord:
         record.truth = (
             _unpack_rows(packed_truth, record.width) if packed_truth is not None else None
         )
+        record.ledges = {
+            (int(row[0]), int(row[1]), str(row[2])): (int(row[3]), int(row[4]))
+            for row in payload.get("ledges") or []
+            if isinstance(row, (list, tuple)) and len(row) == 5
+        }
         # A store written before visit counts existed carries only the walked
         # set. Migrate it — every known tile counts as one arrival — rather than
         # dropping a run's worth of accumulated map memory on the floor.
@@ -551,9 +584,10 @@ class ExploredMaps:
         }
         if truth_walkable and record.truth is None:
             record.adopt_truth(truth_walkable, int(truth["width"]), int(truth["height"]))
+            record.ledges = _ledges_from(truth)
             _log(
                 f"map {map_id} adopted decoded terrain: {len(truth_walkable)} walkable "
-                f"of {truth['width']}x{truth['height']}"
+                f"of {truth['width']}x{truth['height']}, {len(record.ledges)} ledge hops"
             )
 
         # A sprite standing on a tile makes that tile read as blocked, so skip
@@ -698,7 +732,28 @@ class ExploredMaps:
             "walkable": set(record.walkable),
             "walked": set(record.visits),
             "warps": set(record.warps),
+            # The decoded floor on its own, kept apart from `walkable` so a
+            # router can tell ground truth from the doors the live window added.
+            # None until this map has been stood on and decoded.
+            "truth": set(record.truth) if record.truth is not None else None,
+            "ledges": dict(record.ledges),
         }
+
+    def terrain(self, map_id: int) -> Optional[Set[Coord]]:
+        """The decoded floor for one map, or None if nobody has stood on it.
+
+        A route crosses maps the player is not on, so this answers for any map
+        the store has ever decoded, not only the current one.
+        """
+        record = self._maps.get(map_id)
+        if record is None or record.truth is None:
+            return None
+        return set(record.truth)
+
+    def ledges_for(self, map_id: int) -> Dict[Tuple[int, int, str], Coord]:
+        """One map's ledge hops. Empty for a map never decoded, which is honest."""
+        record = self._maps.get(map_id)
+        return dict(record.ledges) if record is not None else {}
 
     def coverage(self, map_id: int) -> dict:
         record = self._maps.get(map_id)

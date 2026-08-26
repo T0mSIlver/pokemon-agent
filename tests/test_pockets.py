@@ -331,3 +331,87 @@ def test_a_door_onto_ground_that_is_not_walkable_is_not_a_route():
 
     # hall has no terrain, so it collapses to one pocket and stays routable.
     assert graph_with_gap.route("cave", (0, 0), "outside") is not None
+
+
+# ---------------------------------------------------------------------------
+# The payload /route actually returns
+#
+# Real map names, because `route_payload` validates against the game's own map
+# table before it reaches the router. The terrain is synthetic but the shape is
+# not: Mt Moon B1F really is several pockets, and this is the smallest map with
+# that property.
+# ---------------------------------------------------------------------------
+
+REAL_WORLD = {
+    "Mt Moon B1F": [
+        {"x": 0, "y": 0, "to_map": "Mt Moon 1F", "to_warp": 0},
+        {"x": 4, "y": 0, "to_map": "Mt Moon 1F", "to_warp": 1},
+        {"x": 3, "y": 0, "to_map": "Route 4", "to_warp": 0},
+    ],
+    "Mt Moon 1F": [
+        {"x": 0, "y": 0, "to_map": "Mt Moon B1F", "to_warp": 0},
+        {"x": 2, "y": 0, "to_map": "Mt Moon B1F", "to_warp": 1},
+    ],
+    "Route 4": [{"x": 0, "y": 0, "to_map": "Mt Moon B1F", "to_warp": 2}],
+}
+REAL_TERRAIN = {
+    "Mt Moon B1F": {(0, 0), (1, 0), (3, 0), (4, 0)},  # two pockets, gap at x=2
+    "Mt Moon 1F": {(0, 0), (1, 0), (2, 0)},
+    "Route 4": {(0, 0), (1, 0)},
+}
+
+
+def real_world():
+    """A World that knows these three maps and no hops between them.
+
+    No hops on purpose: the fallback search must come back empty, so a passing
+    pocket assertion cannot be the static graph answering by accident.
+    """
+    from pokemon_agent.world import MapInfo, World
+
+    return World(
+        {
+            name: MapInfo(name=name, map_id=index, size=(8, 4), hops=())
+            for index, name in enumerate(REAL_TERRAIN)
+        }
+    )
+
+
+def real_graph():
+    return PocketGraph(lambda name: REAL_WORLD.get(name, []), lambda name: REAL_TERRAIN.get(name))
+
+
+def test_route_payload_prefers_the_pocket_answer_and_says_the_ground_is_checked():
+    """The point of wiring it in: the map-keyed search cannot express this route.
+
+    Getting from one Mt Moon B1F pocket to the other means leaving B1F and
+    coming back, so a search keyed by map name reports no route rather than a
+    worse one. The payload says `ground: checked` because these hops came from
+    real terrain, not from a static table that has never seen a tile.
+    """
+    from pokemon_agent import capabilities
+
+    payload = capabilities.route_payload(
+        real_world(), "Mt Moon B1F", "Route 4", pockets=real_graph(), at=(0, 0)
+    )
+
+    assert payload["ground"] == "checked"
+    assert payload["distance"] == 3
+    assert [hop["from"] for hop in payload["hops"]] == [
+        "Mt Moon B1F",
+        "Mt Moon 1F",
+        "Mt Moon B1F",
+    ], "it comes back to B1F, which is the thing that was impossible"
+    assert "real terrain" in payload["basis"]
+
+
+def test_route_payload_falls_back_when_the_player_position_is_unknown():
+    """A router that answers per pocket cannot answer without a tile to start from."""
+    from pokemon_agent import capabilities
+
+    payload = capabilities.route_payload(
+        real_world(), "Mt Moon B1F", "Route 4", pockets=real_graph(), at=None
+    )
+
+    assert payload["hops"] is None, "no pocket answer, and the static graph is empty here"
+    assert "No route" in payload["reason"]

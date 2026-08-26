@@ -303,18 +303,76 @@ ROUTE_CAVEAT = (
 )
 
 
-def route_payload(world: world_mod.World, source: str, target: str) -> dict:
+#: What a pocket route is built from, in one line the agent can read.
+POCKET_BASIS = (
+    "the real terrain of every map on the way, decoded from the game's own map data, "
+    "so each hop names a tile you can actually reach from where you are standing"
+)
+
+
+def _pocket_route_payload(src: str, dst: str, hops: Sequence[Any]) -> dict:
+    """A pocket route, rendered the way `route_payload` renders a map route.
+
+    `ground` is "checked" here and "unchecked" below, and the difference is
+    real: these hops were found by flooding terrain the game itself supplied,
+    and the ones below were found in a static table that has never seen a tile.
+    """
+    return {
+        "from": src,
+        "to": dst,
+        "distance": len(hops),
+        "hops": [
+            {
+                "from": hop.from_map,
+                "to": hop.to_map,
+                "kind": hop.kind,
+                "at": list(hop.at) if hop.at else None,
+                "landing": list(hop.landing) if hop.landing else None,
+                "edge": hop.edge,
+                "describe": hop.describe(),
+            }
+            for hop in hops
+        ],
+        "ground": "checked",
+        "basis": POCKET_BASIS,
+    }
+
+
+def route_payload(
+    world: world_mod.World,
+    source: str,
+    target: str,
+    *,
+    pockets: Optional[Any] = None,
+    at: Optional[Coord] = None,
+) -> dict:
     """Hops from *source* to *target*, or a reason there are none.
 
     Hops, not button presses: which buttons cross a map depends on that map's
     live collision, which no static file carries. Every hop carries
     ``ground: "unchecked"`` for the same reason — this function has never seen
     a tile, and a payload that does not say so is read as a guarantee.
+
+    Given a `pockets` graph and the tile the player is on, the answer comes from
+    real terrain instead and says ``ground: "checked"``.
     """
     src = canonical_map_name(world, source)
     dst = canonical_map_name(world, target)
     if src == dst:
         return {"from": src, "to": dst, "distance": 0, "hops": [], "basis": ROUTE_BASIS}
+
+    # The pocket router first, when the caller knows where the player is and the
+    # store has decoded terrain. It is strictly better informed: it searches
+    # (map, pocket) rather than map, so it can express a route that comes back
+    # to a map it has already been on -- which is what crossing Mt Moon is, and
+    # what the map-keyed search below reports as "no route" rather than finding
+    # a worse one.
+    if pockets is not None and at is not None:
+        found = pockets.route(src, at, dst)
+        if found:
+            return _pocket_route_payload(src, dst, found)
+        if found == ():
+            return {"from": src, "to": dst, "distance": 0, "hops": [], "basis": POCKET_BASIS}
 
     hops = world.route(src, dst)
     if hops is None:
