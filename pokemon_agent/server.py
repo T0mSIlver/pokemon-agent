@@ -2543,18 +2543,31 @@ async def list_saves(limit: int = DEFAULT_SAVES_LIMIT, named: bool = False):
         files = list_save_files(saves_dir)
         if named:
             files = [f for f in files if not f.name.startswith(AUTO_SAVE_PREFIX)]
-        files = sorted(files, key=lambda f: f.stat().st_mtime, reverse=True)
-        total = len(files)
-        shown = files if limit <= 0 else files[:limit]
+        # One stat per file, and a file that vanishes between the glob and the
+        # stat drops out of the listing instead of failing it. The autosave
+        # pruner unlinks stale `auto__*.state` from an executor thread while
+        # this runs on the loop, so the window is open constantly: this 500'd
+        # the *entire* listing 23 times in one session, and `poke saves` is how
+        # the agent finds anything to load. The pruner already tolerates the
+        # same race on its side.
+        stated = []
+        for found in files:
+            try:
+                stated.append((found, found.stat()))
+            except OSError:
+                continue
+        stated.sort(key=lambda pair: pair[1].st_mtime, reverse=True)
+        total = len(stated)
+        shown = stated if limit <= 0 else stated[:limit]
         payload = {
             "saves": [
                 {
-                    "name": f.stem,
-                    "file": f.name,
-                    "size_bytes": f.stat().st_size,
-                    "modified": f.stat().st_mtime,
+                    "name": found.stem,
+                    "file": found.name,
+                    "size_bytes": stat.st_size,
+                    "modified": stat.st_mtime,
                 }
-                for f in shown
+                for found, stat in shown
             ],
             "count": total,
             "shown": len(shown),

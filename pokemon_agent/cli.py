@@ -102,6 +102,15 @@ def cmd_serve(args):
         )
     )
 
+    # A crash inside PyBoy's C extension exits with no Python traceback, which
+    # in the log is byte-for-byte a SIGKILL: the access line for the last served
+    # request, then nothing. Two hours went into a "segfault twice in forty
+    # minutes" that turned out to be one `pkill`, because there was no way to
+    # tell the two apart after the fact.
+    import faulthandler
+
+    faulthandler.enable()
+
     import uvicorn
 
     uvicorn.run(app, host=args.host, port=args.port, log_level="info")

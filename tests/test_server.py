@@ -2592,6 +2592,36 @@ def test_saves_is_capped_and_says_how_many_it_hid(server_app):
     assert payload["truncated"] is True
 
 
+def test_a_save_pruned_mid_listing_drops_out_instead_of_500ing_the_lot(server_app, monkeypatch):
+    """The autosave pruner deletes files from a thread while this runs on the loop.
+
+    Measured under load: 23 x `GET /saves -> 500`, each because one `auto__`
+    file vanished between the glob and the stat. `poke saves` is how the agent
+    finds anything to load, so losing the whole listing over one pruned file is
+    expensive. The pruner already tolerates this race on its side.
+    """
+    saves_dir = server_app.saves_dir
+    saves_dir.mkdir(parents=True, exist_ok=True)
+    (saves_dir / "before_brock.state").write_bytes(b"x")
+    doomed = saves_dir / "auto__001.state"
+    doomed.write_bytes(b"x")
+
+    real_stat = server.Path.stat
+
+    def vanishing(self, *args, **kwargs):
+        if self.name == doomed.name:
+            raise FileNotFoundError(2, "No such file or directory", str(self))
+        return real_stat(self, *args, **kwargs)
+
+    monkeypatch.setattr(server.Path, "stat", vanishing)
+    response = server_app.http.get("/saves")
+
+    assert response.status_code == 200, response.text
+    names = {s["name"] for s in response.json()["saves"]}
+    assert "before_brock" in names, "the surviving save is still listed"
+    assert "auto__001" not in names
+
+
 def test_saves_can_hide_the_harnesss_own_autosaves(server_app):
     saves_dir = server_app.saves_dir
     saves_dir.mkdir(parents=True, exist_ok=True)

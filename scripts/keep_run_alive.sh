@@ -79,8 +79,18 @@ except Exception:
 # A run can report 'running' while doing nothing at all. It has happened: the
 # disk filled, every action returned ENOSPC, and the session sat in that state
 # for four hours because the supervisor was technically alive. Status alone is
-# not liveness -- the emulator's frame counter is.
-STALL_SECONDS="${STALL_SECONDS:-600}"
+# not liveness.
+#
+# This watched `emulation.frame_count` for months and could never have fired:
+# the 60 Hz realtime loop ticks that counter forever whether or not the agent
+# has done anything, so it was dead code guarding the exact failure it was
+# written for. `run.presses` only moves when a batch is actually executed.
+#
+# The threshold has to be generous, because a local 27B model reading maps and
+# running sims between batches legitimately goes quiet: this run has ten gaps
+# over nine minutes and one of twenty-one. Ten minutes would restart healthy
+# sessions all day.
+STALL_SECONDS="${STALL_SECONDS:-1800}"
 DISK_MIN_MB="${DISK_MIN_MB:-2048}"
 last_frame=""
 last_frame_at=0
@@ -88,7 +98,7 @@ last_frame_at=0
 frame_count() {
   curl -sf -m 10 "$SERVER/health" 2>/dev/null | python3 -c 'import json,sys
 try:
-    print(json.load(sys.stdin).get("emulation", {}).get("frame_count", ""))
+    print(json.load(sys.stdin).get("run", {}).get("presses", ""))
 except Exception:
     print("")' 2>/dev/null
 }
@@ -118,7 +128,7 @@ while true; do
   elif [ -n "$last_frame" ] && [ "$last_frame_at" -gt 0 ]; then
     stalled=$(( now - last_frame_at ))
     if [ "$stalled" -ge "$STALL_SECONDS" ] && [ "$status" = "running" ]; then
-      log "emulator has not advanced a frame in ${stalled}s while 'running' - restarting the session"
+      log "agent has not pressed a button in ${stalled}s while 'running' - restarting the session"
       curl -sS -m 30 -X POST "$SERVER/supervisor/stop" \
         -H 'Content-Type: application/json' -d '{}' >/dev/null 2>&1 || true
       last_frame_at="$now"
