@@ -2614,8 +2614,32 @@ def _observation_sync() -> dict:
     return {"state": _get_state_dict(), "navigation": {"snapshot": _navigation_snapshot_sync()}}
 
 
+def _in_battle_sync() -> bool:
+    try:
+        return bool((_reader.read_battle() if _reader is not None else {}).get("in_battle"))
+    except Exception:  # noqa: BLE001 — a guard must not be the thing that fails
+        return False
+
+
 async def _require_snapshot() -> dict:
+    """The live collision window, or a refusal that says why there isn't one.
+
+    A battle screen still yields a snapshot, and it is not a map: the window is
+    the fight, so a flood over it reaches one tile and every question answered
+    from it comes back confidently wrong. Measured live -- `goto` reported
+    `sealed: true, reachable_tiles: 1` and `frontier` reported zero tiles, both
+    while a Zubat was on screen. Telling an agent it is walled in when it is
+    merely in a battle is worse than telling it nothing.
+    """
     _ensure_emulator()
+    if await _run_emulator_sync(_in_battle_sync):
+        raise HTTPException(
+            status_code=409,
+            detail=(
+                "In a battle, so there is no map to plan over. Finish the fight "
+                "or flee, then ask again."
+            ),
+        )
     snapshot = await _run_emulator_sync(_navigation_snapshot_sync)
     if not snapshot:
         raise HTTPException(
@@ -2666,6 +2690,16 @@ async def goto(req: GotoRequest):
     rock, and it never spends more frames than one action batch may.
     """
     _ensure_emulator()
+    # Same reason as `_require_snapshot`: a battle frame is not a map, and
+    # planning over one answers "sealed in, one tile reachable".
+    if await _run_emulator_sync(_in_battle_sync):
+        raise HTTPException(
+            status_code=409,
+            detail=(
+                "In a battle, so there is no map to walk over. Finish the fight "
+                "or flee, then ask again."
+            ),
+        )
     _check_action_rate()
     if req.target and (req.x is not None or req.y is not None):
         raise HTTPException(

@@ -2606,3 +2606,34 @@ def test_saves_returns_everything_when_asked(server_app):
 def test_health_does_not_carry_a_whole_intervention_answer(server_app):
     body = server_app.http.get("/health").content
     assert len(body) < 4096, f"/health is {len(body)} bytes"
+
+
+# ---------------------------------------------------------------------------
+# Navigation refuses to answer from a battle frame
+#
+# A battle still produces a snapshot and it is not a map -- the window is the
+# fight. Measured live, mid-Zubat: `goto` answered `sealed: true,
+# reachable_tiles: 1` and `frontier` answered zero tiles. Telling an agent it is
+# walled in when it is merely in a battle is worse than telling it nothing.
+# ---------------------------------------------------------------------------
+
+
+def test_navigation_refuses_during_a_battle_instead_of_answering_wrongly(server_app):
+    server_app.emulator.in_battle = True
+
+    for method, path, body in (
+        ("GET", "/frontier", None),
+        ("POST", "/sim", {"actions": ["walk_up"]}),
+        ("POST", "/goto", {"x": 1, "y": 1}),
+    ):
+        response = server_app.http.request(method, path, json=body)
+        assert response.status_code == 409, f"{path} answered {response.status_code}"
+        assert "battle" in response.json()["detail"].lower()
+
+
+def test_navigation_answers_again_once_the_battle_ends(server_app):
+    server_app.emulator.in_battle = True
+    assert server_app.http.get("/frontier").status_code == 409
+
+    server_app.emulator.in_battle = False
+    assert server_app.http.get("/frontier").status_code == 200
