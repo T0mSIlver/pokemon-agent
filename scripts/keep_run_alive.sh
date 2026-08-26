@@ -76,11 +76,56 @@ except Exception:
     print("")' "$1" 2>/dev/null
 }
 
+# A run can report 'running' while doing nothing at all. It has happened: the
+# disk filled, every action returned ENOSPC, and the session sat in that state
+# for four hours because the supervisor was technically alive. Status alone is
+# not liveness -- the emulator's frame counter is.
+STALL_SECONDS="${STALL_SECONDS:-600}"
+DISK_MIN_MB="${DISK_MIN_MB:-2048}"
+last_frame=""
+last_frame_at=0
+
+frame_count() {
+  curl -sf -m 10 "$SERVER/health" 2>/dev/null | python3 -c 'import json,sys
+try:
+    print(json.load(sys.stdin).get("emulation", {}).get("frame_count", ""))
+except Exception:
+    print("")' 2>/dev/null
+}
+
+free_mb() {
+  df -Pm "${DISK_CHECK_PATH:-$PWD}" 2>/dev/null | awk 'NR==2 {print $4}'
+}
+
 log "watching $SERVER (model=$MODEL thinking=$THINKING)"
 
 while true; do
   snapshot="$(curl -sf -m 10 "$SERVER/supervisor/state" 2>/dev/null || true)"
   status="$(printf '%s' "$snapshot" | read_field status)"
+
+  # Check liveness and disk before trusting the status, because the failure that
+  # cost the most time so far reported 'running' throughout.
+  avail="$(free_mb)"
+  if [ -n "$avail" ] && [ "$avail" -lt "$DISK_MIN_MB" ]; then
+    log "WARNING: only ${avail}MB free - a full disk kills a run with ENOSPC"
+  fi
+
+  now="$(date +%s)"
+  frame="$(frame_count)"
+  if [ -n "$frame" ] && [ "$frame" != "$last_frame" ]; then
+    last_frame="$frame"
+    last_frame_at="$now"
+  elif [ -n "$last_frame" ] && [ "$last_frame_at" -gt 0 ]; then
+    stalled=$(( now - last_frame_at ))
+    if [ "$stalled" -ge "$STALL_SECONDS" ] && [ "$status" = "running" ]; then
+      log "emulator has not advanced a frame in ${stalled}s while 'running' - restarting the session"
+      curl -sS -m 30 -X POST "$SERVER/supervisor/stop" \
+        -H 'Content-Type: application/json' -d '{}' >/dev/null 2>&1 || true
+      last_frame_at="$now"
+      sleep 5
+      continue
+    fi
+  fi
 
   case "$status" in
     # 'critiquing' is the between-sessions retrospective. It runs at xhigh and
