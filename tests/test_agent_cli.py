@@ -209,12 +209,10 @@ def test_act_sends_expanded_batch_and_prints_response(stub, capsys):
     assert run(stub, "act", "up:2", "a") == 0
 
     assert stub.requests[-1]["body"] == {"actions": ["walk_up", "walk_up", "press_a"]}
-    assert json.loads(capsys.readouterr().out) == {
-        "actions_executed": 3,
-        "x": 5,
-        "y": 6,
-        "moved": 2,
-    }
+    # Prose, not the object: see action_lines. `--json` still prints the payload.
+    out = capsys.readouterr().out
+    assert "(5,6)" in out
+    assert "moved 2" in out
 
 
 def test_unknown_action_is_refused_before_any_request(stub, capsys):
@@ -896,3 +894,103 @@ def test_progress_reports_the_ladder_and_the_cost(stub, capsys):
     out = capsys.readouterr().out
     assert "23/63" in out
     assert "4207 presses" in out
+
+
+# ---------------------------------------------------------------------------
+# `act` prints prose, not a JSON object
+#
+# It was the only acting verb that printed its payload raw: 4,251 of them over
+# one run, 960,537 bytes. Tool text is 98% of the model's prompt, so each one is
+# paid when it arrives and again on every turn afterwards.
+# ---------------------------------------------------------------------------
+
+
+WALK = {
+    "actions_executed": 4,
+    "map": "Route 4",
+    "x": 19,
+    "y": 11,
+    "facing": "down",
+    "moves": ["up", "down", "left"],
+    "run": {"up": 4, "left": 3},
+    "exits": {"Cerulean City": "east edge", "Mt Moon 1F": [18, 5]},
+    "mode": "overworld",
+    "dialog": False,
+    "battle": False,
+    "hp": "73/73",
+    "moved": 4,
+}
+
+
+def test_the_line_carries_where_you_are_and_what_the_batch_did():
+    line = agent_cli.action_lines(WALK)
+    assert "Route 4 (19,11)" in line
+    assert "facing down" in line
+    assert "moved 4" in line
+    assert "hp 73/73" in line
+
+
+def test_run_and_exits_survive_the_shaping():
+    # These are the two fields the model measurably acts on.
+    line = agent_cli.action_lines(WALK)
+    assert "up:4" in line and "left:3" in line
+    assert "Cerulean City east edge" in line
+    assert "Mt Moon 1F (18, 5)" in line
+
+
+def test_a_blocked_batch_says_which_step_failed():
+    line = agent_cli.action_lines({**WALK, "moved": 0, "blocked_after": 1})
+    assert "moved 0" in line
+    assert "blocked after 1" in line
+
+
+def test_flags_appear_only_when_they_are_true():
+    quiet = agent_cli.action_lines(WALK)
+    assert "press a" not in quiet
+    assert "warp" not in quiet
+    assert "stood here" not in quiet
+
+    loud = agent_cli.action_lines(
+        {
+            **WALK,
+            "faces": "sign",
+            "here_before": 9,
+            "on_warp": True,
+            "warp": {"to": "Route 4", "step": "down"},
+        }
+    )
+    assert "press a" in loud
+    assert "stood here 9 times" in loud
+    assert "warp to Route 4, step down" in loud
+
+
+def test_a_battle_says_what_it_is_and_what_you_can_hit_it_with():
+    line = agent_cli.action_lines(
+        {
+            **WALK,
+            "battle": True,
+            "enemy": "Zubat L7 23/23 (Poison/Flying)",
+            "your_moves": ["Ember", "Growl"],
+            "menu": "moves",
+            "highlighted": "Ember",
+        }
+    )
+    assert "BATTLE vs Zubat L7" in line
+    assert "Ember, Growl" in line
+    assert "menu moves on Ember" in line
+
+
+def test_the_shaped_line_is_much_smaller_than_the_object():
+    import json as _json
+
+    raw = len(_json.dumps(WALK, separators=(",", ":")))
+    shaped = len(agent_cli.action_lines(WALK))
+    assert shaped < raw * 0.6, f"{shaped}B vs {raw}B is not worth the change"
+
+
+def test_json_is_still_available_for_a_script(stub, capsys):
+    stub.route("POST", "/action", WALK)
+    assert run(stub, "act", "--json", "up") == agent_cli.EXIT_OK
+    out = capsys.readouterr().out
+    assert out.strip().startswith("{")
+    assert "actions_executed" in out

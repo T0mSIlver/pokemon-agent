@@ -401,9 +401,75 @@ def map_lines(payload: dict) -> list[str]:
 # ---------------------------------------------------------------------------
 
 
+def action_lines(payload: dict) -> str:
+    """One line for what just happened, instead of the whole JSON object.
+
+    `act` was the only acting verb that printed its payload raw: 4,251 of them
+    over the run, 960,537 bytes, and tool text is 98% of the model's prompt, so
+    each one is paid when it arrives and again on every turn after. The same
+    facts as prose come to roughly a quarter of that.
+
+    Nothing is dropped from the API -- `--json` still prints the object and the
+    Python client still reads every field. This is only what the shell prints.
+    """
+    where = f"{payload.get('map')} ({payload.get('x')},{payload.get('y')})"
+    parts = [f"{where} facing {payload.get('facing')}"]
+
+    moved = payload.get("moved")
+    if moved is not None:
+        parts.append(f"moved {moved}")
+    if payload.get("blocked_after") is not None:
+        parts.append(f"blocked after {payload['blocked_after']}")
+    if payload.get("hp"):
+        parts.append(f"hp {payload['hp']}")
+
+    lines = ["  ".join(parts)]
+
+    run = payload.get("run") or {}
+    if run:
+        lines.append("run " + " ".join(f"{d}:{n}" for d, n in run.items()))
+    exits = payload.get("exits") or {}
+    if exits:
+        rendered = []
+        for target, where_to in exits.items():
+            rendered.append(
+                f"{target} {tuple(where_to)}"
+                if isinstance(where_to, list)
+                else f"{target} {where_to}"
+            )
+        lines.append("exits " + " | ".join(rendered))
+
+    # Only when they are true, because a line that is always there is read once.
+    flags = []
+    if payload.get("faces"):
+        flags.append(f"facing a {payload['faces']} - press a")
+    if payload.get("on_warp"):
+        warp = payload.get("warp") or {}
+        step = warp.get("step")
+        flags.append(f"on a warp to {warp.get('to')}" + (f", step {step}" if step else ""))
+    if payload.get("here_before"):
+        flags.append(f"stood here {payload['here_before']} times before")
+    if payload.get("dialog"):
+        flags.append("dialog open")
+    if flags:
+        lines.append("  ".join(flags))
+
+    if payload.get("battle"):
+        enemy = payload.get("enemy")
+        lines.append(f"BATTLE vs {enemy}" if enemy else "BATTLE")
+        if payload.get("your_moves"):
+            lines.append("moves " + ", ".join(payload["your_moves"]))
+        if payload.get("menu"):
+            lines.append(f"menu {payload['menu']} on {payload.get('highlighted')}")
+    if payload.get("screen_text"):
+        lines.append(str(payload["screen_text"]))
+    return "\n".join(lines)
+
+
 def cmd_act(args: argparse.Namespace, url: str) -> int:
     actions = expand_actions(args.actions)
-    print(compact(fetch_json(url, "/action", method="POST", payload={"actions": actions})))
+    payload = fetch_json(url, "/action", method="POST", payload={"actions": actions})
+    print(compact(payload) if args.json else action_lines(payload))
     return EXIT_OK
 
 
@@ -695,6 +761,7 @@ def build_parser() -> argparse.ArgumentParser:
         formatter_class=argparse.RawDescriptionHelpFormatter,
     )
     act.add_argument("actions", nargs="+", metavar="ACTION")
+    act.add_argument("--json", action="store_true", help="the whole payload instead of a summary")
     act.set_defaults(func=cmd_act)
 
     fight = subparsers.add_parser(

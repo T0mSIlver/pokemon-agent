@@ -76,18 +76,23 @@ Actions are bare arguments. Use short names, or the long ones if you prefer, so 
 
 Do not build curl by hand. A single missing closing quote makes bash reject the whole command, and it is easy to do while sending a long batch. `poke` has nothing to misquote. A name it does not know is refused before anything is sent, and it lists what it does know.
 
-Actions run in order. The response is small and tells you what you need to keep moving:
+Actions run in order, and the answer is a few lines:
 
-- `x`, `y`, `facing`, `moves`: where you are and which directions are legal.
-- `run`: how many tiles each direction goes before something stops you. `{"left":7,"down":2}` means `left:7` arrives in one call. Use it. Walking one tile and asking again is the slowest way to play and it costs you a turn of context for every tile.
-- `exits`: every map this one leads to, and the nearest tile that gets you there. `{"Route 4":[27,3]}` means walking onto (27,3) puts you on Route 4. A map with one exit back the way you came is a dead end; leave. Which exit serves your goal is your call.
-- `hp`: your lead Pokemon, as `current/max`.
-- `mode`, `dialog`, `battle`: what kind of screen you are on.
-- `faces`: present only when the tile you face is worth a button: `object` is an NPC or item ball, `sign` is readable. **When you see `faces`, press A.**
-- `on_warp`: present only when you are standing on a warp tile. One more step in the exit direction changes the map.
-- `screen_text`: on-screen text when there is any.
+```
+Mt Moon B1F (22,8) facing up  moved 0  blocked after 1  hp 22/73
+run down:4 left:2
+exits Route 4 (27, 3) | Mt Moon B2F (23, 3)
+stood here 9 times before
+```
 
-That is usually enough to act again immediately. Read a frame when the response surprises you or you are entering somewhere new.
+- The first line is where you ended up and what the batch achieved. `moved 0` with `blocked after 1` means only the first action did anything.
+- `run` is how many tiles each direction goes before something stops you. `left:7` there means `poke act left:7` arrives in one call. Walking one tile and asking again is the slowest way to play and it costs you a turn of context for every tile.
+- `exits` is every map this one leads to and how to get there: a tile to walk onto, or an edge to walk off. A map whose only exit is the way you came is a dead end. Which one serves your goal is your call.
+- Extra lines appear only when they are true: facing something worth a button, standing on a warp, treading old ground, a dialog, a battle with what you can hit it with.
+
+`poke act --json` gives the whole object if a script needs it.
+
+That is usually enough to act again immediately. Read a frame when the answer surprises you or you are entering somewhere new.
 
 | Action | Short | Effect |
 |---|---|---|
