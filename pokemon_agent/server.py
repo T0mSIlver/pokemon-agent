@@ -2707,13 +2707,21 @@ async def goto(req: GotoRequest):
         bundle = await _refresh_and_broadcast(reason="goto", source="goto")
     summary = _observation_summary(bundle)
     _annotate_explored_map(summary, bundle)
-    return {
+    payload = {
         "actions_executed": result["actions_executed"],
         **summary,
         "walked": result["walked"],
         "arrived": result["arrived"],
         "stopped_because": result["stopped_because"],
     }
+    # What to do instead, when there is something: whether the goal is walled off
+    # or merely unseen, and which exits *are* reachable from here. The run spent
+    # twelve hours in a sealed pocket of Route 4 whose only ways out led back
+    # into Mt. Moon, and every refusal it got named the tile it could not reach
+    # rather than the three it could.
+    if result.get("onward"):
+        payload["onward"] = result["onward"]
+    return payload
 
 
 def _calc_inputs_sync() -> dict:

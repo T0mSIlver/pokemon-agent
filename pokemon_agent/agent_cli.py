@@ -532,7 +532,27 @@ def cmd_goto(args: argparse.Namespace, url: str) -> int:
         payload = {"x": x, "y": y}
     else:
         payload = {"target": target}
-    print(compact(fetch_json(url, "/goto", method="POST", payload=payload)))
+    answer = fetch_json(url, "/goto", method="POST", payload=payload)
+    if args.json:
+        print(compact(answer))
+        return EXIT_OK
+
+    print(action_lines(answer))
+    walked, arrived = answer.get("walked"), answer.get("arrived")
+    if walked:
+        print(f"walked {walked}" + (" and arrived" if arrived else ", did not arrive"))
+    if not arrived and answer.get("stopped_because"):
+        print(answer["stopped_because"])
+
+    # When it could not get there, say what it *can* get to. A refusal that names
+    # the one tile out of reach reads as a map problem; the same refusal with the
+    # reachable exits beside it reads as a decision.
+    onward = answer.get("onward") or {}
+    for exit_ in (onward.get("exits") or [])[:4]:
+        where = tuple(exit_["at"]) if isinstance(exit_.get("at"), list) else exit_.get("at")
+        print(f"  reachable: {exit_.get('to')} at {where}, {exit_.get('steps')} steps")
+    if onward.get("kind") == "unexplored" and onward.get("unseen_at"):
+        print(f"  unseen ground at {tuple(onward['unseen_at'])} - walk there and look")
     return EXIT_OK
 
 
@@ -828,6 +848,7 @@ def build_parser() -> argparse.ArgumentParser:
 
     goto = subparsers.add_parser("goto", parents=[common], help="walk to a map or a tile")
     goto.add_argument("target", nargs="+", help="map name, or x,y on this map")
+    goto.add_argument("--json", action="store_true", help="the whole payload")
     goto.set_defaults(func=cmd_goto)
 
     calc = subparsers.add_parser(

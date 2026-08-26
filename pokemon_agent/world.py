@@ -37,6 +37,13 @@ a per-tile walkability grid and all three arrive as edges instead:
   recorded on mid-jump is a tile nobody can stand on. Every tile the window
   covers is a fact; every tile beyond it is a belief, and results say which.
 
+And one rule about the absence of a tile. A grid holds the tiles somebody has
+*looked at*; a tile missing from it is either a wall that was looked at and
+found solid or ground nobody has ever been shown, and those are not the same
+answer. `seen` is what separates them, and `reachable_region` is what reports
+the difference: a region whose whole border was looked at is sealed, and a
+region that stops at ground nobody has seen is merely unfinished.
+
 North is up: ``walk_up`` decreases y. Every direction here comes from
 `pathfinding.DIRECTIONS`, which is the one place that fact is written down.
 """
@@ -223,6 +230,17 @@ class World:
         record = self._maps.get(map_name)
         return record.hops if record else ()
 
+    def hops_between(self, src: str, dst: str) -> Tuple[Hop, ...]:
+        """*Every* hop from `src` to `dst`, not just the one `route` picked.
+
+        `route` is a search over map names, so it keeps one edge per pair and
+        throws the rest away. That is fine for counting hops and wrong for
+        walking them: Mt. Moon 1F has three separate ladders down to B1F, and a
+        caller handed only the first spends the whole call failing to reach a
+        ladder while standing two tiles from another one.
+        """
+        return tuple(hop for hop in self.neighbours(src) if hop.to_map == dst)
+
     def route(self, src: str, dst: str) -> Optional[Tuple[Hop, ...]]:
         """Fewest hops from `src` to `dst`, or None if there is no way.
 
@@ -306,6 +324,7 @@ class _Grid:
         "walkable",
         "npcs",
         "live",
+        "seen",
         "ledges",
         "seams",
         "warp_exits",
@@ -320,6 +339,7 @@ class _Grid:
         origin: Coord = (0, 0),
         npcs: Collection[Coord] = (),
         live: Optional[Collection[Coord]] = None,
+        seen: Optional[Collection[Coord]] = None,
         ledges: Optional[Mapping[Tuple[Coord, str], Coord]] = None,
     ) -> None:
         self.walkable = walkable
@@ -328,6 +348,11 @@ class _Grid:
         self.origin = origin
         self.npcs = set(npcs)
         self.live: Set[Coord] = set(live or ())
+        # Looked at, whatever the answer was. Absent a record of it, the only
+        # tiles anybody can claim to have looked at are the ones this frame
+        # showed and the ones remembered as ground; everything else is a tile
+        # nobody has an opinion about, and saying "wall" there is a guess.
+        self.seen: Set[Coord] = set(seen) if seen is not None else (self.live | set(walkable))
         self.ledges: Dict[Tuple[Coord, str], Coord] = dict(ledges or {})
         # The other two per-seam facts ride on the same object when there is
         # one, so no caller has to grow an argument to pass them along.
@@ -337,6 +362,14 @@ class _Grid:
     def is_live(self, x: int, y: int) -> bool:
         """Whether this tile came from the current frame rather than memory."""
         return (x, y) in self.live
+
+    def is_known(self, x: int, y: int) -> bool:
+        """Whether anybody has ever looked at this tile, walkable or not.
+
+        Off the grid counts as known: the map ends there and no amount of
+        walking will show us more of it.
+        """
+        return not self.in_bounds(x, y) or (x, y) in self.seen
 
     def seam_between(self, here: Coord, there: Coord) -> bool:
         """Whether the tileset refuses the move between two adjacent tiles.
@@ -402,7 +435,14 @@ def _rows_to_grid(
     # Rows are somebody showing us tiles, which is the strongest evidence there
     # is: every one of them is a fact about now, walkable or not.
     return _Grid(
-        walkable, width=width, height=height, origin=origin, npcs=npcs, live=live, ledges=ledges
+        walkable,
+        width=width,
+        height=height,
+        origin=origin,
+        npcs=npcs,
+        live=live,
+        seen=live,
+        ledges=ledges,
     )
 
 
@@ -588,12 +628,19 @@ def _as_grid(collision: object) -> _Grid:
         # A merged map has to say which of its tiles the frame actually showed;
         # with no `live` key the whole thing is memory, and is reported as such.
         live = {found for found in (_coord(item) for item in collision.get("live") or ()) if found}
+        raw_seen = collision.get("seen")
+        seen = (
+            {found for found in (_coord(item) for item in raw_seen) if found}
+            if raw_seen is not None
+            else None
+        )
         return _Grid(
             walkable,
             width=width,
             height=height,
             npcs=npcs,
             live=live,
+            seen=seen,
             ledges=ledge_edges(collision),
         )
 
@@ -808,13 +855,15 @@ class _Flood:
     takes to invent a corridor — which is exactly what happened on Route 3.
     """
 
-    __slots__ = ("previous", "order", "certain")
+    __slots__ = ("previous", "order", "certain", "distance")
 
     def __init__(self, start: Coord) -> None:
         self.previous: Dict[Coord, Optional[Tuple[Coord, str]]] = {start: None}
         self.order: List[Coord] = [start]
         # The player is standing on `start`, so it is a fact by definition.
         self.certain: Dict[Coord, bool] = {start: True}
+        # Steps, not tiles: a ledge jump crosses two tiles for one press.
+        self.distance: Dict[Coord, int] = {start: 0}
 
 
 def _bfs(grid: _Grid, start: Coord, *, goal: Optional[Coord] = None) -> _Flood:
@@ -846,9 +895,26 @@ def _bfs(grid: _Grid, start: Coord, *, goal: Optional[Coord] = None) -> _Flood:
                 continue
             flood.previous[step] = (current, direction)
             flood.certain[step] = flood.certain[current] and grid.is_live(*step)
+            flood.distance[step] = flood.distance[current] + 1
             flood.order.append(step)
             queue.append(step)
     return flood
+
+
+def _actions_from(flood: _Flood, target: Coord) -> Optional[Tuple[str, ...]]:
+    """Walk the `previous` chain back from `target` and turn it into actions."""
+    if target not in flood.previous:
+        return None
+    directions: List[str] = []
+    cursor: Optional[Coord] = target
+    while cursor is not None:
+        step = flood.previous.get(cursor)
+        if step is None:
+            break
+        cursor, direction = step
+        directions.append(direction)
+    directions.reverse()
+    return tuple(directions_to_actions(directions))
 
 
 def path_within(collision, start: Coord, target: Coord) -> Optional[Tuple[str, ...]]:
@@ -866,20 +932,100 @@ def path_within(collision, start: Coord, target: Coord) -> Optional[Tuple[str, .
     if not grid.is_walkable(*target):
         return None
 
-    flood = _bfs(grid, start, goal=target)
-    if target not in flood.previous:
-        return None
+    return _actions_from(_bfs(grid, start, goal=target), target)
 
-    directions: List[str] = []
-    cursor: Optional[Coord] = target
-    while cursor is not None:
-        step = flood.previous.get(cursor)
-        if step is None:
-            break
-        cursor, direction = step
-        directions.append(direction)
-    directions.reverse()
-    return tuple(directions_to_actions(directions))
+
+@dataclass(frozen=True)
+class Region:
+    """Everywhere one flood can get to, and what stopped it.
+
+    The point of this object is the difference between the two ways a flood
+    ends. It ends at a tile somebody looked at and found solid — a wall, and
+    walking at it forever will not change that — or it ends at a tile nobody
+    has ever been shown, which is not a wall, it is an unanswered question.
+    A grid of walkable tiles cannot tell those apart, and a caller that treats
+    the second as the first reports "unreachable" for ground it has simply
+    never looked at.
+
+    `edge_of_knowledge` is the boundary of the second kind: pairs of (a tile
+    you can stand on, the unseen tile next to it), nearest first. `sealed` is
+    true when there is no such pair — every way out of this region was looked
+    at, and the region really is closed.
+    """
+
+    start: Coord
+    order: Tuple[Coord, ...]
+    distance: Mapping[Coord, int]
+    certain: Mapping[Coord, bool]
+    edge_of_knowledge: Tuple[Tuple[Coord, Coord], ...]
+    _flood: "_Flood"
+
+    @property
+    def sealed(self) -> bool:
+        """Whether every border of this region is ground somebody looked at."""
+        return not self.edge_of_knowledge
+
+    def __contains__(self, coord: object) -> bool:
+        return coord in self.distance
+
+    def steps_to(self, coord: Coord) -> Optional[int]:
+        return self.distance.get(coord)
+
+    def actions_to(self, coord: Coord) -> Optional[Tuple[str, ...]]:
+        """Walk actions from `start` to `coord`, or None if it is not in here."""
+        return _actions_from(self._flood, coord)
+
+    def approach(self, goal: Coord) -> Optional[Tuple[Tuple[str, ...], int]]:
+        """Actions that end with the player entering `goal`, and their cost.
+
+        A door reads as blocked collision — you walk *into* it, you do not
+        stand on it — so a goal this region cannot hold is approached from
+        whichever neighbour it can, and the step into it is appended.
+        """
+        direct = self.actions_to(goal)
+        if direct is not None:
+            return direct, self.distance[goal]
+        best: Optional[Tuple[Tuple[str, ...], int]] = None
+        for direction, (dx, dy) in DIRECTIONS.items():
+            neighbour = (goal[0] - dx, goal[1] - dy)
+            cost = self.distance.get(neighbour)
+            if cost is None:
+                continue
+            if best is not None and cost + 1 >= best[1]:
+                continue
+            leg = self.actions_to(neighbour)
+            if leg is None:  # pragma: no cover - distance implies a path
+                continue
+            best = ((*leg, f"walk_{direction}"), cost + 1)
+        return best
+
+
+def reachable_region(collision, start: Coord) -> Region:
+    """Flood from `start` and report where it stopped and why.
+
+    One flood answers every "can I get there from here" a caller has, which is
+    the other half of the point: picking the nearest of three ladders used to
+    cost three floods, so it was not done, so the first ladder in the file won
+    every time.
+    """
+    grid = _as_grid(collision)
+    start = (int(start[0]), int(start[1]))
+    flood = _bfs(grid, start)
+    edge: List[Tuple[Coord, Coord]] = []
+    for tile in flood.order:
+        for dx, dy in DIRECTIONS.values():
+            beyond = (tile[0] + dx, tile[1] + dy)
+            if beyond in flood.previous or grid.is_known(*beyond):
+                continue
+            edge.append((tile, beyond))
+    return Region(
+        start=start,
+        order=tuple(flood.order),
+        distance=dict(flood.distance),
+        certain=dict(flood.certain),
+        edge_of_knowledge=tuple(edge),
+        _flood=flood,
+    )
 
 
 @dataclass(frozen=True)
@@ -939,6 +1085,7 @@ __all__ = [
     "MapInfo",
     "MovementEdges",
     "ReachableTile",
+    "Region",
     "SimResult",
     "World",
     "frontier",
@@ -946,6 +1093,7 @@ __all__ = [
     "ledge_edges",
     "movement_edges",
     "path_within",
+    "reachable_region",
     "simulate",
     "unseen_reachable_count",
 ]

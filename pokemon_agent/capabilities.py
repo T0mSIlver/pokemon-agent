@@ -84,8 +84,16 @@ def collision_from(snapshot: dict, explored: Optional[dict] = None) -> dict:
 
     Sprites come from the live window only, because an NPC that stood somewhere
     once is not standing there now.
+
+    `seen` is the third set and the one that was missing. The store records
+    every tile a window covered, solid ones included, and dropping that on the
+    way in left every consumer unable to tell a wall it has looked at from
+    ground nobody has ever been shown. Both read as "not in `walkable`", and
+    answering "unreachable" for the second is how a route that had never been
+    looked at got reported as a route that does not exist.
     """
     walkable: set[Coord] = set(explored.get("walkable") or ()) if explored else set()
+    seen: set[Coord] = set(explored.get("seen") or ()) if explored else set()
 
     live: set[Coord] = set()
     origin = _coord(snapshot.get("window_top_left")) or (0, 0)
@@ -119,6 +127,10 @@ def collision_from(snapshot: dict, explored: Optional[dict] = None) -> dict:
         "walkable": walkable,
         "sprites": sprites,
         "live": live,
+        # A tile is looked-at if this frame shows it, if the store wrote it
+        # down either way, or if we believe it is ground — you cannot hold a
+        # belief about ground nobody ever saw.
+        "seen": seen | live | walkable,
         "ledges": ledges,
     }
 
@@ -202,16 +214,42 @@ def canonical_map_name(world: world_mod.World, name: Optional[str]) -> str:
     return found
 
 
+#: What every hop in a /route answer is made of, and what none of it is made
+#: of. Printed on the payload because the alternative — leaving /goto to be the
+#: only one that mentions ground — is what made a one-hop route read as a
+#: promise.
+ROUTE_BASIS = (
+    "the game's own connection and warp tables: which maps touch, never which "
+    "ground connects. No tile on any of these maps has been looked at to answer this."
+)
+
+#: The failure mode this caveat exists for is not hypothetical. Route 4 holds
+#: the Mt. Moon mouth and the Cerulean half as two pockets of land that never
+#: join up, so `Route 4 -> Cerulean City, distance 1` is a true statement about
+#: the map table and a false one about walking, and only /goto can tell which.
+ROUTE_CAVEAT = (
+    "Every hop here is unchecked ground. The graph knows two maps touch; it does "
+    "not know that the tile you are standing on can reach the seam. One map can "
+    "hold several pockets of land that never join up — Route 4's Mt. Moon mouth "
+    "and its Cerulean half are two of them — so even a one-hop route can be "
+    "unwalkable from where you are. /goto is what finds out, and it answers with "
+    "which of the two it hit: ground that was looked at and is solid, or ground "
+    "nobody has looked at yet."
+)
+
+
 def route_payload(world: world_mod.World, source: str, target: str) -> dict:
     """Hops from *source* to *target*, or a reason there are none.
 
     Hops, not button presses: which buttons cross a map depends on that map's
-    live collision, which no static file carries.
+    live collision, which no static file carries. Every hop carries
+    ``ground: "unchecked"`` for the same reason — this function has never seen
+    a tile, and a payload that does not say so is read as a guarantee.
     """
     src = canonical_map_name(world, source)
     dst = canonical_map_name(world, target)
     if src == dst:
-        return {"from": src, "to": dst, "distance": 0, "hops": []}
+        return {"from": src, "to": dst, "distance": 0, "hops": [], "basis": ROUTE_BASIS}
 
     hops = world.route(src, dst)
     if hops is None:
@@ -220,6 +258,7 @@ def route_payload(world: world_mod.World, source: str, target: str) -> dict:
             "to": dst,
             "distance": None,
             "hops": None,
+            "basis": ROUTE_BASIS,
             "reason": (
                 f"No route from {src} to {dst} in the map graph. Either they are not "
                 "connected by warps and edges, or the leg between them is not in the "
@@ -230,17 +269,35 @@ def route_payload(world: world_mod.World, source: str, target: str) -> dict:
         "from": src,
         "to": dst,
         "distance": len(hops),
-        "hops": [
-            {
-                "from": hop.from_map,
-                "to": hop.to_map,
-                "kind": hop.kind,
-                "at": list(hop.at) if hop.at is not None else None,
-                "edge": hop.edge,
-            }
-            for hop in hops
-        ],
+        "hops": [_route_hop(world, hop) for hop in hops],
+        # Not a hedge: the honest state of every hop above. Nothing here was
+        # checked against a tile, and /goto is the verb that checks.
+        "ground": "unchecked",
+        "basis": ROUTE_BASIS,
+        "caveat": ROUTE_CAVEAT,
     }
+
+
+def _route_hop(world: world_mod.World, hop: world_mod.Hop) -> dict:
+    """One hop, plus the one thing about it the graph does know and dropped.
+
+    ``ways`` counts the doors that make the same crossing. Mt. Moon 1F has
+    three ladders down to B1F and the search keeps whichever the file listed
+    first; a reader shown that one tile will walk at that one tile until it
+    gives up, which is what happened two tiles from a ladder that works.
+    """
+    ways = world.hops_between(hop.from_map, hop.to_map)
+    payload = {
+        "from": hop.from_map,
+        "to": hop.to_map,
+        "kind": hop.kind,
+        "at": list(hop.at) if hop.at is not None else None,
+        "edge": hop.edge,
+    }
+    if len(ways) > 1:
+        payload["ways"] = len(ways)
+        payload["at_any_of"] = [list(way.at) for way in ways if way.at is not None]
+    return payload
 
 
 # ---------------------------------------------------------------------------
@@ -282,26 +339,268 @@ def plan_within(collision, start: Coord, goal: Coord) -> Optional[list[str]]:
     return None
 
 
-def _edge_goal(collision: dict, start: Coord, edge: str) -> Optional[Coord]:
-    """The reachable tile on *edge* that is cheapest to walk to, if any."""
+def _edge_tiles(collision: dict, edge: str) -> list[Coord]:
+    """Every tile along one side of the map, walkable or not."""
     width, height = collision["width"], collision["height"]
     if edge == "north":
-        candidates = [(x, 0) for x in range(width)]
-    elif edge == "south":
-        candidates = [(x, height - 1) for x in range(width)]
-    elif edge == "west":
-        candidates = [(0, y) for y in range(height)]
-    elif edge == "east":
-        candidates = [(width - 1, y) for y in range(height)]
-    else:
+        return [(x, 0) for x in range(width)]
+    if edge == "south":
+        return [(x, height - 1) for x in range(width)]
+    if edge == "west":
+        return [(0, y) for y in range(height)]
+    if edge == "east":
+        return [(width - 1, y) for y in range(height)]
+    return []
+
+
+def _cheapest(
+    region: world_mod.Region,
+    candidates: Sequence[Coord],
+    *,
+    enter: bool = True,
+) -> Optional[tuple[Coord, list[str], int]]:
+    """The candidate this region reaches for the fewest steps, and how.
+
+    Cheapest by steps actually walked, over one flood, across every candidate.
+    The edge search this replaces sorted by straight-line distance and gave up
+    after twelve tries, which on a ninety-tile-wide map means the twelve tiles
+    nearest as the crow flies rather than the ones you can get to.
+
+    `enter` walks *into* the goal from a neighbour when the goal itself is not
+    standable, which is what a door is. Edges are not doors: you have to be
+    standing on the boundary tile before the map will hand you to the next one.
+    """
+    best: Optional[Coord] = None
+    best_cost: Optional[int] = None
+    for candidate in candidates:
+        cost = region.steps_to(candidate)
+        if cost is None and enter:
+            costs = [
+                found + 1
+                for found in (
+                    region.steps_to((candidate[0] - dx, candidate[1] - dy))
+                    for dx, dy in DIRECTIONS.values()
+                )
+                if found is not None
+            ]
+            cost = min(costs) if costs else None
+        if cost is None or (best_cost is not None and cost >= best_cost):
+            continue
+        best, best_cost = candidate, cost
+    if best is None or best_cost is None:
         return None
-    walkable = collision["walkable"]
-    candidates = [tile for tile in candidates if tile in walkable]
-    candidates.sort(key=lambda tile: abs(tile[0] - start[0]) + abs(tile[1] - start[1]))
-    for tile in candidates[:12]:
-        if world_mod.path_within(collision, start, tile) is not None:
-            return tile
-    return None
+    # One path built, at the end, rather than one per candidate: an edge is up
+    # to `width` tiles long and this runs on every replanning round.
+    if enter:
+        found = region.approach(best)
+        if found is None:  # pragma: no cover - a cost implies a path
+            return None
+        return best, list(found[0]), found[1]
+    actions = region.actions_to(best)
+    if actions is None:  # pragma: no cover - a cost implies a path
+        return None
+    return best, list(actions), best_cost
+
+
+def _progress(here: Coord, there: Coord, *, toward: object) -> int:
+    """How much closer *there* is than *here*, in whatever `toward` means.
+
+    `toward` is either a compass edge — progress is distance along that axis —
+    or a tile, and then it is the drop in Manhattan distance to it.
+    """
+    if isinstance(toward, str):
+        if toward == "north":
+            return here[1] - there[1]
+        if toward == "south":
+            return there[1] - here[1]
+        if toward == "west":
+            return here[0] - there[0]
+        if toward == "east":
+            return there[0] - here[0]
+        return 0
+    goal = _coord(toward)
+    if goal is None:
+        return 0
+    return (abs(here[0] - goal[0]) + abs(here[1] - goal[1])) - (
+        abs(there[0] - goal[0]) + abs(there[1] - goal[1])
+    )
+
+
+def _toward_the_unseen(
+    region: world_mod.Region,
+    toward: object,
+) -> Optional[tuple[Coord, Coord, list[str]]]:
+    """Where to stand to look at the nearest unseen ground in this direction.
+
+    Returns ``(stand here, the unseen tile beyond, how to get there)``. Only
+    ground that is actually *forward* counts: walking to the edge of knowledge
+    behind you is not a step toward anything, and a /goto that wanders is worse
+    than one that stops.
+    """
+    best: Optional[tuple[Coord, Coord, list[str]]] = None
+    best_key: Optional[tuple[int, int]] = None
+    for stand, unseen in region.edge_of_knowledge:
+        gain = _progress(region.start, unseen, toward=toward)
+        if gain <= 0:
+            continue
+        steps = region.steps_to(stand)
+        if steps is None:  # pragma: no cover - it came out of this region
+            continue
+        key = (-gain, steps)
+        if best_key is not None and key >= best_key:
+            continue
+        actions = region.actions_to(stand)
+        if actions is None:  # pragma: no cover - it came out of this region
+            continue
+        best_key, best = key, (stand, unseen, list(actions))
+    return best
+
+
+def _reachable_exits(
+    world: world_mod.World,
+    here: str,
+    collision: dict,
+    snapshot: dict,
+    region: world_mod.Region,
+    limit: int = 6,
+) -> list[dict]:
+    """The ways off this map that this region can actually get to, cheapest first.
+
+    A refusal that only says "not that way" leaves the agent with nothing to
+    do. This is the rest of the answer: from the Mt. Moon mouth on Route 4 the
+    east edge is walled off, and these are the three doors and one edge that
+    are not.
+    """
+    hops = world.neighbours(here)
+    by_tile = {tuple(hop.at): hop for hop in hops if hop.at is not None}
+    exits: list[dict] = []
+    for coord in warp_coords(snapshot):
+        found = region.approach(coord)
+        if found is None:
+            continue
+        hop = by_tile.get(coord)
+        exits.append(
+            {
+                "kind": "warp",
+                "at": list(coord),
+                "to": hop.to_map if hop else None,
+                "steps": found[1],
+            }
+        )
+    for hop in hops:
+        if hop.kind != "connection" or not hop.edge:
+            continue
+        found = _cheapest(region, _edge_tiles(collision, hop.edge), enter=False)
+        if found is None:
+            continue
+        exits.append(
+            {
+                "kind": "edge",
+                "edge": hop.edge,
+                "at": list(found[0]),
+                "to": hop.to_map,
+                "steps": found[2] + 1,
+            }
+        )
+    exits.sort(key=lambda item: item["steps"])
+    return exits[:limit]
+
+
+def _describe_exits(exits: Sequence[dict]) -> str:
+    parts = []
+    for item in exits:
+        where = f"at {item['at']}"
+        if item["kind"] == "edge":
+            where = f"off the {item['edge']} edge at {item['at']}"
+        parts.append(f"{item.get('to') or 'somewhere unmapped'} {where}, {item['steps']} steps")
+    return "; ".join(parts)
+
+
+class _Stop:
+    """Why the walk ended, in a shape and in a sentence.
+
+    Both, because the two travel different distances: `onward` is the structure
+    a caller can act on, and `reason` is what survives the trip through /goto's
+    three-key HTTP answer.
+    """
+
+    def __init__(self, reason: str, onward: Optional[dict] = None) -> None:
+        self.reason = reason
+        self.onward = onward
+
+
+def _walled_off(
+    world: world_mod.World,
+    goal: str,
+    tried: int,
+    observation: dict,
+    collision: dict,
+    region: world_mod.Region,
+    *,
+    lead: str,
+) -> _Stop:
+    """The refusal for ground that was looked at and is solid."""
+    here = observation["map_name"]
+    exits: list[dict] = []
+    try:
+        exits = _reachable_exits(
+            world, canonical_map_name(world, here), collision, observation["snapshot"], region
+        )
+    except NotFound:
+        pass
+    onward = {
+        "kind": "walled-off",
+        "goal": goal,
+        "tried": tried,
+        "reachable_tiles": len(region.order),
+        "sealed": region.sealed,
+        "exits": exits,
+    }
+    sealed = (
+        "Every tile bordering the ground you can reach has been looked at and is solid, "
+        "so this is a wall and not a gap in the map"
+        if region.sealed
+        else "No unseen ground lies that way either, so there is nothing to walk at and find out"
+    )
+    onward_note = (
+        f" What is reachable from here: {_describe_exits(exits)}."
+        if exits
+        else " Nothing on this map leads anywhere from here."
+    )
+    return _Stop(
+        f"{lead} {sealed}. {len(region.order)} tiles are reachable from "
+        f"{list(region.start)} on {here}.{onward_note}",
+        onward,
+    )
+
+
+def _go_look(goal: str, stand: Coord, unseen: Coord, observation: dict, steps: int) -> _Stop:
+    """The answer for ground nobody has looked at: go and look at it."""
+    onward = {
+        "kind": "unexplored",
+        "goal": goal,
+        "heading_for": list(stand),
+        "unseen_at": list(unseen),
+        "steps": steps,
+    }
+    return _Stop(_look_reason(onward, observation), onward)
+
+
+def _look_reason(onward: dict, observation: dict) -> str:
+    """The go-look sentence, rendered against wherever the player actually is.
+
+    Rendered late on purpose. The plan that reaches the edge of knowledge can
+    be cut short — a batch runs out, an NPC is standing in it — and a message
+    written before the walk claims a tile the player never got to.
+    """
+    position = observation["position"]
+    onward["stopped_at"] = list(position) if position is not None else None
+    return (
+        f"nothing known reaches {onward['goal']}, but this is the edge of what has been seen "
+        f"and not a wall. Stopped at {onward['stopped_at']} on {observation['map_name']}; the "
+        f"nearest unlooked-at ground that way is {onward['unseen_at']}, with "
+        f"{onward['heading_for']} the last tile before it. Look, then ask again to keep going."
+    )
 
 
 def warp_step_direction(coord: Coord, dimensions: dict) -> Optional[str]:
@@ -325,77 +624,124 @@ def _leg_for_map(
     *,
     target_map: Optional[str],
     target_xy: Optional[Coord],
-) -> tuple[Optional[list[str]], Optional[str]]:
+) -> tuple[Optional[list[str]], Optional[_Stop]]:
     """The next batch of walk actions, or the reason there is not one.
 
-    Returns ``(actions, None)`` to keep walking or ``(None, reason)`` to stop.
+    Returns ``(actions, None)`` to keep walking or ``(None, stop)`` to stop.
+    Everything here runs off one flood: which of several doors is nearest,
+    whether the ground that stopped us was looked at, and where the nearest
+    unlooked-at ground in this direction is.
     """
     position = observation["position"]
     snapshot = observation["snapshot"]
+    region = world_mod.reachable_region(collision, position)
 
     if target_xy is not None:
-        plan = plan_within(collision, position, target_xy)
-        if plan is None:
-            return None, (
+        found = _cheapest(region, [target_xy])
+        if found is not None:
+            return found[1], None
+        toward = _toward_the_unseen(region, target_xy)
+        if toward is not None:
+            stand, unseen, plan = toward
+            return plan, _go_look(str(list(target_xy)), stand, unseen, observation, len(plan))
+        return None, _walled_off(
+            world,
+            str(list(target_xy)),
+            1,
+            observation,
+            collision,
+            region,
+            lead=(
                 f"no walkable path from {list(position)} to {list(target_xy)} on "
-                f"{observation['map_name']}, checked against {collision_basis(collision)}"
-            )
-        return plan, None
+                f"{observation['map_name']}, checked against {collision_basis(collision)}."
+            ),
+        )
 
     current = observation["map_name"]
     try:
         here = canonical_map_name(world, current)
     except NotFound:
-        return None, (
+        return None, _Stop(
             f"{current!r} is not a map the route graph knows, so there is nothing to "
             "plan a hop from"
         )
     hops = world.route(here, target_map or "")
     if hops is None:
-        return None, f"no route from {current} to {target_map}"
+        return None, _Stop(f"no route from {current} to {target_map}")
     if not hops:
         return [], None
-    hop = hops[0]
+    next_map = hops[0].to_map
+    # Every door to the same place, not the first one the file happened to list.
+    ways = world.hops_between(here, next_map) or (hops[0],)
 
-    if hop.kind == "warp" and hop.at is not None:
-        if position == tuple(hop.at):
-            step = warp_step_direction(position, snapshot.get("map_dimensions") or {})
-            if step is None:
-                return None, (
-                    f"standing on the warp at {list(position)} on {current} but the map did "
-                    "not change; this hop does not lead where the graph says it does"
-                )
-            return [f"walk_{step}"], None
-        plan = plan_within(collision, position, tuple(hop.at))
-        if plan is None:
-            return None, (
-                f"the warp to {hop.to_map} at {list(hop.at)} is not reachable on foot from "
-                f"{list(position)} on {current}. A hop is a plan, not a guarantee — this "
-                "half of the map may be walled off from the other. Checked against "
-                f"{collision_basis(collision)}."
-            )
-        return plan, None
+    warps = [way for way in ways if way.kind == "warp" and way.at is not None]
+    if warps:
+        for way in warps:
+            if position == tuple(way.at):
+                step = warp_step_direction(position, snapshot.get("map_dimensions") or {})
+                if step is None:
+                    return None, _Stop(
+                        f"standing on the warp at {list(position)} on {current} but the map "
+                        "did not change; this hop does not lead where the graph says it does"
+                    )
+                return [f"walk_{step}"], None
+        found = _cheapest(region, [tuple(way.at) for way in warps])
+        if found is not None:
+            return found[1], None
 
-    step = _EDGE_STEPS.get(hop.edge or "")
-    if step is None:
-        return None, f"hop from {current} to {hop.to_map} has no direction to walk"
-    goal = _edge_goal(collision, position, hop.edge or "")
-    if goal is None:
-        return None, (
-            f"nothing on the {hop.edge} edge of {current} is reachable from {list(position)}. "
-            "A hop is a plan, not a guarantee — this half of the map may be walled off, and "
-            "a ledge you came down is not a way back up. Checked against "
+    connections = [way for way in ways if way.kind == "connection" and way.edge]
+    edge_goals: list[Coord] = []
+    for way in connections:
+        edge_goals.extend(_edge_tiles(collision, way.edge or ""))
+    if connections:
+        found = _cheapest(region, edge_goals, enter=False)
+        if found is not None:
+            goal, plan, _ = found
+            step = _EDGE_STEPS[
+                next(way.edge for way in connections if goal in _edge_tiles(collision, way.edge))
+            ]
+            return [*plan, f"walk_{step}"], None
+
+    if not warps and not connections:
+        return None, _Stop(f"hop from {current} to {next_map} has no direction to walk")
+
+    goal_name = _hop_goal_name(current, next_map, warps, connections)
+    toward: object
+    if connections:
+        toward = connections[0].edge
+    else:
+        toward = tuple(warps[0].at)
+    look = _toward_the_unseen(region, toward)
+    if look is not None:
+        stand, unseen, plan = look
+        return plan, _go_look(goal_name, stand, unseen, observation, len(plan))
+    return None, _walled_off(
+        world,
+        goal_name,
+        len(warps) + len(connections),
+        observation,
+        collision,
+        region,
+        lead=(
+            f"{goal_name} is not reachable on foot from {list(position)} on {current}; "
+            f"tried {len(warps) + len(connections)} way(s) in. Checked against "
             f"{collision_basis(collision)}."
-        )
-    if position == goal:
-        return [f"walk_{step}"], None
-    plan = plan_within(collision, position, goal)
-    if plan is None:
-        return None, (
-            f"no walkable path to the {hop.edge} edge of {current}, checked against "
-            f"{collision_basis(collision)}"
-        )
-    return [*plan, f"walk_{step}"], None
+        ),
+    )
+
+
+def _hop_goal_name(
+    current: str,
+    next_map: str,
+    warps: Sequence[world_mod.Hop],
+    connections: Sequence[world_mod.Hop],
+) -> str:
+    if connections:
+        edges = " or ".join(sorted({str(way.edge) for way in connections}))
+        return f"the {edges} edge of {current} toward {next_map}"
+    tiles = ", ".join(str(list(way.at)) for way in warps if way.at is not None)
+    plural = "warps" if len(warps) > 1 else "warp"
+    return f"the {plural} to {next_map} at {tiles}"
 
 
 async def walk_to(
@@ -415,6 +761,16 @@ async def walk_to(
     plan, not a guarantee — Route 4 is one map whose halves are separated by
     Mt. Moon — so a plan that cannot be walked stops the whole call and says
     why, rather than grinding into rock.
+
+    There are two ways a plan can fail to exist and this answers them
+    differently. Ground that was looked at and is solid is a refusal, and it
+    comes with the ways off this map that *are* reachable. Ground nobody has
+    looked at is not a refusal: the walk goes to the last tile before the
+    unseen ground, stops there, and says what to look at. One such hop per
+    call — the point is to hand back a decision, not to wander.
+
+    Never a step onto ground that was not planned over: the frontier tile is
+    reached across known walkable tiles like any other goal.
     """
     if target_map is None and target_xy is None:
         raise CapabilityError("Nothing to walk to: send a target map name or an x and y.")
@@ -432,6 +788,9 @@ async def walk_to(
     budget = max(0, int(frame_budget))
     stopped = "arrived"
     arrived = False
+    onward: Optional[dict] = None
+    #: The unseen tile this call set out to look at, once it has picked one.
+    looking_at: Optional[Coord] = None
 
     for _ in range(MAX_GOTO_ROUNDS):
         if target_xy is not None and observation["position"] == target_xy:
@@ -445,16 +804,27 @@ async def walk_to(
             break
 
         collision = collision_from(observation["snapshot"], explored_grid(observation["map_id"]))
-        plan, reason = _leg_for_map(
+        plan, stop = _leg_for_map(
             world,
             observation,
             collision,
             target_map=target_map,
             target_xy=target_xy,
         )
-        if plan is None:
-            stopped = reason or "no plan"
+        if plan is None or (stop is not None and not plan):
+            stopped = stop.reason if stop is not None else "no plan"
+            onward = stop.onward if stop is not None else None
             break
+        if stop is not None and stop.onward is not None:
+            onward = stop.onward
+            stopped = _look_reason(onward, observation)
+            if looking_at is not None and observation["position"] == looking_at:
+                # Standing on the edge of knowledge it set out for, and there is
+                # still no path: the unseen ground is in the window now, so the
+                # walk has done its job and the next move is a fresh decision.
+                break
+            found = _coord(onward.get("heading_for"))
+            looking_at = found or looking_at
         if not plan:
             arrived = True
             break
@@ -473,20 +843,30 @@ async def walk_to(
         observation = observation_from_bundle(result.get("bundle"))
         if observation["position"] is None:
             stopped = "lost track of the player — a battle or a cutscene interrupted the walk"
+            onward = None
             break
         if not moved:
             stopped = (
                 f"blocked after {outcome.get('blocked_after') or 0} of {len(batch)} steps on "
                 f"{observation['map_name']} — the way the plan wanted is not walkable"
             )
+            onward = None
             break
     else:
         stopped = f"gave up after {MAX_GOTO_ROUNDS} replanning rounds"
+        onward = None
 
+    if not arrived and walked:
+        # "not reachable" and "walked twelve tiles and then could not continue"
+        # are different events, and the agent was being told the first one when
+        # the second is what happened.
+        goal = target_map or str(list(target_xy or ()))
+        stopped = f"walked {walked} toward {goal}, then {stopped}"
     return {
         "walked": walked,
         "arrived": arrived,
         "stopped_because": "arrived" if arrived else stopped,
+        "onward": None if arrived else onward,
         "actions_executed": executed,
         "bundle": observation["bundle"],
     }
