@@ -117,8 +117,8 @@ uv run python -m pokemon_agent.bench <run_id>           # one run
 uv run python -m pokemon_agent.bench --compare a b c    # side by side
 ```
 
-The ladder has 63 rungs, from the starter through the Hall of Fame, each backed
-by a flag in the game's own RAM. No model judges progress. Presses never reset
+The ladder has 58 rungs, from the starter through the Hall of Fame, each backed
+by a bit in the game's own RAM that the game never clears again. No model judges progress. Presses never reset
 on a save-state reload, so a gym won on the fourth attempt reads as exactly
 that.
 

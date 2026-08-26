@@ -7,6 +7,7 @@ about: An ordinary, safe route through all eight badges and the Elite Four. Leve
 
 ## Pallet Town and the first steps
 <!-- slug: start -->
+<!-- hops: Pallet Town -north-> Route 1 -north-> Viridian City -->
 <!-- summary: Starter choice, Rival 1, Oak's Parcel, and the Route 1 loop. -->
 
 Leave the house, try to walk north out of town, and Oak drags the player back to the lab. Three balls on the table: Bulbasaur (left), Charmander (right), Squirtle (middle).
@@ -17,10 +18,11 @@ Rival 1 happens immediately, at Lv5, with whichever starter beats yours. Lower i
 
 North through Route 1 to Viridian. Catch a Pidgey or a Rattata in the grass on the way — a second body matters as soon as the starter takes a bad hit. The Poké Mart clerk hands over Oak's Parcel; carry it back to Pallet, give it to Oak, and receive the Pokédex and five Poké Balls.
 
-Back in Viridian, buy Poké Balls (about 10) and Potions (about 5) with the starting money. Two things in Viridian are locked for now: the gym (it is the eighth badge) and the fat man blocking Route 2 north, who moves once the Parcel is delivered.
+Back in Viridian, buy Poké Balls (about 10) and Potions (about 5) with the starting money. Two things in Viridian are locked for now: the gym (it is the eighth badge) and the fat man blocking Route 2 north, who moves once Oak has handed over the Pokédex. Delivering the Parcel alone is not enough; the game checks the Pokédex flag.
 
 ## Viridian Forest and Route 2
 <!-- slug: viridian-forest -->
+<!-- hops: Viridian City -north-> Route 2 -warp-> Viridian Forest South Gate -warp-> Viridian Forest -warp-> Viridian Forest North Gate -warp-> Route 2 -north-> Pewter City -->
 <!-- summary: The first real grass; catch a Pikachu here or skip it. -->
 
 Route 2 north is a short strip of grass with a Poké Ball on it, then the forest gate.
@@ -37,6 +39,7 @@ Exit north to Pewter City.
 
 ## Brock and Route 3
 <!-- slug: brock -->
+<!-- hops: Pewter City -east-> Route 3 -north-> Route 4 -->
 <!-- summary: The Boulder Badge, then the long trainer gauntlet east of Pewter. -->
 
 Pewter Gym has one trainer (a Jr. Trainer with a Diglett and a Sandshrew) and Brock. Brock has Geodude Lv12 and Onix Lv14, both Rock/Ground.
@@ -49,10 +52,11 @@ The Boulder Badge makes traded Pokémon up to Lv20 obey and enables Flash outsid
 
 Also in Pewter: the museum (pay to see the Old Amber, which is only usable much later), and a man who gives away a Nugget for hearing him out on the way east.
 
-Route 3 is a straight line east with five or six trainers on it, all Bug Catchers, Youngsters and a Lass with a Clefairy. Fight them; the money and levels are both needed. Wild Spearow, Mankey, Jigglypuff and Nidoran appear here. The Pokémon Center at the far end sits right in front of Mt. Moon and has a man selling a Magikarp for 500 — a bad deal in the short term and a Gyarados in the long term.
+Route 3 is a straight line east with five or six trainers on it, all Bug Catchers, Youngsters and a Lass with a Clefairy. Fight them; the money and levels are both needed. Wild Spearow, Mankey, Jigglypuff and Nidoran appear here. Route 3 has no doors on it at all: at its east end the map hands off *north* to Route 4, and the Pokémon Center is a warp on Route 4 at (11,5), with Mt. Moon's entrance a little further east at (18,5). The man in the Center sells a Magikarp for 500 — a bad deal in the short term and a Gyarados in the long term.
 
 ## Mt. Moon
 <!-- slug: mt-moon -->
+<!-- hops: Route 4 -warp-> Mt Moon 1F -warp-> Mt Moon B1F -warp-> Mt Moon B2F -warp-> Mt Moon B1F -warp-> Route 4 -east-> Cerulean City -->
 <!-- summary: Three floors, Team Rocket's first appearance, and the fossil choice. -->
 
 Mt. Moon is the first dungeon. Zubat and Geodude are everywhere; Paras, Clefairy and Sandshrew also appear. Bring Repels and about 10 Poké Balls.
@@ -67,10 +71,11 @@ At the end, a Super Nerd guards two fossils and only one can be taken:
 
 Neither can be revived until the Cinnabar lab much later, and neither is necessary. Omastar has better Special; Kabutops has better Attack.
 
-Exit east onto Route 4, which is a short ledge run down to Cerulean. The exit is the warp at (27,3) on B1F: far east side, near the top. From Mt Moon 1F the doors back to Route 4 are at (14,35) and (15,35) instead, at the bottom. There is a hidden Rare Candy and a wild-grass patch with Ekans/Sandshrew, plus the back entrance to Cerulean Cave that stays locked until the Champion is beaten.
+The way onward is the warp at (27,3) on Mt Moon B1F — far east side, near the top — and it lands on Route 4 at (24,5). The two doors at the bottom of Mt Moon 1F, (14,35) and (15,35), also say Route 4, but they land at (18,5), which is the door you came in by: taking them is a return, not progress. From (24,5) Route 4 runs east to Cerulean, a short ledge run down, with a hidden Rare Candy and a wild-grass patch of Ekans and Sandshrew on the way. Cerulean Cave is not on this road — its only door is in Cerulean City at (4,11), and it stays shut until the Champion is beaten.
 
 ## Misty, Nugget Bridge and Bill
 <!-- slug: misty -->
+<!-- hops: Cerulean City -north-> Route 24 -east-> Route 25 -->
 <!-- summary: Cascade Badge, the bridge gauntlet, S.S. Ticket from Bill. -->
 
 Cerulean City has the second gym, a house being robbed (the Rocket inside leaves a TM), and a bike shop selling a bicycle nobody can afford yet.
@@ -87,6 +92,7 @@ Along the way: TM19 Seismic Toss lies on Route 25, and there is a hidden Ether a
 
 ## Vermilion, the S.S. Anne and Surge
 <!-- slug: vermilion-surge -->
+<!-- hops: Cerulean City -south-> Route 5 -warp-> Underground Path Route 5 -warp-> Underground Path North South -warp-> Underground Path Route 6 -warp-> Route 6 -south-> Vermilion City -->
 <!-- summary: HM01 Cut, the S.S. Anne, and Surge's trash-can switches. -->
 
 South from Cerulean on Route 5, through the Underground Path (Route 5 to Route 6 entrance), and out onto Route 6 into Vermilion City.
@@ -105,6 +111,7 @@ The Thunder Badge enables Fly outside battle and makes traded Pokémon to Lv40 o
 
 ## Rock Tunnel and Lavender Town
 <!-- slug: rock-tunnel -->
+<!-- hops: Cerulean City -east-> Route 9 -east-> Route 10 -warp-> Rock Tunnel 1F -warp-> Rock Tunnel B1F -warp-> Rock Tunnel 1F -warp-> Route 10 -south-> Lavender Town -west-> Route 8 -->
 <!-- summary: Flash, a pitch-dark cave, and the tower that needs the Silph Scope. -->
 
 Head back to Cerulean and Cut the trees east onto Route 9, or take Route 11 and Diglett's Cave to shortcut around. Route 9 and Route 10 are dense with trainers and lead to Rock Tunnel.
@@ -123,6 +130,7 @@ So: leave Lavender west along Route 8, through the Underground Path (Route 7 to 
 
 ## Celadon: Erika, the department store and the Rocket Hideout
 <!-- slug: celadon -->
+<!-- hops: Route 8 -warp-> Underground Path Route 8 -warp-> Underground Path West East -warp-> Underground Path Route 7 -warp-> Route 7 -west-> Celadon City -warp-> Game Corner -->
 <!-- summary: Rainbow Badge, TM shopping, and the Silph Scope from Giovanni's hideout. -->
 
 Celadon City is the game's shopping hub and the point where a normal team stops being underpowered.
@@ -135,6 +143,7 @@ The Rocket Game Corner in Celadon hides the Rocket Hideout. Talk to the Rocket s
 
 ## Pokémon Tower, Saffron and Sabrina
 <!-- slug: silph-and-sabrina -->
+<!-- hops: Lavender Town -warp-> Pokemon Tower 1F; Celadon City -east-> Route 7 -east-> Saffron City -warp-> Silph Co 1F -->
 <!-- summary: Poke Flute, Silph Co., the Master Ball, and the Marsh Badge. -->
 
 Return to Lavender with the Silph Scope. Climb Pokémon Tower: Channelers on every floor with Gastly, Haunter and Cubone. On 6F Rival 4 waits (Pidgeotto, Gyarados, Growlithe/Exeggcute, Kadabra, starter — all around Lv25). On the top the ghost is now identifiable as a Lv30 Marowak; beat it, then the three Rocket Grunts, and Mr. Fuji gives the Poké Flute.
@@ -151,6 +160,7 @@ Sabrina's gym is a grid of teleport tiles; each pad sends the player to a fixed 
 
 ## Fuchsia, Koga and the Safari Zone
 <!-- slug: fuchsia-koga -->
+<!-- hops: Celadon City -west-> Route 16 -south-> Route 17 -south-> Route 18 -east-> Fuchsia City -warp-> Safari Zone Gate -->
 <!-- summary: Cycling Road, HM03 Surf and HM04 Strength, then the Soul Badge. -->
 
 From Celadon, Route 16 west needs the Poké Flute for the Snorlax, then Cycling Road (Route 17) runs south — the bicycle is mandatory here. Cycling Road is a long downhill with Bikers and Cue Balls on it; the ledges mean it is one-way fast. Route 18 leads east into Fuchsia City. The alternative approach is Route 12/13/14/15 south from Lavender, which needs the other Snorlax moved and a Fishing Rod for the water sections.
@@ -167,9 +177,10 @@ The Soul Badge raises Defense and enables Surf outside battle.
 
 ## Cinnabar, Blaine and Viridian Gym
 <!-- slug: cinnabar-blaine -->
+<!-- hops: Pallet Town -south-> Route 21 -south-> Cinnabar Island; Fuchsia City -south-> Route 19 -west-> Route 20 -west-> Cinnabar Island -->
 <!-- summary: Surf south, the Mansion and Secret Key, then Giovanni's last gym. -->
 
-Surf south from Pallet Town along Route 21, or east from Fuchsia along Routes 19 and 20, to reach Cinnabar Island. Route 20 also passes the Seafoam Islands, an optional two-part boulder puzzle holding Articuno.
+Surf south from Pallet Town along Route 21, or south out of Fuchsia onto Route 19 and then west along Route 20, to reach Cinnabar Island. Fuchsia's east edge is Route 15, which goes the other way entirely. Route 20 also passes the Seafoam Islands, an optional two-part boulder puzzle holding Articuno.
 
 Cinnabar has a Pokémon Lab (revives the Helix or Dome Fossil and the Old Amber into Omanyte, Kabuto or Aerodactyl, and holds three in-game trades), the Pokémon Mansion, and Blaine's gym — locked, and needing the Secret Key.
 
@@ -185,6 +196,7 @@ The Earth Badge makes every traded Pokémon obey. After the win, the old man in 
 
 ## Victory Road and the Elite Four
 <!-- slug: elite-four -->
+<!-- hops: Viridian City -west-> Route 22 -north-> Route 23 -warp-> Victory Road 1F -warp-> Victory Road 2F -warp-> Victory Road 3F -warp-> Victory Road 2F -warp-> Route 23 -north-> Indigo Plateau -->
 <!-- summary: The final gauntlet: five back-to-back fights with no healing between. -->
 
 West out of Viridian to Route 22 for Rival 6 (Pidgeot, Rhyhorn, Gyarados, Growlithe/Exeggcute, Alakazam, starter — around Lv47). Then north through Route 23, where a guard checks each badge in turn at a series of checkpoints. All eight are needed.

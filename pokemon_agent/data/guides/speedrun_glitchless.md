@@ -25,6 +25,7 @@ Reset check: if the fight ran 10+ turns, or Bulbasaur fainted at 2:50 or later o
 
 ## Nidoran on Route 22
 <!-- slug: nidoran -->
+<!-- hops: Pallet Town -north-> Route 1 -north-> Viridian City -west-> Route 22 -->
 <!-- summary: The Route 22 catch the whole run is built on. -->
 
 Between the two Route 1 trips, faint one wild encounter — a Lv2-3 Rattata or a Lv2 Pidgey, nothing higher. That kill is what puts Squirtle at Lv8 for the Viridian Forest Bug Catcher.
@@ -39,6 +40,7 @@ If more than half the balls are gone to Spearow, start Tackling Lv4 Nidorans onc
 
 ## Viridian Forest
 <!-- slug: viridian-forest -->
+<!-- hops: Viridian City -north-> Route 2 -warp-> Viridian Forest South Gate -warp-> Viridian Forest -warp-> Viridian Forest North Gate -warp-> Route 2 -north-> Pewter City -->
 <!-- summary: One Bug Catcher, two pickups, and the party-order menu. -->
 
 North out of Viridian, take the hidden Potion in the cut tree on the left, then straight through Route 2 into the forest.
@@ -55,6 +57,7 @@ Exit north to Pewter City.
 
 ## Brock
 <!-- slug: brock -->
+<!-- hops: Pewter City -warp-> Pewter Gym -->
 <!-- summary: Squirtle switches in, Bubble twice, then the Nidoran DV check. -->
 
 Walk into the gym and hug the left wall to slip past the gym trainer. Only Brock is fought.
@@ -71,6 +74,7 @@ Then the Pewter mart: buy 10 Potions, or 8-9 if Nidoran's Speed DV is known to b
 
 ## Route 3
 <!-- slug: route-3 -->
+<!-- hops: Pewter City -east-> Route 3 -north-> Route 4 -->
 <!-- summary: Four bug fights on a Horn Attack PP budget; catch a flier. -->
 
 Route 3 is a PP problem, not a damage problem. Horn Attack has 15 PP and there is no way to restore it until Route 25. The counts below are the standard number of Horn Attacks — aim to use one fewer than listed by finishing with Tackle whenever Tackle will kill.
@@ -87,6 +91,7 @@ Then east through the grass to dodge the Lass. If no Spearow was caught on Route
 
 ## Mt. Moon
 <!-- slug: mt-moon -->
+<!-- hops: Route 4 -warp-> Mt Moon 1F -warp-> Mt Moon B1F -warp-> Mt Moon B2F -warp-> Mt Moon B1F -warp-> Route 4 -->
 <!-- summary: The route's biggest branch: Water Gun, the optional Hiker, or neither. -->
 
 Mt. Moon is where the run forks, and the fork is decided by Nidoran's Attack DV.
@@ -103,10 +108,11 @@ Catch a Paras on sight; it is the best HM mule available here. Weaken with Horn 
 
 Fights: Super Nerd 1 (Magnemite Lv11, Voltorb Lv11) — two Horn Attacks then Poison Sting each. Then the Rare Candy east of him and the Escape Rope above. Lass (Oddish Lv11, Bellsprout Lv11) — Horn Attacks. Optional Hiker (two Geodude Lv10, Onix Lv10) — Water Gun. Rocket Grunt (Zubat Lv13, Rattata Lv13). Super Nerd 2 (Grimer, Voltorb, Koffing, all Lv12).
 
-Take the Moon Stone in the first floor's top-left corner. When to evolve matters: Nidorino cannot reliably faint Lv10 Zubats, but Nidoking's cry costs 0.6s per encounter, so evolve just before the floor where the bigger Zubats appear. Take the Helix Fossil and leave west.
+Take the Moon Stone in the first floor's top-left corner. When to evolve matters: Nidorino cannot reliably faint Lv10 Zubats, but Nidoking's cry costs 0.6s per encounter, so evolve just before the floor where the bigger Zubats appear. Take the Helix Fossil, then back up to B1F and out through the warp at (27,3) on its far east side.
 
 ## Cerulean and the second rival
 <!-- slug: cerulean-rival -->
+<!-- hops: Route 4 -east-> Cerulean City -->
 <!-- summary: Heal, hidden Rare Candy, then Rival 2 on the bridge approach. -->
 
 Straight through Route 4 to Cerulean. Heal at the Center, then go to the house in the far north-west of town and pick up the hidden Rare Candy in the back garden. That candy is half of the pair that buys Thrash later.
@@ -121,6 +127,7 @@ Sand-Attack is the danger. If Pidgeotto lands one and is already in range to die
 
 ## Nugget Bridge, Route 25 and Thrash
 <!-- slug: nugget-bridge -->
+<!-- hops: Cerulean City -north-> Route 24 -east-> Route 25 -->
 <!-- summary: Six bridge fights, Rare Candies to Lv23 for Thrash, then Bill. -->
 
 Talk to the first five bridge trainers from below so the exclamation-mark walk-up never happens.
@@ -141,6 +148,7 @@ Talk to Bill, say yes, then menu: Potion Nidoking toward full, then Escape Rope 
 
 ## Misty
 <!-- slug: misty -->
+<!-- hops: Cerulean City -south-> Route 5 -warp-> Underground Path Route 5 -warp-> Underground Path North South -warp-> Underground Path Route 6 -warp-> Route 6 -->
 <!-- summary: One gym trainer, Thrash Misty, then the Rocket and Route 5-6. -->
 
 Take the left path in Cerulean Gym to skip the first trainer. Fight the Jr. Trainer beside Misty (Goldeen Lv19, two Thrashes), then heal off Peck and Supersonic damage — the menu time is worth it.
@@ -157,6 +165,7 @@ On Route 6, minimise grass steps if Paras or Spearow is already caught; otherwis
 
 ## Surge and the bike
 <!-- slug: surge -->
+<!-- hops: Route 6 -south-> Vermilion City -warp-> Vermilion Dock -->
 <!-- summary: S.S. Anne, Rival 3, HM01 Cut, the can puzzle, then Thunderbolt. -->
 
 In Vermilion, shop before the S.S. Anne only if both Route 25 PP items were collected and TM34 is in item slot 2. Buy 3 Super Potions and 3 Repels.
@@ -177,6 +186,7 @@ Then the Pokémon Fan Club for the Bike Voucher, Dig back to Cerulean, trade for
 
 ## Rock Tunnel and Celadon
 <!-- slug: rock-tunnel -->
+<!-- hops: Cerulean City -east-> Route 9 -east-> Route 10 -warp-> Rock Tunnel 1F -warp-> Route 10 -south-> Lavender Town -west-> Route 8 -warp-> Underground Path Route 8 -warp-> Underground Path West East -warp-> Underground Path Route 7 -warp-> Route 7 -west-> Celadon City -->
 <!-- summary: Route 9 with Repels, the tunnel, then the Celadon shopping block. -->
 
 Cut the two trees east of Cerulean and bike into Route 9. Fight the Jr. Trainer (Oddish, Bellsprout, Oddish, Bellsprout, all Lv18 — Thrash) and the Bug Catcher (Caterpie, Weedle, Venonat, all Lv20). Thunderbolt the Caterpie if Attack DV is 0-12, so a short Thrash does not leave Nidoking confused in red bar against Venonat. Bike past the rest and Repel a few steps before the entrance.
@@ -193,6 +203,7 @@ Celadon Mart, floor by floor: 2F buy TM07 Horn Drill and 10 Super Repels (7000);
 
 ## Fly, the tower, and Silph Co.
 <!-- slug: fly-and-silph -->
+<!-- hops: Celadon City -west-> Route 16 -south-> Route 17 -south-> Route 18 -east-> Fuchsia City; Celadon City -east-> Route 7 -east-> Saffron City -warp-> Silph Co 1F -->
 <!-- summary: HM02, Pokemon Tower, Cycling Road, Safari Zone, Silph, Koga. -->
 
 Cut the bush by the sleeping Snorlax, go west through the checkpoint, and take HM02 from the girl in the house. Menu: Super Repel, teach TM07 Horn Drill over Horn Attack, swap X Accuracy up the list, teach HM02 to the flier, teach TM48 Rock Slide over Bubblebeam, then Fly to Lavender.
@@ -209,6 +220,7 @@ Dig out, Fly to Fuchsia, and clear Koga's gym: two Jugglers on Earthquake, then 
 
 ## Endgame
 <!-- slug: endgame -->
+<!-- hops: Pallet Town -south-> Route 21 -south-> Cinnabar Island; Viridian City -west-> Route 22 -north-> Route 23 -north-> Indigo Plateau -->
 <!-- summary: Three gyms in either order, Viridian, Victory Road, Elite Four. -->
 
 Fly to Pallet. Super Repel, dump every remaining Rare Candy into Nidoking, then Surf south to Cinnabar. In the Mansion take a Carbos on the Speed DVs that need it, teach HM04 Strength to Squirtle, pick up the Rare Candy item ball and the hidden one, use them two steps before the Secret Key, then Dig out.

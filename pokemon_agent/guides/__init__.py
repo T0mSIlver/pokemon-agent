@@ -6,6 +6,16 @@ each one covers — and decides for itself which to open with `read()`. That is
 the whole point: choosing *which* route to follow, and *when*, is the agent's
 call, not the harness's.
 
+Prose is not checkable, and a wrong walkthrough is worse than no walkthrough
+because the agent believes it: `standard_playthrough` said "Exit west onto
+Route 4" where the exit is east, and the run spent thousands of presses on it
+before anyone read the map. So every section that moves between maps carries a
+`<!-- hops: A -east-> B -warp-> C -->` line naming the chain in `world.json`'s
+own map names, `read()` renders it above the prose, and a test walks every triple
+against the decoded map data. A direction written into that line is checked; a
+direction written only into a sentence is not, which is why the sentence is now
+the second place a route is stated rather than the first.
+
 `GuideLog` is the other half. Every `read()` the agent performs can be recorded
 against the map it was standing on and the press count at the time, so "did it
 exercise agency?" becomes a question with an answer: which sections it opened,
@@ -38,6 +48,13 @@ _SECTION_RE = re.compile(r"^##\s+(?P<title>.+?)\s*$", re.MULTILINE)
 _META_RE = re.compile(r"<!--\s*(?P<key>[a-z_]+)\s*:\s*(?P<value>.*?)\s*-->", re.DOTALL)
 _WORD_RE = re.compile(r"[a-z0-9]+")
 
+#: `A -east-> B`. The edge is a compass direction for a map connection, or the
+#: literal `warp` for a door, ladder or cave mouth.
+_HOP_RE = re.compile(r"\s*-(?P<edge>north|south|east|west|warp)->\s*")
+
+#: What a hop's edge may say. Anything else is a typo the test will not decode.
+HOP_EDGES = ("north", "south", "east", "west", "warp")
+
 #: Field weights for `search`. A hit in the title says far more about what a
 #: section is *about* than the same word buried in its body.
 _WEIGHT_TITLE = 8
@@ -62,11 +79,55 @@ class Section:
     title: str
     summary: str
     words: int
+    #: `(from_map, edge, to_map)` triples, in the order the section walks them.
+    #: Empty for a section that does not move, like anything in `battles`.
+    hops: Tuple[Tuple[str, str, str], ...] = ()
 
     @property
     def ref(self) -> str:
         """`guide/slug` — the stable address of this section."""
         return f"{self.guide}/{self.slug}"
+
+    @property
+    def route_line(self) -> str:
+        """The hop chain as one line, or `""` for a section that stays put.
+
+        A section can cover two stretches that do not join up — Celadon to Fuchsia
+        and Celadon to Saffron are one section and two roads — so the rendering
+        starts a new run whenever a hop does not begin where the last one ended.
+        """
+        if not self.hops:
+            return ""
+        parts: List[str] = []
+        previous = None
+        for from_map, edge, to_map in self.hops:
+            if from_map != previous:
+                parts.append(("; " if parts else "") + from_map)
+            parts.append(f"-{edge}-> {to_map}")
+            previous = to_map
+        return "Route: " + " ".join(parts)
+
+
+def parse_hops(text: str) -> Tuple[Tuple[str, str, str], ...]:
+    """`A -east-> B -warp-> C` into `(("A","east","B"), ("B","warp","C"))`.
+
+    Several chains separated by `;` flatten into one tuple; the gap between them
+    shows up as a hop that does not start where the last one ended.
+
+    A malformed chain yields nothing rather than raising: a guide that will not
+    parse must still be readable, and the test is where a bad chain is caught.
+    """
+    hops: List[Tuple[str, str, str]] = []
+    for chain in text.split(";"):
+        pieces = _HOP_RE.split(chain.strip())
+        if len(pieces) < 3 or len(pieces) % 2 == 0:
+            return ()
+        names = [piece.strip() for piece in pieces[0::2]]
+        edges = [piece.strip() for piece in pieces[1::2]]
+        if not all(names) or any(edge not in HOP_EDGES for edge in edges):
+            return ()
+        hops.extend(zip(names, edges, names[1:]))
+    return tuple(hops)
 
 
 @dataclass(frozen=True)
@@ -140,6 +201,7 @@ def _parse_guide(path: Path) -> List[_Entry]:
                     title=title,
                     summary=summary,
                     words=len(section_body.split()),
+                    hops=parse_hops(section_meta.get("hops", "")),
                 ),
                 body=section_body,
                 tokens=tuple(_tokenize(section_body)),
@@ -215,11 +277,33 @@ def outline() -> str:
 
 
 def read(guide: str, slug: str) -> Optional[str]:
-    """The body of one section, or `None` for an address that does not exist."""
+    """The body of one section, or `None` for an address that does not exist.
+
+    The checked hop chain leads, because it is the only part of the section a
+    test has walked against the decoded maps. The prose that follows says what
+    to do on the way; the first line says where the way goes.
+    """
     for entry in _entries():
         if entry.section.guide == guide and entry.section.slug == slug:
-            return entry.body
+            route = entry.section.route_line
+            return f"{route}\n\n{entry.body}" if route else entry.body
     return None
+
+
+def find(ref: str) -> Tuple[Section, ...]:
+    """Every section addressed by *ref*, as `guide/slug` or as a bare slug.
+
+    A bare slug is the address the agent reaches for, and six of the thirty slugs
+    live in two guides at once, so this returns a tuple: one match is the answer,
+    several is a question worth asking back, none is a miss worth a suggestion.
+    That distinction is why a `read` used to fail outright and cost a second call.
+    """
+    guide, _, slug = str(ref).strip().partition("/")
+    if slug:
+        return tuple(
+            section for section in index() if section.guide == guide and section.slug == slug
+        )
+    return tuple(section for section in index() if section.slug == guide)
 
 
 def search(query: str, limit: int = 5) -> Tuple[Section, ...]:

@@ -21,9 +21,13 @@ from pokemon_agent.memory.red import (
     ADDR_BADGES,
     ADDR_BAG_COUNT,
     ADDR_BAG_ITEMS,
+    ADDR_ELITE_4_FLAGS,
     ADDR_EVENT_FLAGS,
     ADDR_OAK_PARCEL,
+    ADDR_PC_COUNT,
+    ADDR_PC_ITEMS,
     ADDR_POKEDEX_FLAG,
+    ADDR_TOWN_VISITED_FLAGS,
     ITEM_NAMES,
     PokemonRedReader,
 )
@@ -34,6 +38,7 @@ from pokemon_agent.milestones import (
     MILESTONE_DAG,
     MILESTONES,
     MILESTONES_BY_ID,
+    RESETTABLE_EVENTS,
     MilestoneTracker,
     blocking,
     frontier,
@@ -182,6 +187,11 @@ def test_every_ladder_source_resolves():
             assert 0 <= int(milestone.source.split(":")[1]) <= 7
         elif milestone.kind == "item":
             assert int(milestone.source.split(":")[1]) in ITEM_NAMES
+        elif milestone.kind == "ram_bit":
+            prefix, address, bit = milestone.source.split(":")
+            assert prefix == "ram_bit"
+            assert 0xC000 <= int(address, 16) <= 0xDFFF
+            assert 0 <= int(bit) <= 15
         else:  # pragma: no cover - the assert is the point
             pytest.fail(f"{milestone.id} has unknown kind {milestone.kind!r}")
 
@@ -193,7 +203,62 @@ def test_no_ladder_rung_uses_a_flag_the_game_can_clear():
     by VictoryRoad2F.asm; EVENT_IN_SAFARI_ZONE is only set while you stand inside.
     """
     for milestone in MILESTONES:
-        assert milestone.source not in gen.RESETTABLE_EVENTS
+        assert milestone.source not in RESETTABLE_EVENTS
+
+
+def test_the_reset_set_is_the_one_the_decomp_actually_has():
+    """Scanned, not typed. The typed one was eleven names short.
+
+    Each of these is a shape the hand-written list got wrong: a range whose named
+    endpoints do not mention the flag (the Elite Four rooms), a CheckAndReset that
+    consumes the flag it tests (the Hall of Fame), and a plain two-name ResetEvents
+    nobody thought to grep for (the Victory Road 2F switches).
+    """
+    assert len(RESETTABLE_EVENTS) >= gen.MIN_RESETTABLE_EVENTS
+    assert set(gen.RESET_SENTINELS) <= RESETTABLE_EVENTS
+    assert RESETTABLE_EVENTS <= set(ALL_EVENTS)
+
+
+@pytest.mark.parametrize(
+    "event_id",
+    [
+        "EVENT_VICTORY_ROAD_2_BOULDER_ON_SWITCH2",
+        "EVENT_AUTOWALKED_INTO_LORELEIS_ROOM",
+        "EVENT_BEAT_LORELEIS_ROOM_TRAINER_0",
+        "EVENT_BEAT_BRUNOS_ROOM_TRAINER_0",
+        "EVENT_BEAT_AGATHAS_ROOM_TRAINER_0",
+        "EVENT_BEAT_LANCE",
+        "EVENT_BEAT_CHAMPION_RIVAL",
+        "EVENT_HALL_OF_FAME_DEX_RATING",
+    ],
+)
+def test_the_eight_rungs_that_could_not_be_banked_are_off_the_ladder(event_id):
+    """These were rungs 55..62 and the game clears every one of them.
+
+    Route23.asm zeroes the boulder switches on every map load;
+    IndigoPlateauLobby.asm zeroes the Elite Four block when a failed challenge
+    sends you back to the lobby; HallOfFame.asm zeroes it again on the way in,
+    and pokedex_rating.asm consumes the Hall of Fame flag in the same cutscene
+    that sets it. Finishing the game moved the score down by eight and 63/63 was
+    unreachable by any route.
+    """
+    assert event_id in RESETTABLE_EVENTS
+    assert event_id not in MILESTONES_BY_ID
+
+
+def test_reset_range_clears_whole_bytes_not_just_the_named_span():
+    """Which is how a range that names Lorelei and Lance also wipes what is between.
+
+    macros/scripts/events.asm masks the partial start byte, zeroes whole bytes in
+    the middle, and masks the partial end byte -- so the reach is byte-aligned
+    outwards from both endpoints, not the closed interval a reader would assume.
+    """
+    # Same byte: exactly the closed interval.
+    assert gen.range_cleared_bits(9, 11) == {9, 10, 11}
+    # Crossing a boundary: from bit 9 up to the end of byte 1, then bits 16..17.
+    assert gen.range_cleared_bits(9, 17) == set(range(9, 18))
+    # The end byte is cleared from its bit 0, which is below the named endpoint.
+    assert 16 in gen.range_cleared_bits(15, 17)
 
 
 def test_all_eight_badges_appear_in_bit_order():
@@ -221,8 +286,16 @@ def test_each_gym_leader_sits_just_before_their_badge(leader_event, badge_id):
 
 
 def test_the_ladder_ends_at_the_hall_of_fame():
-    assert MILESTONES[-1].id == "EVENT_HALL_OF_FAME_DEX_RATING"
-    assert MILESTONES[-2].id == "EVENT_BEAT_CHAMPION_RIVAL"
+    """One bit, because one bit is all that survives the Hall of Fame.
+
+    wElite4Flags bit 0 is set on the way in and read by nothing in the game,
+    which is why it is still there afterwards when the six event flags that
+    described the same achievement have all been zeroed.
+    """
+    assert MILESTONES[-1].id == "ELITE_FOUR_CHAMPION"
+    address, bit = MILESTONES[-1].source.split(":")[1:]
+    assert (int(address, 16), int(bit)) == (ADDR_ELITE_4_FLAGS, 0)
+    assert MILESTONES[-2].id == "TOWN_INDIGO_PLATEAU"
 
 
 def test_all_five_hms_are_on_the_ladder():
@@ -269,8 +342,19 @@ def make_tracker(
     raw_event_bytes: Mapping[int, int] | None = None,
     badge_bits: Iterable[int] = (),
     items: Sequence[int] = (),
+    pc_items: Sequence[int] = (),
+    ram_bits: Iterable[str] = (),
 ) -> MilestoneTracker:
     emulator = FakeEmulator()
+    emulator.mem[ADDR_PC_COUNT] = len(pc_items)
+    for slot, item_id in enumerate(pc_items):
+        emulator.mem[ADDR_PC_ITEMS + slot * 2] = item_id
+        emulator.mem[ADDR_PC_ITEMS + slot * 2 + 1] = 1
+    emulator.mem[ADDR_PC_ITEMS + len(pc_items) * 2] = 0xFF
+    for source in ram_bits:
+        _, address, bit = source.split(":")
+        index = int(bit)
+        emulator.mem[int(address, 16) + index // 8] |= 1 << (index % 8)
     for name in events:
         index = ALL_EVENTS[name]
         emulator.mem[ADDR_EVENT_FLAGS + index // 8] |= 1 << (index % 8)
@@ -295,6 +379,47 @@ def test_snapshot_reads_all_three_kinds():
     assert tracker.snapshot() == frozenset(
         {"EVENT_GOT_STARTER", "EVENT_BEAT_BROCK", "BADGE_BOULDER", "ITEM_LIFT_KEY"}
     )
+
+
+def test_a_key_item_in_the_pc_still_counts():
+    """Gen 1 has no key-item pocket, so the Lift Key can be deposited.
+
+    A rung that only read the bag went out again the moment the player tidied
+    up, which is the same non-monotonicity a resettable event flag has.
+    """
+    assert "ITEM_LIFT_KEY" in make_tracker(items=[74]).snapshot()
+    assert "ITEM_LIFT_KEY" in make_tracker(pc_items=[74]).snapshot()
+    assert "ITEM_LIFT_KEY" not in make_tracker(items=[20], pc_items=[20]).snapshot()
+
+
+def test_a_ram_bit_milestone_reads_the_byte_its_source_names():
+    champion = MILESTONES_BY_ID["ELITE_FOUR_CHAMPION"]
+    assert "ELITE_FOUR_CHAMPION" not in make_tracker().snapshot()
+    assert "ELITE_FOUR_CHAMPION" in make_tracker(ram_bits=[champion.source]).snapshot()
+
+    # Neighbouring bits in the same byte must not read as the milestone:
+    # wElite4Flags bit 1 is BIT_STARTED_ELITE_4, set while a challenge is running
+    # and cleared again in the lobby.
+    started = MilestoneTracker(PokemonRedReader(FakeEmulator()))
+    started.reader.emu.mem[ADDR_ELITE_4_FLAGS] = 0b10
+    assert "ELITE_FOUR_CHAMPION" not in started.snapshot()
+
+
+def test_a_ram_bit_past_the_first_byte_spills_into_the_next_one():
+    """Indigo Plateau is bit 9 of an 11-bit array: byte 1, bit 1, LSB first.
+
+    Same order as wEventFlags. Reading it as bit 9 of a single byte, or MSB-first
+    within the byte, both land on a different town.
+    """
+    indigo = MILESTONES_BY_ID["TOWN_INDIGO_PLATEAU"]
+    assert indigo.source == f"ram_bit:0x{ADDR_TOWN_VISITED_FLAGS:04X}:9"
+
+    tracker = MilestoneTracker(PokemonRedReader(FakeEmulator()))
+    tracker.reader.emu.mem[ADDR_TOWN_VISITED_FLAGS] = 0xFF  # Pallet .. Cinnabar
+    assert "TOWN_INDIGO_PLATEAU" not in tracker.snapshot()
+
+    tracker.reader.emu.mem[ADDR_TOWN_VISITED_FLAGS + 1] = 0b10
+    assert "TOWN_INDIGO_PLATEAU" in tracker.snapshot()
 
 
 def test_event_bits_are_little_endian_within_their_byte():
@@ -564,9 +689,12 @@ def test_victory_road_waits_for_all_eight_badges_and_for_strength():
         "EVENT_BEAT_ROUTE22_RIVAL_2ND_BATTLE",
         without=["EVENT_BEAT_BLAINE", "BADGE_VOLCANO", "EVENT_GOT_HELIX_FOSSIL"],
     )
-    assert blocking("EVENT_VICTORY_ROAD_2_BOULDER_ON_SWITCH2", everything_but_blaine) == (
-        "BADGE_VOLCANO",
-    )
+    assert blocking("EVENT_PASSED_EARTHBADGE_CHECK", everything_but_blaine) == ("BADGE_VOLCANO",)
+
+    # Strength is not a Route 23 guard; it is the boulders inside Victory Road,
+    # so it blocks the plateau rather than the gate.
+    at_the_gate = reached_through("EVENT_PASSED_EARTHBADGE_CHECK", without=["EVENT_GOT_HM04"])
+    assert blocking("TOWN_INDIGO_PLATEAU", at_the_gate) == ("EVENT_GOT_HM04",)
 
 
 def test_off_ladder_events_in_a_snapshot_do_not_disturb_the_frontier():

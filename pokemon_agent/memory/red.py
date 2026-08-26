@@ -50,8 +50,9 @@ ADDR_BAG_COUNT = 0xD31D
 ADDR_BAG_ITEMS = 0xD31E  # pairs (item_id, qty)
 
 # -- PC items --
-ADDR_PC_COUNT = 0xD53A
-ADDR_PC_ITEMS = 0xD53B
+ADDR_PC_COUNT = 0xD53A  # wNumBoxItems
+ADDR_PC_ITEMS = 0xD53B  # wBoxItems, pairs (item_id, qty)
+PC_ITEM_CAPACITY = 50
 
 # -- Battle --
 ADDR_BATTLE_TYPE = 0xD057  # 0=none, 1=wild, 2=trainer
@@ -99,16 +100,34 @@ ADDR_DEX_OWNED = 0xD2F7  # 19 bytes (152 bits, only 151 used)
 ADDR_DEX_SEEN = 0xD30A
 
 # -- Play time --
-ADDR_PLAYTIME_H = 0xDA40  # 2 bytes (little-endian hours)
-ADDR_PLAYTIME_M = 0xDA42  # 1 byte minutes
-ADDR_PLAYTIME_S = 0xDA43  # 1 byte seconds
-ADDR_PLAYTIME_F = 0xDA44  # 1 byte frames
+# Every one of these was one byte low, and the whole block read as garbage: hours
+# came off 0xDA40 as a little-endian u16 whose low byte is padding, so a 25-hour
+# save reported 6400, and "minutes" read wPlayTimeMaxed, which is 0 in every save
+# state in saves/ -- 494 of them, all reporting :00. The real layout, walked out
+# of pokered's ram/wram.asm from wEventFlags (0xD747) and confirmed against those
+# saves, is five consecutive single bytes with a flag in the middle.
+ADDR_PLAYTIME_H = 0xDA41  # wPlayTimeHours, 1 byte
+ADDR_PLAYTIME_MAXED = 0xDA42  # wPlayTimeMaxed, set once the clock stops at 255:59
+ADDR_PLAYTIME_M = 0xDA43  # wPlayTimeMinutes
+ADDR_PLAYTIME_S = 0xDA44  # wPlayTimeSeconds
+ADDR_PLAYTIME_F = 0xDA45  # wPlayTimeFrames
 
 # -- Event / story flags --
 ADDR_EVENT_FLAGS = 0xD747  # large bitfield (wEventFlags)
 ADDR_OAK_PARCEL = 0xD74E  # bit 1 = has parcel
 ADDR_POKEDEX_FLAG = 0xD74B  # bit 5 = has pokedex
-ADDR_TOWN_MAP_FLAG = 0xD5F3  # bit 0 = has town map
+
+# wTownVisitedFlag: one bit per Fly destination, in map-id order from
+# PALLET_TOWN = 0 to SAFFRON_CITY = 10. Set on arrival, never cleared, which is
+# what makes ELITE_FOUR's Indigo Plateau bit (9) usable as a milestone. The
+# constant here used to read 0xD5F3, which is not this array and not any flag:
+# it holds 1 in a save standing in Red's house before the Town Map exists.
+ADDR_TOWN_VISITED_FLAGS = 0xD70B  # 2 bytes, 11 bits used
+
+# wElite4Flags. Bit 0 is set by HallOfFame.asm and read by nothing in the game,
+# so unlike every event flag in the Indigo Plateau block it survives the reset
+# the Hall of Fame performs on its way in.
+ADDR_ELITE_4_FLAGS = 0xD734
 
 # -- Warps --
 ADDR_WARP_COUNT = 0xD3AE  # current map warp count (wNumberOfWarps)
@@ -1414,7 +1433,7 @@ class RedBlueMemoryReader(GameMemoryReader):
         facing_byte = self.emu.read_u8(ADDR_FACING)
         facing = FACING_NAMES.get(facing_byte, f"unknown(0x{facing_byte:02X})")
 
-        hours = self.emu.read_u16(ADDR_PLAYTIME_H)
+        hours = self.emu.read_u8(ADDR_PLAYTIME_H)
         minutes = self.emu.read_u8(ADDR_PLAYTIME_M)
         seconds = self.emu.read_u8(ADDR_PLAYTIME_S)
 
@@ -1448,6 +1467,29 @@ class RedBlueMemoryReader(GameMemoryReader):
         for i in range(count):
             item_id = self.emu.read_u8(ADDR_BAG_ITEMS + i * 2)
             qty = self.emu.read_u8(ADDR_BAG_ITEMS + i * 2 + 1)
+            if item_id == 0xFF:  # terminator
+                break
+            items.append(
+                {
+                    "id": item_id,
+                    "item": ITEM_NAMES.get(item_id, f"???({item_id})"),
+                    "quantity": qty,
+                }
+            )
+        return items
+
+    def read_pc_items(self) -> List[Dict[str, Any]]:
+        """Read the item PC's list, same shape as :meth:`read_bag`.
+
+        Gen 1 has no key-item pocket, so the Card Key, Lift Key, Silph Scope and
+        Secret Key can all be deposited here. A milestone that only looked in the
+        bag would un-fire the moment the player tidied up.
+        """
+        count = min(self.emu.read_u8(ADDR_PC_COUNT), PC_ITEM_CAPACITY)
+        items: List[Dict[str, Any]] = []
+        for i in range(count):
+            item_id = self.emu.read_u8(ADDR_PC_ITEMS + i * 2)
+            qty = self.emu.read_u8(ADDR_PC_ITEMS + i * 2 + 1)
             if item_id == 0xFF:  # terminator
                 break
             items.append(

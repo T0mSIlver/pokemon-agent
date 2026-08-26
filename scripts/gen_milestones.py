@@ -4,12 +4,12 @@
 Source of truth for the event bitfield at wEventFlags (0xD747):
   https://raw.githubusercontent.com/pret/pokered/master/constants/event_constants.asm
 
-Same precedent as MAP_NAMES in pokemon_agent/memory/red.py: the upstream file is
+Same precedent as MAP_NAMES in pokemon_agent/memory/red.py: the upstream files are
 parsed once, offline, and the result is checked in. A running emulator must not
 depend on network access, and the diff has to be reviewable.
 
-Unlike map_constants.asm, this file is *not* a straight line count. rgbds'
-const_def/const/const_skip/const_next macros move a counter:
+Unlike map_constants.asm, event_constants.asm is *not* a straight line count.
+rgbds' const_def/const/const_skip/const_next macros move a counter:
 
     const_def            counter = 0
     const NAME           NAME = counter; counter += 1
@@ -21,23 +21,51 @@ the start of that map's slice of the bitfield, so enumerating `const` lines in
 order and numbering them 0..506 gives 507 wrong indices. Ask MAP_NAMES how much a
 drifted table costs.
 
+The *second* thing this script reads upstream for is which flags the game can
+clear again, and that half exists because a hand-written list got it wrong. The
+first version of this file carried twenty resettable event names typed out by
+hand. The decomp resets thirty-one, plus two whole byte-aligned ranges, and the
+eleven that were missed included the last eight rungs of the ladder: Victory
+Road's 2F switch (Route23.asm clears it on every map load), all five Elite Four
+rooms and the Champion (IndigoPlateauLobby.asm clears them when a failed
+challenge sends you back to the lobby; HallOfFame.asm clears them again on the
+way in), and the Hall of Fame flag itself (set by hall_of_fame.asm and consumed
+by the Pokedex rating in the same cutscene). Finishing the game moved the score
+*down* by eight, and 63/63 was not reachable by any route. So the reset set is no
+longer typed: it is scanned out of every .asm in the tree, ranges expanded the
+way the ResetEventRange macro actually expands them, and any ladder rung that
+lands in it fails generation.
+
 Usage:
-    .venv/bin/python scripts/gen_milestones.py            # fetch and write
-    .venv/bin/python scripts/gen_milestones.py --source F # parse a local copy
-    .venv/bin/python scripts/gen_milestones.py --check    # fail if stale
+    .venv/bin/python scripts/gen_milestones.py             # fetch and write
+    .venv/bin/python scripts/gen_milestones.py --source D  # read a pokered checkout
+    .venv/bin/python scripts/gen_milestones.py --check     # fail if stale
 """
 
 from __future__ import annotations
 
 import argparse
+import io
 import json
 import re
 import sys
+import tarfile
 import urllib.request
 from pathlib import Path
-from typing import Dict, List, Tuple
+from typing import Dict, Iterable, List, Mapping, Set, Tuple
 
 SOURCE_URL = "https://raw.githubusercontent.com/pret/pokered/master/constants/event_constants.asm"
+
+#: The whole tree, because the reset sites are spread over ~20 files in scripts/
+#: and engine/ and there is no way to know which twenty without reading all of
+#: them. One request, unpacked in memory, never touched at runtime.
+TREE_URL = "https://codeload.github.com/pret/pokered/tar.gz/refs/heads/master"
+
+#: Where inside the checkout the parse looks. macros/ is included because
+#: ResetEventRange's expansion is defined there and worth diffing if it changes.
+SOURCE_DIRS = ("constants", "scripts", "engine", "data", "home", "macros")
+
+EVENT_CONSTANTS_PATH = "constants/event_constants.asm"
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 OUTPUT_PATH = REPO_ROOT / "pokemon_agent" / "data" / "red_milestones.json"
@@ -63,35 +91,37 @@ CROSS_CHECKED_EVENTS = {
     "EVENT_BEAT_BROCK": 119,
 }
 
-# Events pokered's scripts can *clear* again -- every EVENT_ name that appears
-# after a ResetEvent* macro anywhere in the decomp. They are the flags that make a
-# ladder non-monotone, so none of them may be used as a rung. Two were caught this
-# way: EVENT_IN_SAFARI_ZONE (set only while you are inside) and
-# EVENT_VICTORY_ROAD_1_BOULDER_ON_SWITCH (cleared by VictoryRoad2F.asm when the
-# boulder is lifted off).
-RESETTABLE_EVENTS = frozenset(
-    {
-        "EVENT_1ST_LOCK_OPENED",
-        "EVENT_2A7",
-        "EVENT_2ND_ROUTE22_RIVAL_BATTLE",
-        "EVENT_67F",
-        "EVENT_BILL_SAID_USE_CELL_SEPARATOR",
-        "EVENT_BOUGHT_MUSEUM_TICKET",
-        "EVENT_FIGHT_ROUTE12_SNORLAX",
-        "EVENT_FIGHT_ROUTE16_SNORLAX",
-        "EVENT_IN_PURIFIED_ZONE",
-        "EVENT_IN_SAFARI_ZONE",
-        "EVENT_IN_SEAFOAM_ISLANDS",
-        "EVENT_LAB_STILL_REVIVING_FOSSIL",
-        "EVENT_MANSION_SWITCH_ON",
-        "EVENT_NUGGET_REWARD_AVAILABLE",
-        "EVENT_PIKACHU_FAN_BOAST",
-        "EVENT_POKEMON_TOWER_RIVAL_ON_LEFT",
-        "EVENT_SAFARI_GAME_OVER",
-        "EVENT_SEEL_FAN_BOAST",
-        "EVENT_VICTORY_ROAD_1_BOULDER_ON_SWITCH",
-    }
+# Every macro in macros/scripts/events.asm that clears a bit. The named-argument
+# ones list their events on the same line; ResetEventRange takes two endpoints and
+# is handled separately because it clears whole bytes, not just the named span.
+RESET_MACROS = (
+    "CheckAndResetEventA",
+    "CheckAndResetEvent",
+    "ResetEventAfterBranchReuseHL",
+    "ResetEventForceReuseHL",
+    "ResetEventReuseHL",
+    "ResetEvents",
+    "ResetEvent",
 )
+
+_RESET_LINE_RE = re.compile(r"^\s*(?:%s)\b(?P<args>.*)$" % "|".join(RESET_MACROS))
+_RESET_RANGE_RE = re.compile(r"^\s*ResetEventRange\b(?P<args>.*)$")
+_EVENT_NAME_RE = re.compile(r"\bEVENT_[A-Z0-9_]+\b")
+_MARKER_RE = re.compile(r"^\s*DEF\s+(?P<name>\w+)\s+EQU\s+(?P<expr>.*?)\s*$")
+
+# The scan has to come back with these or it did not really run. Each is a flag a
+# human has watched the game clear, spread across four different reset shapes:
+# a bare ResetEvent, a CheckAndReset that consumes the flag it tests, a two-name
+# ResetEvents, and a ResetEventRange whose named endpoints do not mention it.
+RESET_SENTINELS = {
+    "EVENT_IN_SAFARI_ZONE": "engine/items/item_effects.asm, ResetEvent",
+    "EVENT_HALL_OF_FAME_DEX_RATING": "engine/events/pokedex_rating.asm, CheckAndResetEventA",
+    "EVENT_VICTORY_ROAD_2_BOULDER_ON_SWITCH2": "scripts/Route23.asm, ResetEvents",
+    "EVENT_BEAT_LANCE": "scripts/HallOfFame.asm, ResetEventRange",
+}
+
+#: Below this the scan found a handful of lines and missed the rest.
+MIN_RESETTABLE_EVENTS = 30
 
 # ---------------------------------------------------------------------------
 # The curated ladder.
@@ -99,19 +129,32 @@ RESETTABLE_EVENTS = frozenset(
 # Ordered the way a normal playthrough hits it, because the runtime scores
 # progress as max(ladder_index) over everything set. Entries are
 # (id, label, kind, source):
-#   kind "event" -> source is the EVENT_ name (id and source coincide)
-#   kind "badge" -> source is "badge_bit:N", N = bit in wObtainedBadges (0xD356)
-#   kind "item"  -> source is "item_id:N", N = bag item id
+#   kind "event"   -> source is the EVENT_ name (id and source coincide)
+#   kind "badge"   -> source is "badge_bit:N", N = bit in wObtainedBadges (0xD356)
+#   kind "item"    -> source is "item_id:N", N = bag item id
+#   kind "ram_bit" -> source is "ram_bit:0xADDR:N", one bit of one WRAM byte
 #
 # Events are preferred over items wherever pokered defines one, because bag
 # contents are not monotone: Oak's Parcel and the fossils are consumed when handed
 # over, and a player can toss anything. The four item-kind entries are key items
 # Gen 1 has no flag for *and* never removes from the bag once given.
 #
+# ram_bit is the last resort, for the end of the game, where pokered's own event
+# flags are all scratch space. Both addresses were resolved by walking the "Main
+# Data" section of ram/wram.asm and land on wObtainedBadges = 0xD356 and
+# wEventFlags = 0xD747 exactly, which is what makes the walk trustworthy; the
+# town-visited byte was then confirmed against 494 save states, where it reads
+# Pallet+Viridian before Pewter and Pallet+Viridian+Pewter after, and never
+# Cerulean in a run that never got there.
+#
 # Deliberately not on the ladder:
-#   Anything in RESETTABLE_EVENTS above. The Safari Zone is therefore represented
-#     by EVENT_GOT_HM03 (Surf, in the Secret House) rather than EVENT_IN_SAFARI_ZONE,
-#     and Victory Road by the 2F boulder switch rather than the 1F one.
+#   Anything the scan above finds on a ResetEvent* line. The Safari Zone is
+#     therefore represented by EVENT_GOT_HM03 (Surf, in the Secret House) rather
+#     than EVENT_IN_SAFARI_ZONE; Route 23 by the badge check the guards set
+#     rather than by a Victory Road boulder switch, all six of which Route23.asm
+#     clears on every map load; and the Elite Four by one wElite4Flags bit rather
+#     than by six per-room flags that a failed challenge and then the Hall of
+#     Fame itself both wipe.
 #   EVENT_GOT_POKEBALLS_FROM_OAK -- OaksLab.asm only reaches it if you have beaten
 #     the Route 22 rival *and* your bag holds no Poke Balls. It is clear in save
 #     states that are well past Brock, so it would be a rung nobody can stand on.
@@ -260,47 +303,34 @@ LADDER: Tuple[Tuple[str, str, str, str], ...] = (
         "EVENT_BEAT_ROUTE22_RIVAL_2ND_BATTLE",
     ),
     (
-        "EVENT_VICTORY_ROAD_2_BOULDER_ON_SWITCH2",
-        "Opened the Victory Road 2F barrier",
+        "EVENT_PASSED_EARTHBADGE_CHECK",
+        "Passed the last Route 23 badge check",
         "event",
-        "EVENT_VICTORY_ROAD_2_BOULDER_ON_SWITCH2",
+        "EVENT_PASSED_EARTHBADGE_CHECK",
     ),
+    # wTownVisitedFlag = 0xD70B, bit 9 = INDIGO_PLATEAU. Set on arrival and never
+    # cleared. Victory Road is the only way in on a first visit, so this is the
+    # rung that says Victory Road is behind you -- which is what the six boulder
+    # switches were supposed to say and cannot, being scratch space Route23.asm
+    # zeroes every time the map loads.
     (
-        "EVENT_AUTOWALKED_INTO_LORELEIS_ROOM",
-        "Cleared Victory Road and reached the Elite Four",
-        "event",
-        "EVENT_AUTOWALKED_INTO_LORELEIS_ROOM",
+        "TOWN_INDIGO_PLATEAU",
+        "Cleared Victory Road and reached the Indigo Plateau",
+        "ram_bit",
+        "ram_bit:0xD70B:9",
     ),
+    # wElite4Flags = 0xD734, bit 0 = BIT_UNUSED_BEAT_ELITE_4. HallOfFame.asm sets
+    # it on the way in and nothing in the decomp clears it -- the game itself
+    # never reads it, which is precisely why it survives. Everything else about
+    # the Elite Four is wiped twice over: once by IndigoPlateauLobby.asm when a
+    # failed challenge sends you back to the lobby, and again by HallOfFame.asm.
+    # So the Elite Four is one rung here, because one bit is all that is left
+    # standing afterwards.
     (
-        "EVENT_BEAT_LORELEIS_ROOM_TRAINER_0",
-        "Defeated Lorelei",
-        "event",
-        "EVENT_BEAT_LORELEIS_ROOM_TRAINER_0",
-    ),
-    (
-        "EVENT_BEAT_BRUNOS_ROOM_TRAINER_0",
-        "Defeated Bruno",
-        "event",
-        "EVENT_BEAT_BRUNOS_ROOM_TRAINER_0",
-    ),
-    (
-        "EVENT_BEAT_AGATHAS_ROOM_TRAINER_0",
-        "Defeated Agatha",
-        "event",
-        "EVENT_BEAT_AGATHAS_ROOM_TRAINER_0",
-    ),
-    ("EVENT_BEAT_LANCE", "Defeated Lance", "event", "EVENT_BEAT_LANCE"),
-    (
-        "EVENT_BEAT_CHAMPION_RIVAL",
-        "Defeated the Champion",
-        "event",
-        "EVENT_BEAT_CHAMPION_RIVAL",
-    ),
-    (
-        "EVENT_HALL_OF_FAME_DEX_RATING",
-        "Entered the Hall of Fame",
-        "event",
-        "EVENT_HALL_OF_FAME_DEX_RATING",
+        "ELITE_FOUR_CHAMPION",
+        "Beat the Elite Four and entered the Hall of Fame",
+        "ram_bit",
+        "ram_bit:0xD734:0",
     ),
 )
 
@@ -336,16 +366,21 @@ def eval_const_expr(expr: str) -> int:
     return total
 
 
-def parse_event_constants(text: str) -> Tuple[Dict[str, int], int]:
-    """Return (EVENT_ name -> bit index, final counter value)."""
+def _counter_walk(text: str) -> Iterable[Tuple[int, str, str, int]]:
+    """Yield ``(lineno, directive, args, counter)`` for every rgbds line.
+
+    *counter* is the value ``const_value`` holds as the line is reached, which is
+    what both the event indices and the ``DEF ... EQU const_value`` range markers
+    are read off. One walk, two consumers, no chance of them disagreeing.
+    """
     counter = 0
-    events: Dict[str, int] = {}
     for lineno, raw_line in enumerate(text.splitlines(), start=1):
         line = raw_line.split(";", 1)[0].strip()
         if not line:
             continue
         parts = line.split()
         directive, args = parts[0], " ".join(parts[1:])
+        yield lineno, directive, args, counter
         if directive == "const_def":
             counter = eval_const_expr(args) if args else 0
         elif directive == "const_next":
@@ -353,16 +388,95 @@ def parse_event_constants(text: str) -> Tuple[Dict[str, int], int]:
         elif directive == "const_skip":
             counter += eval_const_expr(args) if args else 1
         elif directive == "const":
-            name = parts[1]
-            if name in events:
-                raise ValueError(f"line {lineno}: duplicate event {name}")
-            events[name] = counter
             counter += 1
-        # DEF ... EQU lines and anything else only read the counter; ignore them.
+    yield len(text.splitlines()) + 1, "", "", counter
+
+
+def parse_event_constants(text: str) -> Tuple[Dict[str, int], int]:
+    """Return (EVENT_ name -> bit index, final counter value)."""
+    events: Dict[str, int] = {}
+    counter = 0
+    for lineno, directive, args, counter in _counter_walk(text):
+        if directive != "const":
+            continue
+        name = args.split()[0]
+        if name in events:
+            raise ValueError(f"line {lineno}: duplicate event {name}")
+        events[name] = counter
     return events, counter
 
 
-def validate(events: Dict[str, int], final_counter: int) -> None:
+def parse_range_markers(text: str) -> Dict[str, int]:
+    """``DEF NAME EQU const_value``-style labels, e.g. INDIGO_PLATEAU_EVENTS_END.
+
+    ResetEventRange names its endpoints with these rather than with events, so
+    without them the two range resets in the decomp cannot be expanded at all.
+    """
+    markers: Dict[str, int] = {}
+    for _lineno, directive, args, counter in _counter_walk(text):
+        if directive != "DEF":
+            continue
+        match = _MARKER_RE.match(f"DEF {args}")
+        if match is None or "const_value" not in match.group("expr"):
+            continue
+        expr = match.group("expr").replace("const_value", str(counter))
+        markers[match.group("name")] = eval_const_expr(expr)
+    return markers
+
+
+def range_cleared_bits(start: int, end: int) -> Set[int]:
+    """Every bit ``ResetEventRange start, end`` actually clears.
+
+    The macro works a byte at a time (macros/scripts/events.asm): the partial
+    start byte from ``start % 8`` up, whole bytes in between, and the partial end
+    byte up to ``end % 8``. It therefore reaches past both named endpoints, which
+    is how EVENT_AUTOWALKED_INTO_LORELEIS_ROOM ends up cleared by a range whose
+    endpoints never mention it.
+    """
+    start_byte, end_byte = start // 8, end // 8
+    if start_byte == end_byte:
+        return set(range(start, end + 1))
+    cleared = set(range(start, (start_byte + 1) * 8))
+    cleared.update(range((start_byte + 1) * 8, end_byte * 8))
+    cleared.update(range(end_byte * 8, end + 1))
+    return cleared
+
+
+def scan_resettable(
+    sources: Mapping[str, str], events: Mapping[str, int], markers: Mapping[str, int]
+) -> Set[str]:
+    """Every event name the decomp can clear again, from every .asm in the tree."""
+    by_index = {index: name for name, index in events.items()}
+
+    def resolve(token: str) -> int:
+        token = token.strip()
+        if token in events:
+            return events[token]
+        if token in markers:
+            return markers[token]
+        raise SystemExit(f"ResetEventRange endpoint {token!r} resolves to nothing")
+
+    resettable: Set[str] = set()
+    for path, text in sorted(sources.items()):
+        if path.startswith("macros/"):
+            continue  # the macro definitions, not uses
+        for raw_line in text.splitlines():
+            line = raw_line.split(";", 1)[0]
+            range_match = _RESET_RANGE_RE.match(line)
+            if range_match is not None:
+                args = [a for a in range_match.group("args").split(",") if a.strip()]
+                start, end = resolve(args[0]), resolve(args[1])
+                resettable.update(
+                    by_index[bit] for bit in range_cleared_bits(start, end) if bit in by_index
+                )
+                continue
+            named = _RESET_LINE_RE.match(line)
+            if named is not None:
+                resettable.update(_EVENT_NAME_RE.findall(named.group("args")))
+    return resettable
+
+
+def validate(events: Dict[str, int], final_counter: int, resettable: Set[str]) -> None:
     if len(events) != EXPECTED_EVENT_COUNT:
         raise SystemExit(f"expected {EXPECTED_EVENT_COUNT} events, parsed {len(events)}")
     if final_counter != NUM_EVENTS:
@@ -378,6 +492,16 @@ def validate(events: Dict[str, int], final_counter: int) -> None:
         if events.get(name) != expected:
             raise SystemExit(f"{name} parsed as {events.get(name)}, expected {expected}")
 
+    if len(resettable) < MIN_RESETTABLE_EVENTS:
+        raise SystemExit(
+            f"the reset scan found only {len(resettable)} events; the decomp has at least "
+            f"{MIN_RESETTABLE_EVENTS}. A silent miss here is what put eight resettable "
+            "flags on the ladder."
+        )
+    for name, where in RESET_SENTINELS.items():
+        if name not in resettable:
+            raise SystemExit(f"the reset scan missed {name}, which {where} clears")
+
     seen: set[str] = set()
     for entry_id, label, kind, source in LADDER:
         if entry_id in seen:
@@ -390,8 +514,14 @@ def validate(events: Dict[str, int], final_counter: int) -> None:
                 raise SystemExit(f"ladder entry {entry_id} references unknown event {source}")
             if source != entry_id:
                 raise SystemExit(f"event ladder entry {entry_id} should be named {source}")
-            if source in RESETTABLE_EVENTS:
+            if source in resettable:
                 raise SystemExit(f"ladder entry {entry_id} uses a flag pokered can reset")
+        elif kind == "ram_bit":
+            _, addr, bit = source.split(":")
+            if not 0xC000 <= int(addr, 16) <= 0xDFFF:
+                raise SystemExit(f"ladder entry {entry_id} points outside WRAM at {addr}")
+            if not 0 <= int(bit) <= 15:
+                raise SystemExit(f"ladder entry {entry_id} has out-of-range bit {bit}")
         elif kind == "badge":
             bit = int(source.split(":", 1)[1])
             if not 0 <= bit <= 7:
@@ -404,7 +534,7 @@ def validate(events: Dict[str, int], final_counter: int) -> None:
             raise SystemExit(f"ladder entry {entry_id} has unknown kind {kind!r}")
 
 
-def build_document(events: Dict[str, int]) -> Dict[str, object]:
+def build_document(events: Dict[str, int], resettable: Set[str]) -> Dict[str, object]:
     ordered: List[Dict[str, object]] = [
         {"id": name, "bit_index": index}
         for name, index in sorted(events.items(), key=lambda kv: (kv[1], kv[0]))
@@ -415,23 +545,57 @@ def build_document(events: Dict[str, int]) -> Dict[str, object]:
     ]
     return {
         "source": SOURCE_URL,
+        "source_tree": TREE_URL,
         "flag_base_address": 0xD747,
         "num_event_bits": NUM_EVENTS,
         "events": ordered,
+        # Checked in so the invariant "no rung is resettable" is testable without
+        # a network round trip, and so a change upstream shows up as a diff.
+        "resettable": sorted(resettable),
         "ladder": ladder,
     }
 
 
-def fetch(source: str | None) -> str:
+def fetch_sources(source: str | None) -> Dict[str, str]:
+    """Every .asm in the decomp, keyed by repo-relative path.
+
+    *source* is a pokered checkout to read instead of downloading. Files outside
+    SOURCE_DIRS are skipped: they hold graphics and audio and nothing that sets
+    or clears an event.
+    """
     if source:
-        return Path(source).read_text(encoding="utf-8")
-    with urllib.request.urlopen(SOURCE_URL, timeout=60) as response:  # noqa: S310
-        return response.read().decode("utf-8")
+        root = Path(source)
+        if not (root / EVENT_CONSTANTS_PATH).exists():
+            raise SystemExit(f"{root} is not a pokered checkout ({EVENT_CONSTANTS_PATH} missing)")
+        return {
+            str(path.relative_to(root)): path.read_text(encoding="utf-8", errors="replace")
+            for directory in SOURCE_DIRS
+            for path in sorted((root / directory).rglob("*.asm"))
+        }
+
+    with urllib.request.urlopen(TREE_URL, timeout=180) as response:  # noqa: S310
+        payload = response.read()
+    sources: Dict[str, str] = {}
+    with tarfile.open(fileobj=io.BytesIO(payload), mode="r:gz") as archive:
+        for member in archive.getmembers():
+            # The tarball has one top-level directory; strip it.
+            relative = member.name.partition("/")[2]
+            if not member.isfile() or not relative.endswith(".asm"):
+                continue
+            if not relative.startswith(tuple(d + "/" for d in SOURCE_DIRS)):
+                continue
+            handle = archive.extractfile(member)
+            if handle is None:  # pragma: no cover - a directory entry lying about itself
+                continue
+            sources[relative] = handle.read().decode("utf-8", errors="replace")
+    if EVENT_CONSTANTS_PATH not in sources:
+        raise SystemExit(f"{TREE_URL} yielded no {EVENT_CONSTANTS_PATH}")
+    return sources
 
 
 def main(argv: List[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--source", help="local event_constants.asm instead of fetching")
+    parser.add_argument("--source", help="a local pokered checkout instead of fetching")
     parser.add_argument(
         "--check",
         action="store_true",
@@ -439,9 +603,12 @@ def main(argv: List[str] | None = None) -> int:
     )
     args = parser.parse_args(argv)
 
-    events, final_counter = parse_event_constants(fetch(args.source))
-    validate(events, final_counter)
-    document = build_document(events)
+    sources = fetch_sources(args.source)
+    constants = sources[EVENT_CONSTANTS_PATH]
+    events, final_counter = parse_event_constants(constants)
+    resettable = scan_resettable(sources, events, parse_range_markers(constants))
+    validate(events, final_counter, resettable)
+    document = build_document(events, resettable)
     payload = json.dumps(document, indent=2) + "\n"
 
     existing = OUTPUT_PATH.read_text(encoding="utf-8") if OUTPUT_PATH.exists() else None
@@ -462,6 +629,7 @@ def main(argv: List[str] | None = None) -> int:
     state = "unchanged" if existing == payload else "updated"
     print(f"source     {SOURCE_URL}")
     print(f"events     {len(events)} named bits, counter ended at {final_counter:#x}")
+    print(f"resettable {len(resettable)} events the decomp can clear again")
     print(f"ladder     {len(LADDER)} entries ({breakdown})")
     print(f"first/last {LADDER[0][0]} -> {LADDER[-1][0]}")
     print(f"wrote      {OUTPUT_PATH.relative_to(REPO_ROOT)} ({state})")

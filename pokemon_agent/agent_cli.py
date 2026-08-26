@@ -734,7 +734,7 @@ def cmd_guide(args: argparse.Namespace, url: str) -> int:
 def cmd_progress(args: argparse.Namespace, url: str) -> int:
     """How far through the game you are, what it cost, and what is open next.
 
-    The `open now` block is the point of the verb. The 63 milestones form a
+    The `open now` block is the point of the verb. The 58 milestones form a
     graph, and this is the handful whose preconditions the game already
     satisfies: everything else is behind a road, a door or a badge you do not
     have yet. Nothing here says which one to take.
