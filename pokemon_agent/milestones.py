@@ -11,7 +11,7 @@ Four kinds of milestone, distinguished by ``Milestone.kind``:
 * ``event``   -- a bit in ``wEventFlags`` (0xD747). ``source`` is the pokered
   ``EVENT_`` name and ``ALL_EVENTS`` maps it to its bit index.
 * ``badge``   -- a bit in ``wObtainedBadges`` (0xD356). ``source`` is ``badge_bit:N``.
-* ``item``    -- a key item present in the bag. ``source`` is ``item_id:N``.
+* ``item``    -- a key item held in the bag *or* the item PC, ``item_id:N``.
 * ``ram_bit`` -- one bit of one WRAM byte, ``ram_bit:0xADDR:N``. Two rungs, both
   at the end of the game, where every event flag pokered defines is scratch
   space the scripts clear again. See ``RESETTABLE_EVENTS`` below.
@@ -147,8 +147,19 @@ class MilestoneTracker:
         obtained = set(self.reader.read_flags()["badges"])
         return {bit for bit, name in enumerate(BADGE_NAMES) if name in obtained}
 
-    def _bag_item_ids(self) -> set[int]:
-        return {entry["id"] for entry in self.reader.read_bag()}
+    def _held_item_ids(self) -> set[int]:
+        """Bag and item PC together.
+
+        Gen 1 has no key-item pocket: every one of the four item rungs can be
+        deposited in the PC, and a rung that only looked in the bag would go out
+        again when the player tidied up. Reading both is what makes an item
+        milestone as monotone as an event one.
+        """
+        held = {entry["id"] for entry in self.reader.read_bag()}
+        read_pc = getattr(self.reader, "read_pc_items", None)
+        if read_pc is not None:
+            held.update(entry["id"] for entry in read_pc())
+        return held
 
     # -- public interface ---------------------------------------------------
 
@@ -156,7 +167,7 @@ class MilestoneTracker:
         """Ids of every ladder milestone currently satisfied."""
         bits = self._event_bits()
         badges = self._badge_bits()
-        items = self._bag_item_ids()
+        items = self._held_item_ids()
 
         reached: List[str] = []
         for milestone in MILESTONES:

@@ -50,8 +50,9 @@ ADDR_BAG_COUNT = 0xD31D
 ADDR_BAG_ITEMS = 0xD31E  # pairs (item_id, qty)
 
 # -- PC items --
-ADDR_PC_COUNT = 0xD53A
-ADDR_PC_ITEMS = 0xD53B
+ADDR_PC_COUNT = 0xD53A  # wNumBoxItems
+ADDR_PC_ITEMS = 0xD53B  # wBoxItems, pairs (item_id, qty)
+PC_ITEM_CAPACITY = 50
 
 # -- Battle --
 ADDR_BATTLE_TYPE = 0xD057  # 0=none, 1=wild, 2=trainer
@@ -1466,6 +1467,29 @@ class RedBlueMemoryReader(GameMemoryReader):
         for i in range(count):
             item_id = self.emu.read_u8(ADDR_BAG_ITEMS + i * 2)
             qty = self.emu.read_u8(ADDR_BAG_ITEMS + i * 2 + 1)
+            if item_id == 0xFF:  # terminator
+                break
+            items.append(
+                {
+                    "id": item_id,
+                    "item": ITEM_NAMES.get(item_id, f"???({item_id})"),
+                    "quantity": qty,
+                }
+            )
+        return items
+
+    def read_pc_items(self) -> List[Dict[str, Any]]:
+        """Read the item PC's list, same shape as :meth:`read_bag`.
+
+        Gen 1 has no key-item pocket, so the Card Key, Lift Key, Silph Scope and
+        Secret Key can all be deposited here. A milestone that only looked in the
+        bag would un-fire the moment the player tidied up.
+        """
+        count = min(self.emu.read_u8(ADDR_PC_COUNT), PC_ITEM_CAPACITY)
+        items: List[Dict[str, Any]] = []
+        for i in range(count):
+            item_id = self.emu.read_u8(ADDR_PC_ITEMS + i * 2)
+            qty = self.emu.read_u8(ADDR_PC_ITEMS + i * 2 + 1)
             if item_id == 0xFF:  # terminator
                 break
             items.append(

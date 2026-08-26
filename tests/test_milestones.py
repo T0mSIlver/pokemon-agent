@@ -24,6 +24,8 @@ from pokemon_agent.memory.red import (
     ADDR_ELITE_4_FLAGS,
     ADDR_EVENT_FLAGS,
     ADDR_OAK_PARCEL,
+    ADDR_PC_COUNT,
+    ADDR_PC_ITEMS,
     ADDR_POKEDEX_FLAG,
     ADDR_TOWN_VISITED_FLAGS,
     ITEM_NAMES,
@@ -340,9 +342,15 @@ def make_tracker(
     raw_event_bytes: Mapping[int, int] | None = None,
     badge_bits: Iterable[int] = (),
     items: Sequence[int] = (),
+    pc_items: Sequence[int] = (),
     ram_bits: Iterable[str] = (),
 ) -> MilestoneTracker:
     emulator = FakeEmulator()
+    emulator.mem[ADDR_PC_COUNT] = len(pc_items)
+    for slot, item_id in enumerate(pc_items):
+        emulator.mem[ADDR_PC_ITEMS + slot * 2] = item_id
+        emulator.mem[ADDR_PC_ITEMS + slot * 2 + 1] = 1
+    emulator.mem[ADDR_PC_ITEMS + len(pc_items) * 2] = 0xFF
     for source in ram_bits:
         _, address, bit = source.split(":")
         index = int(bit)
@@ -371,6 +379,17 @@ def test_snapshot_reads_all_three_kinds():
     assert tracker.snapshot() == frozenset(
         {"EVENT_GOT_STARTER", "EVENT_BEAT_BROCK", "BADGE_BOULDER", "ITEM_LIFT_KEY"}
     )
+
+
+def test_a_key_item_in_the_pc_still_counts():
+    """Gen 1 has no key-item pocket, so the Lift Key can be deposited.
+
+    A rung that only read the bag went out again the moment the player tidied
+    up, which is the same non-monotonicity a resettable event flag has.
+    """
+    assert "ITEM_LIFT_KEY" in make_tracker(items=[74]).snapshot()
+    assert "ITEM_LIFT_KEY" in make_tracker(pc_items=[74]).snapshot()
+    assert "ITEM_LIFT_KEY" not in make_tracker(items=[20], pc_items=[20]).snapshot()
 
 
 def test_a_ram_bit_milestone_reads_the_byte_its_source_names():
