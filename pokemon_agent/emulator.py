@@ -11,6 +11,7 @@ from abc import ABC, abstractmethod
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
+from pokemon_agent import mapdecode
 from pokemon_agent.navigation import (
     MAP_COORDINATE_NOTE,
     MAP_COORDINATE_SYSTEM,
@@ -507,6 +508,15 @@ class PyBoyEmulator(Emulator):
     def read_range(self, addr: int, size: int) -> bytes:
         return bytes(self._pyboy.memory[addr : addr + size])  # type: ignore[index]
 
+    def read_rom(self, bank: int, addr: int) -> int:
+        """One byte of a banked ROM address.
+
+        Blockset data is banked; the tileset collision lists are not. Keeping
+        this separate from `read_u8` is what makes that distinction visible at
+        the call site, having already cost one wrong decode of every map.
+        """
+        return self._pyboy.memory[bank, addr] & 0xFF  # type: ignore[index]
+
     # -- save / load --------------------------------------------------------
 
     def save_state(self, path: str) -> None:
@@ -657,9 +667,30 @@ class PyBoyEmulator(Emulator):
             "map_dimensions": map_dimensions,
             "standing_on_warp": bool(self.read_u8(ADDR_MOVEMENT_FLAGS) & STANDING_ON_WARP_BIT),
             "terrain": self._downsample_collision(pb.game_wrapper.game_area_collision()),  # type: ignore[attr-defined]
+            # The whole floor, not the 9x10 window `terrain` covers. See
+            # mapdecode: without this the explored map is a mosaic of screen
+            # scraps and tile-pair seams are known only where the player stands.
+            "map_terrain": self._read_map_terrain(),
             "tilemap": self._matrix_to_rows(pb.game_wrapper._get_screen_background_tilemap()),  # type: ignore[attr-defined]
             "sprites_local": sprites_local,
         }
+
+    def _read_map_terrain(self) -> Optional[Dict[str, Any]]:
+        """The loaded map's terrain and warps, or None if the reads do not describe one.
+
+        A dialog, a battle or a mid-transition frame can leave the map buffer in
+        a state that does not decode. That is a reason to say nothing, not to
+        return an empty floor: an empty floor reads as "walled in" downstream,
+        which is the failure this project keeps paying for.
+        """
+        try:
+            decoded = mapdecode.decode_map(self.read_u8, self.read_rom)
+            decoded["warps"] = mapdecode.decode_warps(self.read_u8)
+        except mapdecode.DecodeFailed:
+            return None
+        except Exception:  # a bad read is not worth taking the whole snapshot down
+            return None
+        return decoded
 
     def _compute_ledge_hops(
         self,
