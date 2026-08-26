@@ -894,6 +894,32 @@ def ladder_labels() -> tuple[dict[str, str], tuple[str, ...]]:
     return _LOOKUP_CACHE["ladder"]
 
 
+#: Enough to say which jobs are open without turning the digest into a plan.
+MAX_FRONTIER_SHOWN = 6
+
+
+def milestone_frontier(done: Iterable[str], limit: int = MAX_FRONTIER_SHOWN) -> tuple[str, ...]:
+    """Labels of every milestone whose prerequisites the run has already met.
+
+    :func:`ladder_position` answers with one rung because the ladder is a list,
+    and a list has to pick. The DAG does not: it knows the fossil pair excludes
+    each other, that the Route 22 rival is optional, and that three jobs can be
+    open at once. Handing the critic the one next rung has been handing it a
+    guess, and on this run the guess pointed four maps backwards.
+
+    Empty when the DAG cannot be read, which drops the line and nothing else.
+    """
+
+    try:
+        from pokemon_agent.milestones import frontier as dag_frontier
+    except Exception:  # noqa: BLE001
+        return ()
+    try:
+        return tuple(node.label or node.id for node in dag_frontier(list(done))[:limit])
+    except Exception:  # noqa: BLE001
+        return ()
+
+
 def ladder_position(done: Iterable[str]) -> tuple[str, str]:
     """``(highest rung reached, next rung to reach)`` as labels, either may be "".
 
@@ -1024,6 +1050,14 @@ class SessionFacts:
     #: Label of the highest ladder rung the run has reached, and of the next one.
     rung_done: str = ""
     rung_next: str = ""
+    #: Every milestone whose prerequisites are already met, from the DAG in
+    #: :mod:`pokemon_agent.milestones`. The ladder is a line and the game is
+    #: not: on the session this was added for, ``rung_next`` read "Beat the
+    #: rival on Route 22" — four maps behind the run, optional, and skipped —
+    #: while the DAG had the Super Nerd holding the fossils on the floor the
+    #: run was actually standing on. One next rung is a guess about which of
+    #: several open jobs matters; the frontier is the list.
+    frontier: tuple[str, ...] = ()
     #: Every way off the map the session ended on, marking the ones never used.
     exits: str = ""
     #: Where the goal is, as hops on the map graph, and what the goal was read as.
@@ -1062,6 +1096,12 @@ class SessionFacts:
             )
             upcoming = f" Next rung: {self.rung_next}." if self.rung_next else ""
             rows.append(f"- Done ({self.done_count}), {reached}. {gained}.{upcoming}")
+        if self.frontier:
+            rows.append(
+                "- Open now (every milestone whose prerequisites are already met): "
+                + "; ".join(self.frontier)
+                + "."
+            )
 
         tail = f"ended on {self.ended_map or '?'} {_position(self.ended_pos)}"
         if self.ended_hp:
@@ -1239,6 +1279,7 @@ def collect_session_facts(
     # never ran at all - which is the path nine sessions on disk actually took.
     done = tuple(dict.fromkeys([*earned, *baseline]))
     rung_done, rung_next = ladder_position(done)
+    open_now = milestone_frontier(done)
     brief = map_brief(ended_map)
     # Every tile of this map the *run* ever stood on, not just this session: a
     # warp the run walked through six hours ago is not a warp it has never used.
@@ -1289,6 +1330,7 @@ def collect_session_facts(
         saves=list_named_saves(data_dir, saves_limit),
         rung_done=rung_done,
         rung_next=rung_next,
+        frontier=open_now,
         heal_target=heal_target,
         heal_route=heal_route,
         exits=exits,
@@ -2545,6 +2587,69 @@ def check_next_goal(goal: str, *, from_map: str) -> tuple[str, str]:
     return text, ""
 
 
+#: Sentence ends, inside a line. Lines are kept whole so a markdown bullet or
+#: heading survives a strike from the middle of the paragraph next to it.
+_SENTENCE_RE = re.compile(r"(?<=[.!?])\s+")
+
+#: Further than any two maps in Kanto are apart, so the hop rule never fires on
+#: a handoff. See the comment in :func:`strike_false_claims`.
+HANDOFF_HOP_CEILING = 999
+
+
+def strike_false_claims(text: str, *, from_map: str) -> tuple[str, list[str]]:
+    """``(handoff to write, sentences struck)``.
+
+    ``check_next_goal`` gatekeeps the one line that becomes the next session's
+    goal. Nothing gatekeeps the body, and the body is delivered verbatim as
+    that session's first user message — which is to say the retrospective gets
+    read as ground truth by a model that will then spend a session acting on
+    it. The same map data that rejects a goal rejects a sentence, so it does.
+
+    Struck rather than dropped whole, because a retrospective is not only
+    geography: "you spent 61% of the session in battle" is worth keeping even
+    in a handoff whose last paragraph invented a door. A body left empty by the
+    striking is no handoff at all and the caller is told so with ``""``.
+    """
+
+    if not text or not from_map:
+        return text, []
+    try:
+        from pokemon_agent.interventions import check_advice
+    except Exception:  # noqa: BLE001 — no map data, nothing to check against
+        return text, []
+    try:
+        # No hop ceiling here. The ceiling in `check_advice` is for a message
+        # steering the next few hundred presses, where naming somewhere eight
+        # warps off is the tell; a retrospective's job includes naming the run's
+        # destination, and Cerulean City is five hops from Pallet Town whether
+        # or not the sentence about it is true. Only what the map data
+        # contradicts outright gets struck from a handoff.
+        claims = check_advice(text, here=from_map, max_hops=HANDOFF_HOP_CEILING)
+    except Exception:  # noqa: BLE001
+        return text, []
+    if not claims:
+        return text, []
+
+    # Checked once over the whole body so a sentence keeps the context its
+    # neighbours give it, then matched back by the span each claim quoted.
+    disproved = [claim.said for claim in claims if claim.said]
+    struck: list[str] = []
+    kept_lines: list[str] = []
+    for line in text.splitlines():
+        parts = _SENTENCE_RE.split(line)
+        keep = []
+        for part in parts:
+            if part.strip() and any(said in part for said in disproved):
+                struck.append(part.strip())
+                continue
+            keep.append(part)
+        joined = " ".join(piece for piece in keep if piece).strip()
+        if joined or not line.strip():
+            kept_lines.append(joined if line.strip() else line)
+    body = "\n".join(kept_lines).strip()
+    return body, struck
+
+
 def handoff_path(workspace_dir: Path) -> Path:
     return Path(workspace_dir) / HANDOFF_FILENAME
 
@@ -2951,6 +3056,15 @@ async def run_critic(
     goal, rejected = check_next_goal(parse_next_goal(text), from_map=from_map)
     if rejected:
         error = f"{error + ' ' if error else ''}Dropped the NEXT GOAL: it {rejected}."
+    text, struck = strike_false_claims(text, from_map=from_map)
+    if struck:
+        error = (
+            f"{error + ' ' if error else ''}Struck {len(struck)} sentence"
+            f"{'s' if len(struck) > 1 else ''} the map data contradicts: "
+            f"{' | '.join(struck[:3])}"
+        )
+    if not text:
+        return finish(ok=False, error=f"{error + ' ' if error else ''}Nothing left to hand off.")
     result = finish(
         ok=True,
         text=text,

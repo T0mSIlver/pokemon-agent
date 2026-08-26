@@ -20,9 +20,12 @@ from pokemon_agent.interventions import (
     Toothless,
     Trigger,
     build_prompt,
+    check_advice,
     default_detectors,
     format_facts,
     harness_facts,
+    refusal_note,
+    standing_on,
 )
 from pokemon_agent.world import World
 
@@ -612,3 +615,220 @@ def test_stalled_fires_inside_a_window_the_policy_actually_passes_it():
         f"under the {StalledMilestones().presses}-press threshold"
     )
     assert StalledMilestones().check(window, {}) is not None
+
+
+# ---------------------------------------------------------------------------
+# Checking the answer, not just grounding the question
+#
+# Every message quoted below is verbatim from interventions.jsonl of run
+# 20260825T224823Z-983b, the only archive of delivered interventions this
+# project has. Thirteen were delivered before `harness_facts` existed and
+# twelve of those named somewhere unreachable the way they said; twenty-two
+# were delivered after it, and none did. So the wrong ones are the fixtures for
+# what has to be refused and the right ones are the fixtures for what must not.
+# ---------------------------------------------------------------------------
+
+
+class TestCheckAdviceRefusesWhatTheMapContradicts:
+    def test_a_warp_the_map_agrees_with_is_left_alone(self):
+        assert check_advice("Step on (11,5) -> Mt Moon Pokecenter.", here="Route 4") == ()
+
+    def test_a_warp_that_goes_somewhere_else_is_caught(self):
+        claims = check_advice("Step on (18,5) -> Mt Moon Pokecenter.", here="Route 4")
+        assert [claim.kind for claim in claims] == ["warp"]
+        assert claims[0].truth == "Route 4 (18,5) goes to Mt Moon 1F"
+
+    def test_a_map_named_in_shorthand_still_holds_its_own_warps(self):
+        """Intervention 34: "on B1F, go to warp (27,3) -> Route 4", from B2F.
+
+        True of Mt Moon B1F, which the message called "B1F". Refusing it for the
+        abbreviation would be catching a typo, so a warp is checked against the
+        maps on the route — the ones named, and the ones one hop off them.
+        """
+
+        assert check_advice("On B1F, go to warp (27,3) → Route 4.", here="Mt Moon B2F") == ()
+
+    def test_a_warp_on_a_map_further_along_the_route_still_counts(self):
+        """Advice is a plan, not a sentence about one map.
+
+        Intervention 19 was written from inside Mt Moon 1F and said "on Route 4,
+        go to the warp at (11,5), which leads to the Mt Moon Pokecenter". That is
+        true of Route 4, and refusing it would be a bug in the checker rather
+        than a catch: a coordinate is checked against every map the message
+        names, not only against the one the player happens to be standing on.
+        """
+
+        text = (
+            "Walk south 9 tiles to the exit at (14,35) — it warps to Route 4. "
+            "On Route 4, go to the warp at (11,5), which leads to the Mt Moon Pokecenter."
+        )
+        assert check_advice(text, here="Mt Moon 1F") == ()
+
+    def test_a_coordinate_off_every_named_map_is_caught(self):
+        claims = check_advice("Head for (99,99) and press A.", here="Mt Moon 1F")
+        assert [claim.kind for claim in claims] == ["bounds"]
+        assert "Mt Moon 1F is 40x36" in claims[0].truth
+
+    def test_a_coordinate_that_fits_any_named_map_is_left_alone(self):
+        # (60,4) is off Mt Moon 1F and well inside Route 3, which the text names.
+        assert check_advice("On Route 3, walk to (60,4).", here="Mt Moon 1F") == ()
+
+    def test_the_wrong_edge_is_caught(self):
+        claims = check_advice("Walk west to Cerulean City.", here="Route 4")
+        assert [claim.kind for claim in claims] == ["edge"]
+        assert "off the east edge of Route 4" in claims[0].truth
+
+    def test_the_right_edge_is_left_alone(self):
+        assert check_advice("Walk east to Cerulean City.", here="Route 4") == ()
+        assert check_advice("Press down to Route 3.", here="Route 4") == ()
+
+    def test_a_compass_word_not_aimed_at_a_map_is_not_a_claim(self):
+        """The regression that killed the first version of this rule.
+
+        Taking every compass word with a map name inside sixty characters of it
+        read intervention 23 — "only 'down' and 'left' are available, so the
+        east exit to Cerulean City is impossible right now" — as a claim that
+        Cerulean is west of Route 4, and refused thirteen of the twenty-two
+        messages that were right. A direction binds to a destination only where
+        it is written as one.
+        """
+
+        text = (
+            "Only 'down' and 'left' are available, so the east exit to "
+            "Cerulean City (70 tiles east) is impossible right now."
+        )
+        assert check_advice(text, here="Route 4") == ()
+
+    def test_a_destination_reached_by_warp_makes_no_compass_claim(self):
+        """Mt Moon 1F leaves to Route 4 by warp, so no direction can be wrong."""
+
+        assert check_advice("Head down to Route 4.", here="Mt Moon 1F") == ()
+
+    def test_somewhere_too_far_to_walk_to_in_one_message_is_caught(self):
+        """Intervention 9, written from inside Mt Moon 1F with the party at 10 HP.
+
+        Pallet Town is seven warps away and has no Pokemon Center in it. The
+        player followed the advice.
+        """
+
+        text = "You emerge on Route 1. Turn WEST and walk about 45 tiles to Pallet Town."
+        claims = check_advice(text, here="Mt Moon 1F")
+        assert {claim.kind for claim in claims} == {"exit", "distance"}
+        assert "7 hops" in next(c.truth for c in claims if c.said == "Pallet Town")
+
+    def test_the_hop_ceiling_is_the_callers_to_lift(self):
+        text = "Head for Pallet Town."
+        assert check_advice(text, here="Mt Moon 1F") != ()
+        assert check_advice(text, here="Mt Moon 1F", max_hops=99) == ()
+
+    def test_a_name_that_means_several_maps_is_not_a_checkable_claim(self):
+        """ "Mt. Moon" is four maps. Refusing shorthand is not catching an error."""
+
+        assert check_advice("Step on (18,5) -> Mt. Moon.", here="Route 4") == ()
+
+    def test_spelling_is_normalised_but_ambiguity_is_not(self):
+        maps = MapFacts()
+        assert maps.resolve("Mt. Moon Poke Center") == "Mt Moon Pokecenter"
+        assert maps.resolve("Mt Moon") is None
+        assert maps.resolve("nowhere at all") is None
+
+    def test_every_map_a_message_names_is_found_not_just_the_last(self):
+        maps = MapFacts()
+        text = "Leave Mt Moon 1F for Route 4, then east into Cerulean City."
+        assert maps.names_in(text) == ("Mt Moon 1F", "Route 4", "Cerulean City")
+        # find_map answers "what is this about", which is the other question.
+        assert maps.find_map(text) == "Cerulean City"
+
+    def test_a_name_inside_a_longer_one_is_not_a_match(self):
+        assert "Route 2" not in MapFacts().names_in("Walk east along Route 24.")
+
+
+class TestCheckAdviceOnTheArchive:
+    """The messages themselves, refused or delivered as the map data decides."""
+
+    def test_the_message_that_invented_a_door_out_of_mt_moon(self):
+        """Intervention 2. Mt Moon 1F's only exits are two warps to Route 4."""
+
+        text = (
+            "From (25,10) press down 6 times to reach (25,16). From (25,16), follow it "
+            "toward the south side of Mt Moon 1F; the door to Route 2 is there. Once "
+            "outside on Route 2, face west and walk to Viridian City."
+        )
+        claims = check_advice(text, here="Mt Moon 1F")
+        assert {claim.kind for claim in claims} == {"exit", "distance"}
+        assert {"Route 2", "Viridian City"} <= {claim.said for claim in claims}
+        assert any("nowhere else" in claim.truth for claim in claims)
+
+    def test_the_message_that_sent_the_run_to_pallet_town_from_two_floors_down(self):
+        """Intervention 13. Pallet Town is eight warps from Mt Moon B2F."""
+
+        text = (
+            "Walk north the full length of Route 2 (~48 tiles), then continue north "
+            "onto Route 1 (~20 tiles) into Pallet Town."
+        )
+        assert {claim.said for claim in check_advice(text, here="Mt Moon B2F")} == {
+            "Route 2",
+            "Route 1",
+            "Pallet Town",
+        }
+
+    def test_the_grounded_message_that_named_three_real_warps(self):
+        """Intervention 29, and the shape every message after the facts landed had.
+
+        The list is verbatim, and it is why the warp pattern refuses to read
+        across a "(" or a ":": three tiles sharing one destination phrase is not
+        a claim about the first of them.
+        """
+
+        text = (
+            "Do not step on (11,5), (18,5), (24,5): they warp into Mt Moon/Pokecenter. "
+            "Keep pressing right until you leave the east edge; that exits to "
+            "Cerulean City, about 70 tiles from x=19."
+        )
+        assert check_advice(text, here="Route 4") == ()
+
+    def test_the_grounded_message_that_routed_out_of_b1f(self):
+        """Intervention 35: (27,3) really is Mt Moon B1F's door to Route 4."""
+
+        text = (
+            "From (24,22): right 3 tiles to (27,22), up 19 tiles to (27,3). That tile "
+            "warps to Route 4. On Route 4: go east to the map edge to Cerulean City."
+        )
+        assert check_advice(text, here="Mt Moon B1F") == ()
+
+
+class TestCheckAdviceDegradesToDisprovingNothing:
+    """Same rule as the facts: what cannot be computed is left out, never guessed."""
+
+    def test_no_map_data_disproves_nothing(self):
+        maps = MapFacts(World.load(Path("/nonexistent/world.json")))
+        assert check_advice("Walk west to Cerulean City.", here="Route 4", maps=maps) == ()
+
+    def test_a_map_the_harness_cannot_name_disproves_nothing(self):
+        assert check_advice("Walk west to Cerulean City.", here="") == ()
+        assert check_advice("", here="Route 4") == ()
+
+    def test_an_unreachable_map_is_a_claim_no_ceiling_forgives(self):
+        # The Colosseum is link-cable-only: no warp or edge in the game reaches
+        # it, so no hop ceiling makes naming it a walk the player can take.
+        claims = check_advice("Go to the Colosseum.", here="Route 4", max_hops=99)
+        assert [claim.kind for claim in claims] == ["distance"]
+        assert "cannot reach it" in claims[0].truth
+
+
+class TestStandingOn:
+    def test_the_live_frame_wins_over_the_receipts(self):
+        observation = {"state": {"map": {"map_name": "Route 4"}}}
+        assert standing_on(observation, [receipt(seq=0, map_name="Route 3")]) == "Route 4"
+
+    def test_the_receipts_answer_when_there_is_no_frame(self):
+        assert standing_on(None, [receipt(seq=0, map_name="Route 3")]) == "Route 3"
+
+    def test_neither_source_knowing_is_not_an_error(self):
+        assert standing_on(None, []) == ""
+
+
+def test_a_refusal_note_names_what_the_map_says_instead():
+    note = refusal_note(check_advice("Walk west to Cerulean City.", here="Route 4"))
+    assert note.startswith("map data contradicts: ")
+    assert "east edge of Route 4" in note
