@@ -108,6 +108,57 @@ def test_an_unknown_map_collapses_to_one_pocket_rather_than_vanishing():
     assert pocket_of([], (99, 99)) == 0
 
 
+# ---------------------------------------------------------------------------
+# One-way ledges
+#
+# Route 4's east half is reachable ONLY over one-way ledge hops down from row 8
+# onto row 10. Treating a ledge as an ordinary edge claims you can climb back;
+# ignoring it claims the east half does not exist. The run spent sixteen hours
+# on the second answer.
+# ---------------------------------------------------------------------------
+
+# A wall at x=2 splits the row; a ledge drops from (1,0) to (3,0) over it.
+LEDGE_TERRAIN = {(0, 0), (1, 0), (3, 0), (4, 0)}
+LEDGE_HOPS = {((1, 0), "right"): (3, 0)}
+
+
+def ledge_graph():
+    return PocketGraph(
+        lambda name: [],
+        lambda name: LEDGE_TERRAIN,
+        lambda name: {},
+        lambda name: (5, 1),
+        lambda name: LEDGE_HOPS,
+    )
+
+
+def test_a_ledge_does_not_merge_the_two_sides_into_one_pocket():
+    """You can drop down, not climb up, so they are not one place."""
+    pieces = components(LEDGE_TERRAIN, LEDGE_HOPS)
+
+    assert len(pieces) == 2, "a one-way edge is not enough to make a pocket"
+
+
+def test_a_ledge_is_a_route_in_the_direction_it_drops():
+    hops = ledge_graph().route("cliff", (0, 0), "cliff", (4, 0))
+
+    assert hops is not None, "the far side is reachable, over the ledge"
+    assert len(hops) == 1 and hops[0].kind == "ledge"
+    assert hops[0].at == (1, 0) and hops[0].landing == (3, 0)
+
+
+def test_there_is_no_route_back_up_a_ledge():
+    """The failure this guards: a plan that asks the player to climb."""
+    assert ledge_graph().route("cliff", (4, 0), "cliff", (0, 0)) is None
+
+
+def test_without_ledges_the_far_side_looks_unreachable():
+    """What the router said for sixteen hours, and why the terrain alone was not enough."""
+    blind = PocketGraph(lambda name: [], lambda name: LEDGE_TERRAIN)
+
+    assert blind.route("cliff", (0, 0), "cliff", (4, 0)) is None
+
+
 def test_an_ambiguous_edge_landing_yields_no_route_rather_than_a_guess():
     """Route 4's south edge is touched by two pockets sixty tiles apart.
 

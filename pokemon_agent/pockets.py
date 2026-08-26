@@ -25,7 +25,7 @@ from __future__ import annotations
 
 from collections import deque
 from dataclasses import dataclass
-from typing import Callable, Collection, Dict, List, Optional, Sequence, Set, Tuple
+from typing import Callable, Collection, Dict, List, Mapping, Optional, Sequence, Set, Tuple
 
 Coord = Tuple[int, int]
 
@@ -52,42 +52,111 @@ class PocketHop:
     from_pocket: int
     to_map: str
     to_pocket: int
-    at: Optional[Coord] = None  # the warp tile you step onto, in from_map
+    at: Optional[Coord] = None  # the warp or ledge tile you step onto, in from_map
     landing: Optional[Coord] = None  # where you appear, in to_map
     edge: Optional[str] = None  # "north"|"south"|"east"|"west" for a connection
+    ledge: bool = False  # a one-way drop within one map; there is no way back
 
     @property
     def kind(self) -> str:
+        if self.ledge:
+            return "ledge"
         return "connection" if self.edge else "warp"
 
     def describe(self) -> str:
         where = f"{self.from_map}#{self.from_pocket} -> {self.to_map}#{self.to_pocket}"
         if self.edge:
             return f"{where} (walk off the {self.edge} edge)"
+        if self.ledge:
+            return f"{where} (one-way ledge at {list(self.at)}, landing {list(self.landing)})"
         return f"{where} (warp at {list(self.at)}, landing {list(self.landing)})"
 
 
-def components(walkable: Collection[Coord]) -> List[Set[Coord]]:
-    """The walkable set split into pieces you can actually walk between.
+def components(walkable: Collection[Coord], ledges: Optional[Mapping] = None) -> List[Set[Coord]]:
+    """The walkable set split into pieces you can walk *both ways* between.
 
-    Largest first, so pocket 0 is the main floor wherever there is one and the
-    numbering stays stable enough to appear in a message.
+    Walking is symmetric; a ledge is not. Route 4's two halves are joined only
+    by one-way hops down from row 8 onto row 10, so treating a ledge as an
+    ordinary edge claims you can climb back up, and ignoring it claims the east
+    half is unreachable. Both are wrong, and the run has spent sixteen hours
+    paying for the second.
+
+    So a pocket is a strongly connected component: everywhere you can reach and
+    return from. One-way ledges become edges *between* pockets, which the graph
+    walks in the one direction they go.
+
+    Largest first, so pocket 0 is the main floor wherever there is one.
     """
-    remaining = set(walkable)
+    walk = set(walkable)
+    out = {tile: _neighbours(walk, tile) for tile in walk}
+    for start, landing in _ledge_pairs(ledges):
+        if start in walk and landing in walk:
+            out[start].append(landing)
+
+    incoming: Dict[Coord, List[Coord]] = {tile: [] for tile in walk}
+    for tile, targets in out.items():
+        for target in targets:
+            incoming[target].append(tile)
+
+    # Kosaraju: finish order on the forward graph, then flood the reverse graph
+    # in that order. Iterative, because a cave floor runs to thousands of tiles
+    # and the recursive form will not survive one.
+    order: List[Coord] = []
+    visited: Set[Coord] = set()
+    for root in walk:
+        if root in visited:
+            continue
+        visited.add(root)
+        stack = [(root, iter(out[root]))]
+        while stack:
+            tile, pending = stack[-1]
+            for step in pending:
+                if step not in visited:
+                    visited.add(step)
+                    stack.append((step, iter(out[step])))
+                    break
+            else:
+                order.append(stack.pop()[0])
+
+    assigned: Set[Coord] = set()
     found: List[Set[Coord]] = []
-    while remaining:
-        start = next(iter(remaining))
-        piece, queue = {start}, deque([start])
+    for root in reversed(order):
+        if root in assigned:
+            continue
+        assigned.add(root)
+        piece, queue = {root}, deque([root])
         while queue:
-            x, y = queue.popleft()
-            for step in ((x + 1, y), (x - 1, y), (x, y + 1), (x, y - 1)):
-                if step in remaining and step not in piece:
+            tile = queue.popleft()
+            for step in incoming[tile]:
+                if step not in assigned:
+                    assigned.add(step)
                     piece.add(step)
                     queue.append(step)
         found.append(piece)
-        remaining -= piece
-    found.sort(key=len, reverse=True)
+    # Largest first, ties broken by the topmost-leftmost tile. The tiebreak is
+    # not cosmetic: pocket indices appear in refusals and plans, and two pockets
+    # of equal size would otherwise swap numbers depending on which tile the
+    # flood happened to start from.
+    found.sort(key=lambda piece: (-len(piece), min(piece)))
     return found
+
+
+def _neighbours(walk: Set[Coord], tile: Coord) -> List[Coord]:
+    x, y = tile
+    return [step for step in ((x + 1, y), (x - 1, y), (x, y + 1), (x, y - 1)) if step in walk]
+
+
+def _ledge_pairs(ledges: Optional[Mapping]):
+    """(standing tile, landing) for each ledge hop, however the caller keyed it.
+
+    `MovementEdges` keys by ``(tile, direction)``; a plainer mapping may key by
+    the tile alone.
+    """
+    for key, landing in (ledges or {}).items():
+        start = key[0] if isinstance(key, tuple) and key and isinstance(key[0], tuple) else key
+        found, target = _coord(start), _coord(landing)
+        if found is not None and target is not None:
+            yield found, target
 
 
 def pocket_of(pieces: Sequence[Set[Coord]], coord: Optional[Coord]) -> Optional[int]:
@@ -121,17 +190,21 @@ class PocketGraph:
         terrain_for,
         connections_for: Optional[Callable[[str], dict]] = None,
         size_for: Optional[Callable[[str], Optional[Tuple[int, int]]]] = None,
+        ledges_for: Optional[Callable[[str], Optional[Mapping]]] = None,
     ):
         self._warps_for = warps_for
         self._terrain_for = terrain_for
         self._connections_for = connections_for or (lambda _name: {})
         self._size_for = size_for or (lambda _name: None)
+        self._ledges_for = ledges_for or (lambda _name: None)
         self._pieces: Dict[str, List[Set[Coord]]] = {}
 
     def pieces(self, map_name: str) -> List[Set[Coord]]:
         if map_name not in self._pieces:
             walkable = self._terrain_for(map_name)
-            self._pieces[map_name] = components(walkable) if walkable else []
+            self._pieces[map_name] = (
+                components(walkable, self._ledges_for(map_name)) if walkable else []
+            )
         return self._pieces[map_name]
 
     def pocket_at(self, map_name: str, coord: Optional[Coord]) -> Optional[int]:
@@ -167,6 +240,48 @@ class PocketGraph:
                 )
             )
         out.extend(self._connection_hops(map_name, pocket))
+        out.extend(self._ledge_hops(map_name, pocket))
+        return out
+
+    def _ledge_hops(self, map_name: str, pocket: int) -> List[PocketHop]:
+        """One-way ledge drops out of this pocket, into another on the same map.
+
+        Route 4's east half is reachable *only* this way: 169 ledges, and the
+        two that matter drop from row 8 onto row 10 where the map otherwise has
+        a wall at x=62. Without these the router says the road to Cerulean does
+        not exist, which is what it said for sixteen hours.
+
+        There is no way back. The hop carries `edge=None` and `at`/`landing`
+        set, and the graph never generates the reverse, so a plan built from
+        these cannot ask the player to climb a ledge.
+        """
+        pieces = self.pieces(map_name)
+        if not pieces or pocket >= len(pieces):
+            return []
+        here = pieces[pocket]
+        seen: Set[Tuple[int, Coord, Coord]] = set()
+        out: List[PocketHop] = []
+        for start, landing in _ledge_pairs(self._ledges_for(map_name)):
+            if start not in here:
+                continue
+            to_pocket = pocket_of(pieces, landing)
+            if to_pocket is None or to_pocket == pocket:
+                continue
+            key = (to_pocket, start, landing)
+            if key in seen:
+                continue
+            seen.add(key)
+            out.append(
+                PocketHop(
+                    from_map=map_name,
+                    from_pocket=pocket,
+                    to_map=map_name,
+                    to_pocket=to_pocket,
+                    at=start,
+                    landing=landing,
+                    ledge=True,
+                )
+            )
         return out
 
     def _connection_hops(self, map_name: str, pocket: int) -> List[PocketHop]:
