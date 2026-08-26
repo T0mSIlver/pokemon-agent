@@ -2836,10 +2836,23 @@ def _pocket_graph() -> Optional[PocketGraph]:
         map_id = by_name.get(name)
         return _explored_maps.ledges_for(map_id) if map_id is not None else None
 
+    def connections_for(name: str):
+        """The map header's connections, with their offsets, where we have them.
+
+        `gamedata`'s table says which maps touch and never at what offset, so a
+        router given only that has to guess which pocket walking off an edge
+        lands in. On Route 4's south edge the candidates are sixty tiles apart,
+        and the guess produced a route that walked south and back north into a
+        different pocket. Stored specs first, the flat table only as a fallback.
+        """
+        map_id = by_name.get(name)
+        stored = _explored_maps.connections_for(map_id) if map_id is not None else {}
+        return stored or (world.get(name) or {}).get("connections") or {}
+
     return PocketGraph(
         lambda name: (world.get(name) or {}).get("warps") or [],
         terrain_for,
-        lambda name: (world.get(name) or {}).get("connections") or {},
+        connections_for,
         lambda name: (world.get(name) or {}).get("size"),
         ledges_for,
     )

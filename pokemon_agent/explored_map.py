@@ -360,6 +360,7 @@ class _MapRecord:
         "player",
         "truth",
         "ledges",
+        "connections",
     )
 
     def __init__(self, map_id: int, map_name: str = "") -> None:
@@ -378,6 +379,11 @@ class _MapRecord:
         # loaded one. Route 4's east half hangs off 169 of these, so a router
         # without them calls the road to Cerulean a wall.
         self.ledges: Dict[Tuple[int, int, str], Coord] = {}
+        # ``edge -> connection spec`` from the map header, which carries the
+        # offset `gamedata`'s connection table does not. Without it a router has
+        # to guess which pocket walking off an edge lands in, and on Route 4 the
+        # candidates are sixty tiles apart.
+        self.connections: Dict[str, dict] = {}
         # Tile -> how many separate arrivals. A tile stood on 24 times is the
         # single loudest signal that the agent is going in circles.
         self.visits: Dict[Coord, int] = {}
@@ -469,6 +475,7 @@ class _MapRecord:
                 [x, y, direction, landing[0], landing[1]]
                 for (x, y, direction), landing in self.ledges.items()
             ),
+            "connections": self.connections,
         }
 
     @classmethod
@@ -491,6 +498,10 @@ class _MapRecord:
             for row in payload.get("ledges") or []
             if isinstance(row, (list, tuple)) and len(row) == 5
         }
+        stored_connections = payload.get("connections")
+        record.connections = (
+            dict(stored_connections) if isinstance(stored_connections, dict) else {}
+        )
         # A store written before visit counts existed carries only the walked
         # set. Migrate it — every known tile counts as one arrival — rather than
         # dropping a run's worth of accumulated map memory on the floor.
@@ -602,6 +613,7 @@ class ExploredMaps:
         if truth_walkable and record.truth is None:
             record.adopt_truth(truth_walkable, int(truth["width"]), int(truth["height"]))
             record.ledges = _ledges_from(truth)
+            record.connections = dict(truth.get("connections") or {})
             _log(
                 f"map {map_id} adopted decoded terrain: {len(truth_walkable)} walkable "
                 f"of {truth['width']}x{truth['height']}, {len(record.ledges)} ledge hops"
@@ -754,6 +766,7 @@ class ExploredMaps:
             # None until this map has been stood on and decoded.
             "truth": set(record.truth) if record.truth is not None else None,
             "ledges": dict(record.ledges),
+            "connections": dict(record.connections),
         }
 
     def terrain(self, map_id: int) -> Optional[Set[Coord]]:
@@ -771,6 +784,15 @@ class ExploredMaps:
         """One map's ledge hops. Empty for a map never decoded, which is honest."""
         record = self._maps.get(map_id)
         return dict(record.ledges) if record is not None else {}
+
+    def connections_for(self, map_id: int) -> Dict[str, dict]:
+        """One map's edge connections with their offsets, from the map header.
+
+        Empty for a map never decoded, and a caller then has only `gamedata`'s
+        table, which says which maps touch and never at what offset.
+        """
+        record = self._maps.get(map_id)
+        return dict(record.connections) if record is not None else {}
 
     def coverage(self, map_id: int) -> dict:
         record = self._maps.get(map_id)

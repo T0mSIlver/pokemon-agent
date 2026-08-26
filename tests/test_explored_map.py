@@ -572,11 +572,13 @@ def test_grid_hands_back_the_raw_tile_sets(tmp_path):
         "walkable",
         "walked",
         "warps",
-        # The decoded floor and its ledges, kept apart from `walkable` so a
-        # router can tell ground truth from the doors the live window added.
-        # Both are empty here: this snapshot carries no `map_terrain`.
+        # The decoded floor and what a router needs to cross it: ledges, and the
+        # edge connections with the offsets `gamedata` does not carry. All kept
+        # apart from `walkable` so a reader can tell ground truth from the doors
+        # the live window added. Empty here: this snapshot has no `map_terrain`.
         "truth",
         "ledges",
+        "connections",
     }
     assert grid["truth"] is None, "nothing has decoded this map"
     assert grid["ledges"] == {}

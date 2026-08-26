@@ -116,6 +116,35 @@ def cmd_serve(args):
     uvicorn.run(app, host=args.host, port=args.port, log_level="info")
 
 
+def cmd_backfill_maps(args):
+    """Learn every map in the save library at once, instead of one walk at a time."""
+    from pathlib import Path
+
+    from pokemon_agent.backfill import backfill
+    from pokemon_agent.explored_map import ExploredMaps
+
+    data_dir = Path(args.data_dir).expanduser().resolve()
+    store = ExploredMaps(data_dir / "explored_maps.json")
+    known_before = sum(1 for map_id in store.map_ids() if store.terrain(map_id) is not None)
+
+    print(f"reading save states from {data_dir / 'saves'}")
+    result = backfill(
+        Path(args.rom).expanduser().resolve(),
+        data_dir / "saves",
+        store,
+        limit=args.limit,
+        on_progress=print,
+    )
+
+    known_after = known_before + len(result["learned"])
+    print(
+        f"\ndecoded {len(result['learned'])} new map(s) from {result['states_read']} states "
+        f"in {result['seconds']}s ({result['skipped']} already known or unreadable, "
+        f"{result['failed']} failed to load)"
+    )
+    print(f"maps with real terrain: {known_before} -> {known_after}")
+
+
 def cmd_info(args):
     """Display ROM information."""
     rom = Path(args.rom).expanduser().resolve()
@@ -199,10 +228,23 @@ def main():
     info_p = sub.add_parser("info", help="Show ROM information")
     info_p.add_argument("--rom", required=True, help="Path to Pokemon ROM file")
 
+    # --- backfill-maps ---
+    backfill_p = sub.add_parser(
+        "backfill-maps",
+        help="Decode every map the save library has been on, so routing works cold",
+    )
+    backfill_p.add_argument("--rom", required=True, help="Path to Pokemon ROM file")
+    backfill_p.add_argument("--data-dir", default=".", help="Where saves/ and the map store live")
+    backfill_p.add_argument(
+        "--limit", type=int, default=None, help="Read at most this many save states"
+    )
+
     args = parser.parse_args()
 
     if args.command == "serve":
         cmd_serve(args)
+    elif args.command == "backfill-maps":
+        cmd_backfill_maps(args)
     elif args.command == "info":
         cmd_info(args)
     else:
