@@ -73,6 +73,27 @@ def test_decodes_the_whole_map_not_just_a_window():
     assert len(got["tile_ids"]) == 8, "every tile has an id, walkable or not"
 
 
+def test_output_speaks_the_units_every_consumer_already_speaks():
+    """The bug that reported zero ledges on a map with 169 of them.
+
+    `movement_edges` skips its entire ledge and seam block unless the tileset is
+    a string, and the ledge and tile-pair tables hold PyBoy tilemap ids, which
+    are pokered ids plus 0x100. Returning raw ids and a numeric tileset matched
+    nothing and raised nothing: Route 4 came back with no ledges, Mt Moon 1F
+    with no seams, and both empty answers read as facts.
+    """
+    from pokemon_agent.navigation import TILE_ID_OFFSET
+
+    read_u8, read_rom, _, _ = build_memory()
+
+    got = mapdecode.decode_map(read_u8, read_rom)
+
+    assert got["tileset"] == "CAVERN", "a name, not the id 17"
+    assert got["tileset_id"] == 17, "the raw id is still there for anyone who wants it"
+    assert got["tile_ids"][(0, 0)] == 0x10 + TILE_ID_OFFSET
+    assert all(tile >= TILE_ID_OFFSET for tile in got["tile_ids"].values())
+
+
 def test_collision_list_is_read_from_bank_zero():
     """The bug that made every outdoor map decode to zero walkable tiles.
 

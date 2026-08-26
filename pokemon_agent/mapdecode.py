@@ -24,11 +24,29 @@ Two details cost hours to find and are worth stating:
   scores 7 misses in 806 tiles the player physically walked and 4 false
   positives in 1,065 tiles it saw and found solid, across two tilesets. The
   next best is off by two orders of magnitude.
+* The output has to speak the units the rest of the codebase already speaks.
+  The first version returned raw pokered tile ids and a numeric tileset; every
+  consumer expects PyBoy tilemap ids (offset by 0x100) and a tileset *name*.
+  Nothing raised. `movement_edges` skips its whole ledge and seam block when
+  the tileset is not a string, and the tile-pair tables just match nothing. So
+  Route 4 reported zero ledges when it has 169, and Mt Moon 1F reported zero
+  seams when it has 131. An empty answer that reads as a fact, which is the
+  failure this project keeps paying for. Terrain was exact the whole time; the
+  units were not.
+
+Verified by walking it. An emulator flood from Route 4 (24,6) -- press a real
+button, read wXCoord/wYCoord, repeat -- reaches 467 tiles out to x=89 and steps
+off the east edge into Cerulean City. Against that, this decoder's walkable set
+has zero false positives and zero false negatives. The two floors of Route 4
+are joined only by one-way ledge hops at row 9, which is why they look like
+separate pockets until ledges are switched on.
 """
 
 from __future__ import annotations
 
 from typing import Callable, Dict, Set, Tuple
+
+from pokemon_agent.navigation import TILE_ID_OFFSET
 
 Coord = Tuple[int, int]
 
@@ -96,13 +114,26 @@ def decode_map(read_u8: Callable[[int], int], read_rom: Callable[[int, int], int
                 for sub_x in (0, 1):
                     tile = block[(sub_y * 2 + COLLISION_ROW) * 4 + sub_x * 2 + COLLISION_COL]
                     coord = (block_x * 2 + sub_x, block_y * 2 + sub_y)
-                    tile_ids[coord] = tile
+                    # Shifted into the same space the ledge and tile-pair tables
+                    # use. They were written against PyBoy's tilemap, which
+                    # offsets every id by 0x100, and a raw pokered id matches
+                    # nothing in them -- silently, as an empty set of ledges.
+                    tile_ids[coord] = tile + TILE_ID_OFFSET
                     if tile in walkable_tiles:
                         walkable.add(coord)
 
+    # Imported here rather than at module scope: `memory.red` reaches back to
+    # `emulator`, which imports this module, and a top-level import closes the
+    # cycle.
+    from pokemon_agent.memory.red import TILESET_NAMES
+
+    tileset_id = read_u8(WCURMAPTILESET)
     return {
         "map_id": read_u8(WCURMAP),
-        "tileset": read_u8(WCURMAPTILESET),
+        # The NAME, because `world.movement_edges` gates its whole ledge and
+        # seam block on the tileset being a string and skips it otherwise.
+        "tileset": TILESET_NAMES.get(tileset_id, f"UNKNOWN_TILESET({tileset_id})"),
+        "tileset_id": tileset_id,
         "width": width_blocks * 2,
         "height": height_blocks * 2,
         "walkable": walkable,

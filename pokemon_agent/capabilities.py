@@ -144,7 +144,25 @@ def collision_from(snapshot: dict, explored: Optional[dict] = None) -> dict:
     # A ledge's landing is two tiles away because the tile between is one no
     # player can stand on. That holds wherever the ledge was learned, so it
     # outranks a store that remembers standing there.
+    #
+    # Read from the decoded floor when there is one, because the snapshot only
+    # carries the window's tile ids and ledges and seams are map-wide facts.
+    # Route 4 has 169 ledge hops and Mt Moon 1F has 131 uncrossable seams; from
+    # the window alone the planner saw a handful and read the rest as open
+    # corridor. Route 4's east half is reachable *only* over one-way ledges, so
+    # with them switched off the road to Cerulean looks like a wall.
     ledges = world_mod.ledge_edges(snapshot)
+    if truth.get("tile_ids"):
+        map_wide = world_mod.movement_edges(
+            {
+                "tileset": truth.get("tileset"),
+                "tile_ids": truth["tile_ids"],
+            }
+        )
+        map_wide.update(ledges)  # the live frame still wins where they overlap
+        map_wide.blocked_pairs |= ledges.blocked_pairs
+        map_wide.warp_exits |= ledges.warp_exits
+        ledges = map_wide
     for (start, _direction), landing in ledges.items():
         walkable.discard(((start[0] + landing[0]) // 2, (start[1] + landing[1]) // 2))
 
