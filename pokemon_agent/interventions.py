@@ -1515,10 +1515,25 @@ def build_prompt(
         "YOUR TASK",
         trigger.question,
         "",
-        "Answer in at most 150 words, as directions the player can press: "
-        "which way, how many tiles, which exit. Not strategy. Every claim you "
-        "make about where something is must come from the facts above — if "
-        "they do not cover it, say what to check rather than recalling it.",
+        "Answer in at most 150 words. Not strategy: say where to go and how to "
+        "get there. Every claim you make about where something is must come "
+        "from the facts above — if they do not cover it, say what to check "
+        "rather than recalling it.",
+        "",
+        # Counted button runs are what this prompt used to ask for, and they are
+        # the wrong shape for the failure it is called on. "Press down 8 tiles"
+        # dies at the first blocked tile and leaves the player facing a wall
+        # with seven presses of plan left; three consecutive interventions gave
+        # exactly that advice and the player came out of each one oscillating
+        # against a different dead end. `goto` re-plans on live collision, which
+        # a counted run cannot, and it was used once in 2,314 presses while the
+        # advice channel taught the alternative.
+        "The player has `poke goto <map>` and `poke goto <x> <y>`, which walks "
+        "toward a target and re-plans against real collision each map, and "
+        "stops and says why if it cannot get there. Prefer naming the "
+        "destination and letting it walk. Counted runs of presses are for short "
+        "moves where you can see the whole path: a blocked tile ends a counted "
+        "run and leaves the rest of it wrong.",
     ]
     return "\n".join(lines)
 
