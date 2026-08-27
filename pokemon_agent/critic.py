@@ -29,6 +29,7 @@ from typing import Any, Awaitable, Callable, Iterable, Iterator, Mapping, Option
 
 from pokemon_agent.agent_cli import ActionError, expand_actions
 from pokemon_agent.bench.metrics import compute as compute_run_metrics
+from pokemon_agent.bench.metrics import whiteout_events
 from pokemon_agent.bench.registry import RunRegistry
 from pokemon_agent.pi_supervisor import (
     IMAGE_SUFFIXES,
@@ -1248,7 +1249,11 @@ def collect_session_facts(
     visits: Counter[tuple[str, int, int]] = Counter()
     tools: Counter[str] = Counter()
     gained: list[str] = []
-    session_presses = batches = blocked = samples = whiteouts = reloads = party_size = 0
+    session_presses = batches = blocked = samples = reloads = party_size = 0
+    # Rising edges, not flagged frames — see `whiteout_events`. The handoff line
+    # this feeds told one session it had whited out 40 times when it had whited
+    # out 19, which is the sort of number a next session plans around.
+    whiteouts = whiteout_events(session)
     ended_map = ""
     ended_pos: Optional[tuple[int, int]] = None
     ended_hp: Optional[tuple[int, int]] = None
@@ -1261,7 +1266,6 @@ def collect_session_facts(
                 blocked += 1
         if receipt.tool and receipt.tool != RUN_START_TOOL:
             tools[receipt.tool] += 1
-        whiteouts += int(receipt.whiteout)
         reloads += int(receipt.reloaded)
         if receipt.pos is not None:
             samples += 1

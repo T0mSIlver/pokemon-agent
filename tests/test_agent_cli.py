@@ -1165,6 +1165,21 @@ def test_a_blocked_batch_says_which_step_failed():
     assert "blocked after 1" in line
 
 
+def test_the_shell_prints_the_whiteout_note_the_server_sent():
+    # The renderer names every field it prints, so a new one the server sends is
+    # silently dropped until it is named here. This is the field that would be
+    # worth the least in JSON nobody reads: the shell line is what the model
+    # actually sees after it wakes up somewhere it did not walk to.
+    note = (
+        "whited out on Mt Moon 1F (5,8) — the party fainted. The game moved you "
+        "to Route 4 (11,6) and took $1,981 of your $3,961."
+    )
+    lines = agent_cli.action_lines({**WALK, "whiteout": note})
+
+    assert note in lines
+    assert "whiteout" not in agent_cli.action_lines(WALK)
+
+
 def test_flags_appear_only_when_they_are_true():
     quiet = agent_cli.action_lines(WALK)
     assert "press a" not in quiet

@@ -100,6 +100,18 @@ class FakeEmulator:
         self.locked_in: str | None = None
         #: Whether the game comes to rest after a press. See `press_and_settle`.
         self.settles = True
+        #: The two readings a whiteout changes and nothing else in this fake
+        #: touches: the lead's HP goes to zero and the wallet is halved. Set them
+        #: by hand to stage a faint; see `whiteout` below.
+        self.hp = 20
+        self.money = 3000
+
+    def whiteout(self, map_name: str, x: int, y: int) -> None:
+        """What Gen 1 does after the party goes down: heal, halve, teleport."""
+
+        self.hp = 22
+        self.money //= 2
+        self.map_name, self.x, self.y = map_name, x, y
 
     def get_screen(self) -> Image.Image:
         # Vary the pixels with the frame counter so refreshed PNGs differ.
@@ -256,7 +268,7 @@ class FakeReader:
             "rival_name": "BLUE",
             "position": {"x": self.emulator.x, "y": self.emulator.y},
             "facing": self.emulator.facing,
-            "money": 3000,
+            "money": self.emulator.money,
             "badge_count": 0,
             "badges": [],
             "play_time": "0:10",
@@ -268,7 +280,7 @@ class FakeReader:
                 "nickname": "Bulbasaur",
                 "species": "Bulbasaur",
                 "level": 8,
-                "hp": 20,
+                "hp": self.emulator.hp,
                 "max_hp": 22,
                 "status": "OK",
                 "types": ["Grass", "Poison"],
@@ -1329,6 +1341,62 @@ def test_a_tile_walked_a_couple_of_times_is_not_worth_saying(server_app):
     for _ in range(2):
         assert "here_before" not in step(server_app, "up")
         assert "here_before" not in step(server_app, "down")
+
+
+def faint_then_wake_up(app, *, map_name="VIRIDIAN CITY", x=17, y=9):
+    """Play out one whiteout: the party goes down, then the game moves the player.
+
+    Two batches, because that is how it lands on the real game — the faint is
+    read off one frame and the teleport off the next.
+    """
+    app.emulator.hp = 0
+    app.http.post("/action", json={"actions": ["press_a"]})
+    app.emulator.whiteout(map_name, x, y)
+    return app.http.post("/action", json={"actions": ["press_a"]}).json()
+
+
+def test_the_batch_after_a_whiteout_says_it_was_one(server_app):
+    # Measured over 33 hours: 19 whiteouts, and the payload rendered every one
+    # as an ordinary map change arriving at full HP. The model always worked out
+    # for itself that it had fainted, so the fact that earns its place is the
+    # bill: $15,249 halved away, checked by the model after three of nineteen,
+    # and one of those three read as "I spent some". It had spent nothing.
+    payload = faint_then_wake_up(server_app)
+
+    note = payload["whiteout"]
+    assert "PALLET TOWN (5,6)" in note, "where the party went down"
+    assert "VIRIDIAN CITY (17,9)" in note, "where the game put it"
+    assert "$1,500 of your $3,000" in note, "what the halving cost"
+
+
+def test_the_whiteout_note_is_news_and_not_a_standing_field(server_app):
+    # Read once and cleared. A field on every payload is read on none of them:
+    # `here_before` was sent 2,339 times in one run and acted on zero.
+    faint_then_wake_up(server_app)
+
+    assert "whiteout" not in step(server_app, "up")
+
+
+def test_an_ordinary_map_change_carries_no_whiteout_note(server_app):
+    server_app.emulator.north_map = ("VIRIDIAN CITY", 1, 17)
+    server_app.emulator.y = 0
+
+    assert "whiteout" not in step(server_app, "up")
+
+
+def test_a_reload_over_a_faint_leaves_no_bill_to_pay(server_app):
+    # Loading a save rewinds the money along with everything else, so a note
+    # would price a loss that no longer exists. Ten of the nineteen measured
+    # whiteouts were undone this way within four receipts of the faint.
+    server_app.http.post("/save", json={"name": "before"})
+    server_app.emulator.hp = 0
+    server_app.http.post("/action", json={"actions": ["press_a"]})
+
+    server_app.http.post("/load", json={"name": "before"})
+    server_app.emulator.hp = 22
+    server_app.emulator.map_name, server_app.emulator.x = "VIRIDIAN CITY", 17
+
+    assert "whiteout" not in step(server_app, "up")
 
 
 def test_standing_still_does_not_inflate_the_revisit_count(server_app):

@@ -62,6 +62,7 @@ from pokemon_agent.saves import (
     resolve_save_path,
     validate_save_name,
 )
+from pokemon_agent.state_analysis import WhiteoutWatch
 from pokemon_agent.world import World, reachable_region
 
 __version__ = "0.1.0"
@@ -290,6 +291,17 @@ _press_count: int = 0
 _run_recorder: Optional[RunRecorder] = None
 _interventions: Optional[InterventionRunner] = None
 _intervention_task: Optional[asyncio.Task] = None
+
+#: Watches for the party going down so the batch that lands somewhere else can
+#: say why. See WhiteoutWatch: a whiteout is the only map change the player did
+#: not make, and the payload used to render it as an ordinary walk.
+_whiteout_watch = WhiteoutWatch()
+
+#: The note for the next model-facing payload, read once and cleared. It is a
+#: global rather than a return value because POST /goto whites out inside a walk
+#: loop whose inner batches never reach the model, and losing the note there
+#: would lose it on exactly the walks that go worst.
+_pending_whiteout: Optional[str] = None
 
 #: Why the emulator was never created, if it was not. An unsupported ROM is
 #: reported here rather than as an ImportError three steps later.
@@ -1274,6 +1286,45 @@ def _annotate_batch_outcome(summary: dict, outcome: Optional[dict]) -> None:
         summary["blocked_after"] = outcome["blocked_after"]
 
 
+def _watch_for_whiteout(bundle: Optional[dict], *, reloaded: bool = False) -> None:
+    """Feed one batch to the watch and hold on to any note it produces.
+
+    A batch with no bundle is a refused or failed call that never reached the
+    emulator, so it says nothing about where the player is standing. Feeding it
+    in would read as "the player moved somewhere with no name" and fire the note
+    on a frame that never happened.
+    """
+    global _pending_whiteout
+    if reloaded:
+        _whiteout_watch.forget()
+        return
+    if bundle is None:
+        return
+    note = _whiteout_watch.observe(bundle.get("state"))
+    if note:
+        _pending_whiteout = note
+
+
+def _annotate_whiteout(summary: dict) -> None:
+    """Say what the last map change was, when the player did not make it.
+
+    The one fact the run was missing. Measured over 33 hours: 19 whiteouts, at
+    least 10,801 presses walking back from them, and $15,249 halved away that no
+    payload ever mentioned — the model checked its money after three of the
+    nineteen and misread one of those three as spending. It always knew it had
+    fainted; it never knew the bill.
+
+    Read once and cleared, like a piece of news rather than a field: it belongs
+    to the batch that landed, and repeating it on the next twenty would make it
+    wallpaper, which is what `here_before` became before its threshold was
+    raised.
+    """
+    global _pending_whiteout
+    if _pending_whiteout:
+        summary["whiteout"] = _pending_whiteout
+        _pending_whiteout = None
+
+
 def _annotate_explored_map(summary: dict, bundle: Optional[dict]) -> None:
     """The one thing the frame cannot show: you have stood here before.
 
@@ -1531,7 +1582,13 @@ async def _write_receipt(
     the default executor, so the event loop is free while the line lands. The
     file is opened ``O_APPEND`` and never re-read, so this does not grow with
     the length of the run.
+
+    It is also the one place every emulator batch passes through in order, which
+    is what the whiteout watch needs: a faint seen on a battle frame and a
+    landing seen on the next overworld frame arrive here two calls apart, in
+    that order, whichever endpoints produced them.
     """
+    _watch_for_whiteout(bundle, reloaded=reloaded)
     recorder = _run_recorder
     if recorder is not None and recorder.run_id is not None:
         try:
@@ -2145,8 +2202,12 @@ async def _run_battle_sequence(intent: dict, func, *args) -> dict:
 
 def configure(config: GameConfig):
     """Set server configuration (call before app startup)."""
-    global _config
+    global _config, _pending_whiteout
     _config = config
+    # A faint half-seen by the previous emulator describes a game this one is not
+    # playing, and the note would name a map the new save has never been on.
+    _whiteout_watch.forget()
+    _pending_whiteout = None
 
 
 def _endpoint_banner_lines() -> list[str]:
@@ -2662,6 +2723,7 @@ async def execute_actions(req: ActionRequest):
         summary = _observation_summary(result["bundle"])
         _annotate_batch_outcome(summary, result.get("outcome"))
         _annotate_explored_map(summary, result["bundle"])
+        _annotate_whiteout(summary)
         return {"actions_executed": result["actions_executed"], **summary}
     except HTTPException:
         raise
@@ -2679,6 +2741,7 @@ async def battle_fight(req: BattleFightRequest):
         result = await _run_battle_sequence({"fight": req.move}, _battle_fight_sync, req.move)
         outcome = result["outcome"]
         payload = {"used": outcome["used"], **_observation_summary(result["bundle"])}
+        _annotate_whiteout(payload)
         if outcome["retried"]:
             payload["retried"] = True
         return payload
@@ -2696,10 +2759,12 @@ async def battle_run():
     _ensure_emulator()
     try:
         result = await _run_battle_sequence({"run": True}, _battle_run_sync)
-        return {
+        payload = {
             "fled": result["outcome"]["fled"],
             **_observation_summary(result["bundle"]),
         }
+        _annotate_whiteout(payload)
+        return payload
     except HTTPException:
         raise
     except ValueError as e:
@@ -3106,6 +3171,7 @@ async def goto(req: GotoRequest):
         bundle = await _refresh_and_broadcast(reason="goto", source="goto")
     summary = _observation_summary(bundle)
     _annotate_explored_map(summary, bundle)
+    _annotate_whiteout(summary)
     payload = {
         "actions_executed": result["actions_executed"],
         **summary,

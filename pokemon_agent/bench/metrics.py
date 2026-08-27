@@ -10,7 +10,7 @@ agent spent, from the first one of the run, counted once.
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import Any, Mapping, Optional
+from typing import Any, Iterable, Mapping, Optional
 
 from pokemon_agent.bench.registry import Receipt, RunRecord
 
@@ -19,6 +19,29 @@ REFERENCE_POINTS: tuple[tuple[str, int], ...] = (
     ("PokeAgent best entry, first gym", 1608),
     ("PokeAgent most efficient, first gym", 649),
 )
+
+
+def whiteout_events(receipts: Iterable[Receipt]) -> int:
+    """How many times the run actually whited out.
+
+    ``receipt.whiteout`` marks a *frame*, not an event: the whole party reads as
+    down on every batch the faint takes to resolve, so a whiteout the agent
+    mashed A through four times used to score four. Measured on the 33-hour run
+    that prompted this: 40 flagged receipts, 19 whiteouts. Every number this
+    project has published about whiteouts — ``scope live``, the critic's handoff
+    line, ``bench report``, ``scope diff`` — was inflated by that factor, and it
+    is not a constant one, so runs were not even comparable with each other.
+
+    Rising edges, therefore. A run of flagged receipts is one whiteout.
+    """
+
+    total = 0
+    down = False
+    for receipt in receipts:
+        if receipt.whiteout and not down:
+            total += 1
+        down = receipt.whiteout
+    return total
 
 
 @dataclass(frozen=True)
@@ -212,7 +235,7 @@ def compute(record: RunRecord, *, ladder: Optional[Mapping[str, LadderEntry]] = 
     action_batches = 0
     blocked_batches = 0
     tool_errors = 0
-    whiteouts = 0
+    whiteouts = whiteout_events(receipts)
     reloads = 0
     final_milestone_count = 0
 
@@ -239,8 +262,6 @@ def compute(record: RunRecord, *, ladder: Optional[Mapping[str, LadderEntry]] = 
                 blocked_batches += 1
         if receipt.errored:
             tool_errors += 1
-        if receipt.whiteout:
-            whiteouts += 1
         if receipt.reloaded:
             reloads += 1
         if receipt.milestone_count:

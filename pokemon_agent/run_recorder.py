@@ -57,6 +57,7 @@ from pokemon_agent.bench.registry import (
     Receipt,
     RunRegistry,
 )
+from pokemon_agent.state_analysis import party_is_down
 
 #: The file naming the run that is currently open, next to the run directories.
 RUN_POINTER_FILENAME = "CURRENT"
@@ -517,11 +518,13 @@ def receipt_from_batch(
     if lead.get("max_hp"):
         hp = (int(lead.get("hp") or 0), int(lead["max_hp"]))
 
-    # Every member down. Gen 1 heals the party at the Pokemon Center a moment
-    # later, so this is the only frame the loss is visible in.
-    whiteout = bool(party) and all(
-        isinstance(member, Mapping) and not (member.get("hp") or 0) for member in party
-    )
+    # Every member down. One definition, shared with the watch that writes the
+    # model-facing note, so the receipt and the payload can never disagree about
+    # whether a whiteout happened. Note that this flag marks the *frame*, not the
+    # event: the party stays down across every batch the faint takes to resolve,
+    # which is why anything counting whiteouts has to count rising edges. See
+    # `whiteout_events`.
+    whiteout = party_is_down(state)
 
     return {
         "tool": tool,

@@ -2,12 +2,13 @@
 
 Nothing here touches the emulator, the filesystem, or a clock. Every function
 takes the state dict the memory reader produced and returns plain data, which is
-what makes the observation bundle testable without a ROM.
+what makes the observation bundle testable without a ROM. :class:`WhiteoutWatch`
+is the one thing here that remembers a previous frame, and it says why.
 """
 
 from __future__ import annotations
 
-from typing import Any, Iterable, Optional
+from typing import Any, Iterable, Mapping, Optional
 
 from pokemon_agent.navigation import LiveNavigationSnapshot
 
@@ -536,3 +537,98 @@ def build_battle_guidance(state: JsonDict, dialog_guidance: JsonDict) -> JsonDic
         "reason": reason,
         "safe_short_actions": ["press_a"],
     }
+
+
+def party_is_down(state: Optional[JsonDict]) -> bool:
+    """Every member of a non-empty party is at 0 HP — the frame a whiteout starts on.
+
+    Gen 1 heals the party at the Poke Center a moment later, so this is the only
+    frame the loss is visible in. Shared with ``receipt_from_batch`` so the
+    receipt flag and the model-facing note can never disagree about what happened.
+    """
+
+    party = (state or {}).get("party") or []
+    return bool(party) and all(
+        isinstance(member, Mapping) and not (member.get("hp") or 0) for member in party
+    )
+
+
+def _coord(frame: JsonDict) -> str:
+    x, y = frame.get("x"), frame.get("y")
+    return "(?,?)" if x is None or y is None else f"({x},{y})"
+
+
+class WhiteoutWatch:
+    """Name the one map change the player did not make.
+
+    A whiteout does three things at once: it heals the party, it moves the player
+    to the last Poke Center, and it halves their money. The payload the model
+    reads shows the first two as an ordinary map change that happens to arrive at
+    full HP, and carries no money field at all, so the price is invisible.
+
+    Measured over one 33-hour run: 19 whiteouts, $15,249 halved away, and the
+    model went looking for money afterwards three times out of nineteen. One of
+    those three read a clean halving — 2,490 to 1,245 — as "1245 money (I spent
+    some)". It had spent nothing. Its transcripts show it always knows it
+    fainted, so that half needs no help; what it does not know is what the faint
+    cost, and that is the half this reports.
+
+    The one stateful object in this module, because a whiteout is a transition
+    and no single frame shows one. What it remembers is two names and four
+    numbers off the frame the party went down on, and it forgets them as soon as
+    the player lands somewhere else.
+    """
+
+    def __init__(self) -> None:
+        self._fell: Optional[JsonDict] = None
+
+    def forget(self) -> None:
+        """Drop any pending faint. The caller says when the frame stopped counting.
+
+        A save reload rewinds the money along with everything else, so the note
+        would price a loss that no longer exists: 10 of the 19 measured whiteouts
+        were undone that way within four receipts.
+        """
+
+        self._fell = None
+
+    def observe(self, state: Optional[JsonDict]) -> Optional[str]:
+        """Feed one observation. Returns the landing frame's note, once.
+
+        Called on every batch and answers ``None`` on nearly all of them: the
+        faint frame arms it, the first frame somewhere else fires it.
+        """
+
+        state = state or {}
+        player = state.get("player") or {}
+        position = player.get("position") or {}
+        here: JsonDict = {
+            "map": (state.get("map") or {}).get("map_name") or "",
+            "x": position.get("x"),
+            "y": position.get("y"),
+            "money": player.get("money"),
+        }
+
+        if party_is_down(state):
+            if self._fell is None:
+                self._fell = here
+            return None
+
+        fell = self._fell
+        if fell is None:
+            return None
+        if (fell["map"], fell["x"], fell["y"]) == (here["map"], here["x"], here["y"]):
+            # Still standing where it went down, so the faint is still resolving
+            # and the teleport has not landed. Every measured whiteout spent
+            # between one and seven batches in this state.
+            return None
+
+        self._fell = None
+        note = (
+            f"whited out on {fell['map'] or 'an unknown map'} {_coord(fell)} — the party "
+            f"fainted. The game moved you to {here['map'] or 'an unknown map'} {_coord(here)}"
+        )
+        before, after = fell["money"], here["money"]
+        if isinstance(before, int) and isinstance(after, int) and after < before:
+            note += f" and took ${before - after:,} of your ${before:,}"
+        return note + "."

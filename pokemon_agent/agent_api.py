@@ -459,6 +459,11 @@ class Result:
     moved: Optional[int] = None
     blocked_after: Optional[int] = None
     here_before: Optional[int] = None
+    #: Set on the one batch that landed after a whiteout, saying where the party
+    #: went down, where the game put it, and what the halving cost. It is the
+    #: only map change in the game the player did not make, and without this the
+    #: payload renders it as an ordinary walk that happens to arrive at full HP.
+    whiteout: Optional[str] = None
     on_warp: bool = False
     warp: dict = field(default_factory=dict)
     faces: Optional[str] = None
@@ -525,6 +530,7 @@ class Result:
             moved=payload.get("moved"),
             blocked_after=payload.get("blocked_after"),
             here_before=payload.get("here_before"),
+            whiteout=payload.get("whiteout"),
             on_warp=bool(payload.get("on_warp")),
             warp=payload.get("warp") or {},
             faces=payload.get("faces"),
@@ -570,7 +576,10 @@ class Result:
         moved = "" if self.moved is None else f" moved {self.moved}"
         blocked = "" if self.blocked_after is None else f" blocked after {self.blocked_after}"
         warp = " on a warp" if self.on_warp else ""
-        return where + moved + blocked + warp
+        # On its own line and last, so a script reading only the first line still
+        # gets a well-formed position, and one printing the whole thing cannot
+        # miss the reason the map changed under it.
+        return where + moved + blocked + warp + (f"\n  {self.whiteout}" if self.whiteout else "")
 
 
 @dataclass

@@ -444,6 +444,12 @@ def action_lines(payload: dict) -> str:
 
     lines = ["  ".join(parts)]
 
+    # Ahead of everything else, because it is the reason the line above says a
+    # different map than the last one did. Without it a whiteout renders as a
+    # walk: the model reads a new town and full HP and has to infer the rest.
+    if payload.get("whiteout"):
+        lines.append(str(payload["whiteout"]))
+
     # Before anything read off the frame, because it says the frame is not one the
     # game has come to rest on: mid-transition the map name and the coordinates
     # can belong to two different maps.
