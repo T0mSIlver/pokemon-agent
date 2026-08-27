@@ -487,6 +487,10 @@ class Result:
     #: ball costs when none are carried. ``"Poke Ball x11 36% now / 100% worn
     #: down"``. Never set in a trainer battle, where a ball bounces off.
     catch: Optional[str] = None
+    #: On any battle frame whose Pokemon is hurt: the healing items carried,
+    #: what each restores and the HP it would leave you on, or what one costs
+    #: when none are carried. ``"Potion x7 +20 -> 25/95"``. Never set at full HP.
+    items: Optional[str] = None
     #: Inside a mart: the money, the stock and the prices. Never set anywhere
     #: else, because 211 of the game's 223 maps sell nothing.
     shop: Optional[str] = None
@@ -552,6 +556,7 @@ class Result:
             no_damage=payload.get("no_damage"),
             locked_in=payload.get("locked_in"),
             catch=payload.get("catch"),
+            items=payload.get("items"),
             shop=payload.get("shop"),
             heal=payload.get("heal"),
             menu=payload.get("menu"),
@@ -589,6 +594,12 @@ class Result:
             # to see it, or the ball in the bag stays in the bag.
             if self.catch:
                 head += f"\n  catch: {self.catch}"
+            # And the third. Same bargain as `catch`: a script that reads only
+            # this line has to see it, or the Potion in the bag stays in the bag
+            # -- which is what 1,555 battle commands of one run did with ten of
+            # them, including the fight it finished on 5 HP.
+            if self.items:
+                head += f"\n  items: {self.items}"
             return head
         where = f"{self.map} {self._where}" + (f" facing {self.facing}" if self.facing else "")
         moved = "" if self.moved is None else f" moved {self.moved}"
@@ -1480,6 +1491,19 @@ class Client:
 
         return Result.from_payload(self._act_json("/battle/catch", {"ball": ball} if ball else {}))
 
+    def item(self, name: Optional[str] = None, on: Optional[int] = None) -> Result:
+        """Use an item mid-battle. No name uses the weakest healing item carried.
+
+        ``on`` is a 1-based party slot; the default is the Pokemon on the field.
+        """
+
+        body: dict = {}
+        if name:
+            body["item"] = name
+        if on is not None:
+            body["on"] = int(on)
+        return Result.from_payload(self._act_json("/battle/item", body))
+
     def buy(self, item: str, count: int = 1) -> Result:
         """Buy from the mart on this map, walking to the counter first if need be."""
 
@@ -1690,6 +1714,10 @@ def catch(ball: Optional[str] = None) -> Result:
     return client().catch(ball)
 
 
+def item(name: Optional[str] = None, on: Optional[int] = None) -> Result:
+    return client().item(name, on)
+
+
 def buy(item: str, count: int = 1) -> Result:
     return client().buy(item, count)
 
@@ -1800,6 +1828,7 @@ __all__ = [
     "frontier",
     "game",
     "goto",
+    "item",
     "guide",
     "health",
     "limits",

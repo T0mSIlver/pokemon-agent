@@ -259,6 +259,14 @@ class BattleCatchRequest(BaseModel):
     ball: Optional[str] = None
 
 
+class BattleItemRequest(BaseModel):
+    """Body for POST /battle/item. No item named means the weakest healing one."""
+
+    item: Optional[str] = None
+    #: 1-based party slot to use it on. None means the Pokemon on the field.
+    on: Optional[int] = None
+
+
 class MartBuyRequest(BaseModel):
     """Body for POST /mart/buy."""
 
@@ -381,6 +389,10 @@ _loads_since_milestone: dict[str, int] = {}
 #: invisible. Counting them costs no extra write because the number rides on the
 #: next receipt something else was already writing.
 _sims_since_receipt: int = 0
+
+#: The distinct plans behind that count, for the cap. Cleared on every receipt,
+#: because a receipt means something was actually pressed.
+_sim_plans_since_press: set[tuple] = set()
 
 #: The milestone set the last receipt saw, so the counter above can tell a rung
 #: being reached from a rung merely being present. ``None`` until the first
@@ -1451,6 +1463,15 @@ def _observation_summary(bundle: Optional[dict]) -> dict:
         catch = _catch_line(state)
         if catch:
             summary["catch"] = catch
+        # The third thing the turn can be spent on. See capabilities.heal_item_line:
+        # None at full HP, which is nearly every frame, so it costs nothing there.
+        items = capabilities.heal_item_line(
+            active,
+            state.get("bag") or [],
+            money=(state.get("player") or {}).get("money"),
+        )
+        if items:
+            summary["items"] = items
 
         # Which menu is open and which entry A would fire. Perception, not advice:
         # the move cursor remembers where it was last turn and wraps at both ends,
@@ -1776,7 +1797,32 @@ async def _refresh_and_broadcast(
 # a loop that is not looking at its own results.
 ACTION_RATE_WINDOW_SECONDS = 60.0
 ACTION_RATE_MAX_CALLS = 60
+
+# `/sim` needs its own ceiling and a much looser one: planning is cheap and a
+# model is entitled to walk several routes on paper per batch. Measured over
+# 2,226 sim calls, no legitimate stretch comes close — the busiest honest minute
+# is well inside this, while the loop this exists for managed 124 calls in 190
+# milliseconds.
+SIM_RATE_WINDOW_SECONDS = 60.0
+SIM_RATE_MAX_CALLS = 120
+
+#: Distinct plans walked on paper since the last button was pressed. Measured
+#: over 671 chains: 484 of them (72%) are one or two sims, which is a model
+#: planning and then acting. Past that the return collapses — tiles gained per
+#: chain stays flat at around four however long the chain runs, so the third sim
+#: and every one after it buys nothing. The cap sits at six rather than three to
+#: leave room for genuinely comparing a few routes, and it still cuts a third of
+#: all sim traffic because the waste is a long tail: the worst chain ran 140.
+#:
+#: *Distinct* matters. The repeat guard already refuses the same plan simulated
+#: over and over, at a limit of sixteen, and counting repeats here would reach
+#: six first and leave that rule unreachable — a guard that can never fire,
+#: which is the failure this project keeps finding in itself. Asking one
+#: question sixteen times and asking six different ones are different mistakes
+#: and get different answers.
+MAX_SIMS_BETWEEN_PRESSES = 6
 _action_call_times: deque[float] = deque(maxlen=ACTION_RATE_MAX_CALLS * 2)
+_sim_call_times: deque[float] = deque(maxlen=SIM_RATE_MAX_CALLS * 2)
 
 
 def _check_action_rate() -> None:
@@ -1795,6 +1841,32 @@ def _check_action_rate() -> None:
             ),
         )
     _action_call_times.append(now)
+
+
+def _check_sim_rate() -> None:
+    """Throttle `/sim` for a caller that is not reading the answers.
+
+    The repeat guard refuses a plan that has already been simulated, and that
+    works on a model, which reads what it is told. It does nothing to a shell
+    loop: 124 refusals arrived in 190 milliseconds on 124 separate connections,
+    each a fresh `poke sim` process, none of which looked at the 400 it got.
+    A refusal assumes a reader. A rate limit does not.
+    """
+
+    now = time.monotonic()
+    while _sim_call_times and now - _sim_call_times[0] > SIM_RATE_WINDOW_SECONDS:
+        _sim_call_times.popleft()
+    if len(_sim_call_times) >= SIM_RATE_MAX_CALLS:
+        raise HTTPException(
+            status_code=429,
+            detail=(
+                f"More than {SIM_RATE_MAX_CALLS} simulations in "
+                f"{int(SIM_RATE_WINDOW_SECONDS)}s. `poke sim` presses nothing, so a loop over it "
+                "never ends on its own and never moves the player. Press something and read what "
+                "happened."
+            ),
+        )
+    _sim_call_times.append(now)
 
 
 def _reject_unsafe_dialog_actions(actions: list[str]) -> None:
@@ -1948,6 +2020,7 @@ async def _write_receipt(
         # distinguishable from one this counter never watched.
         extra = {**(extra or {}), "sims": _sims_since_receipt}
         _sims_since_receipt = 0
+    _sim_plans_since_press.clear()
     recorder = _run_recorder
     if recorder is not None and recorder.run_id is not None:
         try:
@@ -2639,6 +2712,186 @@ def _no_balls_note() -> str:
         f"A Poke Ball is ${price} at any Poke Mart (blue roof) — `poke buy poke ball 10` "
         "inside one buys ten."
     )
+
+
+#: The item menus a use walks through are the bag list and then the party
+#: screen, and a heal ends in one line of text rather than a ball's animation,
+#: so this is shorter than CATCH_SETTLE_MAX_PRESSES and longer than a move's.
+ITEM_SETTLE_MAX_PRESSES = 16
+
+
+def _resolve_heal_item_sync(named, bag):
+    """Which healing item to spend, and where it sits in the bag.
+
+    With nothing named this is the weakest one carried that is not pure waste,
+    for the reason `_resolve_ball_sync` picks the cheapest ball: a Potion into a
+    twenty-point hole is the right item and a Full Restore into it is a Full
+    Restore gone.
+    """
+    carried = {entry["item"]: entry for entry in bag}
+    if named:
+        wanted = str(named).strip().lower()
+        match = next((n for n in capabilities.HEALING_ITEMS if n.lower() == wanted), None)
+        if match is None:
+            raise HTTPException(
+                status_code=400,
+                detail=(
+                    f"No healing item called {named!r}. Healing items: "
+                    f"{', '.join(capabilities.HEALING_ITEMS)}."
+                ),
+            )
+        if match not in carried:
+            held = [f"{e['item']} x{e['quantity']}" for e in bag] or ["nothing"]
+            raise HTTPException(
+                status_code=409,
+                detail=f"No {match} in the bag. Carrying: {', '.join(held)}.",
+            )
+        chosen = match
+    else:
+        chosen = next((n for n in capabilities.HEALING_ITEMS if n in carried), None)
+        if chosen is None:
+            raise HTTPException(status_code=409, detail=_no_heal_note())
+    index = _reader.bag_index_of(capabilities.HEALING_ITEMS[chosen]["id"])
+    if index is None:  # unreachable: the name came out of the bag we just read
+        raise HTTPException(status_code=409, detail="That item is no longer in the bag.")
+    return {"name": chosen, "id": capabilities.HEALING_ITEMS[chosen]["id"], "index": index}
+
+
+def _no_heal_note():
+    """Why a heal is impossible, said as the thing to do about it. See _no_balls_note."""
+    money = ((_get_state_dict().get("player") or {}).get("money")) or 0
+    item, price = capabilities.cheapest_heal()
+    return (
+        f"No healing items in the bag, so there is nothing to use. You have ${money}. "
+        f"A {item} is ${price} at any Poke Mart (blue roof) — `poke buy {item.lower()} 10` "
+        "inside one buys ten."
+    )
+
+
+def _battle_item_sync(named, slot):
+    """Open the bag mid-battle, use a healing item, and say what it put back."""
+    _require_battle_sync()
+    party_before = _reader.read_party()
+    if not party_before:
+        raise HTTPException(status_code=409, detail="No party to use an item on.")
+    target = 0 if slot is None else int(slot) - 1
+    if not 0 <= target < len(party_before):
+        raise HTTPException(
+            status_code=400,
+            detail=f"Party slot {slot} does not exist: the party has {len(party_before)}.",
+        )
+    # The Pokemon a bare call heals is the one taking the hits, not slot 0.
+    if slot is None:
+        active = _get_state_dict().get("battle_mon") or party_before[0]
+        target = next(
+            (
+                i
+                for i, mon in enumerate(party_before)
+                if mon.get("species") == active.get("species")
+                and mon.get("max_hp") == active.get("max_hp")
+            ),
+            0,
+        )
+    mon = party_before[target]
+    hp, max_hp = int(mon.get("hp") or 0), int(mon.get("max_hp") or 0)
+    # Both refusals cost no turn, and both are the refusal the model needs to
+    # read rather than a 500: full HP wastes the item and the turn, and a
+    # fainted Pokemon takes nothing from a potion at all.
+    if hp <= 0:
+        raise HTTPException(
+            status_code=409,
+            detail=(
+                f"{mon.get('species')} has fainted. No potion heals a fainted Pokemon — "
+                "a Revive or a Poke Center is the only thing that does."
+            ),
+        )
+    if max_hp and hp >= max_hp:
+        raise HTTPException(
+            status_code=409,
+            detail=f"{mon.get('species')} is already at {hp}/{max_hp}. Nothing to restore.",
+        )
+
+    item = _resolve_heal_item_sync(named, _reader.read_bag())
+
+    _normalise_to_battle_menu_sync()
+    keys = list(BATTLE_OPEN_BAG)
+    for key in keys:
+        _execute_action_sync(key)
+    if not _tick_until(_reader.at_bag_list):
+        raise HTTPException(
+            status_code=409,
+            detail="The bag did not open from the battle menu. Nothing was used. Read the frame.",
+        )
+    walk = item_list_walk_keys(item["index"], _reader.read_list_menu()["index"])
+    for key in walk:
+        _execute_action_sync(key)
+    menu = _reader.read_list_menu()
+    # The last check before anything is spent, exactly where the catch path puts
+    # its one: everything before this press is free to get wrong and fix.
+    if not (menu["open"] and menu["index"] == item["index"]):
+        raise HTTPException(
+            status_code=409,
+            detail=(
+                f"The bag list is not sitting on {item['name']} (row {item['index']}); "
+                f"it reads row {menu['index']}. Nothing was used, so no turn was spent. "
+                "Read the frame."
+            ),
+        )
+    _execute_action_sync("press_a")  # opens "Use item on which POKéMON?"
+    # The party screen does not wrap in Gen 1, so Up over-pressed floors the
+    # cursor at slot 0 and the walk down from there needs no reader of its own.
+    # With a party of one -- which is the party this was written for -- both
+    # loops are empty and the single A below is the whole of it.
+    for _ in range(len(party_before) - 1):
+        _execute_action_sync("press_up")
+    for _ in range(target):
+        _execute_action_sync("press_down")
+    _execute_action_sync("press_a")
+
+    # Read the heal here, before settling, because settling plays out the rest
+    # of the turn and the enemy moves in it. Measured on Route 4: a Potion into
+    # a three-point gap restored three, then a Rattata's Tackle took three back,
+    # and reading afterwards reported "+0 HP" for an item that had worked and
+    # been spent. The number the model needs is what the item put back, not what
+    # the turn came to.
+    _emulator.tick(90)
+    healed = _reader.read_party()
+    restored = 0
+    if target < len(healed):
+        restored = max(0, int(healed[target].get("hp") or 0) - hp)
+
+    # B, never A, for the same reason the catch settle uses it: A on a party
+    # screen opens the SWITCH/STATS menu, and B backs out of everything while
+    # advancing text exactly as A does.
+    for _ in range(ITEM_SETTLE_MAX_PRESSES):
+        _emulator.tick(30)
+        if _reader.at_battle_top_menu():
+            break
+        if not _battle_state_sync().get("in_battle") and not _read_dialog_active_sync():
+            break
+        _execute_action_sync("press_b")
+    else:
+        _emulator.tick(60)
+
+    party_after = _reader.read_party()
+    after = party_after[target] if target < len(party_after) else {}
+    left = next((e["quantity"] for e in _reader.read_bag() if e["id"] == item["id"]), 0)
+    now = int(after.get("hp") or 0)
+    return {
+        "used": item["name"],
+        "on": mon.get("species"),
+        # Read off the party, not computed from the table: a Potion into a
+        # three-point gap restores three, and the number the model needs is the
+        # one the game actually applied.
+        "restored": restored,
+        # Using an item spends the turn, so the enemy has moved by the time this
+        # returns. Saying only what the item put back would let a heal that was
+        # immediately undone read as progress.
+        "hp_after_their_turn": f"{now}/{max_hp}" if max_hp else None,
+        "left": left,
+        "in_battle": bool(_battle_state_sync().get("in_battle")),
+        "actions": [],  # filled by the caller's key accounting, as catch does
+    }
 
 
 def _battle_catch_sync(named: Optional[str]) -> dict:
@@ -3849,6 +4102,47 @@ async def battle_catch(req: BattleCatchRequest):
         raise HTTPException(status_code=500, detail=f"Battle error: {e}")
 
 
+@app.post("/battle/item")
+async def battle_item(req: BattleItemRequest):
+    """Use an item on one of your Pokemon without leaving the battle.
+
+    The bag is reachable from the battle menu with the d-pad and always was, so
+    this endpoint is not new capability — it is the capability said out loud.
+    Across 1,555 battle commands of one 40-hour run the only intents that ever
+    existed were `run` (847) and `fight` (708): not one item was used, ever,
+    with ten Potions in the bag and Misty beaten on 5 HP out of 95. There were
+    two battle verbs and this was not one of them.
+    """
+    _ensure_emulator()
+    key = ("item", str(req.item or "any").strip().lower(), str(req.on or "active"))
+    await _check_repeat(key, tool="battle", describe=battle_refusal)
+    try:
+        result = await _run_battle_sequence(
+            {"item": req.item or "any", "on": req.on},
+            _battle_item_sync,
+            req.item,
+            req.on,
+        )
+        _record_repeat(key, result["state_before"], result["state_after"])
+        outcome = result["outcome"]
+        payload = {
+            "used": outcome["used"],
+            "on": outcome["on"],
+            "restored": outcome["restored"],
+            "left": outcome["left"],
+            **_observation_summary(result["bundle"]),
+        }
+        _annotate_whiteout(payload)
+        _annotate_gym_outlook(payload, result["bundle"])
+        return payload
+    except HTTPException:
+        raise
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    except Exception as e:  # noqa: BLE001
+        raise HTTPException(status_code=500, detail=f"Battle error: {e}")
+
+
 @app.post("/mart/buy")
 async def mart_buy(req: MartBuyRequest):
     """Buy from the counter on this map, walking to the till first if need be."""
@@ -4723,11 +5017,24 @@ async def frontier():
 @app.post("/sim")
 async def sim(req: SimRequest):
     """Dry-run a plan against live collision. Presses nothing."""
+    global _sims_since_receipt
     # Pressing nothing is exactly why this one went unnoticed. It writes no
     # receipt and spends no buttons, so a session that loops on it looks idle
     # right up until it dies on the token budget: 531 identical calls in one
     # session, and six of the run's 49 sessions ended inside a loop like this.
+    _check_sim_rate()
     key = ("sim", *(str(action).strip().lower() for action in req.actions))
+    fresh_plan = key not in _sim_plans_since_press
+    if fresh_plan and len(_sim_plans_since_press) >= MAX_SIMS_BETWEEN_PRESSES:
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                f"{len(_sim_plans_since_press)} different plans walked on paper since the last "
+                "button was pressed, and none of them moved anything. Another plan answers a "
+                "question you have already asked six ways. Press the first step of the best one "
+                "so far and read what actually happened."
+            ),
+        )
     await _check_repeat(key, tool="sim", describe=sim_refusal)
     snapshot = await _require_snapshot()
     try:
@@ -4741,8 +5048,8 @@ async def sim(req: SimRequest):
     # is the whole of what a repeat proves.
     answer = json.dumps(payload, sort_keys=True, default=str)
     _repeat_guard.record(key, (), (), answer)
-    global _sims_since_receipt
     _sims_since_receipt += 1
+    _sim_plans_since_press.add(key)
     return payload
 
 

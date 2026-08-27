@@ -368,7 +368,7 @@ You do not have to find her. `poke heal` walks to her counter, talks to her, ans
 
 Every frame inside a Center carries that `nurse` line, and when there is nothing to heal it says so — `nurse (3,1): the party is already full — nothing to heal`. That is your cue to leave rather than walk the room again.
 
-Buy Potions when you pass a Poke Mart (blue roof) and have money — `poke buy potion 5`, see Buying. Walking into tall grass with no healing items and a hurt lead Pokemon is how runs end.
+Buy Potions when you pass a Poke Mart (blue roof) and have money — `poke buy potion 5`, see Buying. Walking into tall grass with no healing items and a hurt lead Pokemon is how runs end. Use one mid-fight with `poke item potion`: a hurt battle frame carries an `items` line pricing every healing item you are holding, and using one costs the turn, so the enemy moves before you act again.
 
 If your lead Pokemon faints you white out, lose money, and wake up at the last Poke Center. You keep your progress but lose the walk. Prefer heading back to heal over pushing on at low HP.
 
@@ -427,6 +427,7 @@ If the same action fails three times, stop repeating it. Something in your model
 
 - `poke fight <move>`: attack with a named move. `poke run` flees. Both under Battles above.
 - `poke catch [ball]`: throw a ball at a wild Pokemon. Under Catching above.
+- `poke item [name]`: use a healing item without leaving a battle. Under Staying alive above.
 - `poke buy <item> [count]`: buy from the mart you are standing in. Under Buying above.
 - `poke heal`: heal at the nurse on this map. Under Staying alive above.
 - `poke calc`: the same move table the battle payload already carries, on demand. Under Battles.

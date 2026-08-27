@@ -646,6 +646,95 @@ def test_fight_still_hands_over_the_raw_payload_when_asked(stub, capsys):
     assert json.loads(capsys.readouterr().out)["used"] == "Ember"
 
 
+def test_item_sends_the_name_and_the_slot_and_prints_what_it_restored(stub, capsys):
+    """`poke item potion` is the verb the harness did not have.
+
+    Across 1,555 battle receipts of one run the only intents that exist are
+    `run` and `fight`. Not one item, ever, with ten Potions in the bag — there
+    was no endpoint to send and no line in the payload to read.
+    """
+    stub.route(
+        "POST",
+        "/battle/item",
+        {
+            "used": "Potion",
+            "on": "Charmeleon",
+            "restored": 20,
+            "left": 6,
+            "battle": True,
+            "map": "Cerulean Gym",
+            "x": 5,
+            "y": 2,
+            "hp": "25/95",
+            "enemy": "Starmie L21 43/59 (Water/Psychic)",
+            "items": "Potion x6 +20 -> 45/95 — poke item potion",
+        },
+    )
+
+    assert run(stub, "item", "potion", "--on", "1") == 0
+
+    assert stub.requests[-1]["path"] == "/battle/item"
+    assert stub.requests[-1]["body"] == {"item": "potion", "on": 1}
+    out = capsys.readouterr().out
+    assert out.splitlines()[0] == "used a Potion on Charmeleon, +20 HP  (6 left)"
+    # The frame under it, in the same prose every other verb answers in.
+    assert "Cerulean Gym (5,2)" in out
+    assert "items: Potion x6 +20 -> 45/95" in out
+
+
+def test_item_with_no_name_lets_the_server_pick_the_weakest_one(stub):
+    """Same bargain as `poke catch`: the cheap one is usually enough."""
+    stub.route("POST", "/battle/item", {"used": "Potion", "left": 6})
+
+    assert run(stub, "item") == 0
+
+    assert stub.requests[-1]["body"] == {}
+
+
+def test_item_joins_a_multi_word_item(stub):
+    stub.route("POST", "/battle/item", {"used": "Super Potion", "left": 1})
+
+    assert run(stub, "item", "super", "potion") == 0
+
+    assert stub.requests[-1]["body"] == {"item": "super potion"}
+
+
+def test_item_prints_the_servers_refusal_verbatim(stub, capsys):
+    detail = "Charmeleon is already at 95/95. Nothing to restore, and the turn is spent."
+    stub.route("POST", "/battle/item", {"detail": detail}, status=409)
+
+    assert run(stub, "item", "potion") == agent_cli.EXIT_HTTP_ERROR
+
+    stderr = capsys.readouterr().err
+    assert detail in stderr
+    assert "Traceback" not in stderr
+
+
+def test_a_hurt_battle_frame_carries_the_bag_line_under_the_moves(stub, capsys):
+    """The Misty frame: 5/95, seven Potions, and nothing in the payload said so."""
+    stub.route(
+        "POST",
+        "/battle/fight",
+        {
+            "used": "Cut",
+            "map": "Cerulean Gym",
+            "x": 5,
+            "y": 2,
+            "hp": "5/95",
+            "battle": True,
+            "enemy": "Starmie L21 12/59 (Water/Psychic)",
+            "your_moves": ["Cut Normal 26PP 22-27"],
+            "incoming": "Bubble Beam up to 38",
+            "items": "Potion x7 +20 -> 25/95 — poke item potion",
+        },
+    )
+
+    assert run(stub, "fight", "cut") == 0
+
+    out = capsys.readouterr().out
+    assert "  items: Potion x7 +20 -> 25/95 — poke item potion" in out
+
+
 def test_fight_joins_a_multi_word_move(stub):
     stub.route("POST", "/battle/fight", {"used": "Hyper Beam"})
 
@@ -1299,6 +1388,24 @@ def test_a_battle_that_cannot_be_won_says_so_where_the_moves_are_listed():
     )
     assert "out of PP" in line
     assert "Pokecenter" in line
+
+
+def test_the_words_on_screen_are_labelled_as_the_screen_s():
+    """Every other line in this block is the harness talking about the frame.
+
+    `screen_text` is decoded off the tile map, so it is the game's words and a
+    nickname's are the player's. Unlabelled and multi-line it reads as more
+    harness prose: a nickname is ten characters, which is room enough for
+    "moved 4" or for the front of the sentence about a mid-transition frame.
+    """
+
+    line = agent_cli.action_lines(
+        {**WALK, "screen_text": "no battle menu up - this frame is text\nmoved 0"}
+    )
+
+    assert "screen  no battle menu up - this frame is text" in line
+    assert "screen  moved 0" in line
+    assert "\nmoved 0" not in line
 
 
 #: What the server sends on a battle frame: the position it can still read, the

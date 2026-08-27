@@ -1658,6 +1658,160 @@ def catch_payload(battle: dict, bag: Sequence[dict], catch_rate: int) -> dict:
 
 
 # ---------------------------------------------------------------------------
+# Healing items
+# ---------------------------------------------------------------------------
+
+#: Every item that puts HP back, weakest first, with what it restores. ``None``
+#: restores means "all of it": a Max Potion and a Full Restore both refill to
+#: the maximum whatever the shortfall is.
+#:
+#: Weakest first because that is the order the choice is made in. The balls are
+#: a price ladder and so are these, and spending a Hyper Potion on a six-point
+#: gap is the same waste as spending an Ultra Ball on a Pidgey.
+#:
+#: Ids are the Gen 1 item ids, so a bag entry can be matched by id as well as by
+#: name -- ``_resolve_ball_sync`` matches on id and the item verb has to do the
+#: same, because the bag's names come from the same table the ids do.
+HEALING_ITEMS: dict[str, dict[str, Optional[int]]] = {
+    "Potion": {"id": 20, "restores": 20},
+    "Fresh Water": {"id": 60, "restores": 50},
+    "Super Potion": {"id": 19, "restores": 50},
+    "Soda Pop": {"id": 61, "restores": 60},
+    "Lemonade": {"id": 62, "restores": 80},
+    "Hyper Potion": {"id": 18, "restores": 200},
+    "Max Potion": {"id": 17, "restores": None},
+    "Full Restore": {"id": 16, "restores": None},
+}
+
+#: How many item rows a frame line may carry. Four is what the catch line pays
+#: for at its worst and this is the same kind of list, so it is held to the same
+#: budget: a bag with six kinds of potion in it would otherwise put a 200-byte
+#: line on every frame of every fight.
+MAX_HEAL_ROWS = 3
+
+
+def heal_item_payload(active: Mapping, bag: Sequence[Mapping]) -> dict:
+    """What the healing items in the bag would do for the Pokemon on the field.
+
+    Every healing item carried gets a row: what it restores, and the HP it would
+    leave you on. That second number is the whole decision — "Potion +20" beside
+    "5/95" is a subtraction the model has to remember to make, and the measured
+    record of this project is that it does not make them. It beat Misty on 5 HP
+    with seven Potions in the bag.
+
+    A party at full HP is not an error; it is a real answer with no rows, and
+    the caller is what decides to say nothing at all.
+    """
+    max_hp = int(active.get("max_hp") or 0)
+    if not max_hp:
+        raise Conflict("That Pokemon is not readable yet — there is no HP to restore.")
+    hp = max(0, int(active.get("hp") or 0))
+    # Zero is not "very hurt", it is fainted, and a Potion does nothing to a
+    # fainted Pokemon in Gen 1 — the game refuses the use and the turn is still
+    # spent. Priced as "+20 -> 20/95" it would read as the way out of the one
+    # frame where it is not, so it is refused here instead.
+    if hp <= 0:
+        raise Conflict(
+            f"{active.get('species') or 'That Pokemon'} has fainted. No potion heals a "
+            "fainted Pokemon — a Revive or a Poke Center is the only thing that does."
+        )
+    carried = {
+        str(entry.get("item")): int(entry.get("quantity") or 0)
+        for entry in bag or ()
+        if isinstance(entry, Mapping)
+    }
+    rows = []
+    for name, spec in HEALING_ITEMS.items():
+        held = carried.get(name, 0)
+        if held <= 0:
+            continue
+        restores = spec["restores"]
+        to = max_hp if restores is None else min(max_hp, hp + int(restores))
+        rows.append(
+            {
+                "item": name,
+                "held": held,
+                "restores": restores,
+                "to": to,
+                # What the item would throw away. A Hyper Potion into a six-point
+                # gap heals six and wastes 194, and nothing else in the row says so.
+                "wasted": 0 if restores is None else max(0, int(restores) - (to - hp)),
+            }
+        )
+    return {
+        "species": active.get("species"),
+        "hp": [hp, max_hp],
+        "missing": max_hp - hp,
+        "items": rows,
+    }
+
+
+@functools.lru_cache(maxsize=1)
+def cheapest_heal() -> tuple[str, int]:
+    """The cheapest healing item on sale anywhere, as ``(name, price)``.
+
+    Read out of the shop table for the same reason :func:`cheapest_ball_price`
+    is: 300 is a number someone would have to keep true by hand. Cached because
+    it is a scan of every map and it is asked on every frame of a hurt party.
+    """
+    priced = [
+        (price, item)
+        for name in gamedata.map_names()
+        for item, price in ((gamedata.shops(name) or {}).get("prices") or {}).items()
+        if item in HEALING_ITEMS and price
+    ]
+    if not priced:
+        return ("Potion", 300)
+    price, item = min(priced)
+    return (item, int(price))
+
+
+def heal_item_line(
+    active: Mapping,
+    bag: Sequence[Mapping],
+    money: Optional[int] = None,
+) -> Optional[str]:
+    """One line about the bag, for a frame whose Pokemon is hurt. Or ``None``.
+
+    The sibling of :func:`catch_payload`'s line, written for the same measured
+    failure and in the same shape. Across 1,555 battle commands of one run the
+    only two intents that ever existed were ``run`` and ``fight``: not one item
+    was used, ever, and the reason is visible in the payload rather than in the
+    model. No frame that run ever read mentioned the bag. It bought ten Potions
+    and beat Misty on 5/95 without touching them.
+
+    ``None`` on a full-HP Pokemon, which is nearly every frame, so this costs
+    nothing where it would be wallpaper. With items it is what each one restores
+    and the HP it leaves you on. Without them it is the price beside the money,
+    because "no Potions" was already known and the money beside it never was.
+    """
+    try:
+        payload = heal_item_payload(active, bag)
+    except CapabilityError:
+        return None
+    if not payload["missing"]:
+        return None  # nothing to put back, so nothing to say
+    hp, max_hp = payload["hp"]
+    rows = payload["items"][:MAX_HEAL_ROWS]
+    if not rows:
+        item, price = cheapest_heal()
+        return (
+            f"no healing items: ${int(money or 0)} buys {item} "
+            f"x{min(99, int(money or 0) // price)} at a Poke Mart"
+        )
+    parts = [
+        f"{row['item']} x{row['held']} "
+        + ("+full" if row["restores"] is None else f"+{row['restores']}")
+        + f" -> {row['to']}/{max_hp}"
+        for row in rows
+    ]
+    # The verb named with the weakest item carried, because that is the one a
+    # bare `poke item` picks and a line that ends in a placeholder is a line the
+    # reader has to finish before it can run.
+    return "; ".join(parts) + f" — poke item {rows[0]['item'].lower()}"
+
+
+# ---------------------------------------------------------------------------
 # Marts
 # ---------------------------------------------------------------------------
 
@@ -2194,12 +2348,17 @@ __all__ = [
     "BALLS",
     "CapabilityError",
     "Conflict",
+    "HEALING_ITEMS",
     "MAX_GOTO_ROUNDS",
+    "MAX_HEAL_ROWS",
     "NotFound",
     "calc_payload",
     "catch_chance",
     "cheapest_ball_price",
+    "cheapest_heal",
     "catch_payload",
+    "heal_item_line",
+    "heal_item_payload",
     "shop_at",
     "shop_payload",
     "services_at",

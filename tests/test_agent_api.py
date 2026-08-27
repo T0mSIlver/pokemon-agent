@@ -615,6 +615,36 @@ def test_fight_and_flee_carry_the_move_name(stub, poke):
     assert stub.requests[0]["body"] == {"move": "ember"}
 
 
+def test_item_carries_the_name_and_the_slot_and_surfaces_the_bag_line(stub, poke):
+    """The third battle verb. One run had two, and used a Potion zero times."""
+    stub.route(
+        "POST",
+        "/battle/item",
+        {
+            **WALK_RESULT,
+            "battle": True,
+            "hp": "25/95",
+            "enemy": "Starmie L21 43/59",
+            "items": "Potion x6 +20 -> 45/95 — poke item potion",
+        },
+    )
+
+    result = poke.item("potion", on=1)
+
+    assert stub.requests[-1]["body"] == {"item": "potion", "on": 1}
+    assert result.items == "Potion x6 +20 -> 45/95 — poke item potion"
+    # A script that reads only str(result) has to see it, or the bag stays shut.
+    assert "items: Potion x6 +20 -> 45/95" in str(result)
+
+
+def test_item_with_nothing_named_sends_an_empty_body(stub, poke):
+    stub.route("POST", "/battle/item", {**WALK_RESULT, "battle": True})
+
+    poke.item()
+
+    assert stub.requests[-1]["body"] == {}
+
+
 # ---------------------------------------------------------------------------
 # The chunked walker
 # ---------------------------------------------------------------------------

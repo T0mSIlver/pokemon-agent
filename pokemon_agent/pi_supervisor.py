@@ -2074,7 +2074,13 @@ class PiSupervisor:
         # ``critic.handoff_body``.
         handoff = critic.handoff_body(critic.read_handoff(self.workspace_dir))
         if handoff:
-            blocks.append(f"## {critic.HANDOFF_HEADING}\n\n{handoff}")
+            # The block above this one is headed authoritative and is measured
+            # off the receipts; this one is prose a model wrote, and the critic
+            # is told the other heading by name. A line of the retrospective
+            # that opens the same way is quoted rather than delivered as a
+            # second heading. See ``critic.quote_forged_headings``.
+            safe = critic.quote_forged_headings(handoff)
+            blocks.append(f"## {critic.HANDOFF_HEADING}\n\n{safe}")
         return "\n\n".join(blocks)
 
     # ------------------------------------------------------------------

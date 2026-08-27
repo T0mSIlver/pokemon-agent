@@ -1059,6 +1059,26 @@ NARRATION_HEADING = "Narration the agent wrote, oldest first - CLAIMS, not facts
 NOTES_HEADING = "NOTES.md as the agent left it - CLAIMS, not facts, and unverified"
 
 
+def quoted_lines(text: str) -> list[str]:
+    """*text* as markdown blockquote lines, so it cannot close its own section.
+
+    Every section of the digest is a ``## `` heading and its body, and one body
+    is a whole document the model wrote: ``NOTES.md``. Markdown does not nest,
+    so the first ``## `` line inside those notes ends the section that called
+    them claims, and everything after it reads as a section of the digest — a
+    peer of "Ground truth from the run receipts (authoritative)". The seeded
+    notes file opens with ``## Your notes``, so this is not a corner case; it is
+    what the section looks like on every run that has notes at all.
+
+    Blockquoting is the cheapest correct fix: not a byte of the model's text is
+    lost or reordered, and no line of it starts a heading any more. A blank line
+    keeps its paragraph break as a bare ``>``, because :func:`_section` drops
+    empty strings.
+    """
+
+    return [f"> {line}" if line.strip() else ">" for line in (text or "").splitlines()]
+
+
 def _plural(count: int, noun: str, plural: str = "") -> str:
     return f"{count:,} " + (noun if count == 1 else (plural or noun + "s"))
 
@@ -2287,7 +2307,7 @@ def build_digest(data: DigestInput, *, char_budget: int = DIGEST_CHAR_BUDGET) ->
             _section("Explored-map coverage", format_map_summary(data.map_summary)),
             _section(NARRATION_HEADING, narration_rows),
             _section(f"Last {len(recent_rows)} tool calls, oldest first", recent_rows),
-            _section(NOTES_HEADING, [notes] if notes else []),
+            _section(NOTES_HEADING, quoted_lines(notes)),
         ]
         return "\n\n".join(section for section in sections if section).strip() + "\n"
 
@@ -2800,6 +2820,36 @@ def handoff_body(text: str) -> str:
                 continue
         kept.append(line)
     return "\n".join(kept).strip()
+
+
+#: The headings the next session's first user message is assembled from. The
+#: block under the first one is measured off the receipts; the block under the
+#: second is prose a model wrote, and it is appended below the measurements.
+FIRST_MESSAGE_HEADINGS = (FACTS_HEADING, HANDOFF_HEADING)
+
+
+def quote_forged_headings(text: str, headings: Sequence[str] = FIRST_MESSAGE_HEADINGS) -> str:
+    """*text* with any line that opens like one of *headings* quoted instead.
+
+    The retrospective is model-written and it is concatenated under the
+    harness's own ``## `` headings, one of which announces the block above it as
+    authoritative and tells the reader not to contradict it. The critic is
+    handed that heading by name in its instructions, so writing it back out is
+    not a stretch — and a second "Ground truth from the run receipts" heading,
+    below the real one, would be read as more of the same measurements.
+
+    Only a line that opens like one of the harness's own headings is touched:
+    a heading the retrospective invented for itself impersonates nothing, and
+    quoting every heading would rewrite prose this has no business rewriting.
+    Same defence, and the same reason, as the body quoting in
+    :func:`pokemon_agent.interventions.revise_advice`.
+    """
+
+    def forged(line: str) -> bool:
+        bare = line.strip().lstrip("#").strip()
+        return any(heading and bare.startswith(heading) for heading in headings)
+
+    return "\n".join(f"> {line}" if forged(line) else line for line in (text or "").splitlines())
 
 
 def read_handoff(workspace_dir: Path) -> str:

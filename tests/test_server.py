@@ -3888,3 +3888,95 @@ def test_the_sim_count_resets_so_it_is_never_double_counted(server_app):
     # Absent, not zero: a batch that planned nothing is not a batch this counter
     # never watched.
     assert "sims" not in entries[-1]
+
+
+# ---------------------------------------------------------------------------
+# Planning that never becomes pressing
+#
+# 2,226 simulations in 671 chains. 484 of those chains are one or two plans —
+# a model planning and then acting — and the worst single chain ran 140 with
+# nothing pressed in it. Tiles gained per chain stays flat at about four however
+# long the chain runs, so past the first couple the answers stop buying
+# anything.
+# ---------------------------------------------------------------------------
+
+
+def test_a_seventh_different_plan_without_pressing_anything_is_refused(server_app):
+    plans = (
+        ["walk_up"],
+        ["walk_down"],
+        ["walk_left"],
+        ["walk_right"],
+        ["walk_up", "walk_up"],
+        ["walk_down", "walk_down"],
+    )
+    for plan in plans:
+        assert server_app.http.post("/sim", json={"actions": plan}).status_code == 200
+
+    response = server_app.http.post("/sim", json={"actions": ["walk_left", "walk_left"]})
+
+    assert response.status_code == 400
+    detail = response.json()["detail"]
+    assert "6 different plans" in detail
+    assert "Press the first step of the best one" in detail
+
+
+def test_pressing_something_clears_the_count(server_app):
+    plans = (
+        ["walk_up"],
+        ["walk_down"],
+        ["walk_left"],
+        ["walk_right"],
+        ["walk_up", "walk_up"],
+        ["walk_down", "walk_down"],
+    )
+    for plan in plans:
+        server_app.http.post("/sim", json={"actions": plan})
+    server_app.http.post("/action", json={"actions": ["walk_left"]})
+
+    after = server_app.http.post("/sim", json={"actions": ["walk_right", "walk_right"]})
+    assert after.status_code == 200
+
+
+def test_the_same_plan_again_is_the_repeat_guards_business_not_this_one(server_app):
+    """Both rules stay reachable, and they answer different mistakes.
+
+    Counting repeats toward the cap would hit six long before the repeat guard's
+    sixteen, leaving that rule unable to fire at all — the shape of bug this
+    project keeps finding in itself. Asking one question sixteen times and
+    asking six different ones are not the same error.
+    """
+
+    for _ in range(REPEAT_LIMIT):
+        assert server_app.http.post("/sim", json={"actions": ["walk_up"]}).status_code == 200
+
+    response = server_app.http.post("/sim", json={"actions": ["walk_up"]})
+
+    assert response.status_code == 400
+    # The repeat guard's message, not the cap's.
+    assert "different plans" not in response.json()["detail"]
+
+
+def test_a_loop_that_never_reads_the_refusal_is_throttled(server_app):
+    """A refusal assumes a reader; 124 of them arrived in 190 milliseconds.
+
+    Each was a separate `poke sim` process on its own connection, so nothing in
+    that loop ever saw the 400 it got back. A rate limit does not care whether
+    anyone is reading.
+    """
+
+    from pokemon_agent import server as server_module
+
+    server_module._sim_call_times.clear()
+    seen = set()
+    for i in range(server_module.SIM_RATE_MAX_CALLS + 5):
+        # Fresh plan each time so the cap above is not what answers, and the
+        # press keeps the distinct-plan set empty.
+        server_module._sim_plans_since_press.clear()
+        plan = {"actions": ["walk_up"] * (1 + i % 30)}
+        code = server_app.http.post("/sim", json=plan).status_code
+        seen.add(code)
+        if code == 429:
+            break
+
+    assert 429 in seen, "the rate limit never fired"

@@ -227,21 +227,38 @@ def splice_state_block(existing: Optional[str], block: str) -> str:
 
 
 def strip_state_block(text: str) -> str:
-    """*text* without the harness block - what the model actually wrote.
+    """*text* without any harness block - what the model actually wrote.
 
     The critic heads this file "CLAIMS, not facts, and unverified", which is
     true of the model's half and the opposite of the harness's. Handing the
     critic the block would file measurements under claims and spend tokens
     telling it what it already measured.
+
+    *Any* block, not just the first one. :func:`splice_state_block` deliberately
+    rewrites only the pair at the top and leaves a copied one further down
+    alone, so a model that copy-pastes the block - which is exactly what the
+    preamble inside it tells the model not to do - keeps a second one in its own
+    half of the file. That copy wears the harness's delimiters, the harness's
+    title and the sentence "written by the harness, read from the game", and
+    stripping only the first pair sends it to the critic as prose the model
+    wrote. It is then a stale measurement in the harness's voice sitting inside
+    the section headed "CLAIMS". Nothing wearing these delimiters is the model's
+    prose: either the harness wrote it or it is a copy of something the harness
+    wrote, and neither belongs under that heading.
+
+    An opening delimiter with no closing one is left alone, for the same reason
+    :func:`splice_state_block` leaves it: there is no way to tell where the
+    block it opened was meant to stop, and guessing would delete model text.
     """
     body = text or ""
-    start = body.find(BLOCK_BEGIN)
-    if start == -1:
-        return body
-    end = body.find(BLOCK_END, start + len(BLOCK_BEGIN))
-    if end == -1:
-        return body
-    return body[:start] + body[end + len(BLOCK_END) :].lstrip("\n")
+    while True:
+        start = body.find(BLOCK_BEGIN)
+        if start == -1:
+            return body
+        end = body.find(BLOCK_END, start + len(BLOCK_BEGIN))
+        if end == -1:
+            return body
+        body = body[:start] + body[end + len(BLOCK_END) :].lstrip("\n")
 
 
 def notes_path(workspace_dir: Path) -> Path:

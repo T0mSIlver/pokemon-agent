@@ -253,6 +253,36 @@ def test_strip_removes_the_block_and_keeps_the_rest():
     assert stripped == MODEL_TEXT
 
 
+def test_strip_removes_a_copied_block_too():
+    """A copy of the block below the real one is not prose the model wrote.
+
+    ``splice_state_block`` deliberately rewrites only the pair at the top and
+    leaves a copy further down alone, so a model that copy-pastes the block
+    keeps one in its own half of the file. That copy carries the delimiters, the
+    title "written by the harness, read from the game" and the sentence saying
+    the block is not the model's - and it is stale, because nothing refreshes
+    it. Stripping only the first pair would file it under the critic's "CLAIMS,
+    not facts" heading as something the model wrote in its own voice.
+    """
+
+    real = notes.state_block({"map": {"map_name": "Route 4"}}, None)
+    copied = notes.state_block({"map": {"map_name": "Cinnabar Island"}}, None)
+    stripped = notes.strip_state_block(real + "\n" + MODEL_TEXT + "\n" + copied)
+
+    assert MODEL_TEXT.strip() in stripped
+    assert notes.BLOCK_BEGIN not in stripped
+    assert notes.BLOCK_END not in stripped
+    assert "Cinnabar Island" not in stripped
+    assert notes.BLOCK_TITLE not in stripped
+
+
+def test_strip_leaves_an_unclosed_delimiter_alone():
+    """Same reason the splice does: nothing says where the block stopped."""
+
+    orphan = notes.BLOCK_BEGIN + "\n" + MODEL_TEXT
+    assert notes.strip_state_block(orphan) == orphan
+
+
 def test_strip_is_a_no_op_without_delimiters():
     assert notes.strip_state_block(MODEL_TEXT) == MODEL_TEXT
     assert notes.strip_state_block("") == ""

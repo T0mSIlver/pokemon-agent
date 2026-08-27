@@ -540,6 +540,12 @@ def action_lines(payload: dict) -> str:
         # spent on and it is only ever sent on a wild encounter.
         if payload.get("catch"):
             lines.append(f"  catch: {payload['catch']}")
+        # Beside `catch`, because it is the third thing the turn could be spent
+        # on and the only one of the three the run that this was written for
+        # never once spent it on. Labelled for the same reason `incoming` is:
+        # under a list of moves, "Potion x7 +20 -> 25/95" reads as a fifth move.
+        if payload.get("items"):
+            lines.append(f"  items: {payload['items']}")
         menu, highlighted = payload.get("menu"), payload.get("highlighted")
         if menu == "other":
             # `other` is the reader saying neither battle menu is up, so there is
@@ -564,8 +570,16 @@ def action_lines(payload: dict) -> str:
     # the only line that says why you walked in.
     if payload.get("heal"):
         lines.append(str(payload["heal"]))
+    # Labelled, and labelled on every line of it, because this is the one thing
+    # in the block the harness is not the author of: it is decoded off the tile
+    # map, so it is the game's words and a nickname's are the player's. Every
+    # other line here is the harness talking - "no battle menu up", "the game
+    # was still moving when this was read" - and an unlabelled multi-line
+    # dialog under them reads as more of the same. It is the same misreading
+    # `incoming:` is labelled against two dozen lines further up, with the
+    # difference that a nickname can be written to produce it on purpose.
     if payload.get("screen_text"):
-        lines.append(str(payload["screen_text"]))
+        lines += [f"screen  {line}" for line in str(payload["screen_text"]).splitlines()]
     return "\n".join(lines)
 
 
@@ -618,6 +632,27 @@ def cmd_catch(args: argparse.Namespace, url: str) -> int:
         print(f"caught {species} with a {threw}")
     else:
         print(f"threw a {threw}, {species} broke free  ({answer.get('balls_left')} left)")
+    print(action_lines(answer))
+    return EXIT_OK
+
+
+def cmd_item(args: argparse.Namespace, url: str) -> int:
+    """Use an item mid-battle. No item named means the weakest healing one carried."""
+    payload: dict = {}
+    if args.item:
+        payload["item"] = " ".join(args.item)
+    if args.on is not None:
+        payload["on"] = args.on
+    answer = fetch_json(url, "/battle/item", method="POST", payload=payload)
+    if args.json:
+        print(compact(answer))
+        return EXIT_OK
+    used, on = answer.get("used"), answer.get("on")
+    restored = answer.get("restored")
+    head = f"used a {used}" + (f" on {on}" if on else "")
+    if restored is not None:
+        head += f", +{restored} HP"
+    print(head + f"  ({answer.get('left')} left)")
     print(action_lines(answer))
     return EXIT_OK
 
@@ -1054,6 +1089,31 @@ def build_parser() -> argparse.ArgumentParser:
     catch.add_argument("ball", nargs="*", metavar="BALL")
     catch.add_argument("--json", action="store_true", help="the whole payload instead of a summary")
     catch.set_defaults(func=cmd_catch)
+
+    item = subparsers.add_parser(
+        "item",
+        parents=[common],
+        help="use a healing item in the battle you are in, e.g. poke item potion",
+        description=(
+            "Use an item on one of your Pokemon without leaving the battle. With no "
+            "item named it uses the weakest healing item you carry, so a Potion goes "
+            "before a Hyper Potion and a Full Restore is not spent on a scratch.\n"
+            "What each one would restore is already on any battle frame whose Pokemon "
+            "is hurt, under `items`: the item, what it puts back, and the HP it leaves "
+            "you on. `--on` picks a party slot; the default is the Pokemon on the field."
+        ),
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+    )
+    item.add_argument("item", nargs="*", metavar="ITEM")
+    item.add_argument(
+        "--on",
+        type=int,
+        default=None,
+        metavar="SLOT",
+        help="party slot to use it on, 1 for the lead (default: the Pokemon on the field)",
+    )
+    item.add_argument("--json", action="store_true", help="the whole payload instead of a summary")
+    item.set_defaults(func=cmd_item)
 
     buy = subparsers.add_parser(
         "buy",
