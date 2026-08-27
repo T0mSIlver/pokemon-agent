@@ -123,6 +123,20 @@ def test_sim_answers_a_ledge_with_a_jump_and_says_it_is_one_way():
     assert payload["certain"] is True
 
 
+def test_sim_carries_the_tile_it_walked_the_plan_from():
+    """The origin is not the caller's to choose, so the answer has to name it.
+
+    A simulated plan always starts on the live tile. The payload never said which
+    one, and the model read a column of endpoints with no anchor between them:
+    1,878 of one run's 3,859 sims came in runs of three or more with nothing that
+    presses a button in between.
+    """
+    payload = capabilities.simulate_payload(["down"], snapshot(player=(10, 12)), store())
+
+    assert payload["start"] == [10, 12]
+    assert payload["map"] == "Route 3"
+
+
 def test_sim_says_where_its_answer_stops_being_this_frame():
     payload = capabilities.simulate_payload(["right:8"], snapshot(), store())
 

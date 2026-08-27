@@ -120,11 +120,11 @@ Cheaper than probing: `poke sim` runs a plan against the collision map without t
 
 ```bash
 poke sim up:6 right:3
-# clean: ends at (12, 2) facing up
-# blocked at step 4 (walk_up) by wall, stops at (12, 6)
+# from Route 3 (12,8): clean: ends at (12, 2) facing up
+# from Route 3 (12,8): blocked at step 4 (walk_up) by wall, stops at (12, 6)
 ```
 
-It costs no game time and no button presses, and it names the exact step that would fail. Use it before any long batch across ground you have not walked. A batch that ends against a wall wastes every action after the first bump.
+It costs no game time and no button presses, and it names the exact step that would fail. It always walks from the tile the player is standing on — the one it prints first — never from the endpoint of the sim before it. Chaining sims is fine, but each one replays the whole plan from that same live tile, so the tile a previous sim stopped on is somewhere you have not been. Use it before any long batch across ground you have not walked. A batch that ends against a wall wastes every action after the first bump.
 
 Never write an unbounded loop. If you script several actions, give every loop a hard iteration cap and check that the player actually moved. **A blocked move succeeds and returns the same position**, because walls, NPCs and furniture all stop you silently, so `while position != target: step()` never ends. Cap it, and treat "position unchanged" as "that direction is blocked", not as "try again" — unless the answer carries a `no walking` line, which means a box or a battle ate the button and the ground was never the problem. The server rejects more than 60 action batches a minute for exactly this reason, and says so.
 

@@ -1024,6 +1024,125 @@ def test_a_stated_position_is_checked_against_the_last_reply(tmp_path: Path) -> 
     assert positions[0].actual == (20, 12)
 
 
+def test_a_prose_reply_updates_where_the_player_is(tmp_path: Path) -> None:
+    """`poke act` stopped printing JSON on 2026-08-26 and the checker went blind.
+
+    9,029 of the 13,400 position answers in the 34-hour run came back as
+    `Route 3 (63,0) facing up`, which the JSON-only reader could not see, so
+    every claim after one of them was judged against a tile the player had left
+    hours earlier. That alone accused the model of standing in the wrong place
+    1,164 times out of 2,055 — the run's headline 57%. Reading the prose line
+    puts it at 8%.
+    """
+
+    builder = TranscriptBuilder(tmp_path / "s.jsonl")
+    builder.user("go")
+    builder.turn("./poke act left", act_result(20, 12, 1, map_name="Mt Moon 1F"))
+    builder.turn("./poke goto 63,0", "Route 3 (63,0) facing up  moved 4  hp 73/73")
+    builder.turn("# I'm at (63,0) on Route 3\n./poke act up", "Route 3 (63,0) facing up  moved 0")
+    claim = [c for c in _claims_for(builder) if c.kind == "position"][-1]
+    assert claim.verdict == beliefs.TRUE
+    assert claim.map_name == "Route 3"
+
+
+def test_a_simulated_endpoint_is_never_mistaken_for_the_live_tile(tmp_path: Path) -> None:
+    """`poke sim` answers in the same shape as `poke act` and means something else.
+
+    `clean: ends at (24, 7) facing right` names a tile on paper. Letting it set
+    the player's position would hand the checker a tile the player never stood
+    on, which is the exact confusion it exists to catch the model making.
+    """
+
+    builder = TranscriptBuilder(tmp_path / "s.jsonl")
+    builder.user("go")
+    builder.turn("./poke act left", act_result(17, 11, 1, map_name="Mt Moon B1F"))
+    builder.turn("./poke sim right:5 up:3", "clean: ends at (24, 7) facing right")
+    builder.turn("# I'm at (17,11)\n./poke act up", "Mt Moon B1F (17,10) facing up  moved 1")
+    claim = [c for c in _claims_for(builder) if c.kind == "position"][-1]
+    assert claim.verdict == beliefs.TRUE
+
+
+def test_sim_reporting_its_own_origin_keeps_the_position_fresh(tmp_path: Path) -> None:
+    """A chain of sims used to answer with no live tile in it at all.
+
+    One such chain ran 538 calls, and 1,878 of the run's 3,859 sims sat in a run
+    of three or more. `poke sim` now leads with the tile it walked from, so the
+    checker — and the model — see the live position on every one of them.
+    """
+
+    builder = TranscriptBuilder(tmp_path / "s.jsonl")
+    builder.user("go")
+    builder.turn("./poke act left", act_result(17, 11, 1, map_name="Mt Moon B1F"))
+    builder.turn(
+        "./poke sim left:3 up:4",
+        "from Mt Moon B1F (14,11): blocked at step 6 (walk_up) by wall, stops at (14, 8)",
+    )
+    builder.turn("# From (14,11) check up\n./poke act up", "Mt Moon B1F (14,10) facing up  moved 1")
+    claim = [c for c in _claims_for(builder) if c.kind == "position"][-1]
+    assert claim.verdict == beliefs.TRUE
+    assert claim.actual == (14, 11)
+
+
+def test_a_plan_waypoint_is_unchecked_rather_than_called_a_lie(tmp_path: Path) -> None:
+    """ "From (14,8) check left" above a `poke sim` is a waypoint, not a position.
+
+    The model chains sims: read the endpoint, sim the same prefix plus one more
+    leg, name the endpoint. 616 of the 701 such sentences in the run named a
+    tile a sim had just printed, and the player had not taken a step for any of
+    them. Grading them as standing claims was the second-largest source of the
+    "wrong about where it stood" count.
+    """
+
+    builder = TranscriptBuilder(tmp_path / "s.jsonl")
+    builder.user("go")
+    builder.turn("./poke act left", act_result(17, 11, 1, map_name="Mt Moon B1F"))
+    builder.turn("./poke sim left:3 up:4", "blocked at step 6 (walk_up) by wall, stops at (14, 8)")
+    builder.turn("# From (14,8) check left\n./poke sim left:3 up:3 left:3", "stops at (14, 8)")
+    claim = [c for c in _claims_for(builder) if c.kind == "position"][-1]
+    assert claim.verdict == beliefs.UNCHECKED
+    assert "waypoint" in claim.why
+
+
+def test_a_waypoint_the_agent_then_walks_to_is_still_checked(tmp_path: Path) -> None:
+    """The excuse only covers calls that press nothing.
+
+    A sentence naming a simulated tile above a `poke act` is the model acting on
+    that belief, which is the whole point of the report.
+    """
+
+    builder = TranscriptBuilder(tmp_path / "s.jsonl")
+    builder.user("go")
+    builder.turn("./poke act left", act_result(17, 11, 1, map_name="Mt Moon B1F"))
+    builder.turn("./poke sim left:3 up:4", "blocked at step 6 (walk_up) by wall, stops at (14, 8)")
+    builder.turn(
+        "# From (14,8) go left\n./poke act left", "Mt Moon B1F (16,11) facing left moved 1"
+    )
+    claim = [c for c in _claims_for(builder) if c.kind == "position"][-1]
+    assert claim.verdict == beliefs.FALSE
+    assert claim.why == beliefs.WHY_MISPLACED
+
+
+def test_a_coordinate_the_sentence_calls_blocked_is_not_a_position(tmp_path: Path) -> None:
+    """A leading coordinate the sentence calls blocked names the obstacle, not the player.
+
+    The model states its own tile with "from" or "I'm at"; a bare leading
+    coordinate followed by a property of that tile names the obstacle in front
+    of it. 176 of the 318 such sentences the checker called false were adjacent
+    to the player and correct.
+    """
+
+    builder = TranscriptBuilder(tmp_path / "s.jsonl")
+    builder.user("go")
+    builder.turn("./poke act left", act_result(21, 20, 1, map_name="Mt Moon 1F"))
+    builder.turn(
+        "# (22,20) has an NPC on it. Route around via row 21\n./poke act down",
+        "Mt Moon 1F (21,21) facing down  moved 1",
+    )
+    claim = [c for c in _claims_for(builder) if c.kind == "position"][-1]
+    assert claim.verdict == beliefs.UNCHECKED
+    assert "not where the player stands" in claim.why
+
+
 def test_a_multi_leg_plan_is_unchecked_rather_than_guessed_at(tmp_path: Path) -> None:
     builder = TranscriptBuilder(tmp_path / "s.jsonl")
     builder.user("go")
