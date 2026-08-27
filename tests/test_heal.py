@@ -18,6 +18,8 @@ conversation.
 
 from __future__ import annotations
 
+import asyncio
+import json
 import random
 from pathlib import Path
 
@@ -379,8 +381,22 @@ def test_driving_the_whole_heal_restores_the_party_and_closes_her_box(tmp_path):
     with TestClient(server.app) as client:
         loaded = client.post("/load", json={"name": hurt.stem})
         assert loaded.status_code == 200
+        # Healing drives a menu, so it spends real buttons, and for as long as
+        # this endpoint existed it recorded none of them. The errand the player
+        # runs most was missing from the total the project measures itself in.
+        run = asyncio.run_coroutine_threadsafe(
+            server._run_recorder.begin_session(goal="heal", model="test"), server._loop
+        ).result(timeout=10)
         answer = client.post("/pokecenter/heal", json={})
         assert answer.status_code == 200, answer.text
+        written = (tmp_path / "runs" / run.run_id / "receipts.jsonl").read_text(encoding="utf-8")
+        heals = [
+            json.loads(line)
+            for line in written.splitlines()
+            if line and json.loads(line).get("tool") == "heal"
+        ]
+        assert len(heals) == 1, "the heal wrote no receipt"
+        assert heals[0]["presses"] > 0, "walking to the nurse and talking costs buttons"
         payload = answer.json()
         assert payload["nurse"] == [3, 1]
         assert payload["dialog"] is False

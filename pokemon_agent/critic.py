@@ -912,6 +912,44 @@ def ladder_labels() -> tuple[dict[str, str], tuple[str, ...]]:
     return _LOOKUP_CACHE["ladder"]
 
 
+def _live_or_reached(
+    live_milestones: Optional[Iterable[str]],
+    reached: Sequence[str],
+) -> tuple[tuple[str, ...], bool]:
+    """``(what the game holds now, whether RAM said so)``.
+
+    Falls back to *reached* -- the receipts' running union -- and says so, so a
+    caller with no RAM reading still gets the block it has always got rather
+    than a blank one. The fallback is a high-water mark; see
+    :func:`collect_session_facts`.
+
+    A list with no recognisable milestone in it is a failed read, not a fresh
+    game. The two are identical from here, and the difference matters: the
+    frontier of nothing is "go and get a starter", which is a confident lie to
+    print over a run that is nineteen hours past its starter. Same rule
+    :func:`pokemon_agent.objectives.frontier_objective` applies to the same
+    field, for the same reason.
+
+    Ordered highest rung first, matching what ``reached`` already does, so the
+    fallback render -- the first few ids, when the ladder has no label -- names
+    the same end of the run either way.
+    """
+
+    if live_milestones is None:
+        return tuple(reached), False
+    labels, ordered = ladder_labels()
+    try:
+        held = {str(item) for item in live_milestones}
+    except TypeError:  # a milestones field that is not iterable
+        return tuple(reached), False
+    if not any(milestone_id in labels for milestone_id in held):
+        return tuple(reached), False
+    ranks = {identifier: rank for rank, identifier in enumerate(ordered)}
+    known = [identifier for identifier in held if identifier in labels]
+    known.sort(key=lambda identifier: (-ranks.get(identifier, -1), identifier))
+    return tuple(known), True
+
+
 #: Enough to say which jobs are open without turning the digest into a plan.
 MAX_FRONTIER_SHOWN = 6
 
@@ -1041,9 +1079,19 @@ class SessionFacts:
     run_id: str = ""
     session_index: int = 0
     total_presses: int = 0
-    #: Milestone ids true at the end of the run, baseline included, newest first.
+    #: Milestone ids the game holds *now*, highest rung first. Read off RAM when
+    #: the caller had a reading; only then does it fall. Without one it is the
+    #: receipts' union of baseline and earned, which is a high-water mark -- see
+    #: :data:`peak_count` and :func:`collect_session_facts`.
     done: tuple[str, ...] = ()
     done_count: int = 0
+    #: The most milestones the run ever held at once, from the receipts. Equal to
+    #: ``done_count`` on a run that never handed a rung back, and larger when a
+    #: reload did. The gap is worth saying out loud: the run has already paid for
+    #: those rungs and the next session has to earn them a second time.
+    peak_count: int = 0
+    #: Whether :data:`done` came from a RAM reading rather than from the receipts.
+    live: bool = False
     #: Milestones the finished session earned. Usually empty, and that is the point.
     gained: tuple[str, ...] = ()
 
@@ -1113,7 +1161,19 @@ class SessionFacts:
                 else "Nothing new last session"
             )
             upcoming = f" Next rung: {self.rung_next}." if self.rung_next else ""
-            rows.append(f"- Done ({self.done_count}), {reached}. {gained}.{upcoming}")
+            # A reload that lands on an earlier branch hands rungs back. The run
+            # still paid for them, so the peak is the honest bill -- but the next
+            # session is playing the branch the game is actually on, and telling
+            # it otherwise is how a model was once told to ride a bicycle the
+            # cartridge did not have.
+            lost = (
+                f" The run held {self.peak_count} at its peak and gave "
+                f"{self.peak_count - self.done_count} back to a reload; those are "
+                "not in the game now."
+                if self.live and self.peak_count > self.done_count
+                else ""
+            )
+            rows.append(f"- Done ({self.done_count}), {reached}. {gained}.{upcoming}{lost}")
         if self.frontier:
             rows.append(
                 "- Open now (every milestone whose prerequisites are already met): "
@@ -1228,6 +1288,7 @@ def collect_session_facts(
     session_index: int = 0,
     saves_limit: int = MAX_HANDOFF_SAVES,
     goal: str = "",
+    live_milestones: Optional[Iterable[str]] = None,
 ) -> Optional[SessionFacts]:
     """Read the run back off disk. ``None`` when there is nothing to read.
 
@@ -1235,6 +1296,23 @@ def collect_session_facts(
     before it. It is a wall clock rather than a sequence number on purpose: the
     sequence counter lives in a process a crash takes with it, and the mark file
     on disk does not.
+
+    ``live_milestones`` is what the game holds right now, as
+    :class:`~pokemon_agent.milestones.MilestoneTracker` read it off RAM. Pass it
+    whenever the caller has one. Without it the only source here is the receipts,
+    and the receipts only ever *add* milestones: a rung is written the batch it
+    fires and nothing writes the subtraction when a reload lands on a branch that
+    never had it. Every current-state claim below -- how many are done, the
+    highest rung, the next rung, what is open now -- is therefore a high-water
+    mark unless RAM supplied it. On the run this argument was added for the gap
+    was 21 against 18, and the block claiming 21 opened the next session's first
+    user message: it named "Got the Bicycle" as the highest rung to a game with no
+    bicycle, and put Lt. Surge and the Rocket Hideout on a frontier computed from
+    three rungs the cartridge had handed back.
+
+    What stays on the receipts is what the run *did*: presses spent, milestones
+    gained last session, whiteouts, reloads, tiles walked. Those are history and
+    a reload does not undo them.
     """
 
     if data_dir is None or not run_id:
@@ -1301,7 +1379,8 @@ def collect_session_facts(
     # Static ground truth about where the run ended up. It costs no model call
     # and no server call, so it reaches the next session even when the critic
     # never ran at all - which is the path nine sessions on disk actually took.
-    done = tuple(dict.fromkeys([*earned, *baseline]))
+    reached = tuple(dict.fromkeys([*earned, *baseline]))
+    done, live = _live_or_reached(live_milestones, reached)
     rung_done, rung_next = ladder_position(done)
     open_now = milestone_frontier(done)
     brief = map_brief(ended_map)
@@ -1335,6 +1414,8 @@ def collect_session_facts(
         total_presses=metrics.total_presses,
         done=done,
         done_count=len(done),
+        peak_count=len(reached),
+        live=live,
         gained=tuple(dict.fromkeys(gained)),
         session_presses=session_presses,
         session_batches=batches,

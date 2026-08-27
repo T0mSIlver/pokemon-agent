@@ -1945,3 +1945,176 @@ def test_the_frontier_reaches_the_digest_the_critic_reads():
 
     assert "Open now (every milestone whose prerequisites are already met)" in rendered
     assert "Defeated Misty" in rendered
+
+
+# ---------------------------------------------------------------------------
+# The facts block after a reload takes rungs back
+#
+# The receipts only ever add. A rung is written the batch it fires and nothing
+# writes the subtraction when a reload lands on a branch that never had it, so
+# every current-tense claim in the facts block is a high-water mark unless RAM
+# supplies one. This block is the first user message of the next session, and on
+# the run these tests are drawn from it read "Done (21), highest rung: Got the
+# Bicycle" to a cartridge holding 18 and no bicycle, and put Lt. Surge on a
+# frontier computed from three rungs the game had handed back.
+# ---------------------------------------------------------------------------
+
+
+def reload_receipts(start: float) -> list[dict]:
+    """A run that earns the Cascade badge and a bicycle, then reloads past both."""
+
+    return [
+        {
+            "t": start - 1,
+            "presses": 0,
+            "tool": "run_start",
+            "milestone_count": 8,
+            "baseline_milestones": ["BADGE_BOULDER", "EVENT_BEAT_BROCK"],
+        },
+        {
+            "t": start + 1,
+            "presses": 100,
+            "tool": "action",
+            "map": "Cerulean City",
+            "pos": [20, 10],
+            "moved": 4,
+            "hp": [95, 95],
+            "party_size": 1,
+            "milestones_new": ["EVENT_BEAT_MISTY", "BADGE_CASCADE"],
+            "milestone_count": 10,
+            "milestones_held": 10,
+        },
+        {
+            "t": start + 2,
+            "presses": 100,
+            "tool": "action",
+            "map": "Cerulean City",
+            "pos": [21, 10],
+            "moved": 1,
+            "hp": [95, 95],
+            "party_size": 1,
+            "milestones_new": ["EVENT_GOT_BIKE_VOUCHER", "EVENT_GOT_BICYCLE"],
+            "milestone_count": 12,
+            "milestones_held": 12,
+        },
+        {
+            "t": start + 3,
+            "presses": 0,
+            "tool": "load",
+            "map": "Cerulean City",
+            "pos": [25, 11],
+            "moved": 0,
+            "hp": [95, 95],
+            "party_size": 1,
+            "reloaded": True,
+            # The running maximum holds its peak; only the live count falls.
+            "milestone_count": 12,
+            "milestones_held": 8,
+        },
+    ]
+
+
+#: What the cartridge holds after the reload above: the baseline, and nothing
+#: the run went on to earn.
+AFTER_RELOAD = ["BADGE_BOULDER", "EVENT_BEAT_BROCK"]
+
+
+def test_without_a_ram_reading_the_facts_block_reports_the_high_water_mark(tmp_path: Path):
+    """The bug, pinned. Not a wish: this is all the receipts alone can say."""
+
+    data_dir = tmp_path / "data"
+    run_id = record_run(data_dir, reload_receipts(1000.0))
+
+    facts = collect_session_facts(data_dir=data_dir, run_id=run_id, since_t=1000.0)
+
+    assert facts is not None
+    assert facts.live is False
+    assert facts.done_count == 6
+    assert "BADGE_CASCADE" in facts.done
+    assert "EVENT_GOT_BICYCLE" in facts.done
+
+
+def test_a_ram_reading_beats_the_receipts_for_what_the_game_holds_now(tmp_path: Path):
+    data_dir = tmp_path / "data"
+    run_id = record_run(data_dir, reload_receipts(1000.0))
+
+    facts = collect_session_facts(
+        data_dir=data_dir,
+        run_id=run_id,
+        since_t=1000.0,
+        live_milestones=AFTER_RELOAD,
+    )
+
+    assert facts is not None
+    assert facts.live is True
+    assert facts.done == ("BADGE_BOULDER", "EVENT_BEAT_BROCK")
+    assert facts.done_count == 2
+    # The bill is not rewritten. The run spent those presses and still has.
+    assert facts.peak_count == 6
+    assert facts.total_presses == 200
+
+
+def test_the_rungs_a_reload_took_back_come_off_the_frontier_and_the_ladder(tmp_path: Path):
+    """The half that gave advice, not just the half that gave a number."""
+
+    data_dir = tmp_path / "data"
+    run_id = record_run(data_dir, reload_receipts(1000.0))
+
+    stale = collect_session_facts(data_dir=data_dir, run_id=run_id, since_t=1000.0)
+    live = collect_session_facts(
+        data_dir=data_dir,
+        run_id=run_id,
+        since_t=1000.0,
+        live_milestones=AFTER_RELOAD,
+    )
+
+    assert stale is not None and live is not None
+    # Stale: the ladder walks past Misty, so nothing sends the run back for her.
+    assert "Cascade Badge" not in stale.frontier
+    assert stale.rung_done != live.rung_done
+    # Live: Misty is open work again, which is the whole point. The badge is
+    # one rung behind her and stays off the frontier until she is beaten, which
+    # is the DAG being right rather than the reconciliation being incomplete.
+    assert "Defeated Misty" in live.frontier
+    assert "Cascade Badge" not in live.frontier
+
+
+def test_the_facts_block_says_out_loud_that_a_reload_took_rungs_back(tmp_path: Path):
+    data_dir = tmp_path / "data"
+    run_id = record_run(data_dir, reload_receipts(1000.0))
+
+    facts = collect_session_facts(
+        data_dir=data_dir,
+        run_id=run_id,
+        since_t=1000.0,
+        live_milestones=AFTER_RELOAD,
+    )
+
+    assert facts is not None
+    rendered = "\n".join(facts.lines())
+    assert "Done (2)" in rendered
+    assert "held 6 at its peak and gave 4 back to a reload" in rendered
+    # History is history: the session did earn them, and still says so.
+    assert "BADGE_CASCADE" in rendered
+
+
+def test_a_milestone_list_with_nothing_recognisable_in_it_is_a_failed_read(tmp_path: Path):
+    """An unreadable machine answers ``[]``. That is not a fresh game.
+
+    Believing it would put "go and get a starter" over a run past Mt Moon, so an
+    empty or junk reading falls back to the receipts rather than to zero.
+    """
+
+    data_dir = tmp_path / "data"
+    run_id = record_run(data_dir, reload_receipts(1000.0))
+
+    for reading in ([], ["NOT_A_MILESTONE"], 17):
+        facts = collect_session_facts(
+            data_dir=data_dir,
+            run_id=run_id,
+            since_t=1000.0,
+            live_milestones=reading,
+        )
+        assert facts is not None
+        assert facts.live is False
+        assert facts.done_count == 6

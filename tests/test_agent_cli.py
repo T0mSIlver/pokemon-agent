@@ -1407,3 +1407,74 @@ def test_json_is_still_available_for_a_script(stub, capsys):
     out = capsys.readouterr().out
     assert out.strip().startswith("{")
     assert "actions_executed" in out
+
+
+# ---------------------------------------------------------------------------
+# A run that went backwards
+#
+# `/progress` is two sources in one object: `count`, `furthest`, `latest` and
+# `frontier` are RAM and fall when a reload hands a badge back, while
+# `presses_to` and `attainments` come from the recorder, which takes a max() so
+# a gym won on the fourth attempt costs what all four attempts cost. Both are
+# right. `poke progress --json` hands the whole object to the player model, so
+# the recorder half has to be reconciled before it gets there, or it reads as a
+# description of the game in front of it.
+# ---------------------------------------------------------------------------
+
+
+def _reloaded_progress_payload() -> dict:
+    """One badge held, two rungs the run reached and a reload took back."""
+
+    from pokemon_agent import capabilities
+
+    payload = {
+        "count": 2,
+        "total": 58,
+        "furthest": "EVENT_BEAT_BROCK",
+        "furthest_label": "Defeated Brock",
+        "latest": ["EVENT_BEAT_BROCK"],
+        "presses": 91116,
+        "frontier": [],
+        "presses_to": {
+            "BADGE_BOULDER": 40000,
+            "EVENT_BEAT_BROCK": 41000,
+            "EVENT_GOT_BIKE_VOUCHER": 68745,
+            "EVENT_GOT_BICYCLE": 91116,
+        },
+        "attainments": [
+            {"milestone_id": "BADGE_BOULDER", "label": "Boulder Badge", "presses": 40000},
+            {"milestone_id": "EVENT_BEAT_BROCK", "label": "Defeated Brock", "presses": 41000},
+            {
+                "milestone_id": "EVENT_GOT_BIKE_VOUCHER",
+                "label": "Got the Bike Voucher",
+                "presses": 68745,
+            },
+            {"milestone_id": "EVENT_GOT_BICYCLE", "label": "Got the Bicycle", "presses": 91116},
+        ],
+    }
+    return capabilities.reconcile_run_history(payload, ["BADGE_BOULDER", "EVENT_BEAT_BROCK"])
+
+
+def test_progress_json_never_hands_the_model_a_bicycle_the_game_gave_back(stub, capsys):
+    stub.route("GET", "/progress", _reloaded_progress_payload())
+    assert run(stub, "progress", "--json") == agent_cli.EXIT_OK
+    out = capsys.readouterr().out
+    # The prices survive -- the run did spend them -- but not as things held.
+    assert '"attainments"' in out
+    assert out.count("EVENT_GOT_BICYCLE") == 1
+    assert '"lost"' in out
+
+
+def test_progress_names_the_rungs_a_reload_took_back(stub, capsys):
+    stub.route("GET", "/progress", _reloaded_progress_payload())
+    assert run(stub, "progress") == agent_cli.EXIT_OK
+    out = capsys.readouterr().out
+    assert "2/58" in out
+    assert "not held now" in out
+    assert "Got the Bicycle" in out
+
+
+def test_progress_stays_quiet_when_the_run_never_went_backwards(stub, capsys):
+    stub.route("GET", "/progress", _mt_moon_progress_payload())
+    assert run(stub, "progress") == agent_cli.EXIT_OK
+    assert "not held now" not in capsys.readouterr().out

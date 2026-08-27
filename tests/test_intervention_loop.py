@@ -16,6 +16,7 @@ import pytest
 
 from pokemon_agent.bench.registry import Receipt
 from pokemon_agent.intervention_loop import (
+    ANSWER_LIMIT,
     DEFAULT_RETRY_THINKING,
     DEFAULT_THINKING,
     DEFAULT_TIMEOUT_SECONDS,
@@ -27,6 +28,7 @@ from pokemon_agent.intervention_loop import (
     pi_thinker,
 )
 from pokemon_agent.interventions import (
+    NOTICE_HEADER,
     InterventionPolicy,
     RepeatedFailure,
     StalledMilestones,
@@ -699,12 +701,19 @@ def test_a_server_with_no_frame_yet_gives_nothing(monkeypatch):
 
 
 # ---------------------------------------------------------------------------
-# Refusing an answer the map data contradicts
+# Holding back the part of an answer the map data contradicts
 #
 # `harness_facts` grounds the prompt; until this, nothing checked the reply,
 # and the reply is what reaches the player. Twelve of the first thirteen
 # answers this loop ever delivered named somewhere unreachable the way they
 # said, and the player walked at each one.
+#
+# The check used to answer in one word: a message with a disproved claim in it
+# was dropped whole. Intervention 61 is what that cost — a plan to walk off
+# Route 4's east edge into Cerulean City, binned over the waypoint "(90,14)" on
+# a map that is 90 wide, while the player oscillated on. `revise_advice` cuts
+# the part instead, and the loop refuses only what it cannot cut down to
+# something usable.
 # ---------------------------------------------------------------------------
 
 #: Intervention 9's advice, from the archive, aimed at the map it was given on.
@@ -713,6 +722,11 @@ INVENTED_GEOGRAPHY = (
     "until you find the gap in the wall. You emerge on Route 1. Turn WEST and "
     "walk straight about 45 tiles to Pallet Town, and heal there."
 )
+
+#: One sentence of intervention 7. Everything it says is disproved — Mt Moon 1F
+#: has no door onto Route 2, and Viridian City is five warps away — so nothing
+#: survives the striking and nothing is delivered.
+ALL_INVENTED = "Once outside on Route 2, face west and walk roughly 12–15 tiles to Viridian City."
 
 
 def in_mt_moon() -> list[Receipt]:
@@ -724,41 +738,103 @@ def in_mt_moon() -> list[Receipt]:
     ]
 
 
-async def test_an_answer_the_map_contradicts_never_reaches_the_player():
+async def test_the_part_the_map_contradicts_is_the_only_part_held_back():
     runner, log = make_runner(advise=lambda prompt: INVENTED_GEOGRAPHY)
+
+    record = await runner.after_batch(in_mt_moon(), total_presses=900)
+
+    assert record is not None
+    assert record.delivered is True
+    assert record.struck
+    header, _, body = log["steers"][0].partition("\n\n")
+    assert "In Mt Moon 1F, walk up to the top wall" in body
+    assert "Pallet Town" not in body
+    assert "Route 1" not in body
+    # Cut, not hidden: the header quotes what went, prints the map's answer
+    # beside it, and counts what it had no room to quote.
+    assert '"You emerge on Route 1."' in header
+    assert "Mt Moon 1F leads to Mt Moon B1F, Route 4 and nowhere else" in header
+    assert "The message below is missing 2 sentences of prose." in header
+    assert record.error.startswith("map data contradicts, struck: ")
+
+
+async def test_an_answer_with_nothing_left_after_the_striking_reaches_nobody():
+    runner, log = make_runner(advise=lambda prompt: ALL_INVENTED)
 
     record = await runner.after_batch(in_mt_moon(), total_presses=900)
 
     assert record is not None
     assert record.delivered is False
     assert log["steers"] == []
-    assert any("Pallet Town" in claim for claim in record.refused)
+    assert any("Viridian City" in claim for claim in record.refused)
     assert record.error.startswith("map data contradicts: ")
+    assert record.error.endswith("nothing left after striking it")
 
 
-async def test_a_refusal_is_counted_apart_from_a_failure():
-    """Nothing broke. The thinker was wrong, and the two need different fixes."""
+async def test_the_header_is_paid_for_out_of_the_answers_budget():
+    """`send_operator_message` raises past 1200 characters, so a header on top
+    of a full-length answer would turn a message that was only partly wrong
+    into a failed intervention.
+    """
 
-    runner, _ = make_runner(advise=lambda prompt: INVENTED_GEOGRAPHY)
+    padding = " Keep walking east along the corridor and do not stop to fight."
+    long_answer = INVENTED_GEOGRAPHY + padding * 20
+    assert len(long_answer) > ANSWER_LIMIT
+    runner, log = make_runner(advise=lambda prompt: long_answer)
 
-    await runner.after_batch(in_mt_moon(), total_presses=900)
+    record = await runner.after_batch(in_mt_moon(), total_presses=900)
 
-    status = runner.status()
-    assert status["refused"] == 1
-    assert status["failed"] == 0
-    assert status["delivered"] == 0
+    assert record is not None
+    assert record.delivered is True
+    assert len(log["steers"][0]) <= ANSWER_LIMIT
+    assert log["steers"][0].startswith(NOTICE_HEADER)
+
+
+async def test_a_strike_and_a_refusal_are_counted_apart_from_a_failure():
+    """Nothing broke in either. The thinker was wrong once by a sentence and
+    once by the whole message, and the three need different fixes."""
+
+    struck, _ = make_runner(advise=lambda prompt: INVENTED_GEOGRAPHY)
+    refused, _ = make_runner(advise=lambda prompt: ALL_INVENTED)
+
+    await struck.after_batch(in_mt_moon(), total_presses=900)
+    await refused.after_batch(in_mt_moon(), total_presses=900)
+
+    assert struck.status()["struck"] == 1
+    assert struck.status()["delivered"] == 1
+    assert struck.status()["refused"] == 0
+    assert refused.status()["refused"] == 1
+    assert refused.status()["struck"] == 0
+    assert refused.status()["delivered"] == 0
+    assert struck.status()["failed"] == refused.status()["failed"] == 0
 
 
 async def test_a_refused_answer_is_still_journalled_so_it_can_be_argued_with(tmp_path):
+    journal = tmp_path / "interventions.jsonl"
+    runner, _ = make_runner(advise=lambda prompt: ALL_INVENTED, journal_path=journal)
+
+    await runner.after_batch(in_mt_moon(), total_presses=900)
+
+    written = json.loads(journal.read_text(encoding="utf-8").strip())
+    assert written["delivered"] is False
+    assert written["answer"] == ALL_INVENTED
+    assert written["refused"]
+
+
+async def test_a_struck_answer_is_journalled_whole_beside_what_left_it(tmp_path):
+    """The journal keeps the answer as written, so the strike can be argued
+    with the same way a refusal can."""
+
     journal = tmp_path / "interventions.jsonl"
     runner, _ = make_runner(advise=lambda prompt: INVENTED_GEOGRAPHY, journal_path=journal)
 
     await runner.after_batch(in_mt_moon(), total_presses=900)
 
     written = json.loads(journal.read_text(encoding="utf-8").strip())
-    assert written["delivered"] is False
+    assert written["delivered"] is True
     assert written["answer"] == INVENTED_GEOGRAPHY
-    assert written["refused"]
+    assert written["refused"] == []
+    assert any("Pallet Town" in piece for piece in written["struck"])
 
 
 async def test_an_answer_the_map_agrees_with_goes_through_untouched():

@@ -868,6 +868,15 @@ def cmd_progress(args: argparse.Namespace, url: str) -> int:
         print(f"furthest: {payload['furthest_label']}")
     for label in payload.get("latest") or []:
         print(f"  reached {label}")
+    # Rungs this run reached and the game no longer holds, because a save was
+    # reloaded past them. Named rather than silently dropped: a run that went
+    # backwards is the one fact a model rereading its own progress most needs,
+    # and the alternative -- leaving them in the count -- is how a session was
+    # told it had a bicycle three rungs after a reload took it back.
+    lost = payload.get("lost") or []
+    if lost:
+        names = ", ".join(str(item.get("label") or item.get("milestone_id")) for item in lost)
+        print(f"reached earlier in this run, not held now: {names}")
     open_now = payload.get("frontier") or []
     if open_now:
         print(f"open now ({len(open_now)}), pick one:")

@@ -1868,6 +1868,53 @@ def progress_payload(summary: dict, presses: int) -> dict:
     }
 
 
+def reconcile_run_history(
+    payload: Mapping[str, Any],
+    held: Optional[Collection[str]],
+) -> dict:
+    """``/progress`` with its two halves made to agree about the present tense.
+
+    The payload is mixed on purpose. ``count``, ``furthest``, ``latest`` and
+    ``frontier`` are RAM and fall when a reload hands a badge back;
+    ``presses_to`` and ``attainments`` come from the run recorder, which takes a
+    ``max()`` so that a gym won on the fourth attempt costs what all four
+    attempts cost. Both are right. What is wrong is shipping them side by side
+    with nothing saying which tense each is in, to a reader that will take the
+    whole object as a description of the game in front of it: ``poke progress
+    --json`` hands the player model every field here, and the same recorder list
+    read as present tense had a thinking session telling the player to ride a
+    bicycle three rungs after a reload took it back.
+
+    So the prices stay -- the run did spend them -- but the rungs RAM no longer
+    confirms move to ``lost``, where nothing can mistake them for kit the player
+    is carrying. Same treatment ``server._intervention_milestone_summary``
+    gives the same list for the same reason.
+
+    *held* is every milestone id the game holds now, from
+    :meth:`~pokemon_agent.milestones.MilestoneTracker.snapshot`. ``None`` means
+    the caller never read it, which is not the same answer as "the game holds
+    none": the payload comes back untouched, and no ``lost`` key is added, so a
+    caller that cannot check does not get to imply that it did.
+    """
+
+    result = dict(payload)
+    if held is None:
+        return result
+    current = frozenset(str(item) for item in held)
+    attainments = [dict(item) for item in (result.get("attainments") or [])]
+    kept = [item for item in attainments if str(item.get("milestone_id")) in current]
+    lost = [item for item in attainments if str(item.get("milestone_id")) not in current]
+    result["attainments"] = kept
+    result["presses_to"] = {
+        key: value for key, value in (result.get("presses_to") or {}).items() if str(key) in current
+    }
+    # Always present once the caller has read RAM, empty list and all: a reader
+    # that has to distinguish "checked, nothing lost" from "never checked"
+    # cannot do it if the key only shows up on the bad days.
+    result["lost"] = lost
+    return result
+
+
 # ---------------------------------------------------------------------------
 # /gamedata
 #
@@ -2179,6 +2226,7 @@ __all__ = [
     "observation_from_bundle",
     "plan_within",
     "progress_payload",
+    "reconcile_run_history",
     "route_payload",
     "simulate_payload",
     "walk_to",

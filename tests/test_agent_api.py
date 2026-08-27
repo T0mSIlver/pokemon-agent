@@ -874,3 +874,84 @@ def test_default_port_comes_from_the_environment(monkeypatch):
     monkeypatch.delenv("PORT")
     assert agent_api.Client().url == f"http://localhost:{agent_api.DEFAULT_PORT}"
     assert agent_api.Client(url="http://box:1234/").url == "http://box:1234"
+
+
+# ---------------------------------------------------------------------------
+# Reconciling the recorder's half of /progress against RAM
+#
+# The recorder's attainment list is a lifetime record and never falls, which is
+# right for pricing a run and wrong for describing the game in front of the
+# reader. `reconcile_run_history` keeps the prices and moves the rungs RAM no
+# longer confirms into `lost`, where nothing can read them as kit the player is
+# carrying.
+# ---------------------------------------------------------------------------
+
+RELOADED_PAYLOAD = {
+    "count": 1,
+    "total": 58,
+    "presses": 91116,
+    "presses_to": {"BADGE_BOULDER": 40000, "EVENT_GOT_BICYCLE": 91116},
+    "attainments": [
+        {"milestone_id": "BADGE_BOULDER", "label": "Boulder Badge", "presses": 40000},
+        {"milestone_id": "EVENT_GOT_BICYCLE", "label": "Got the Bicycle", "presses": 91116},
+    ],
+}
+
+
+def test_a_rung_the_game_gave_back_moves_out_of_the_attainments():
+    from pokemon_agent import capabilities
+
+    result = capabilities.reconcile_run_history(RELOADED_PAYLOAD, ["BADGE_BOULDER"])
+
+    assert [item["milestone_id"] for item in result["attainments"]] == ["BADGE_BOULDER"]
+    assert [item["milestone_id"] for item in result["lost"]] == ["EVENT_GOT_BICYCLE"]
+    assert result["presses_to"] == {"BADGE_BOULDER": 40000}
+    # The RAM half is not touched, and neither is the bill.
+    assert result["count"] == 1
+    assert result["presses"] == 91116
+
+
+def test_a_run_that_never_went_backwards_loses_nothing_and_says_so():
+    from pokemon_agent import capabilities
+
+    result = capabilities.reconcile_run_history(
+        RELOADED_PAYLOAD, ["BADGE_BOULDER", "EVENT_GOT_BICYCLE"]
+    )
+
+    assert len(result["attainments"]) == 2
+    # Present and empty, not absent: a reader has to be able to tell "checked,
+    # nothing lost" from "never checked", and it cannot if the key only turns
+    # up on the bad days.
+    assert result["lost"] == []
+
+
+def test_without_a_ram_reading_nothing_is_declared_lost():
+    from pokemon_agent import capabilities
+
+    result = capabilities.reconcile_run_history(RELOADED_PAYLOAD, None)
+
+    assert len(result["attainments"]) == 2
+    assert "lost" not in result
+
+
+def test_reconciling_never_mutates_the_payload_it_was_handed():
+    from pokemon_agent import capabilities
+
+    capabilities.reconcile_run_history(RELOADED_PAYLOAD, ["BADGE_BOULDER"])
+
+    assert len(RELOADED_PAYLOAD["attainments"]) == 2
+    assert len(RELOADED_PAYLOAD["presses_to"]) == 2
+
+
+def test_progress_carries_the_rungs_a_reload_took_back(stub, poke):
+    from pokemon_agent import capabilities
+
+    stub.route(
+        "GET",
+        "/progress",
+        capabilities.reconcile_run_history(RELOADED_PAYLOAD, ["BADGE_BOULDER"]),
+    )
+    progress = poke.progress()
+
+    assert [item["label"] for item in progress.lost] == ["Got the Bicycle"]
+    assert "not held now" in str(progress)

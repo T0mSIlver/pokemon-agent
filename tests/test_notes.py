@@ -374,3 +374,42 @@ def test_a_missing_context_still_writes_a_block(tmp_path):
     written = (supervisor.workspace_dir / notes.NOTES_FILENAME).read_text(encoding="utf-8")
     assert written.startswith(notes.BLOCK_BEGIN)
     assert f"- Milestones: {notes.UNREAD}" in written
+
+
+# ---------------------------------------------------------------------------
+# The RAM reading the facts block needs, off the state payload
+#
+# `_notes_progress` above prefers RAM for the one number in NOTES.md. That fix
+# stopped at the notes; the same receipts-derived block is also the next
+# session's first user message and the critic's digest, and those carry the
+# highest rung, the next rung and the whole open-work frontier. All of them come
+# from `collect_session_facts`, so the RAM reading has to reach it too, and this
+# is the only thing that knows where in the state payload it lives.
+# ---------------------------------------------------------------------------
+
+
+def test_the_live_milestone_ids_are_read_off_the_state_payload(tmp_path):
+    supervisor = _supervisor(tmp_path)
+
+    held = ["BADGE_BOULDER", "EVENT_BEAT_BROCK"]
+    assert supervisor._live_milestone_ids({"game_state": {"milestones": held}}) == held
+    # An emulator that answered is an emulator that answered, even with nothing.
+    assert supervisor._live_milestone_ids({"game_state": {"milestones": []}}) == []
+
+
+def test_a_state_payload_with_no_milestone_read_in_it_says_none_not_empty(tmp_path):
+    """``None`` and ``[]`` are different answers and must stay different.
+
+    The server answers an unreadable machine with an empty list. Read as "a
+    fresh game" that would put "go and get a starter" on top of a run past Mt
+    Moon, so a missing read has to be distinguishable from an empty one all the
+    way down to `collect_session_facts`, which treats them differently.
+    """
+
+    supervisor = _supervisor(tmp_path)
+
+    assert supervisor._live_milestone_ids(None) is None
+    assert supervisor._live_milestone_ids({}) is None
+    assert supervisor._live_milestone_ids({"game_state": None}) is None
+    assert supervisor._live_milestone_ids({"game_state": {}}) is None
+    assert supervisor._live_milestone_ids({"game_state": {"milestones": "BADGE_BOULDER"}}) is None

@@ -254,10 +254,13 @@ def test_handoff_objective_comes_from_the_live_frontier():
     # Several real options, each a milestone whose prerequisites are met.
     assert "Defeated Misty" in current["summary"]
     assert "Got the Bike Voucher" in current["summary"]
+    # Where it is earned comes first, then what it opens.
     assert (
-        "Got HM05 Flash (opens dark caves, once the Boulder Badge allows it)"
-        in (current["summary"])
+        "Got HM05 Flash [Route 2 Gate, 6 hops] "
+        "(opens dark caves, once the Boulder Badge allows it)" in (current["summary"])
     )
+    # The map the state says the player is on is the map distances are from.
+    assert "map-graph distance from Vermilion City" in current["summary"]
     # Not a promise about geography.
     assert "not a claim that any of them can be reached on foot" in current["summary"]
     # Behind Cut, which needs a badge this run has not got: not on the frontier,

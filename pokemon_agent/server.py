@@ -374,6 +374,14 @@ MAX_LOADS_PER_SAVE = 3
 #: worked.
 _loads_since_milestone: dict[str, int] = {}
 
+#: Simulations answered since the last receipt was written. `POST /sim` presses
+#: nothing and wrote nothing, so the run's record could only ever see the ones
+#: it refused: 124 refusals in the leg that won the Cascade badge, against 1,340
+#: actual calls — 63% of everything the model did, and half its wall clock,
+#: invisible. Counting them costs no extra write because the number rides on the
+#: next receipt something else was already writing.
+_sims_since_receipt: int = 0
+
 #: The milestone set the last receipt saw, so the counter above can tell a rung
 #: being reached from a rung merely being present. ``None`` until the first
 #: receipt, and deliberately not an empty set: a run resumed from a save holding
@@ -1932,8 +1940,14 @@ async def _write_receipt(
     landing seen on the next overworld frame arrive here two calls apart, in
     that order, whichever endpoints produced them.
     """
+    global _sims_since_receipt
     _watch_for_whiteout(bundle, reloaded=reloaded)
     _note_milestones_for_load_guard(milestone_ids)
+    if _sims_since_receipt:
+        # Absent when nothing was simulated, so a batch that did no planning is
+        # distinguishable from one this counter never watched.
+        extra = {**(extra or {}), "sims": _sims_since_receipt}
+        _sims_since_receipt = 0
     recorder = _run_recorder
     if recorder is not None and recorder.run_id is not None:
         try:
@@ -1961,12 +1975,43 @@ def _intervention_state_summary(bundle: Optional[dict]) -> str:
     return "\n".join(parts) or "(no observation available)"
 
 
-def _intervention_milestone_summary() -> str:
+def _intervention_milestone_summary(live: Optional[Sequence[str]] = None) -> str:
+    """What the run has spent, and what the game still holds for it.
+
+    Those are two different questions and the recorder only answers the first.
+    Its attainments are a lifetime record and never fall, which is right for
+    pricing a run and wrong for telling a thinking session what the player has.
+    After a reload took the Cascade badge back, this block still read
+
+        Got the Bike Voucher at 68745 presses
+        Got the Bicycle at 91116 presses
+
+    to a branch holding neither, and the thinking session answered "The bike is
+    yours; use it on Route 5 to cover ground you cannot yet cross on foot."
+    That was delivered, under a header telling it these facts are authoritative.
+
+    So the costs stay -- they are real, the run did spend them -- but only for
+    rungs RAM still confirms. A rung the run reached and no longer holds is
+    named as exactly that, because a session asking "why am I stuck" is better
+    off knowing the run went backwards than believing it did not.
+    """
+
     recorder = _run_recorder
     if recorder is None or recorder.run_id is None:
         return ""
     lines = [f"{recorder.total_presses} presses spent so far in run {recorder.run_id}."]
-    tail = recorder.attainments[-4:]
+    attainments = list(recorder.attainments)
+    if live is not None:
+        held = frozenset(live)
+        lost = [item for item in attainments if item.get("milestone_id") not in held]
+        attainments = [item for item in attainments if item.get("milestone_id") in held]
+        if lost:
+            names = ", ".join(item["label"] for item in lost[-4:])
+            lines.append(
+                f"Reached earlier in this run and no longer held, so a save was "
+                f"reloaded past them: {names}."
+            )
+    tail = attainments[-4:]
     if tail:
         lines.append("Most recent milestones, with what they cost:")
         lines += [f"  {item['label']} at {item['presses']} presses" for item in tail]
@@ -2007,7 +2052,9 @@ async def _run_intervention_check(bundle: Optional[dict]) -> None:
             state=state,
             total_presses=recorder.total_presses,
             state_summary=_intervention_state_summary(bundle),
-            milestone_summary=_intervention_milestone_summary(),
+            milestone_summary=_intervention_milestone_summary(
+                await _run_emulator_sync(_milestone_ids_sync)
+            ),
             observation=bundle,
         )
     except Exception as exc:  # noqa: BLE001 — never let this take the server with it
@@ -3835,6 +3882,18 @@ async def mart_buy(req: MartBuyRequest):
             "screen_text": bundle.get("screen_text"),
         },
     )
+    # This drives a menu, so it spends real buttons, and until now it recorded
+    # none of them: a $3,500 purchase of ten Poke Balls and five Potions left no
+    # trace in the run at all, and its presses were missing from the total the
+    # whole project is measured in.
+    await _write_receipt(
+        tool="mart",
+        presses=outcome.get("presses") or 0,
+        bundle=bundle,
+        outcome=outcome,
+        milestone_ids=outcome.get("milestones"),
+        extra={"intent": {"buy": req.item, "count": req.count}},
+    )
     return {**outcome, **_observation_summary(bundle)}
 
 
@@ -3869,6 +3928,17 @@ async def pokecenter_heal():
             "state_after": result["state_after"],
             "screen_text": bundle.get("screen_text"),
         },
+    )
+    # Healing is the errand the player runs most, and it was invisible in the
+    # record for exactly as long as buying was. `poke heal` was measured at
+    # 17-24 presses against 129 done by hand; not one of them was ever counted.
+    await _write_receipt(
+        tool="heal",
+        presses=outcome.get("presses") or 0,
+        bundle=bundle,
+        outcome=outcome,
+        milestone_ids=outcome.get("milestones"),
+        extra={"intent": {"heal": True}},
     )
     return {**outcome, **_observation_summary(bundle)}
 
@@ -4671,6 +4741,8 @@ async def sim(req: SimRequest):
     # is the whole of what a repeat proves.
     answer = json.dumps(payload, sort_keys=True, default=str)
     _repeat_guard.record(key, (), (), answer)
+    global _sims_since_receipt
+    _sims_since_receipt += 1
     return payload
 
 
@@ -4716,6 +4788,19 @@ def _milestone_summary_sync() -> dict:
     return MilestoneTracker(_reader).summary()
 
 
+def _milestone_summary_and_ids_sync() -> tuple[dict, tuple[str, ...]]:
+    """The scoreboard and the set behind it, from one tracker and one lock.
+
+    Two reads would be two moments, and the whole point of reconciling the
+    recorder's prices against RAM is that the score and the set describing it
+    cannot be talking about different frames.
+    """
+
+    tracker = MilestoneTracker(_reader)
+    snapshot = tracker.snapshot()
+    return tracker.summary(), tuple(sorted(snapshot))
+
+
 def _progress_presses() -> int:
     """Buttons spent by the *run*, which outlives this process and its sessions.
 
@@ -4738,7 +4823,7 @@ async def progress():
             detail="Milestone tracking needs a Pokemon Red memory reader.",
         )
     try:
-        summary = await _run_emulator_sync(_milestone_summary_sync)
+        summary, held = await _run_emulator_sync(_milestone_summary_and_ids_sync)
     except Exception as exc:  # noqa: BLE001
         raise HTTPException(status_code=503, detail=f"Milestones unreadable: {exc}") from exc
     payload = capabilities.progress_payload(summary, _progress_presses())
@@ -4748,6 +4833,11 @@ async def progress():
         # keeps its meaning — it is just the run's number now, not this
         # process's. Empty until a run is open, never absent.
         payload.update(_run_recorder.progress_payload())
+        # Those two are a lifetime record and never fall, which is right for
+        # pricing a run and wrong sitting beside a RAM `count` in one object:
+        # `poke progress --json` hands the whole thing to the player model.
+        # Rungs the game no longer holds keep their price, under `lost`.
+        payload = capabilities.reconcile_run_history(payload, held)
     return payload
 
 

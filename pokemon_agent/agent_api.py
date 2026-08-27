@@ -923,6 +923,11 @@ class Progress:
     presses: int = 0
     #: Milestones whose preconditions the game already satisfies, ladder order.
     frontier: list[dict] = field(default_factory=list)
+    #: Rungs the run reached and the game no longer holds, a reload having landed
+    #: on a branch without them. Empty when nothing was lost; also empty when the
+    #: server could not read RAM, which is why the count above is the one to
+    #: trust for "how far along am I".
+    lost: list[dict] = field(default_factory=list)
     raw: dict = field(default_factory=dict)
 
     @classmethod
@@ -935,6 +940,7 @@ class Progress:
             latest=list(payload.get("latest") or []),
             presses=payload.get("presses") or 0,
             frontier=list(payload.get("frontier") or []),
+            lost=list(payload.get("lost") or []),
             raw=payload,
         )
 
@@ -944,6 +950,11 @@ class Progress:
             head += f"\nfurthest: {self.furthest_label}"
         for entry in self.frontier:
             head += f"\nopen: {entry.get('label')}"
+        if self.lost:
+            names = ", ".join(
+                str(item.get("label") or item.get("milestone_id")) for item in self.lost
+            )
+            head += f"\nreached earlier in this run, not held now: {names}"
         return head
 
 

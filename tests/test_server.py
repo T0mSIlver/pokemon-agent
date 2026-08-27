@@ -2473,6 +2473,11 @@ def test_progress_on_a_fresh_game_is_honest_about_zero(server_app):
         "run_id": None,
         "presses_to": {},
         "attainments": [],
+        # Empty rather than absent, and the difference carries: absent means the
+        # prices were never checked against RAM, `[]` means they were and none
+        # had been handed back. A reader that cannot tell those apart cannot
+        # tell a reconciled ledger from an unreconciled one.
+        "lost": [],
     }
 
 
@@ -3768,3 +3773,118 @@ def test_a_dialog_stuck_on_words_already_read_is_refused(server_app):
 
     assert response.status_code == 400
     assert "poke act b:2" in response.json()["detail"]
+
+
+# ---------------------------------------------------------------------------
+# What the thinking session is told the run has
+#
+# The recorder's attainments are a lifetime record and never fall, which is
+# right for pricing a run and wrong for describing a game. After a reload took
+# the Cascade badge back, the block below still told a thinking session the run
+# held the Bicycle, and the session answered "The bike is yours; use it on
+# Route 5". That was delivered.
+# ---------------------------------------------------------------------------
+
+
+def _recorder_with(attainments, presses=91116):
+    from pokemon_agent.run_recorder import RunRecorder
+
+    recorder = RunRecorder.__new__(RunRecorder)
+    recorder.run_id = "20260825T224823Z-983b"
+    recorder.total_presses = presses
+    recorder.attainments = list(attainments)
+    return recorder
+
+
+BIKE_RUN = [
+    {"milestone_id": "EVENT_GOT_HM01", "label": "Got HM01 Cut", "presses": 65600},
+    {"milestone_id": "EVENT_SS_ANNE_LEFT", "label": "The S.S. Anne set sail", "presses": 65737},
+    {"milestone_id": "EVENT_GOT_BIKE_VOUCHER", "label": "Got the Bike Voucher", "presses": 68745},
+    {"milestone_id": "EVENT_GOT_BICYCLE", "label": "Got the Bicycle", "presses": 91116},
+]
+
+
+def test_the_thinking_session_is_not_told_about_a_bicycle_the_branch_lost(monkeypatch):
+    from pokemon_agent import server as server_module
+
+    monkeypatch.setattr(server_module, "_run_recorder", _recorder_with(BIKE_RUN))
+    held = ["EVENT_GOT_HM01", "EVENT_SS_ANNE_LEFT"]
+
+    summary = server_module._intervention_milestone_summary(held)
+
+    # The costs section is what the session reads as "the run has this". The
+    # Bicycle may still be named above it, as something reloaded past.
+    costs = summary.split("Most recent milestones, with what they cost:")[1]
+    assert "Bicycle" not in costs
+    assert "Bike Voucher" not in costs
+    assert "Got HM01 Cut at 65600 presses" in costs
+
+
+def test_a_rung_the_run_reached_and_lost_is_named_as_lost(monkeypatch):
+    """Better to know the run went backwards than to believe it did not."""
+    from pokemon_agent import server as server_module
+
+    monkeypatch.setattr(server_module, "_run_recorder", _recorder_with(BIKE_RUN))
+
+    summary = server_module._intervention_milestone_summary(["EVENT_GOT_HM01"])
+
+    assert "no longer held" in summary
+    assert "a save was reloaded past them" in summary
+    assert "Got the Bicycle" in summary
+
+
+def test_the_presses_the_run_spent_are_reported_whatever_it_still_holds(monkeypatch):
+    """The bill is the recorder's question and the recorder answers it correctly."""
+    from pokemon_agent import server as server_module
+
+    monkeypatch.setattr(server_module, "_run_recorder", _recorder_with(BIKE_RUN))
+
+    assert "91116 presses spent" in server_module._intervention_milestone_summary([])
+
+
+def test_without_a_live_reading_the_block_is_unchanged(monkeypatch):
+    from pokemon_agent import server as server_module
+
+    monkeypatch.setattr(server_module, "_run_recorder", _recorder_with(BIKE_RUN))
+
+    summary = server_module._intervention_milestone_summary(None)
+
+    assert "Got the Bicycle at 91116 presses" in summary
+    assert "no longer held" not in summary
+
+
+# ---------------------------------------------------------------------------
+# The verbs that spent buttons and recorded none
+#
+# `mart_buy` and `pokecenter_heal` both drive a menu, so both press real
+# buttons, and neither wrote a receipt. A $3,500 purchase of ten Poke Balls and
+# five Potions left no trace in the run at all, and every heal the player ever
+# ran was missing from the total this project measures itself in. `sim` presses
+# nothing, but wrote a receipt only when refused: 124 refusals were recorded
+# against 1,340 actual calls in the leg that won the Cascade badge.
+# ---------------------------------------------------------------------------
+
+
+def test_a_batch_says_how_many_plans_were_walked_on_paper_first(server_app):
+    run_id = open_run()
+
+    for _ in range(3):
+        assert server_app.http.post("/sim", json={"actions": ["walk_up"]}).status_code == 200
+    server_app.http.post("/action", json={"actions": ["walk_left"]})
+
+    entries = [entry for entry in receipts(server_app, run_id) if entry.get("tool") == "action"]
+    assert entries[-1]["sims"] == 3
+
+
+def test_the_sim_count_resets_so_it_is_never_double_counted(server_app):
+    run_id = open_run()
+
+    server_app.http.post("/sim", json={"actions": ["walk_up"]})
+    server_app.http.post("/action", json={"actions": ["walk_left"]})
+    server_app.http.post("/action", json={"actions": ["walk_left"]})
+
+    entries = [entry for entry in receipts(server_app, run_id) if entry.get("tool") == "action"]
+    assert entries[-2]["sims"] == 1
+    # Absent, not zero: a batch that planned nothing is not a batch this counter
+    # never watched.
+    assert "sims" not in entries[-1]

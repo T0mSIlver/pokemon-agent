@@ -1358,7 +1358,10 @@ class PiSupervisor:
         # baseline receipt on disk and the milestone line is not blank on the
         # one session most likely to guess at it; before the task, so the child
         # process cannot read `NOTES.md` until it is true.
-        self._refresh_notes(self._session_start_context, self._current_session_facts())
+        self._refresh_notes(
+            self._session_start_context,
+            self._current_session_facts(self._session_start_context),
+        )
         self._task = asyncio.create_task(self._run_loop(resume=False, force_single_turn=False))
         return self.state_snapshot()
 
@@ -1793,7 +1796,8 @@ class PiSupervisor:
             # pass because the critic is skippable and this is not: a session
             # that errored is exactly the one whose notes are furthest from the
             # game.
-            self._refresh_notes(await self._collect_critic_context(), self._current_session_facts())
+            end_of_session = await self._collect_critic_context()
+            self._refresh_notes(end_of_session, self._current_session_facts(end_of_session))
             # The watchdog starts the next session the moment the status turns
             # terminal, so the critique has to finish first, under `critiquing`.
             terminal_status, terminal_reason = self.status, self.status_reason
@@ -1897,6 +1901,26 @@ class PiSupervisor:
         recorder = self.run_recorder
         return Path(recorder.data_dir) if recorder is not None else None
 
+    @staticmethod
+    def _live_milestone_ids(context: Optional[JsonDict]) -> Optional[list[str]]:
+        """Every milestone the game holds now, off RAM, or ``None`` if unread.
+
+        ``None`` and ``[]`` are different answers and both reach the facts block
+        intact: the server answers an unreadable machine with an empty list, and
+        an empty list read as "a fresh game" would put "go and get a starter" on
+        top of a run that is past Mt Moon. The state payload carries the ids
+        because :func:`pokemon_agent.server._get_state_dict` puts them there for
+        the objective engine; the facts block wants the same read.
+        """
+
+        state = (context or {}).get("game_state")
+        if not isinstance(state, dict):
+            return None
+        held = state.get("milestones")
+        if not isinstance(held, (list, tuple)):
+            return None
+        return [str(item) for item in held]
+
     def _load_previous_session_facts(self) -> Optional[Any]:
         """Read the finished session's receipts, before this one's mark replaces it.
 
@@ -1921,6 +1945,7 @@ class PiSupervisor:
                 since_t=float(started) if isinstance(started, (int, float)) else None,
                 session_index=int(mark.get("session_index") or 0),
                 goal=self.goal,
+                live_milestones=self._live_milestone_ids(self._session_start_context),
             )
         except Exception as exc:  # noqa: BLE001 — facts are a nicety, never a blocker
             self._push_recent_event(
@@ -1997,8 +2022,14 @@ class PiSupervisor:
             session_index=recorder.sessions if recorder is not None else 1,
         )
 
-    def _current_session_facts(self) -> Optional[Any]:
-        """The same receipts read for the session that is ending right now."""
+    def _current_session_facts(self, context: Optional[JsonDict] = None) -> Optional[Any]:
+        """The same receipts read for the session that is ending right now.
+
+        *context* is a state read from the server, and the milestone ids in it are
+        the only thing here that knows what the game holds rather than what the
+        run once held. Every caller has one; passing it is not optional in
+        practice, and the default exists so a test can leave it out.
+        """
 
         critic = _critic_module()
         recorder = self.run_recorder
@@ -2009,6 +2040,7 @@ class PiSupervisor:
                 since_t=self._session_started_t,
                 session_index=recorder.sessions if recorder is not None else 1,
                 goal=self.goal,
+                live_milestones=self._live_milestone_ids(context),
             )
         except Exception as exc:  # noqa: BLE001
             self._push_recent_event(
@@ -2096,7 +2128,7 @@ class PiSupervisor:
     def _build_critic_digest(self, end_context: JsonDict, status: str, reason: str) -> str:
         critic = _critic_module()
         start_context = self._session_start_context or {}
-        facts = self._current_session_facts()
+        facts = self._current_session_facts(end_context)
         calls = critic.tool_calls_from_stream(self.stream_entries)
         objective = str(end_context.get("objective") or "")
         notes = critic.read_notes(self.workspace_dir)

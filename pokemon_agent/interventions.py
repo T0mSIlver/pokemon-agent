@@ -1815,6 +1815,308 @@ def refusal_note(claims: Sequence[FalseClaim]) -> str:
     return "map data contradicts: " + "; ".join(str(claim) for claim in claims[:4])
 
 
+# ---------------------------------------------------------------------------
+# Striking part of a message instead of dropping all of it
+#
+# `check_advice` says what is wrong; it does not say what to do about it, and
+# the caller did the bluntest possible thing — one disproved claim dropped the
+# whole answer. Intervention 61 (2026-08-27T15:08:03Z) is the case that settled
+# it: a plan to walk off Route 4's east edge into Cerulean City, correct in
+# every particular except the waypoint "(90,14)", one tile past a map that is
+# 90 wide. A thinking session was spent, the answer was binned over the
+# off-by-one, and the player went on oscillating for another 400 presses.
+#
+# Interventions are numbered by their line in `interventions.jsonl` here. The
+# measurements below are that file at 2026-08-27T15:49Z: 64 firings, 51 of
+# which produced an answer, 10 of those with something the map data disproves.
+#
+# `critic.strike_false_claims` already does the proportionate thing for a
+# handoff: cut the sentences, keep the rest. Advice needs two rules a handoff
+# does not, and that is why this lives here rather than being borrowed:
+#
+#   * A plan is enumerated and a hole in it is followed literally. Striking
+#     the middle sentence of "3. Press right 24 tiles -> (90,14). You cross the
+#     east edge into Cerulean City." leaves a step that promises an arrival and
+#     names no button. Whole steps go, never part of one.
+#   * A plan that loses most of itself is not that plan minus a detail. Over
+#     the 10 answers in the archive the map data contradicts, the survivor is
+#     either most of the message (67-91%, eight of them) or a third of it
+#     (39% for intervention 7, 35% for 22) — and both of those leftovers tell
+#     the player to arrive somewhere the struck part was the route to: "Go to
+#     the Pokemon Center in the top of town" with the town gone. Nothing lands
+#     between the two groups, so half is the line.
+#
+# What survives is delivered under a header that quotes what went and what the
+# map says instead. That is not politeness: a payload that elides a fact while
+# reading as complete is the failure this project has paid for twice, and a
+# quoted claim with its refutation beside it is strictly more than the player
+# had either way — the original message told it to walk to a tile that does
+# not exist, and deletion alone would have left it wondering where step 3 was.
+# ---------------------------------------------------------------------------
+
+#: Sentence ends, inside a line. Lines stay whole so a step keeps its number
+#: and a paragraph break survives a strike from the line above it. Same rule as
+#: `critic._SENTENCE_RE`, for the same reason.
+_SENTENCE_END_RE = re.compile(r"(?<=[.!?])\s+")
+
+#: A line the player will follow as one instruction: "3. Press right", "3)
+#: Press right", "Step 3: press right", "- press right". The bullet forms need
+#: the space, or the markdown the thinker writes in — "**Commit to the east
+#: exit**" — reads as a bullet and gets struck whole.
+_ENUMERATED_RE = re.compile(r"^\s*(?:(?:step\s+)?(\d+)\s*[.):]|[-*+•]\s)", re.IGNORECASE)
+
+#: How much of a message has to survive the striking for the remainder to be
+#: worth delivering. Measured, not chosen: see the comment above.
+MIN_SURVIVING_SHARE = 0.5
+
+#: What the header may cost. An answer is cut to ``ANSWER_LIMIT`` — 1200
+#: characters — because past that the player skims it, and a header that
+#: quotes four long steps back at it would be most of that budget. So the
+#: quotes are spelled out until the room runs out and the rest is counted:
+#: the line that says which steps are missing is never the part that is
+#: dropped, because that is the line the payload would otherwise be lying by.
+NOTICE_LIMIT = 500
+MAX_NOTICE_QUOTE = 160
+
+#: How many claims a journal line names, the same count :func:`refusal_note`
+#: uses for the same reason.
+MAX_NOTE_CLAIMS = 4
+
+
+@dataclass(frozen=True)
+class Strike:
+    """One piece of a message that was removed, and what disproved it."""
+
+    #: What was cut, as the message wrote it: one sentence, or a whole
+    #: enumerated step when the sentence was inside one. A step's number is not
+    #: repeated here — it is in ``label``, where the notice can name it.
+    text: str
+    #: "step 3" where the message numbered it, "" for plain prose.
+    label: str
+    claims: tuple[FalseClaim, ...] = ()
+
+    def __str__(self) -> str:
+        return f"{self.label}: {self.text}" if self.label else self.text
+
+
+@dataclass(frozen=True)
+class Revision:
+    """What to hand the player, and what was taken out of it.
+
+    ``text`` empty means deliver nothing — the answer is refused, exactly as it
+    was before this existed, and ``refusal`` says why in one journal line.
+    """
+
+    text: str
+    body: str
+    claims: tuple[FalseClaim, ...] = ()
+    strikes: tuple[Strike, ...] = ()
+    refusal: str = ""
+
+    @property
+    def refused(self) -> bool:
+        return not self.text
+
+    @property
+    def struck(self) -> bool:
+        return bool(self.strikes)
+
+
+def _sentence_spans(line: str) -> list[tuple[int, int]]:
+    """``(start, end)`` for each sentence in one line, whitespace-only dropped."""
+
+    spans: list[tuple[int, int]] = []
+    start = 0
+    for gap in _SENTENCE_END_RE.finditer(line):
+        spans.append((start, gap.start()))
+        start = gap.end()
+    spans.append((start, len(line)))
+    return [(a, b) for a, b in spans if line[a:b].strip()]
+
+
+def _claim_spans(line: str, claims: Sequence[FalseClaim]) -> list[tuple[int, int, FalseClaim]]:
+    """Where in *line* each claim's quoted text sits.
+
+    Whole words only. A distance claim says "Route 2", and a message that talks
+    about Route 24 is not the message being disproved.
+    """
+
+    found: list[tuple[int, int, FalseClaim]] = []
+    for claim in claims:
+        said = claim.said
+        if not said:
+            continue
+        at = line.find(said)
+        while at != -1:
+            if _standalone(line, at, len(said)):
+                found.append((at, at + len(said), claim))
+            at = line.find(said, at + 1)
+    return found
+
+
+#: The opening of the strike header. Deliberately prose and deliberately not a
+#: bracketed tag: this line is prepended to text a *model* wrote, and a header
+#: shaped like `[harness] ...` is a shape that text could contain too. The
+#: player would then have no way to tell the harness's disclosure from a
+#: sentence the thinking session made up, which is the exact confusion the
+#: disclosure exists to prevent. Anything in the body that opens this way is
+#: defanged before the two are joined; see :func:`revise_advice`.
+NOTICE_HEADER = "The game's own map data contradicts part of the message below, and it was removed:"
+
+
+def removal_notice(strikes: Sequence[Strike]) -> str:
+    """The header the player reads above a message something was cut from."""
+
+    if not strikes:
+        return ""
+    lines = [NOTICE_HEADER]
+    spelled = 0
+    for strike in strikes:
+        quote = strike.text
+        if len(quote) > MAX_NOTICE_QUOTE:
+            quote = quote[:MAX_NOTICE_QUOTE].rstrip() + "…"
+        item = [f'- {strike.label + ": " if strike.label else ""}"{quote}"']
+        # Two at most. One sentence can be wrong in two ways — a door that is
+        # not there, onto a map that is four warps off — and the second is
+        # usually the one that says where the player actually is.
+        item += [f"  map data: {claim}" for claim in strike.claims[:2]]
+        if spelled and sum(len(line) + 1 for line in lines + item) > NOTICE_LIMIT:
+            break
+        lines += item
+        spelled += 1
+    if spelled < len(strikes):
+        lines.append(f"- and {len(strikes) - spelled} more.")
+    # What the reader would otherwise have to work out from the gap: which
+    # numbers are missing, and whether anything outside the list went too. A
+    # message that reads as whole while a step of it is gone is the elision
+    # this project has twice paid for.
+    steps = [strike.label for strike in strikes if strike.label]
+    loose = len(strikes) - len(steps)
+    said = []
+    if steps:
+        named = steps[0] if len(steps) == 1 else ", ".join(steps[:-1]) + f" or {steps[-1]}"
+        said.append(f"has no {named}")
+    if loose:
+        said.append(f"is missing {loose} sentence{'s' if loose > 1 else ''} of prose")
+    lines.append(f"The message below {' and '.join(said)}. Nothing else was changed.")
+    return "\n".join(lines)
+
+
+def strike_note(strikes: Sequence[Strike]) -> str:
+    """What was cut, short enough to sit in a journal line beside the answer."""
+
+    # One claim can cost two sentences — "You emerge on Route 1. Turn WEST" is
+    # a single claim about both of them — and printing it twice says the
+    # thinker was wrong twice.
+    reasons = dict.fromkeys(str(claim) for strike in strikes for claim in strike.claims[:1])
+    return "map data contradicts, struck: " + "; ".join(list(reasons)[:MAX_NOTE_CLAIMS])
+
+
+def revise_advice(
+    text: str,
+    *,
+    here: str,
+    maps: Optional[MapFacts] = None,
+    max_hops: int = MAX_ADVICE_HOPS,
+) -> Revision:
+    """*text* with what the map data disproves cut out of it, or nothing at all.
+
+    Three outcomes, in the order they are decided:
+
+    * nothing disproved — the message goes through untouched;
+    * something disproved and enough left over — the remainder goes through
+      under :func:`removal_notice`, which quotes what went;
+    * everything else — refused, and ``refusal`` says which way it failed:
+      nothing to cut, nothing left, or more than half the message gone. "The
+      map contradicted it" no longer distinguishes a message that was binned
+      from one that was trimmed, so the journal line has to.
+    """
+
+    claims = check_advice(text, here=here, maps=maps, max_hops=max_hops)
+    if not claims:
+        return Revision(text=text, body=text)
+
+    kept: list[str] = []
+    strikes: list[Strike] = []
+    for line in text.splitlines():
+        hits = _claim_spans(line, claims)
+        spans = _sentence_spans(line)
+        if not hits or not spans:
+            kept.append(line)
+            continue
+        item = _ENUMERATED_RE.match(line)
+        if item:
+            # The whole step, so the player never follows a numbered
+            # instruction with its verb cut out of it. The number itself moves
+            # to the label, where the notice can say which step is missing.
+            numbered = item.group(1)
+            strikes.append(
+                Strike(
+                    text=(line[item.end() :] if numbered else line).strip(),
+                    label=f"step {numbered}" if numbered else "",
+                    claims=tuple(dict.fromkeys(claim for _, _, claim in hits)),
+                )
+            )
+            continue
+        survivors: list[str] = []
+        for start, end in spans:
+            overlapping = tuple(
+                dict.fromkeys(claim for at, to, claim in hits if at < end and to > start)
+            )
+            if overlapping:
+                strikes.append(Strike(text=line[start:end].strip(), label="", claims=overlapping))
+            else:
+                survivors.append(line[start:end])
+        remainder = " ".join(piece for piece in survivors if piece.strip()).strip()
+        if remainder:
+            kept.append(remainder)
+
+    body = "\n".join(kept).strip()
+    note = refusal_note(claims)
+    if not strikes:
+        # The checker quotes what it disproved and a strike has to find that
+        # text again to cut it, which fails where the quoting normalised
+        # something — a tile written "(99, 99)" is quoted back without the
+        # space. A claim with nothing to cut is the old behaviour, unchanged.
+        return Revision(
+            text="",
+            body=body,
+            claims=claims,
+            refusal=f"{note}; no sentence to strike it from",
+        )
+    if not body:
+        return Revision(
+            text="",
+            body=body,
+            claims=claims,
+            strikes=tuple(strikes),
+            refusal=f"{note}; nothing left after striking it",
+        )
+    share = len(body) / len(text.strip() or body)
+    if share < MIN_SURVIVING_SHARE:
+        return Revision(
+            text="",
+            body=body,
+            claims=claims,
+            strikes=tuple(strikes),
+            refusal=f"{note}; striking it takes {round((1 - share) * 100)}% of the message",
+        )
+    # The body is text a model wrote and the header is the harness speaking. If
+    # the body can open a line the same way, the player cannot tell which is
+    # which, and the one line whose whole job is to be trusted is the one that
+    # becomes forgeable. Cheap to prevent, so prevent it.
+    safe_body = "\n".join(
+        f"> {line}" if line.lstrip().startswith(NOTICE_HEADER[:40]) else line
+        for line in body.splitlines()
+    )
+    return Revision(
+        text=f"{removal_notice(strikes)}\n\n{safe_body}",
+        body=body,
+        claims=claims,
+        strikes=tuple(strikes),
+    )
+
+
 __all__ = [
     "Trigger",
     "Detector",
@@ -1834,6 +2136,14 @@ __all__ = [
     "FalseClaim",
     "check_advice",
     "refusal_note",
+    "revise_advice",
+    "removal_notice",
+    "NOTICE_HEADER",
+    "NOTICE_LIMIT",
+    "strike_note",
+    "Revision",
+    "Strike",
+    "MIN_SURVIVING_SHARE",
     "MAX_ADVICE_HOPS",
     "standing_on",
     "harness_facts",
