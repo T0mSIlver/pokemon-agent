@@ -31,6 +31,17 @@ if [[ -n "$PORT_PID" ]]; then
   exit 1
 fi
 
+# The server's own comment said this variable is "what the launch scripts
+# actually set". No script set it, so the intervention loop had never run: one
+# 34-hour run went 61,349 presses and 20.5 hours with the detectors silent,
+# including a single stuck loop that cost 12,317 presses in fourteen minutes and
+# that `circling` would have caught on its first window.
+#
+# Export it here rather than defaulting it on in code, because the default is a
+# deliberate one -- firing an intervention swaps the player's whole KV cache to
+# disk, and a live run is somebody's data. Set INTERVENTIONS=0 to opt out.
+export POKEMON_AGENT_INTERVENTIONS="${INTERVENTIONS:-1}"
+
 nohup uv run pokemon-agent serve \
   --rom "$ROM_PATH" \
   --port "$PORT" \

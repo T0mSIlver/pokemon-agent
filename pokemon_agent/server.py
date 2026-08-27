@@ -178,10 +178,17 @@ class GameConfig(BaseModel):
     #: Whether the harness may stop the player and think. Off unless something
     #: says otherwise, because firing an intervention swaps the player's whole
     #: KV cache out to disk and a live run is somebody's data. ``None`` defers to
-    #: the ``POKEMON_AGENT_INTERVENTIONS`` environment variable, which is what the
-    #: launch scripts actually set; the flag is read once, at startup, and can be
-    #: turned on for a run already in flight because the run itself is adopted
-    #: from disk rather than restarted.
+    #: the ``POKEMON_AGENT_INTERVENTIONS`` environment variable; the flag is read
+    #: once, at startup, and can be turned on for a run already in flight because
+    #: the run itself is adopted from disk rather than restarted.
+    #:
+    #: This comment used to claim the launch scripts set that variable. None of
+    #: them did, so the whole intervention loop had never run: a 34-hour run went
+    #: 61,349 presses and 20.5 hours with every detector silent, through a stuck
+    #: loop that cost 12,317 presses in fourteen minutes and that `circling`
+    #: would have caught on its first window. `scripts/start_pokemon_server.sh`
+    #: exports it now, and this note stays because a default nobody sets is
+    #: indistinguishable from a feature nobody wrote.
     interventions_enabled: Optional[bool] = None
     slot_base_url: str = DEFAULT_SLOT_BASE_URL
     slot_model: str = DEFAULT_SLOT_MODEL
