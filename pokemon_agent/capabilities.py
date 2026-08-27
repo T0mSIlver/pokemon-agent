@@ -1413,30 +1413,12 @@ def frontier_payload(snapshot: dict, explored: Optional[dict], seen: Collection[
 #: Fallback only. The Red reader now hands over the live ``battle_struct`` stats
 #: for both sides, which are the numbers the engine itself multiplies; this
 #: estimate exists for readers that cannot (FireRed) and for a battle frame read
-#: before the struct is populated.
+#: before the struct is populated. It is worse still on the player's side, where
+#: it cannot see the badge boost or Rage's accumulating Attack.
 #:
-#: It is a bad estimate and the measurement says so. Across 123 auto-saved battle
-#: frames from one run it got 196 of 492 enemy stats wrong, because it can see
-#: neither DVs nor stat stages: a Geodude whose Defense the agent had just cut
-#: with Leer read 22 against an actual 14, a 57% overstatement of how well it
-#: resists. It is worse still on the player's side, where it cannot see the
-#: badge boost or Rage's accumulating Attack.
-DEFAULT_DV = 8
-
-
-def _estimated_stats(mon: dict) -> dict:
-    base = ((gamedata.species(str(mon.get("species") or "")) or {}).get("base")) or {}
-    level = max(1, int(mon.get("level") or 1))
-
-    def stat(key: str) -> int:
-        return ((int(base.get(key, 0)) + DEFAULT_DV) * 2 * level) // 100 + 5
-
-    return {
-        "attack": stat("atk"),
-        "defense": stat("def"),
-        "speed": stat("spd"),
-        "special": stat("spc"),
-    }
+#: The formula and the measurement behind it live in ``gamedata`` now, because
+#: ``party`` needs the same estimate for a trainer's Pokemon one room away.
+_estimated_stats = gamedata.estimated_stats
 
 
 def _combatant(mon: dict) -> dict:

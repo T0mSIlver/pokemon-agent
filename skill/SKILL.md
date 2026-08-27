@@ -200,6 +200,35 @@ vs Onix L14 43 HP (Rock/Ground)
 
 Run from a fight you cannot win — `incoming` close to your `hp`, nothing that damages it, a trainer's Pokemon far above your level — with `poke run`. Fleeing costs a turn and the experience you would have won.
 
+## The gym ahead
+
+Walk into a gym whose badge you do not hold and the answer carries one more line: the leader's team, and the hardest hit your party has against each of it.
+
+```
+ahead Misty: Staryu L18 best Cut ~2 turns | Starmie L21 best Cut ~3 turns
+  1 Pokemon: a faint here is a whiteout
+```
+
+- Every party member and every move with PP left, not just the lead: the answer to a Water gym is rarely in slot 1.
+- Turn counts are estimates. Species and level come from the game's own trainer table, the leader's stats do not, so they are marked `~`.
+- `nothing you carry damages it` means exactly that, and when it is true of the whole team the line says the gym cannot be won as the party stands. Go and change the party, not the button.
+- It is printed when you arrive and when a fight starts, not on every frame. If you want it again, walk out and back in.
+
+One run lost this fight forty times with a move that was halved against Water while a neutral one sat in the same move list.
+
+## Learning a move over another one
+
+A Pokemon with four moves cannot learn a fifth without deleting one, and in Gen 1 **an HM move can never be deleted afterwards**. So the frames of that prompt carry a line saying what the press would cost:
+
+```
+learn Dig (100) replaces one of Charmeleon's 4 moves (Cut, Growl, Ember, Leer): only Cut 50, Ember 40 do damage
+learn A here deletes Ember (40) for Dig (100). Charmeleon would be left attacking with Cut 50, Dig 100
+```
+
+The number after each move is its power; `0` is a status move that damages nothing. Read the second form before pressing A -- it names the move under the cursor, which is the one that press deletes.
+
+`adialog` is refused while that prompt is up, for the same reason it is refused in a battle: mashing A says YES and deletes whatever the cursor was left on. Move the cursor and press A deliberately, or press B to back out.
+
 ## Warps
 
 Warps in Pokemon Red are counter-intuitive, and this is the single most common way to get stuck. Standing next to a doorway does nothing. To use a warp:

@@ -101,6 +101,35 @@ ADDR_TEXT_PROGRESS = 0xC4F2  # approximate; nonzero when text printing
 ADDR_WINDOW_Y = 0xFF4A  # hWY / rWY, window Y position (0x90 = hidden)
 ADDR_WINDOW_X = 0xFF4B  # hWX / rWX, window X position
 
+# -- The screen, as words --
+#
+# wTileMap is the 20x18 grid of tiles the game has actually drawn, and Gen 1's
+# text encoding *is* its font tile numbering, so the same GEN1_ENCODING that
+# decodes a nickname out of the party struct decodes the dialogue box off the
+# screen. Verified against the ROM: driving TM28 onto a four-move Charmeleon in
+# PyBoy reads back "Which move should / be forgotten?" over "CUT GROWL EMBER
+# LEER", exactly as rendered.
+#
+# The harness has had no on-screen text at all until now -- ``screen_text`` in
+# every bundle is the fixed placeholder "Dialog box visible (waiting for
+# input)", 36,300 bytes of it across 660 payloads in one run.
+ADDR_TILE_MAP = 0xC3A0  # wTileMap
+TILE_MAP_WIDTH = 20
+TILE_MAP_HEIGHT = 18
+
+# -- Learning a move --
+#
+# Both routes into a fifth move -- a TM/HM out of the bag and a level-up in
+# battle -- go through the same prompt, and this byte holds the move being
+# taught for every frame of it. Measured: it reads 91 (Dig) from "Booted up an
+# HM!" through "Which move should be forgotten?" while TM28 is being used, and
+# still held 15 (Cut) from the last teach before that, so it is scratch and
+# means nothing on its own. It is only ever read while the screen says a learn
+# is happening, and what it names is checked against the moves the Pokemon
+# already knows before it is printed.
+ADDR_MOVE_BEING_LEARNED = 0xD0E0
+ADDR_WHICH_POKEMON = 0xCF92  # wWhichPokemon, the party slot a menu is acting on
+
 # -- Pokedex --
 ADDR_DEX_OWNED = 0xD2F7  # 19 bytes (152 bits, only 151 used)
 ADDR_DEX_SEEN = 0xD30A
@@ -163,6 +192,18 @@ def _build_encoding_table() -> Dict[int, str]:
     # digits 0-9: 0xF6..0xFF
     for i, c in enumerate("0123456789"):
         t[0xF6 + i] = c
+    # The six tiles that sit immediately after lowercase z: one accented vowel
+    # and five apostrophe ligatures, each a single tile. Without them "can't"
+    # decodes as "can t" with a hole in it and "POKeMON" loses its e -- which is
+    # exactly how the move-learn prompt "But, CHAR can't learn more" read on
+    # screen before they were added, and why matching it by its words missed a
+    # frame of the prompt.
+    t[0xBA] = "é"
+    t[0xBB] = "'d"
+    t[0xBC] = "'l"
+    t[0xBD] = "'s"
+    t[0xBE] = "'t"
+    t[0xBF] = "'v"
     # punctuation / specials
     t[0x7F] = " "
     t[0xE0] = "'"
@@ -1676,6 +1717,47 @@ class RedBlueMemoryReader(GameMemoryReader):
             "window_x": window_x,
             "printing": printing,
             "waiting_for_input": waiting_for_input,
+        }
+
+    def read_screen_text(self) -> str:
+        """The words on screen right now, decoded off ``wTileMap``.
+
+        One line per tile row, trailing blanks trimmed, blank rows kept so a
+        menu column and the dialogue box under it stay apart. Tiles that are not
+        letters -- the map, the sprites, the box borders -- come back as spaces,
+        so an overworld frame decodes to nothing and only a box has words in it.
+        """
+        raw = self.emu.read_range(ADDR_TILE_MAP, TILE_MAP_WIDTH * TILE_MAP_HEIGHT)
+        rows = []
+        for index in range(TILE_MAP_HEIGHT):
+            row = raw[index * TILE_MAP_WIDTH : (index + 1) * TILE_MAP_WIDTH]
+            rows.append("".join(GEN1_ENCODING.get(byte, " ") for byte in row).rstrip())
+        return "\n".join(rows).strip("\n")
+
+    def read_move_learn(self) -> Optional[Dict[str, Any]]:
+        """The move-replacement prompt on screen, or None when there is none.
+
+        Detected from the words themselves rather than from a flag byte: a
+        sweep of the whole WRAM block across the flow found no single byte that
+        is set for all of it and clear before and after, and the six phrases
+        below cover every frame from "CHAR is trying to learn DIG!" to "Which
+        move should be forgotten?".
+
+        ``cursor`` is only meaningful on the forget list, where ``wMaxMenuItem``
+        reads 3 and ``wCurrentMenuItem`` tracks the highlighted move: pressing
+        down took it 0 -> 1 -> 2 against the arrow on screen.
+        """
+        from pokemon_agent.party import is_learn_prompt
+
+        text = self.read_screen_text()
+        if not is_learn_prompt(text):
+            return None
+        incoming_id = self.emu.read_u8(ADDR_MOVE_BEING_LEARNED)
+        return {
+            "screen_text": text,
+            "incoming": MOVE_NAMES.get(incoming_id),
+            "slot": self.emu.read_u8(ADDR_WHICH_POKEMON),
+            "cursor": self.emu.read_u8(ADDR_CURRENT_MENU_ITEM),
         }
 
     def read_coordinates(self) -> tuple[int, int]:

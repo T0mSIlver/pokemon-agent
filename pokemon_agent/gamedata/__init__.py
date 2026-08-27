@@ -139,6 +139,44 @@ def effectiveness(move_type: str, defender_types: Sequence[str]) -> float:
 # Damage
 # ===================================================================
 
+#: Fallback only, for a Pokemon whose live stats nobody can read — a FireRed
+#: battler, a battle frame read before the struct is populated, or a trainer's
+#: Pokemon that is still one room away.
+#:
+#: It is a bad estimate and the measurement says so. Across 123 auto-saved
+#: battle frames from one run it got 196 of 492 enemy stats wrong, because it
+#: can see neither DVs nor stat stages: a Geodude whose Defense the agent had
+#: just cut with Leer read 22 against an actual 14, a 57% overstatement of how
+#: well it resists. Anything printed from it is printed with a ``~``.
+DEFAULT_DV = 8
+
+
+def estimated_stats(mon: Dict[str, Any]) -> Dict[str, int]:
+    """Attack/Defense/Speed/Special from the species table and a level."""
+    base = (species(str(mon.get("species") or "")) or {}).get("base") or {}
+    level = max(1, int(mon.get("level") or 1))
+
+    def stat(key: str) -> int:
+        return ((int(base.get(key, 0)) + DEFAULT_DV) * 2 * level) // 100 + 5
+
+    return {
+        "attack": stat("atk"),
+        "defense": stat("def"),
+        "speed": stat("spd"),
+        "special": stat("spc"),
+    }
+
+
+def estimated_hp(mon: Dict[str, Any]) -> int:
+    """Max HP from the species table and a level.
+
+    HP has its own Gen 1 formula — the level is added again and the constant is
+    10, not 5 — so it is not ``estimated_stats`` with another key.
+    """
+    base = (species(str(mon.get("species") or "")) or {}).get("base") or {}
+    level = max(1, int(mon.get("level") or 1))
+    return ((int(base.get("hp", 0)) + DEFAULT_DV) * 2 * level) // 100 + level + 10
+
 
 def _stat(mon: Dict[str, Any], *names: str) -> int:
     """Read a stat from either a memory-reader mon or a plain dict."""
