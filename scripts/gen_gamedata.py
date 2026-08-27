@@ -987,6 +987,126 @@ def build_shops(
 
 
 # ===================================================================
+# services.json
+# ===================================================================
+#
+# shops.json answers "what is for sale here". This answers the wider question
+# it is a special case of: which person in this room does something for you,
+# and where do they stand. `poke map` in a Poke Center printed the room size,
+# the two warps and the nearest unexplored tile in a room that was already 100%
+# seen -- it never mentioned the nurse, and one 34-hour run spent 4,152 presses
+# across 116 Center visits hunting for her.
+#
+# The join is over what a script *does*, not over which room it is in or which
+# sprite is drawn. Every map script carries a text-pointer table --
+# `dw_const CeruleanPokecenterNurseText, TEXT_CERULEANPOKECENTER_NURSE` -- and
+# the object_event that runs that text carries the same TEXT_ constant, so a
+# body classified as a service names an exact tile. Classifying by sprite would
+# have worked here by luck (all thirteen healers are SPRITE_NURSE) and would
+# have been wrong the moment a service was drawn as anything else.
+
+#: A text body that is nothing but one of these macros is that service.
+SERVICE_MACROS = {"script_pokecenter_nurse": "heal"}
+
+#: A `text_asm` body that calls one of these is that service too. Silph Co 9F's
+#: nurse is hand-written rather than the macro -- she calls `predef HealParty`
+#: inside a conditional -- and she heals exactly like the other twelve.
+SERVICE_CALLS = {"predef HealParty": "heal"}
+
+#: What the whole game holds, checked rather than assumed: eleven Poke Center
+#: nurses, the Indigo Plateau lobby nurse and the Silph Co 9F nurse. If a
+#: regeneration finds a different number the classifier has drifted and the
+#: agent would be pointed at the wrong tile, so it fails instead.
+EXPECTED_SERVICES = {"heal": 13}
+
+
+def parse_map_scripts(fetcher: Fetcher) -> Dict[str, Dict[str, str]]:
+    """Per map label, the service each of its text bodies provides.
+
+    ``{"CeruleanPokecenter": {"TEXT_CERULEANPOKECENTER_NURSE": "heal"}}``.
+    Bodies that are plain dialogue -- ``text_far`` -- and bodies whose asm does
+    nothing we have a name for are left out entirely.
+    """
+    names = [n for n in fetcher.listdir("scripts") if n.endswith(".asm")]
+    texts = fetcher.many([f"scripts/{n}" for n in names])
+    pointer = re.compile(r"dw_const\s+(\w+),\s*(TEXT_\w+)")
+    out: Dict[str, Dict[str, str]] = {}
+    for path, text in texts.items():
+        label = Path(path).stem
+        lines = joined_lines(text)
+        consts = {m.group(1): m.group(2) for line in lines for m in [pointer.search(line)] if m}
+        if not consts:
+            continue
+        # Bodies, in source order: a label at column 0 opens one and the next
+        # such label closes it. Local labels (`.beat_giovanni`) are body, not a
+        # new body, which is what keeps Silph Co 9F's branches together.
+        bodies: Dict[str, List[str]] = {}
+        current: Optional[str] = None
+        for line in lines:
+            if not line.startswith((" ", "\t")) and line.rstrip(":") != line:
+                current = line.rstrip(":")
+                bodies[current] = []
+            elif current is not None:
+                bodies[current].append(line.strip())
+        found: Dict[str, str] = {}
+        for body_label, const in consts.items():
+            body = [entry for entry in bodies.get(body_label, ()) if entry]
+            if not body:
+                continue
+            service = SERVICE_MACROS.get(body[0].split()[0])
+            if service is None:
+                joined = "\n".join(body)
+                service = next(
+                    (name for call, name in SERVICE_CALLS.items() if call in joined), None
+                )
+            if service:
+                found[const] = service
+        if found:
+            out[label] = found
+    return out
+
+
+def build_services(
+    fetcher: Fetcher,
+    maps: MapNames,
+    objects: Dict[str, Dict[str, Any]],
+    report: List[str],
+) -> Dict[str, List[Dict[str, Any]]]:
+    """Every map's service NPCs, with the tile each one stands on.
+
+    The tile is where the *person* is, not where you stand to talk to them: a
+    Center's counter is a talk-over tile, so the nurse at (3,1) is reached from
+    (3,3). Which tiles those are depends on live collision, so the server works
+    them out the same way it does for a mart clerk rather than freezing a guess
+    here.
+    """
+    scripts = parse_map_scripts(fetcher)
+    out: Dict[str, List[Dict[str, Any]]] = {}
+    counts: Dict[str, int] = {}
+    for label, by_const in sorted(scripts.items()):
+        if label not in maps.label_to_const:
+            continue  # a script for a map with no header of its own
+        entries = []
+        for const, service in sorted(by_const.items()):
+            at = [
+                [obj["x"], obj["y"]]
+                for obj in objects.get(label, {}).get("objects", ())
+                if str(obj.get("text") or "") == const
+            ]
+            if len(at) != 1:
+                raise GenError(
+                    f"{const} on {maps.label(label)}: matched {len(at)} objects, expected 1"
+                )
+            entries.append({"service": service, "text": const, "at": at[0]})
+            counts[service] = counts.get(service, 0) + 1
+        out[maps.label(label)] = entries
+    if counts != EXPECTED_SERVICES:
+        raise GenError(f"services found {counts}, expected {EXPECTED_SERVICES}")
+    report.append(f"services: {', '.join(f'{n} {kind}' for kind, n in sorted(counts.items()))}")
+    return out
+
+
+# ===================================================================
 # species.json
 # ===================================================================
 
@@ -1233,6 +1353,7 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
     encounters = build_encounters(fetcher, names, parse_slot_chances(fetcher))
     items = build_items(fetcher, objects, maps, names)
     shops = build_shops(fetcher, maps, names, objects, report)
+    services = build_services(fetcher, maps, objects, report)
     species = build_species(fetcher, names)
     moves = build_moves(fetcher, names)
     types = build_types(fetcher, names, report)
@@ -1243,6 +1364,7 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
         ("encounters.json", with_sha(sha, encounters), f"{len(encounters)} maps"),
         ("items.json", with_sha(sha, items), f"{len(items)} maps with items"),
         ("shops.json", with_sha(sha, shops), f"{len(shops)} marts"),
+        ("services.json", with_sha(sha, services), f"{len(services)} maps with a service"),
         ("species.json", with_sha(sha, species), f"{len(species)} species"),
         ("moves.json", with_sha(sha, moves), f"{len(moves)} moves"),
         ("types.json", with_sha(sha, types), f"{len(types['types'])} types"),

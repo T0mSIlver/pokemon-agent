@@ -1182,6 +1182,35 @@ def _shop_line(state: dict) -> Optional[str]:
     return f"${payload['money']}: " + ", ".join(rows) + " — poke buy <item> <n>"
 
 
+def _heal_line(state: dict) -> Optional[str]:
+    """Where the nurse is and whether she is needed, on every frame in her room.
+
+    Thirteen maps in 223 have a nurse, so this is absent everywhere else, and on
+    those thirteen it is the only line that says what standing there is for.
+    Before it, `poke map` in a 100%-explored Poke Center answered with the room
+    size, the two warps back out and the nearest unexplored tile; across 116
+    Center visits one run spent 4,152 presses and 7% of them moved it forward.
+
+    It says the tile even when nothing needs healing, because the second failure
+    was the mirror of the first: 68% of the presses inside Mt. Moon's Center
+    were spent re-walking tiles already stood on, and no payload ever told the
+    agent the trip was already done.
+    """
+    map_name = (state.get("map") or {}).get("map_name")
+    try:
+        healer = capabilities.healer_at(map_name)
+        if healer is None:
+            return None
+        needs = capabilities.heal_shortfall(state.get("party") or [])
+    except Exception:  # noqa: BLE001 — perception must never fail a state read
+        return None
+    x, y = (healer.get("at") or (None, None))[:2]
+    where = f"nurse ({x},{y})"
+    if not needs:
+        return f"{where}: the party is already full — nothing to heal"
+    return f"{where}: " + "; ".join(needs) + " — poke heal"
+
+
 def _observation_summary(bundle: Optional[dict]) -> dict:
     """Where the player is and what it may do next — the whole model-facing payload.
 
@@ -1229,6 +1258,11 @@ def _observation_summary(bundle: Optional[dict]) -> dict:
     shop = _shop_line(state)
     if shop:
         summary["shop"] = shop
+
+    # Who heals here, if anyone does. See _heal_line.
+    heal = _heal_line(state)
+    if heal:
+        summary["heal"] = heal
 
     # What press_a would hit. "object" is an NPC or item ball, "sign" is readable.
     # Anything else is scenery and not worth a button.
@@ -1282,7 +1316,7 @@ def _observation_summary(bundle: Optional[dict]) -> dict:
         # battle`, which is the payload contradicting itself. 26 bytes there,
         # 70 on Route 4, on every frame of every fight. The exit has not moved
         # and the overworld answer names it again the moment the fight ends.
-        for key in ("on_warp", "warp", "faces", "exits", "shop"):
+        for key in ("on_warp", "warp", "faces", "exits", "shop", "heal"):
             summary.pop(key, None)
         # Facing goes with them, and says so: see FACING_UNREAD_IN_BATTLE. It is
         # the one field here that a battle frame holds a *wrong* value for.
@@ -2499,18 +2533,21 @@ def _battle_catch_sync(named: Optional[str]) -> dict:
 PURCHASE_PROMPT_MAX_PRESSES = 4
 
 
-def _mart_stand_tiles_sync(counter: dict) -> list[tuple[int, int]]:
-    """The tiles you can talk to this counter's clerk from, nearest first.
+def _counter_stand_tiles(at: Sequence[int]) -> list[tuple[int, int]]:
+    """The tiles you can talk to someone standing at *at* from, nearest first.
 
     A clerk stands *behind* the till, and the till itself is a talk-over tile —
     solid to walk on, transparent to an A press. So the tile to stand on is two
     out, not one: measured in Vermilion Mart, where the clerk is at (0,5), the
-    counter fills (1,5) and the purchase happens from (2,5) facing left.
+    counter fills (1,5) and the purchase happens from (2,5) facing left. A Poke
+    Center nurse is the same shape, measured the same way: she is at (3,1)
+    behind a counter on row 2, and every heal in the save library happened from
+    (3,3) facing up.
     Distance 1 is offered too because nothing guarantees every counter in the
     game is one tile deep, and both directions on both axes because the town
     marts face right off their till and the Celadon floors face down off theirs.
     """
-    x, y = int(counter["at"][0]), int(counter["at"][1])
+    x, y = int(at[0]), int(at[1])
     return [
         (x + dx * step, y + dy * step)
         for step in (2, 1)
@@ -2518,13 +2555,67 @@ def _mart_stand_tiles_sync(counter: dict) -> list[tuple[int, int]]:
     ]
 
 
-def _mart_face(clerk: tuple[int, int], stand: tuple[int, int]) -> str:
-    """The direction that turns the player from *stand* toward the clerk."""
-    if clerk[0] < stand[0]:
+def _face_toward(target: tuple[int, int], stand: tuple[int, int]) -> str:
+    """The direction that turns the player from *stand* toward *target*."""
+    if target[0] < stand[0]:
         return "left"
-    if clerk[0] > stand[0]:
+    if target[0] > stand[0]:
         return "right"
-    return "up" if clerk[1] < stand[1] else "down"
+    return "up" if target[1] < stand[1] else "down"
+
+
+def _walk_to_counter_sync(people: Sequence[Sequence[int]], what: str) -> tuple[int, int]:
+    """Walk to whichever of *people* is nearest and turn to face them.
+
+    Shared by the mart clerk and the Center nurse because it was never about
+    marts: what the harness could not do was put the player in front of a named
+    person. Returns the tile now being faced, so the caller can say where it is.
+    """
+    snapshot = _navigation_snapshot_sync()
+    if not snapshot:
+        raise HTTPException(
+            status_code=503, detail="The map is not readable right now, so no walk can be planned."
+        )
+    collision = capabilities.collision_from(snapshot, _explored_grid(snapshot.get("map_id")))
+    start = _player_coord_sync()
+    if start is None:
+        raise HTTPException(status_code=503, detail="The player's tile is not readable right now.")
+    walkable = collision.get("walkable") or set()
+    best: Optional[tuple[list[str], tuple[int, int], tuple[int, int]]] = None
+    for at in people:
+        who = (int(at[0]), int(at[1]))
+        for stand in _counter_stand_tiles(who):
+            # Only a tile you can stand on. `plan_within` will happily plan a
+            # walk that *ends by stepping into* an unwalkable goal, which is the
+            # right answer for a door and the wrong one here: the till is solid,
+            # so that plan stops one tile short and the walk reads as a failure.
+            if stand not in walkable:
+                continue
+            plan = capabilities.plan_within(collision, start, stand)
+            if plan is None:
+                continue
+            if best is None or len(plan) < len(best[0]):
+                best = (plan, stand, who)
+    if best is None:
+        raise HTTPException(
+            status_code=409,
+            detail=(
+                f"No walkable tile beside {what} on this map can be reached from "
+                f"{start}. Walk toward them and ask again."
+            ),
+        )
+    plan, stand, who = best
+    for action in plan:
+        _execute_action_sync(action)
+    if _player_coord_sync() != stand:
+        raise HTTPException(
+            status_code=409,
+            detail=f"The walk to {what} stopped at {_player_coord_sync()}, not {stand}.",
+        )
+    # Face them. Walking into the counter is refused by collision, which is
+    # exactly what turns the player without moving them.
+    _execute_action_sync(f"walk_{_face_toward(who, stand)}")
+    return who
 
 
 def _resolve_stock_item(wanted: str, ids: Sequence[int]) -> int:
@@ -2584,50 +2675,7 @@ def _open_mart_counter_sync(shop: dict) -> None:
     and across 33 hours the run walked into a mart and bought nothing. The
     clerk's tile is in the game data, so the walk is a short search around it.
     """
-    snapshot = _navigation_snapshot_sync()
-    if not snapshot:
-        raise HTTPException(
-            status_code=503, detail="The map is not readable right now, so no walk can be planned."
-        )
-    collision = capabilities.collision_from(snapshot, _explored_grid(snapshot.get("map_id")))
-    start = _player_coord_sync()
-    if start is None:
-        raise HTTPException(status_code=503, detail="The player's tile is not readable right now.")
-    walkable = collision.get("walkable") or set()
-    best: Optional[tuple[list[str], tuple[int, int], tuple[int, int]]] = None
-    for counter in shop.get("counters") or ():
-        clerk = (int(counter["at"][0]), int(counter["at"][1]))
-        for stand in _mart_stand_tiles_sync(counter):
-            # Only a tile you can stand on. `plan_within` will happily plan a
-            # walk that *ends by stepping into* an unwalkable goal, which is the
-            # right answer for a door and the wrong one here: the till is solid,
-            # so that plan stops one tile short and the walk reads as a failure.
-            if stand not in walkable:
-                continue
-            plan = capabilities.plan_within(collision, start, stand)
-            if plan is None:
-                continue
-            if best is None or len(plan) < len(best[0]):
-                best = (plan, stand, clerk)
-    if best is None:
-        raise HTTPException(
-            status_code=409,
-            detail=(
-                "No walkable tile beside any counter on this map can be reached from "
-                f"{start}. Walk toward the till and ask again."
-            ),
-        )
-    plan, stand, clerk = best
-    for action in plan:
-        _execute_action_sync(action)
-    if _player_coord_sync() != stand:
-        raise HTTPException(
-            status_code=409,
-            detail=f"The walk to the counter stopped at {_player_coord_sync()}, not {stand}.",
-        )
-    # Face the clerk. Walking into the till is refused by collision, which is
-    # exactly what turns the player without moving them.
-    _execute_action_sync(f"walk_{_mart_face(clerk, stand)}")
+    _walk_to_counter_sync([counter["at"] for counter in shop.get("counters") or ()], "any counter")
     _execute_action_sync("press_a")
     # Two screens before the list: the clerk's greeting, then BUY/SELL/QUIT with
     # BUY already under the cursor.
@@ -2751,6 +2799,140 @@ def _mart_buy_sync(item: str, count: int) -> dict:
         "spent": money_before - money_after,
         "money": money_after,
         "have": bag_after.get(item_id, 0),
+    }
+
+
+# ---------------------------------------------------------------------------
+# Poke Centers
+# ---------------------------------------------------------------------------
+
+#: A presses the nurse's conversation is given. Measured at eight in Cerulean:
+#: her greeting, the YES that answers "shall we heal them", the machine, and the
+#: two lines after it. Sixteen leaves room for a slower fade; the loop stops the
+#: moment the party reads healed and her box is gone, so the ceiling is only
+#: ever reached by a conversation that has stopped responding.
+HEAL_MAX_A_PRESSES = 16
+
+#: Frames between those presses. A press sent while her text is still printing
+#: is swallowed: pressing A eight times through `press_a` alone healed the party
+#: and then left "Your POKeMON are fighting fit!" on screen through six more
+#: presses, which is the shape of the 38% of Vermilion's presses that went on
+#: dialog. `a_until_dialog_end` uses the same 30.
+HEAL_FRAMES_BETWEEN_PRESSES = 30
+
+
+def _party_sync() -> list[dict]:
+    try:
+        return _reader.read_party() or []
+    except Exception:  # noqa: BLE001 — a party read must not fail the request
+        return []
+
+
+def _nurse_talk_sync() -> None:
+    """Press A at the nurse until the party reads healed and her box is gone.
+
+    Both halves matter. Stopping on the heal leaves her closing line up and the
+    next `poke goto` is refused with "a text box is open"; stopping on the box
+    alone would accept a conversation that healed nothing. The check runs
+    *before* each press, so the press that would re-open the conversation from
+    the top — and heal an already-full party for a second time — is never sent.
+
+    Batched `press_a` cannot do this. Eight of them at Vermilion's counter left
+    the party healed and "Your POKeMON are fighting fit!" still on screen; the
+    30-frame gap is what makes the next press land.
+    """
+    for _ in range(HEAL_MAX_A_PRESSES):
+        if not capabilities.heal_shortfall(_party_sync()) and not _read_dialog_active_sync():
+            return
+        _execute_action_sync("press_a")
+        _emulator.tick(HEAL_FRAMES_BETWEEN_PRESSES)
+
+
+def _heal_sync() -> dict:
+    """Walk to the nurse on this map, heal, and check the party came back full.
+
+    The whole verb exists because the walk and the conversation were each a
+    guess. `poke map` inside a Center named the room size, its two warps and the
+    nearest unexplored tile — in a room that was already 100% seen — and never
+    the nurse; one 34-hour run spent 4,152 presses on 116 visits, 7% of them
+    productive. The presses that were not spent hunting were spent mashing A at
+    her: a plain `press_a` does not reliably advance her text, so the run left
+    the box open and read "no walking while a box is open" over and over.
+    """
+    spent_before = _press_count
+    map_name = _current_map_name_sync()
+    healer = capabilities.healer_at(map_name)
+    if healer is None:
+        raise HTTPException(
+            status_code=409,
+            detail=(
+                f"{map_name} has no nurse, so there is nothing here to heal at. "
+                "Healing happens at a Poke Center — the building with the red roof."
+            ),
+        )
+    # A box already up is the state this verb is most often called from: the
+    # agent walked to the counter, pressed A, and could not get out again. Her
+    # conversation is what A advances, so finish it before deciding anything —
+    # but only when it can be hers. A blind drain is a dozen A presses into
+    # whatever is on screen: pressed at (8,7) in Mt. Moon's Center, which is the
+    # Magikarp salesman's tile, they buy the Magikarp and start typing a
+    # nickname. So the box is only advanced from a tile that talks to the nurse.
+    mid_conversation = _read_dialog_active_sync()
+    if mid_conversation and _player_coord_sync() not in _counter_stand_tiles(healer["at"]):
+        raise HTTPException(
+            status_code=409,
+            detail=(
+                "A text box is open and it is not the nurse's — you are at "
+                f"{_player_coord_sync()}, not at her counter. Close it first: "
+                "`poke act adialog`, or `poke act b` for a menu."
+            ),
+        )
+
+    before = capabilities.heal_shortfall(_party_sync())
+    # Nothing to do *and* nothing on screen. Mid-conversation the party can
+    # already read full — her machine runs before her last line — and refusing
+    # there would leave the box up, which is the exact state this is called from.
+    if not before and not mid_conversation:
+        raise HTTPException(
+            status_code=409,
+            detail=(
+                "Every Pokemon is already at full HP and PP with no status, so the "
+                "nurse has nothing to do. Leave and carry on."
+            ),
+        )
+
+    if mid_conversation:
+        nurse = (int(healer["at"][0]), int(healer["at"][1]))
+    else:
+        nurse = _walk_to_counter_sync([healer["at"]], "the nurse")
+        _execute_action_sync("press_a")
+    _nurse_talk_sync()
+
+    after = capabilities.heal_shortfall(_party_sync())
+    if after:
+        raise HTTPException(
+            status_code=409,
+            detail=(
+                f"Talked to the nurse at {nurse} and the party still reads "
+                f"{'; '.join(after)}. Read the frame — something else is on screen."
+            ),
+        )
+    if _read_dialog_active_sync():
+        raise HTTPException(
+            status_code=409,
+            detail=(
+                f"The party is healed but a text box at {nurse} would not close, so "
+                "the next walk would be refused. Read the frame."
+            ),
+        )
+    party = _party_sync()
+    return {
+        "healed": [str(mon.get("species")) for mon in party],
+        "nurse": list(nurse),
+        "was": before,
+        # The project's unit. This verb exists to replace 4,152 of these across
+        # 116 visits, so the number it costs belongs in its own answer.
+        "presses": max(0, _press_count - spent_before),
     }
 
 
@@ -3296,6 +3478,16 @@ async def get_map(map_id: Optional[int] = None):
             detail=f"Map {target} has never been visited. Maps recorded so far: {known}.",
         )
     payload = _explored_maps.summary(target)
+    # Who is in the room, beside where its walls are. Map memory is geometry and
+    # knows nothing about people, which is how `poke map` came to answer a
+    # 100%-explored Poke Center with its two warps and a "nearest unexplored"
+    # tile and never once mention the nurse standing in it.
+    services = [
+        {"service": entry["service"], "at": entry["at"]}
+        for entry in capabilities.services_at(payload.get("map_name"))
+    ]
+    if services:
+        payload["services"] = services
     image_path = _refresh_map_image(target)
     if image_path is not None:
         payload["image"] = f"/artifacts/{MAP_ARTIFACT_KEY}"
@@ -3451,6 +3643,41 @@ async def mart_buy(req: MartBuyRequest):
             "actions_executed": 0,
             "source": "mart",
             "intent": {"buy": req.item, "count": req.count},
+            "state_after": result["state_after"],
+            "screen_text": bundle.get("screen_text"),
+        },
+    )
+    return {**outcome, **_observation_summary(bundle)}
+
+
+@app.post("/pokecenter/heal")
+async def pokecenter_heal():
+    """Heal the party at the nurse on this map, walking to her counter first."""
+    _ensure_emulator()
+    if await _run_emulator_sync(_in_battle_sync):
+        raise HTTPException(
+            status_code=409, detail="In a battle. Finish the fight before looking for a nurse."
+        )
+    _check_action_rate()
+    try:
+        result = await _coordinator.battle_and_observe(
+            func=_heal_sync,
+            args=(),
+            reason="pokecenter_heal",
+            source="heal",
+        )
+    except capabilities.CapabilityError as exc:
+        raise _capability_error(exc) from exc
+    outcome = result["outcome"]
+    bundle = result["bundle"]
+    await _broadcast_runtime_refresh(result)
+    await _record_and_broadcast(
+        "action_result",
+        {
+            "actions": [],
+            "actions_executed": 0,
+            "source": "heal",
+            "intent": {"heal": True},
             "state_after": result["state_after"],
             "screen_text": bundle.get("screen_text"),
         },

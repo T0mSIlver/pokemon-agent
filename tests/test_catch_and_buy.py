@@ -34,7 +34,7 @@ from pokemon_agent.memory.red import (
 from pokemon_agent.server import (
     BATTLE_OPEN_BAG,
     _catch_line,
-    _mart_face,
+    _face_toward,
     _shop_line,
     item_list_walk_keys,
 )
@@ -316,12 +316,16 @@ def test_the_two_ball_tables_name_the_same_balls_in_the_same_order():
     assert BALL_ITEM_IDS[-1] == ITEM_NAMES_BY_NAME["Master Ball"]
 
 
-def test_facing_the_clerk_points_at_the_till_from_either_side():
-    """Town marts sit their clerk to the west, the Celadon floors to the north."""
-    assert _mart_face((0, 5), (2, 5)) == "left"
-    assert _mart_face((5, 3), (5, 5)) == "up"
-    assert _mart_face((7, 3), (5, 3)) == "right"
-    assert _mart_face((5, 8), (5, 5)) == "down"
+def test_facing_the_person_behind_the_counter_works_from_either_side():
+    """Town marts sit their clerk to the west, the Celadon floors to the north.
+
+    Not named for clerks any more: a Poke Center nurse is reached by the same
+    geometry, so the mart's turn-and-talk is now what both verbs use.
+    """
+    assert _face_toward((0, 5), (2, 5)) == "left"
+    assert _face_toward((5, 3), (5, 5)) == "up"
+    assert _face_toward((7, 3), (5, 3)) == "right"
+    assert _face_toward((5, 8), (5, 5)) == "down"
 
 
 def test_a_trailing_number_is_the_count_not_part_of_the_item_name():

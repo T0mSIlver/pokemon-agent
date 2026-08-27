@@ -398,6 +398,19 @@ def map_lines(payload: dict) -> list[str]:
         for w in warps:
             target = w.get("to")
             lines.append(f"  ({w.get('x')},{w.get('y')})" + (f" -> {target}" if target else ""))
+    # Above "nearest unexplored", because in the room this was written for the
+    # unexplored tile is the wrong answer and the nurse is the right one: a
+    # Cerulean Center read 100% seen and still pointed at (5,6) and the door.
+    services = payload.get("services") or []
+    if services:
+        lines.append(
+            "who is here: "
+            + ", ".join(
+                f"{entry.get('service')} at ({(entry.get('at') or [None, None])[0]},"
+                f"{(entry.get('at') or [None, None])[1]})"
+                for entry in services
+            )
+        )
     nearest = payload.get("unexplored_nearest")
     if nearest:
         lines.append(f"nearest unexplored: ({nearest.get('x')},{nearest.get('y')})")
@@ -546,6 +559,11 @@ def action_lines(payload: dict) -> str:
     # standing there is for.
     if payload.get("shop"):
         lines.append(f"for sale  {payload['shop']}")
+    # Same bargain as `shop`: thirteen maps in the game carry it and none of the
+    # others do, so it never competes with anything, and on those thirteen it is
+    # the only line that says why you walked in.
+    if payload.get("heal"):
+        lines.append(str(payload["heal"]))
     if payload.get("screen_text"):
         lines.append(str(payload["screen_text"]))
     return "\n".join(lines)
@@ -628,6 +646,22 @@ def cmd_buy(args: argparse.Namespace, url: str) -> int:
     print(
         f"bought {answer.get('count')} x {answer.get('bought')} for ${answer.get('spent')}"
         f"  (${answer.get('money')} left, holding {answer.get('have')})"
+    )
+    print(action_lines(answer))
+    return EXIT_OK
+
+
+def cmd_heal(args: argparse.Namespace, url: str) -> int:
+    """Heal at the nurse on this map. Walks to her counter first."""
+    answer = fetch_json(url, "/pokecenter/heal", method="POST", payload={})
+    if args.json:
+        print(compact(answer))
+        return EXIT_OK
+    was = answer.get("was") or []
+    healed = ", ".join(answer.get("healed") or []) or "the party"
+    print(
+        f"healed {healed} in {answer.get('presses')} presses"
+        + (f"  (was {'; '.join(was)})" if was else "")
     )
     print(action_lines(answer))
     return EXIT_OK
@@ -1009,6 +1043,23 @@ def build_parser() -> argparse.ArgumentParser:
     buy.add_argument("item", nargs="+", metavar="ITEM [COUNT]")
     buy.add_argument("--json", action="store_true", help="the whole payload instead of a summary")
     buy.set_defaults(func=cmd_buy)
+
+    heal = subparsers.add_parser(
+        "heal",
+        parents=[common],
+        help="heal at the nurse on this map, e.g. poke heal",
+        description=(
+            "Heal the whole party at the nurse on this map: HP, PP and status.\n"
+            "You do not have to be at her counter: it walks there, talks to her, "
+            "answers YES and reads the conversation out, then checks the party came "
+            "back full. Her counter is a talk-over tile, so the walk ends two tiles "
+            "out — which is the part that cost one run 4,152 presses to find.\n"
+            "It refuses on a map with no nurse, and on a party that is already full."
+        ),
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+    )
+    heal.add_argument("--json", action="store_true", help="the whole payload instead of a summary")
+    heal.set_defaults(func=cmd_heal)
 
     state = subparsers.add_parser("state", parents=[common], help="party, bag, badges, position")
     state.add_argument("--json", action="store_true", help="raw payload")
