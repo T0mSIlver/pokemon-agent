@@ -62,6 +62,17 @@ from pokemon_agent.milestones import MilestoneTracker
 from pokemon_agent.pi_supervisor import NoLiveSessionError, PiSupervisor
 from pokemon_agent.pockets import PocketGraph
 from pokemon_agent.progress import AUTO_SAVE_PREFIX
+from pokemon_agent.repeats import (
+    RepeatedNoProgress,
+    RepeatGuard,
+    action_refusal,
+    all_walks_blocked,
+    battle_refusal,
+    looks_like_dialog,
+    screen_words,
+    sim_refusal,
+    world_fingerprint,
+)
 from pokemon_agent.run_recorder import RunRecorder, receipt_from_batch
 from pokemon_agent.saves import (
     SaveNameError,
@@ -324,6 +335,21 @@ _intervention_task: Optional[asyncio.Task] = None
 #: not make, and the payload used to render it as an ordinary walk.
 _whiteout_watch = WhiteoutWatch()
 
+#: Refuses the command that has already been proved to change nothing. Lives
+#: here rather than in the intervention loop because that loop was switched off
+#: for the whole of the run this was measured on -- the env flag was never set
+#: by any script -- and a guard against the single largest waste in the project
+#: must not depend on an optional subsystem being turned on. See
+#: `pokemon_agent/repeats.py`.
+_repeat_guard = RepeatGuard()
+
+#: What the last batch looked like, so the refusal can name the *reason* this
+#: particular command is inert rather than only the fact. Three of the four
+#: measured episodes had three different causes -- a dialog toggling, a step
+#: into a wall, a flee roll that never passes -- and a refusal that does not
+#: say which one it is reads as noise.
+_repeat_context: dict = {}
+
 #: The note for the next model-facing payload, read once and cleared. It is a
 #: global rather than a return value because POST /goto whites out inside a walk
 #: loop whose inner batches never reach the model, and losing the note there
@@ -545,6 +571,17 @@ def _get_state_dict() -> dict:
     learn = _move_learn_sync()
     if learn is not None:
         state["move_learn"] = learn
+    # The words in the box, decoded off wTileMap through the Gen 1 font table.
+    # Not published in the payload -- it is read here so the repeat guard can
+    # tell a dialog that is advancing from one that is a fixed point, which is
+    # the one distinction the map, the tile, the HP and the `dialog` flag all
+    # fail to make. Cost is one 360-byte RAM read per state build.
+    read_text = getattr(_reader, "read_screen_text", None)
+    if read_text is not None:
+        try:
+            state["screen"] = read_text()
+        except Exception:  # noqa: BLE001 — an unreadable screen must not fail a batch
+            pass
     try:
         snapshot = _emulator.get_navigation_snapshot(_reader)
     except NotImplementedError:
@@ -1746,6 +1783,41 @@ def _reject_unsafe_dialog_actions(actions: list[str]) -> None:
     )
 
 
+async def _check_repeat(key: tuple, tool: str = "action", describe=None) -> None:
+    """Refuse a command already proved inert, before a single button is spent.
+
+    The whole point of doing this here rather than after the batch is that the
+    Cerulean episode spent 12,317 presses on batches whose result was known
+    before the first one of them was sent. A refusal costs no frames.
+
+    It does cost a receipt, for the same reason a failed batch does: a run whose
+    records hold only what it spent cannot show what it was stopped from
+    spending, and this guard is worth exactly the presses it refuses.
+    """
+    try:
+        _repeat_guard.check(key, describe=describe)
+    except RepeatedNoProgress as exc:
+        await _write_receipt(
+            tool=tool,
+            presses=0,
+            bundle=None,
+            outcome=None,
+            exit_code=1,
+            extra={"error": exc.detail[:200], "repeat_refused": list(key)[:8]},
+        )
+        raise HTTPException(status_code=400, detail=exc.detail) from exc
+
+
+def _record_repeat(key: tuple, state_before: Optional[dict], state_after: Optional[dict]) -> None:
+    """File what one command did, so the next identical one can be judged."""
+    _repeat_guard.record(
+        key,
+        world_fingerprint(state_before),
+        world_fingerprint(state_after),
+        screen_words(state_after),
+    )
+
+
 def _check_action_limits(actions: list[str]) -> None:
     """Refuse a batch that would monopolise the emulator, before it starts.
 
@@ -1959,7 +2031,15 @@ async def _run_actions(
         outcome=outcome,
         milestone_ids=outcome.get("milestones") or (),
     )
-    return {"actions_executed": executed, "bundle": bundle, "outcome": outcome}
+    return {
+        "actions_executed": executed,
+        "bundle": bundle,
+        "outcome": outcome,
+        # Both reads happened inside the one transaction, so they describe this
+        # batch and nothing else. The repeat guard compares them.
+        "state_before": result["state_before"],
+        "state_after": result["state_after"],
+    }
 
 
 # ---------------------------------------------------------------------------
@@ -2997,7 +3077,12 @@ async def _run_battle_sequence(intent: dict, func, *args) -> dict:
         milestone_ids=outcome.get("milestones") or (),
         extra={"intent": intent},
     )
-    return {"outcome": outcome, "bundle": bundle}
+    return {
+        "outcome": outcome,
+        "bundle": bundle,
+        "state_before": result["state_before"],
+        "state_after": result["state_after"],
+    }
 
 
 # ---------------------------------------------------------------------------
@@ -3074,6 +3159,9 @@ async def _startup():
     _loop = asyncio.get_running_loop()
     _start_time = time.time()
     _emulator_lock = asyncio.Lock()
+    # Nothing this process has not seen has been proved inert yet.
+    _repeat_guard.reset()
+    _repeat_context.clear()
     # A startup that gives up must not leave the previous run's emulator visible
     # to /health and /action.
     _emulator = None
@@ -3533,8 +3621,22 @@ async def screenshot_base64():
 async def execute_actions(req: ActionRequest):
     """Execute game actions, rewrite the workspace frames, report the new position."""
     _ensure_emulator()
+    key = ("act", *(str(action).strip().lower() for action in req.actions))
+    await _check_repeat(
+        key,
+        describe=lambda streak: action_refusal(
+            streak,
+            dialog=looks_like_dialog(_repeat_context.get("state")),
+            blocked_walk=bool(_repeat_context.get("blocked_walk")),
+        ),
+    )
     try:
         result = await _run_actions(req.actions, source="action", reason="actions_executed")
+        _record_repeat(key, result["state_before"], result["state_after"])
+        _repeat_context.update(
+            state=result["state_after"],
+            blocked_walk=all_walks_blocked(req.actions, result.get("outcome")),
+        )
         summary = _observation_summary(result["bundle"])
         _annotate_batch_outcome(summary, result.get("outcome"))
         _annotate_explored_map(summary, result["bundle"])
@@ -3553,8 +3655,11 @@ async def execute_actions(req: ActionRequest):
 async def battle_fight(req: BattleFightRequest):
     """Attack with a named move, whatever the menu cursor was left on."""
     _ensure_emulator()
+    key = ("fight", str(req.move).strip().lower())
+    await _check_repeat(key, tool="battle", describe=battle_refusal)
     try:
         result = await _run_battle_sequence({"fight": req.move}, _battle_fight_sync, req.move)
+        _record_repeat(key, result["state_before"], result["state_after"])
         outcome = result["outcome"]
         payload = {"used": outcome["used"], **_observation_summary(result["bundle"])}
         _annotate_whiteout(payload)
@@ -3574,8 +3679,11 @@ async def battle_fight(req: BattleFightRequest):
 async def battle_run():
     """Flee, whatever the menu cursor was left on."""
     _ensure_emulator()
+    key = ("run",)
+    await _check_repeat(key, tool="battle", describe=battle_refusal)
     try:
         result = await _run_battle_sequence({"run": True}, _battle_run_sync)
+        _record_repeat(key, result["state_before"], result["state_after"])
         payload = {
             "fled": result["outcome"]["fled"],
             **_observation_summary(result["bundle"]),
@@ -3604,10 +3712,13 @@ async def battle_catch(req: BattleCatchRequest):
     menu by accident.
     """
     _ensure_emulator()
+    key = ("catch", str(req.ball or "any").strip().lower())
+    await _check_repeat(key, tool="battle", describe=battle_refusal)
     try:
         result = await _run_battle_sequence(
             {"catch": req.ball or "any"}, _battle_catch_sync, req.ball
         )
+        _record_repeat(key, result["state_before"], result["state_after"])
         outcome = result["outcome"]
         return {
             "threw": outcome["threw"],
@@ -3631,6 +3742,8 @@ async def mart_buy(req: MartBuyRequest):
     if await _run_emulator_sync(_in_battle_sync):
         raise HTTPException(status_code=409, detail="In a battle. Nothing here is for sale.")
     _check_action_rate()
+    key = ("buy", str(req.item).strip().lower(), str(req.count))
+    await _check_repeat(key, tool="mart")
     try:
         result = await _coordinator.battle_and_observe(
             func=_mart_buy_sync,
@@ -3640,6 +3753,7 @@ async def mart_buy(req: MartBuyRequest):
         )
     except capabilities.CapabilityError as exc:
         raise _capability_error(exc) from exc
+    _record_repeat(key, result["state_before"], result["state_after"])
     outcome = result["outcome"]
     bundle = result["bundle"]
     await _broadcast_runtime_refresh(result)
@@ -3754,6 +3868,11 @@ async def load_state(req: SaveRequest):
         raise HTTPException(status_code=500, detail=f"Load error: {e}")
 
     bundle = result["bundle"]
+    # A load rewinds the world underneath the guard, so whatever it had proved
+    # inert may not be any more. Forget it rather than refuse a command the
+    # restored frame has never been asked.
+    _repeat_guard.reset()
+    _repeat_context.clear()
     if result.get("settled", True):
         await _broadcast_runtime_refresh(result)
     await _record_and_broadcast("load", {"name": req.name, "path": str(save_path)})
@@ -4061,14 +4180,25 @@ async def goto(req: GotoRequest):
         target_xy = (int(req.x), int(req.y))
     elif not req.target:
         raise HTTPException(status_code=400, detail="Nothing to walk to: send target, or x and y.")
+    goto_key = ("goto", str(req.target or "").strip().lower(), str(req.x), str(req.y))
+    await _check_repeat(goto_key, tool="goto")
     # Walking to a tile on the current map needs no map graph at all.
     world = _ensure_world() if req.target else World({})
 
     async def observe() -> dict:
         return capabilities.observation_from_bundle(await _run_emulator_sync(_observation_sync))
 
+    # A goto is many batches, and it is the *whole walk* that either got
+    # somewhere or did not: the run repeated one identical `goto` 120 times,
+    # each spending a single press and reporting `moved 0`. So the guard is
+    # keyed on the request and fed the state either side of the walk, not of
+    # each inner hop.
+    walk_states: list[tuple] = []
+
     async def act(actions: list[str]) -> dict:
-        return await _run_actions(actions, source="goto", reason="goto", rate_check=False)
+        result = await _run_actions(actions, source="goto", reason="goto", rate_check=False)
+        walk_states.append((result["state_before"], result["state_after"]))
+        return result
 
     try:
         result = await capabilities.walk_to(
@@ -4088,6 +4218,12 @@ async def goto(req: GotoRequest):
         # Nothing was walked, so no batch refreshed the workspace. Answer with a
         # real observation rather than half of one.
         bundle = await _refresh_and_broadcast(reason="goto", source="goto")
+    if walk_states:
+        _record_repeat(goto_key, walk_states[0][0], walk_states[-1][1])
+    else:
+        # A walk that never pressed anything moved nothing by definition, and
+        # asking for it again will not move anything either.
+        _record_repeat(goto_key, bundle.get("state"), bundle.get("state"))
     summary = _observation_summary(bundle)
     _annotate_explored_map(summary, bundle)
     _annotate_whiteout(summary)
@@ -4166,13 +4302,25 @@ async def frontier():
 @app.post("/sim")
 async def sim(req: SimRequest):
     """Dry-run a plan against live collision. Presses nothing."""
+    # Pressing nothing is exactly why this one went unnoticed. It writes no
+    # receipt and spends no buttons, so a session that loops on it looks idle
+    # right up until it dies on the token budget: 531 identical calls in one
+    # session, and six of the run's 49 sessions ended inside a loop like this.
+    key = ("sim", *(str(action).strip().lower() for action in req.actions))
+    await _check_repeat(key, tool="sim", describe=sim_refusal)
     snapshot = await _require_snapshot()
     try:
-        return capabilities.simulate_payload(
+        payload = capabilities.simulate_payload(
             req.actions, snapshot, _explored_grid(snapshot.get("map_id"))
         )
     except capabilities.CapabilityError as exc:
         raise _capability_error(exc) from exc
+    # A simulation cannot move the game, so "did anything change" is not the
+    # question here — the answer it gave is. The same plan answered the same way
+    # is the whole of what a repeat proves.
+    answer = json.dumps(payload, sort_keys=True, default=str)
+    _repeat_guard.record(key, (), (), answer)
+    return payload
 
 
 def _record_guide_read(guide: str, slug: str) -> None:
