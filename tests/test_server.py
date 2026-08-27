@@ -238,6 +238,9 @@ class FakeEmulator:
                     "y": self.y,
                     "facing": self.facing,
                     "event_bits": sorted(self.event_bits),
+                    # HP travels too, so a reload can hand resources back — the
+                    # thing sixteen of the run's loads were actually for.
+                    "hp": self.hp,
                 }
             ),
             encoding="utf-8",
@@ -249,6 +252,8 @@ class FakeEmulator:
         self.y = payload["y"]
         self.facing = payload["facing"]
         self.event_bits = set(payload.get("event_bits") or ())
+        if payload.get("hp") is not None:
+            self.hp = payload["hp"]
 
     def get_navigation_snapshot(self, reader) -> LiveNavigationSnapshot:
         return LiveNavigationSnapshot(
@@ -2758,6 +2763,95 @@ def test_a_save_ahead_of_the_game_loads(server_app):
     server_app.emulator.event_bits = set()
 
     assert server_app.http.post("/load", json={"name": "ahead"}).status_code == 200
+
+
+def test_going_back_to_one_save_too_many_times_is_refused(server_app):
+    """Retrying a save is a tactic once or twice; past that it stops paying.
+
+    Measured over the run's 131 loads: the first load of a save is followed by
+    a milestone within 3,000 presses 46% of the time, the second 32%, the third
+    23%, and from the fourth on it is noise. `before_misty` looked like the
+    counter-example at fifteen loads — until the timestamps showed Misty fell
+    34,000 presses later in a different episode entirely.
+    """
+
+    server_app.http.post("/save", json={"name": "checkpoint"})
+    for _ in range(3):
+        assert server_app.http.post("/load", json={"name": "checkpoint"}).status_code == 200
+
+    response = server_app.http.post("/load", json={"name": "checkpoint"})
+
+    assert response.status_code == 409
+    detail = response.json()["detail"]
+    assert "checkpoint has been loaded 3 times" in detail
+    assert "no milestone has been reached since" in detail
+    assert "`poke sim` walks a plan" in detail
+    assert "--force" in detail
+
+
+def test_reaching_a_rung_clears_the_count(server_app):
+    """A milestone is the evidence that whatever it was doing worked.
+
+    The save is re-taken after the rung so the *other* guard stays out of the
+    way: any save older than a milestone is regressive, and this is about the
+    counter, not about handing progress back.
+    """
+
+    server_app.http.post("/save", json={"name": "checkpoint"})
+    for _ in range(3):
+        server_app.http.post("/load", json={"name": "checkpoint"})
+    earn(server_app, event_rungs(1)[0])
+    server_app.http.post("/action", json={"actions": ["walk_up"]})
+    server_app.http.post("/save", json={"name": "checkpoint"})
+
+    assert server_app.http.post("/load", json={"name": "checkpoint"}).status_code == 200
+
+
+def test_the_count_is_per_save_not_global(server_app):
+    """Three different saves is exploring. The same save four times is not."""
+    for name in ("one", "two", "three", "four"):
+        server_app.http.post("/save", json={"name": name})
+    for name in ("one", "two", "three", "four"):
+        assert server_app.http.post("/load", json={"name": name}).status_code == 200
+
+
+def test_force_goes_back_to_a_save_it_has_worn_out(server_app):
+    server_app.http.post("/save", json={"name": "checkpoint"})
+    for _ in range(3):
+        server_app.http.post("/load", json={"name": "checkpoint"})
+
+    response = server_app.http.post("/load", json={"name": "checkpoint", "force": True})
+
+    assert response.status_code == 200
+
+
+def test_a_load_records_what_it_handed_back(server_app):
+    """The measurement the milestone rule deliberately cannot make.
+
+    Sixteen of the run's loads went back to a full party rather than walk to a
+    Poke Center, and every one held the same milestones, so nothing in the
+    record showed it. A number first, a rule later.
+    """
+
+    run_id = open_run()
+    server_app.http.post("/save", json={"name": "rested"})
+    server_app.emulator.hp = max(0, server_app.emulator.hp - 12)
+    server_app.http.post("/action", json={"actions": ["walk_up"]})
+
+    assert server_app.http.post("/load", json={"name": "rested"}).status_code == 200
+
+    loads = [entry for entry in receipts(server_app, run_id) if entry.get("tool") == "load"]
+    assert loads[-1]["restored"]["hp"] == 12
+
+
+def test_a_load_that_hands_nothing_back_records_nothing(server_app):
+    run_id = open_run()
+    server_app.http.post("/save", json={"name": "same"})
+
+    assert server_app.http.post("/load", json={"name": "same"}).status_code == 200
+
+    loads = [entry for entry in receipts(server_app, run_id) if entry.get("tool") == "load"]
+    assert "restored" not in loads[-1]
 
 
 def test_a_refused_load_leaves_a_receipt_priced_at_nothing(server_app):

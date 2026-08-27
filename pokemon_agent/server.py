@@ -22,7 +22,7 @@ from collections import deque
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 from pathlib import Path
-from typing import Any, Optional, Sequence, Set
+from typing import Any, Mapping, Optional, Sequence, Set
 
 from fastapi import FastAPI, HTTPException, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
@@ -354,6 +354,29 @@ _repeat_guard = RepeatGuard()
 #: into a wall, a flee roll that never passes -- and a refusal that does not
 #: say which one it is reads as noise.
 _repeat_context: dict = {}
+
+#: How many times one save may be loaded before the next load is refused,
+#: counting only loads since the last milestone. Measured over the run's 131
+#: loads: the first load of a save is followed by a milestone within 3,000
+#: presses 46% of the time, the second 32%, the third 23%, and from the fourth
+#: on it is indistinguishable from noise. Retrying a save is a real tactic once
+#: or twice; past that it has never started paying.
+#:
+#: The case that looked like a counter-example is the clearest evidence for it.
+#: `before_misty` was loaded fifteen times between 51,622 and 54,513 presses,
+#: which reads as "it kept trying until it won" -- except Misty fell at 88,339,
+#: nearly 34,000 presses and a different episode later. The fifteen reloads
+#: bought nothing.
+MAX_LOADS_PER_SAVE = 3
+
+#: Loads of each save since the last milestone. Cleared whenever a rung is
+#: reached, because a milestone is the evidence that whatever it was doing
+#: worked.
+_loads_since_milestone: dict[str, int] = {}
+
+#: The milestone set the last receipt saw, so the counter above can tell a rung
+#: being reached from a rung merely being present.
+_last_milestone_ids: frozenset[str] = frozenset()
 
 #: The note for the next model-facing payload, read once and cleared. It is a
 #: global rather than a return value because POST /goto whites out inside a walk
@@ -1862,6 +1885,23 @@ def _check_action_limits(actions: list[str]) -> None:
 # ---------------------------------------------------------------------------
 
 
+def _note_milestones_for_load_guard(milestone_ids: Optional[Sequence[str]]) -> None:
+    """Clear the per-save load counter when a rung is reached.
+
+    ``None`` means the caller never read the oracle, which is not the same as
+    reading it and finding nothing — a refused batch must not look like a run
+    that has lost every milestone it had.
+    """
+
+    global _last_milestone_ids
+    if milestone_ids is None:
+        return
+    seen = frozenset(milestone_ids)
+    if seen - _last_milestone_ids:
+        _loads_since_milestone.clear()
+    _last_milestone_ids = seen
+
+
 async def _write_receipt(
     *,
     tool: str,
@@ -1887,6 +1927,7 @@ async def _write_receipt(
     that order, whichever endpoints produced them.
     """
     _watch_for_whiteout(bundle, reloaded=reloaded)
+    _note_milestones_for_load_guard(milestone_ids)
     recorder = _run_recorder
     if recorder is not None and recorder.run_id is not None:
         try:
@@ -3916,6 +3957,69 @@ def _regression_refusal(lost: Sequence[str]) -> str:
     )
 
 
+def _party_resources_sync() -> tuple[int, int]:
+    """Total party HP and total remaining PP, right now. ``(0, 0)`` if unreadable."""
+
+    try:
+        party = (_get_state_dict().get("party")) or []
+    except Exception:  # noqa: BLE001 — a measurement must never cost a load
+        return (0, 0)
+    hp = sum(int(mon.get("hp") or 0) for mon in party if isinstance(mon, Mapping))
+    pp = sum(
+        int(move.get("pp") or 0)
+        for mon in party
+        if isinstance(mon, Mapping)
+        for move in (mon.get("moves") or [])
+        if isinstance(move, Mapping)
+    )
+    return (hp, pp)
+
+
+def _restored_by_load(before: tuple[int, int], bundle: Optional[dict]) -> Optional[dict]:
+    """How much HP and PP the reload handed back, or ``None`` if unmeasurable.
+
+    Only ever positive: a load that lands on a *worse* party is going backwards
+    for some other reason and is not what this is counting.
+    """
+
+    state = (bundle or {}).get("state")
+    party = (state or {}).get("party") or []
+    if not isinstance(party, list) or not party:
+        return None
+    hp = sum(int(mon.get("hp") or 0) for mon in party if isinstance(mon, Mapping))
+    pp = sum(
+        int(move.get("pp") or 0)
+        for mon in party
+        if isinstance(mon, Mapping)
+        for move in (mon.get("moves") or [])
+        if isinstance(move, Mapping)
+    )
+    gained_hp = hp - before[0]
+    gained_pp = pp - before[1]
+    if gained_hp <= 0 and gained_pp <= 0:
+        return None
+    return {"hp": max(0, gained_hp), "pp": max(0, gained_pp)}
+
+
+def _repeat_load_refusal(name: str, already: int) -> str:
+    """What the agent reads when it has gone back to one save too many times.
+
+    Named after the fact rather than the intent, the way the repeat-command
+    guard is: the harness can count loads, and it cannot know why. The escape
+    has to be one that works from here, and ``poke sim`` does — it walks a plan
+    against the live tile and answers with where the plan stops, without
+    touching the game, which is the question the six ``route4_*`` checkpoints
+    were being spent to answer.
+    """
+
+    return (
+        f"Refusing: {name} has been loaded {already} times and no milestone has "
+        "been reached since. Going back again is the same attempt, not a new one. "
+        "`poke sim` walks a plan from where you are standing and says where it "
+        f"stops, without touching the game. Load it anyway with --force."
+    )
+
+
 def _snapshot_sync(path: str) -> None:
     """Write the live frame to *path*, under the emulator lock. Never observes."""
     _emulator.save_state(path)
@@ -4042,6 +4146,25 @@ async def load_state(req: SaveRequest):
         raise HTTPException(status_code=404, detail=f"Save not found: {req.name}")
 
     held_before = frozenset(await _run_emulator_sync(_milestone_ids_sync))
+
+    # Reloading one save over and over is not recovery, it is a search that
+    # never terminates. This costs nothing to check and needs no snapshot: the
+    # world has not moved yet.
+    loaded_already = _loads_since_milestone.get(req.name, 0)
+    if not req.force and loaded_already >= MAX_LOADS_PER_SAVE:
+        detail = _repeat_load_refusal(req.name, loaded_already)
+        await _write_receipt(
+            tool="load",
+            presses=0,
+            bundle=None,
+            outcome=None,
+            milestone_ids=sorted(held_before),
+            exit_code=1,
+            extra={"error": detail[:200], "save": req.name, "load_repeats": loaded_already},
+        )
+        raise HTTPException(status_code=409, detail=detail)
+
+    before_party = await _run_emulator_sync(_party_resources_sync)
     # Nothing to lose, or an operator who has already said they know: no snapshot,
     # no second milestone read, no extra friction on the load that goes forward.
     snapshot = None if req.force or not held_before else await _take_load_snapshot()
@@ -4084,9 +4207,24 @@ async def load_state(req: SaveRequest):
         await _broadcast_runtime_refresh(result)
     await _record_and_broadcast("load", {"name": req.name, "path": str(save_path)})
     await broadcast({"type": "state_update", "reason": "load", "state": result["state_after"]})
+    _loads_since_milestone[req.name] = _loads_since_milestone.get(req.name, 0) + 1
+    load_extra: dict = {"save": req.name, "load_repeats": _loads_since_milestone[req.name]}
+    restored = _restored_by_load(before_party, bundle)
+    if restored:
+        # Absent rather than null when nothing was handed back: a key that is
+        # always present and usually empty reads as a measurement that ran and
+        # found zero, which is not what a load with nothing to restore is.
+        load_extra["restored"] = restored
     # A reload rewinds the game, never the bill. The receipt spends no presses
     # and the running total carries straight over it, so a gym won on the fourth
     # attempt costs what all four attempts cost.
+    #
+    # `restored` is the measurement the milestone rule deliberately cannot make.
+    # Sixteen of this run's loads went back to a full party rather than walk to
+    # a Poke Center -- `ember_pp_ready` eight times, `healed_pp_restored` four
+    # -- and every one held the same milestones, so nothing in the record showed
+    # it. Recording what the reload handed back makes it a number before it is a
+    # rule; a threshold guessed here would have to be re-derived later.
     await _write_receipt(
         tool="load",
         presses=0,
@@ -4094,7 +4232,7 @@ async def load_state(req: SaveRequest):
         outcome=None,
         milestone_ids=await _run_emulator_sync(_milestone_ids_sync),
         reloaded=True,
-        extra={"save": req.name},
+        extra=load_extra,
     )
     payload = {
         "success": True,
