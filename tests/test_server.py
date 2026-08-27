@@ -3597,6 +3597,77 @@ def test_a_gym_already_won_costs_nothing():
     assert "ahead" not in summary
 
 
+#: The bag the live run walked to Vermilion with. TM28 had been in it since Mt.
+#: Moon and was never used.
+_LIVE_BAG = [
+    {"item": "Town Map", "quantity": 1},
+    {"item": "Poke Ball", "quantity": 11},
+    {"item": "TM34", "quantity": 1},
+    {"item": "Potion", "quantity": 9},
+    {"item": "TM28", "quantity": 1},
+    {"item": "HM01", "quantity": 1},
+    {"item": "TM11", "quantity": 1},
+]
+
+
+def _bag_bundle(map_name="Cerulean City", party=None, bag=None):
+    bundle = _gym_bundle(map_name)
+    bundle["state"]["party"] = _LIVE_PARTY if party is None else party
+    bundle["state"]["bag"] = _LIVE_BAG if bag is None else bag
+    return bundle
+
+
+def test_a_machine_in_the_bag_that_beats_the_moveset_is_named():
+    """TM28 rode along for roughly 60,000 presses and no payload named it.
+
+    The bag said "TM28 x1", species.json said Charmeleon can learn TM28, and
+    nothing in the harness said TM28 is Dig -- so the one Ground move the run
+    was carrying, against the one gym Ground walks through, was never a fact the
+    model could reach.
+    """
+    server._tm_said.reset()
+    summary = {}
+    server._annotate_teachable_tm(summary, _bag_bundle())
+
+    assert "TM28 teaches Dig (Ground 100)" in summary["tm"]
+    assert "Charmeleon can learn it" in summary["tm"]
+    # TM11 is Bubble Beam, which Charmeleon cannot learn, and TM34 is Bide,
+    # which damages nothing. Neither is an upgrade and neither is named.
+    assert "TM11" not in summary["tm"] and "TM34" not in summary["tm"]
+
+
+def test_the_machine_line_is_said_once_per_room_not_on_every_frame():
+    """Same bargain as `ahead`: it arrives when a room is walked into."""
+    server._tm_said.reset()
+    first, second, elsewhere = {}, {}, {}
+    server._annotate_teachable_tm(first, _bag_bundle())
+    server._annotate_teachable_tm(second, _bag_bundle())
+    server._annotate_teachable_tm(elsewhere, _bag_bundle("Route 5"))
+
+    assert "tm" in first
+    assert "tm" not in second
+    assert "tm" in elsewhere
+
+
+def test_a_taught_machine_stops_being_news():
+    """Once Dig is on the moveset there is no upgrade left in that bag to name."""
+    taught = [dict(_LIVE_PARTY[0], moves=[{"name": "Dig", "pp": 10}, {"name": "Cut", "pp": 29}])]
+    server._tm_said.reset()
+    summary = {}
+    server._annotate_teachable_tm(summary, _bag_bundle(party=taught))
+
+    assert "tm" not in summary
+
+
+def test_an_unreadable_bag_costs_no_line_and_raises_nothing():
+    server._tm_said.reset()
+    summary = {}
+    server._annotate_teachable_tm(summary, {"state": {"party": _LIVE_PARTY}})
+    server._annotate_teachable_tm(summary, None)
+
+    assert "tm" not in summary
+
+
 def test_a_move_about_to_be_overwritten_is_named_before_the_press():
     """Cut went over an attack on the live run and Gen 1 will not delete an HM.
 
@@ -3980,3 +4051,73 @@ def test_a_loop_that_never_reads_the_refusal_is_throttled(server_app):
             break
 
     assert 429 in seen, "the rate limit never fired"
+
+
+def test_a_forced_load_says_so_in_the_record(server_app):
+    """Recovering a lost branch and overriding the guard look identical without it.
+
+    Measured live: `got_bike_voucher` refused at 20:23:20 and the same save
+    loaded at 20:24:00, taking the run from 18 milestones to 16. The receipts
+    hold the refusal and the success and nothing that says what changed between
+    them, so "it forced" stayed an inference about the run's most important
+    behaviour.
+    """
+
+    run_id = open_run()
+    rung = event_rungs(1)[0]
+    server_app.http.post("/save", json={"name": "before_it"})
+    earn(server_app, rung)
+
+    assert server_app.http.post("/load", json={"name": "before_it"}).status_code == 409
+    forced_call = server_app.http.post("/load", json={"name": "before_it", "force": True})
+    assert forced_call.status_code == 200
+
+    loads = [e for e in receipts(server_app, run_id) if e.get("tool") == "load"]
+    refused, forced = loads[-2], loads[-1]
+    assert "load_refused" in refused and "forced" not in refused
+    assert forced.get("forced") is True
+    # Absent rather than false on an ordinary load, so the key means something
+    # every time it appears.
+    server_app.http.post("/save", json={"name": "level"})
+    assert server_app.http.post("/load", json={"name": "level"}).status_code == 200
+    plain = [e for e in receipts(server_app, run_id) if e.get("tool") == "load"][-1]
+    assert "forced" not in plain
+
+
+def test_forcing_past_the_guard_leaves_a_way_back(server_app):
+    """The guard banked an undo frame for every load except the destructive ones.
+
+    `snapshot = None if req.force or not held_before else ...` skipped exactly
+    the loads it knew would cost something, so the run's only two irreversible
+    milestone losses were the only two loads that took no snapshot. Forcing is a
+    statement of intent, not a guarantee about the outcome, and both forced
+    loads this run were regretted within minutes.
+    """
+
+    rung = event_rungs(1)[0]
+    server_app.http.post("/save", json={"name": "before_it"})
+    earn(server_app, rung)
+    server_app.http.post("/action", json={"actions": ["walk_up"]})
+    before = world_of(server_app)
+
+    forced = server_app.http.post("/load", json={"name": "before_it", "force": True})
+    assert forced.status_code == 200
+    undo = forced.json()["undo"]
+    assert "undo__before_it" in undo and "poke load" in undo
+    assert server_app.http.get("/progress").json()["count"] == 0, "the rung really was given up"
+
+    # And the way back works, which is the whole point of naming it.
+    assert server_app.http.post("/load", json={"name": "undo__before_it"}).status_code == 200
+    assert world_of(server_app) == before
+    assert server_app.http.get("/progress").json()["count"] == 1
+
+
+def test_an_ordinary_load_keeps_no_undo_frame(server_app):
+    """Only a forced load needs one; a refused one is already undone."""
+    server_app.http.post("/save", json={"name": "level"})
+
+    answer = server_app.http.post("/load", json={"name": "level"})
+
+    assert answer.status_code == 200
+    assert "undo" not in answer.json()
+    assert not list((server_app.saves_dir).glob("undo__*.state"))

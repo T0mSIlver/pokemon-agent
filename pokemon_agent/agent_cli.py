@@ -560,6 +560,10 @@ def action_lines(payload: dict) -> str:
         lines.append(str(payload["learn"]))
     if payload.get("ahead"):
         lines.append(str(payload["ahead"]))
+    # Beside `ahead` and for the same reason: both answer "what could this party
+    # do that it is not doing", one from the gym's side and one from the bag's.
+    if payload.get("tm"):
+        lines.append(str(payload["tm"]))
     # Twelve maps in the game carry this and none of the others do, so it never
     # competes with anything: on a mart floor it is the only line that says what
     # standing there is for.
@@ -570,6 +574,12 @@ def action_lines(payload: dict) -> str:
     # the only line that says why you walked in.
     if payload.get("heal"):
         lines.append(str(payload["heal"]))
+    # And the counters that are neither: a room where something is traded rather
+    # than sold. One map carries this today. Before it, the frame inside the
+    # Cerulean Bike Shop was three lines about walking, none of which mentioned
+    # the clerk, and the run spent 839 presses there without the Bicycle.
+    if payload.get("counter"):
+        lines.append(str(payload["counter"]))
     # Labelled, and labelled on every line of it, because this is the one thing
     # in the block the harness is not the author of: it is decoded off the tile
     # map, so it is the game's words and a nickname's are the player's. Every

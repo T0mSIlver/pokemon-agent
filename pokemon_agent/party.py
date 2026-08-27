@@ -227,6 +227,84 @@ def party_shape(able: Sequence[JsonDict]) -> Optional[str]:
     return "; ".join(parts) if parts else None
 
 
+#: How many machines one line is allowed to name. A bag late in the game holds
+#: a dozen, and a payload field that grows without bound becomes wallpaper; the
+#: rows are sorted by how much power they add, so the cut falls on the least
+#: useful ones.
+TEACHABLE_LIMIT = 3
+
+
+def teachable_tms(party: Sequence[JsonDict], bag: Sequence[JsonDict]) -> Optional[str]:
+    """Machines in the bag that teach a party member a *stronger* attack than it has.
+
+    The third fact of this file's kind, and the one that cost the most. The run
+    this was written for picked up TM28 in Mt. Moon, carried it for roughly
+    60,000 presses on a single Charmeleon whose hardest attack was Cut, and
+    never taught it. Nothing it read could have told it to: the bag says
+    ``TM28 x1``, ``species.json`` says Charmeleon can learn ``TM28``, and until
+    ``tms.json`` existed there was nothing anywhere in the harness that said
+    TM28 is Dig. The two halves of the sentence were both in the payload and the
+    join between them did not exist.
+
+    Deliberately narrow, because a field on every overworld frame is expensive:
+
+    * only machines actually in the bag, and only party members that can learn
+      them, both read from pokered rather than assumed;
+    * only a *strict* upgrade -- the taught move's power must beat the best
+      damaging move that member already has -- so a mon holding its best moveset
+      says nothing;
+    * a move already known is not an upgrade, whatever its power.
+
+    The type is printed beside the power because power is not the whole reason
+    to teach one: Ground on an Electric gym is the reason Dig mattered here, and
+    that is the agent's inference to make, not this line's.
+    """
+    able = _able(party)
+    if not able or not bag:
+        return None
+    machines = []
+    for entry in bag or ():
+        if not isinstance(entry, dict):
+            continue
+        label = str(entry.get("item") or "")
+        taught = gamedata.tm_move(label)
+        record = gamedata.move(taught) if taught else None
+        if not record or not record.get("power"):
+            continue
+        machines.append((label, str(taught), int(record["power"]), str(record["type"])))
+
+    rows: List[Tuple[int, str]] = []
+    for label, taught, power, kind in machines:
+        best: Optional[Tuple[int, JsonDict, int]] = None
+        for mon in able:
+            entry = gamedata.species(str(mon.get("species") or "")) or {}
+            if label not in (entry.get("tm_hm") or ()):
+                continue
+            if taught in move_names(mon):
+                continue
+            strongest = max((power for _, power in damaging_moves(mon)), default=0)
+            if power <= strongest:
+                continue
+            if best is None or power - strongest > best[0]:
+                best = (power - strongest, mon, strongest)
+        if best is None:
+            continue
+        gain, mon, strongest = best
+        species = str(mon.get("species") or "it")
+        held = ", ".join(f"{name} {value}" for name, value in damaging_moves(mon)) or "nothing"
+        rows.append(
+            (
+                gain,
+                f"{label} teaches {taught} ({kind} {power}) and {species} can learn it; "
+                f"it attacks with {held}",
+            )
+        )
+    if not rows:
+        return None
+    rows.sort(key=lambda row: -row[0])
+    return "bag " + " | ".join(line for _, line in rows[:TEACHABLE_LIMIT])
+
+
 def is_learn_prompt(screen_text: str) -> bool:
     """Is the game part-way through replacing a move right now."""
     return any(phrase in (screen_text or "") for phrase in LEARN_PROMPT_PHRASES)

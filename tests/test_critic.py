@@ -1303,7 +1303,12 @@ def test_the_facts_block_is_worth_its_tokens(tmp_path: Path):
     assert len(block.splitlines()) <= 12
     # And that the next session can act on every line of it.
     assert "Most revisited tile: Route 3 (22,12), stood on 8 times." in block
-    assert "`./poke load <name>`" in block
+    # The saves are named but not offered. This line used to end "loadable with
+    # `./poke load <name>`", which put the run's most expensive behaviour at the
+    # top of every session: 143 loads and at least thirteen rungs handed back.
+    assert "Saves on disk, newest first:" in block
+    assert "poke load" not in block
+    assert "walking is usually cheaper" in block
     # Ladder labels, not event ids: "BADGE_BOULDER" is not an instruction.
     assert "highest rung: Boulder Badge" in block
     assert "Next rung: Beat the Super Nerd guarding the Mt. Moon fossils" in block

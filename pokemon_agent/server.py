@@ -1322,6 +1322,66 @@ def _heal_line(state: dict) -> Optional[str]:
     return f"{where}: " + "; ".join(needs) + " — poke heal"
 
 
+def _counter_line(state: dict) -> Optional[str]:
+    """What the counter in this room trades, on every frame inside it.
+
+    The same bet as `_heal_line` and for the same measured reason: a fact in the
+    payload the model already reads beats a verb it will not call. In the
+    Cerulean Bike Shop the frame said
+
+        Cerulean Bike Shop (4,2) facing right  moved 0  hp 95/95
+        run up:1 down:4
+        exits Cerulean City (3, 7)
+
+    while the player stood on the one tile in the room that works, facing the
+    one direction that works, holding the voucher. Nothing on the frame, in
+    `poke map`, or behind `poke buy` named the clerk, the counter or the
+    Bicycle; `poke map` pointed at (4,1) instead, as "nearest unexplored", and
+    that window stood there 131 times against 1,233 presses and no Bicycle.
+
+    The press count is on the line because the room was lost by one press. The
+    same run had already traded correctly once, in six A presses from this tile;
+    the failing window reached the tile, pressed A five separate times, and
+    walked away on the sixth.
+
+    It gives the tile only when the trade can actually happen, because on the
+    frame of a player carrying no voucher the tile is not the next thing to do.
+    Once traded the line goes entirely: the room is finished and a finished room
+    should read as one, which is the other half of what the Poke Center line
+    learned from 68% of Mt. Moon's presses being spent re-walking.
+    """
+    map_name = (state.get("map") or {}).get("map_name")
+    try:
+        counter = capabilities.counter_at(map_name)
+    except Exception:  # noqa: BLE001 — perception must never fail a state read
+        return None
+    if counter is None:
+        return None
+    # An unreadable bag is `None`, not an empty set. The difference matters: an
+    # empty set would print "you are not carrying one" at a player who is, which
+    # is the same class of confident wrong answer this whole line exists to
+    # delete. Where the counter is and what it trades is true either way.
+    try:
+        carried: Optional[set[str]] = {str(entry.get("item")) for entry in (state.get("bag") or [])}
+    except Exception:  # noqa: BLE001 — perception must never fail a state read
+        carried = None
+    wants, gives = counter.get("wants"), counter.get("gives")
+    if carried is not None and gives in carried:
+        return None
+    x, y = (counter.get("at") or (None, None))[:2]
+    sx, sy = (counter.get("stand") or (None, None))[:2]
+    where = f"counter ({x},{y})"
+    how = f"stand ({sx},{sy}) facing {counter.get('face')}, poke act a:{counter.get('presses')}"
+    if carried is None:
+        return f"{where}: trades a {wants} for the {gives} — {how}"
+    if wants in carried:
+        return f"{where}: trades your {wants} for the {gives} — {how}"
+    # No tile in this branch. The tile is what to do next only when the trade
+    # can happen; with no voucher the next thing is somewhere else entirely, and
+    # the line costs a third less without it.
+    return f"{where}: trades a {wants} for the {gives} — you are not carrying one"
+
+
 def _observation_summary(bundle: Optional[dict]) -> dict:
     """Where the player is and what it may do next — the whole model-facing payload.
 
@@ -1374,6 +1434,11 @@ def _observation_summary(bundle: Optional[dict]) -> dict:
     heal = _heal_line(state)
     if heal:
         summary["heal"] = heal
+
+    # What the counter here trades, if there is one. See _counter_line.
+    counter = _counter_line(state)
+    if counter:
+        summary["counter"] = counter
 
     # What press_a would hit. "object" is an NPC or item ball, "sign" is readable.
     # Anything else is scenery and not worth a button.
@@ -1646,6 +1711,34 @@ def _annotate_gym_outlook(summary: dict, bundle: Optional[dict]) -> None:
         return
     if line and _ahead_said.fresh((map_name, in_battle, line)):
         summary["ahead"] = line
+
+
+#: One per process, like `_ahead_said`, and keyed the same way: on the map, so
+#: the line is said once when a room is walked into and not on the frames in
+#: between. It goes quiet for good the moment the machine is taught, because the
+#: taught move is then the mon's strongest and there is no upgrade left to name.
+_tm_said = party_facts.SayOnce()
+
+
+def _annotate_teachable_tm(summary: dict, bundle: Optional[dict]) -> None:
+    """A machine in the bag that teaches a party member a harder-hitting move.
+
+    See `party.teachable_tms`. It is a payload fact rather than a `teach` verb
+    for the reason every other line here is: the verbs are not called, and the
+    thing that went wrong was not that teaching a TM was hard but that nothing
+    the model ever read said TM28 was Dig. Teaching it is already expressible --
+    45 `poke act` presses, driven and counted against the ROM -- and the run
+    never spent them because it had no reason to.
+    """
+    state = ((bundle or {}).get("state")) or {}
+    map_name = (state.get("map") or {}).get("map_name")
+    try:
+        line = party_facts.teachable_tms(state.get("party") or [], state.get("bag") or [])
+    except Exception as exc:  # noqa: BLE001 — a hint must never fail an action
+        print(f"[server] WARNING: teachable-TM hint failed: {exc}")
+        return
+    if line and _tm_said.fresh((map_name, line)):
+        summary["tm"] = line
 
 
 def _make_runtime_save_event(name: str, path: Path, source: str, reason: str) -> dict:
@@ -2120,6 +2213,16 @@ async def _run_intervention_check(bundle: Optional[dict]) -> None:
         party = ((bundle or {}).get("state") or {}).get("party")
         if party:
             state["party"] = party
+        # Presses since the last rung, run-wide. The stall detector could only
+        # ever see its own window — 120 receipts, about 411 presses — while the
+        # median gap between milestones in this run is 2,892, so "no milestone
+        # recently" was true almost always and the detector fired on 9 of the
+        # last 12 interventions without distinguishing anything. A detector that
+        # is always true carries as much as one that never fires.
+        if recorder.attainments:
+            state["presses_since_milestone"] = max(
+                0, recorder.total_presses - int(recorder.attainments[-1].get("presses") or 0)
+            )
         await runner.after_batch(
             recorder.recent_receipts(),
             state=state,
@@ -3144,13 +3247,23 @@ def _mart_buy_sync(item: str, count: int) -> dict:
     map_name = _current_map_name_sync()
     shop = capabilities.shop_at(map_name)
     if shop is None:
-        raise HTTPException(
-            status_code=409,
-            detail=(
-                f"{map_name} is not a Poke Mart, so there is no counter to buy from. "
-                "A mart is the building with the blue roof in every town."
-            ),
+        # "so there is no counter to buy from" was false in the room that made
+        # this matter: the Cerulean Bike Shop has a counter, a clerk behind it
+        # and a menu, and none of it is a Poke Mart. Refuse the verb, which is
+        # true, and say what the room actually does when that is known.
+        detail = (
+            f"{map_name} is not a Poke Mart, so `poke buy` has no price list to work "
+            "from. A mart is the building with the blue roof in every town."
         )
+        counter = capabilities.counter_at(map_name)
+        if counter is not None:
+            stand = counter.get("stand") or [None, None]
+            detail += (
+                f" The counter here is not a till: it trades a {counter.get('wants')} "
+                f"for the {counter.get('gives')}. Stand ({stand[0]},{stand[1]}) facing "
+                f"{counter.get('face')} and run `poke act a:{counter.get('presses')}`."
+            )
+        raise HTTPException(status_code=409, detail=detail)
     money_before = int((_reader.read_player() or {}).get("money") or 0)
     bag_before = {entry["id"]: entry["quantity"] for entry in _reader.read_bag()}
     if not _reader.at_mart_counter():
@@ -4009,6 +4122,7 @@ async def execute_actions(req: ActionRequest):
         _annotate_explored_map(summary, result["bundle"])
         _annotate_whiteout(summary)
         _annotate_gym_outlook(summary, result["bundle"])
+        _annotate_teachable_tm(summary, result["bundle"])
         return {"actions_executed": result["actions_executed"], **summary}
     except HTTPException:
         raise
@@ -4031,6 +4145,7 @@ async def battle_fight(req: BattleFightRequest):
         payload = {"used": outcome["used"], **_observation_summary(result["bundle"])}
         _annotate_whiteout(payload)
         _annotate_gym_outlook(payload, result["bundle"])
+        _annotate_teachable_tm(payload, result["bundle"])
         if outcome["retried"]:
             payload["retried"] = True
         return payload
@@ -4057,6 +4172,7 @@ async def battle_run():
         }
         _annotate_whiteout(payload)
         _annotate_gym_outlook(payload, result["bundle"])
+        _annotate_teachable_tm(payload, result["bundle"])
         return payload
     except HTTPException:
         raise
@@ -4134,6 +4250,7 @@ async def battle_item(req: BattleItemRequest):
         }
         _annotate_whiteout(payload)
         _annotate_gym_outlook(payload, result["bundle"])
+        _annotate_teachable_tm(payload, result["bundle"])
         return payload
     except HTTPException:
         raise
@@ -4419,6 +4536,26 @@ async def _take_load_snapshot() -> Optional[Path]:
         return None
 
 
+def _keep_undo_frame(path: Path, loaded: str) -> Optional[str]:
+    """Promote a guard snapshot into a loadable save, and return its name.
+
+    The frame a forced load lands on is the only record of the branch it left,
+    and it was being deleted. Named rather than numbered so the answer can say
+    it out loud: a way back nobody can name is not a way back.
+    """
+
+    stem = f"undo__{loaded}"[:60]
+    try:
+        target = _saves_dir() / f"{stem}.state"
+        target.parent.mkdir(parents=True, exist_ok=True)
+        path.replace(target)
+        return stem
+    except Exception as exc:  # noqa: BLE001 — a lost undo must not lose the load
+        print(f"[server] WARNING: could not keep an undo frame for {loaded}: {exc}")
+        _discard_snapshot(path)
+        return None
+
+
 def _discard_snapshot(path: Optional[Path]) -> None:
     """Drop a guard snapshot. A file that will not delete is not worth a 500."""
     if path is None:
@@ -4535,9 +4672,12 @@ async def load_state(req: SaveRequest):
         raise HTTPException(status_code=409, detail=detail)
 
     before_party = await _run_emulator_sync(_party_resources_sync)
-    # Nothing to lose, or an operator who has already said they know: no snapshot,
-    # no second milestone read, no extra friction on the load that goes forward.
-    snapshot = None if req.force or not held_before else await _take_load_snapshot()
+    # A load with nothing to lose needs no undo frame. A *forced* one needs it
+    # most, and this used to skip exactly those: the guard banked a frame for
+    # every load except the two it knew were destructive, which are the only two
+    # irreversible losses in the run. Forcing is now reversible — the frame is
+    # kept under a name and the answer says what it is.
+    snapshot = None if not held_before else await _take_load_snapshot()
 
     try:
         result = await _coordinator.load_settle_and_observe(
@@ -4551,7 +4691,15 @@ async def load_state(req: SaveRequest):
         _discard_snapshot(snapshot)
         raise HTTPException(status_code=500, detail=f"Load error: {e}")
 
-    if snapshot is not None:
+    undo_name: Optional[str] = None
+    if snapshot is not None and req.force:
+        # Keep the frame instead of checking it. A forced load is the operator
+        # or the model saying "yes, I know" — which is a statement about intent,
+        # not a guarantee about the outcome, and the two forced loads this run
+        # were both regretted within minutes.
+        undo_name = _keep_undo_frame(snapshot, req.name)
+        refusal = None
+    elif snapshot is not None:
         try:
             refusal = await _refuse_if_regressive(
                 name=req.name,
@@ -4579,6 +4727,14 @@ async def load_state(req: SaveRequest):
     await broadcast({"type": "state_update", "reason": "load", "state": result["state_after"]})
     _loads_since_milestone[req.name] = _loads_since_milestone.get(req.name, 0) + 1
     load_extra: dict = {"save": req.name, "load_repeats": _loads_since_milestone[req.name]}
+    if req.force:
+        # Whether a load was forced is the only thing that separates recovering
+        # a lost branch from overriding the guard, and the record could not tell
+        # them apart. Twice this evening a save was refused and the same save
+        # loaded four seconds later; the receipts show the refusal and the
+        # success and nothing about what changed in between, so the obvious
+        # reading had to stay an inference.
+        load_extra["forced"] = True
     restored = _restored_by_load(before_party, bundle)
     if restored:
         # Absent rather than null when nothing was handed back: a key that is
@@ -4609,6 +4765,11 @@ async def load_state(req: SaveRequest):
         "save": {"name": req.name, "path": str(save_path)},
         **_observation_summary(bundle),
     }
+    if undo_name:
+        payload["undo"] = (
+            f"the branch you just left is saved as {undo_name} — "
+            f"`poke load {undo_name}` puts it back"
+        )
     if not result.get("settled", True):
         # The save was captured mid-transition and the game never came to rest.
         # Nothing was published and nothing was auto-saved: the map store would
@@ -4943,6 +5104,7 @@ async def goto(req: GotoRequest):
     _annotate_explored_map(summary, bundle)
     _annotate_whiteout(summary)
     _annotate_gym_outlook(summary, bundle)
+    _annotate_teachable_tm(summary, bundle)
     payload = {
         "actions_executed": result["actions_executed"],
         **summary,

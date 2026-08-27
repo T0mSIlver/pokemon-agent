@@ -1263,10 +1263,18 @@ class SessionFacts:
             rows.append(f"- Verbs beyond walking: {rendered}.")
 
         if self.saves:
+            # Named, not offered. This line used to end "loadable with `./poke
+            # load <name>`" and sat at the top of every session, which is the
+            # harness advertising the single most expensive behaviour in the
+            # run: 143 loads, at least thirteen rungs handed back, and the same
+            # two — Misty and the Cascade Badge — bought three times over. The
+            # names are still worth having, because a save is how a branch is
+            # recognised; the invitation is not.
             rows.append(
-                "- Saves on disk, newest first, loadable with `./poke load <name>`: "
+                "- Saves on disk, newest first: "
                 + ", ".join(self.saves)
-                + "."
+                + ". Loading one rewinds the game to it and keeps the bill; walking is usually "
+                "cheaper than the milestones a reload hands back."
             )
         return rows
 

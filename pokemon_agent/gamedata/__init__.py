@@ -131,6 +131,21 @@ def all_moves() -> Dict[str, Any]:
     return _data("moves")
 
 
+def tms() -> Dict[str, str]:
+    """``{"TM28": "Dig", ..., "HM01": "Cut"}`` -- what each machine teaches."""
+    return _data("tms")
+
+
+def tm_move(label: Optional[str]) -> Optional[str]:
+    """The move ``TM28`` teaches, or ``None`` for anything that is not a machine.
+
+    The bag reads out item names -- ``TM28``, ``HM01`` -- and a species table
+    reads out the same labels, so this is the one join that turns "TM28 x1"
+    beside "Charmeleon can learn TM28" into "Charmeleon can learn Dig".
+    """
+    return tms().get(str(label or "").strip().upper())
+
+
 def types() -> Dict[str, Any]:
     """``types``, ``physical_types``, ``special_types`` and the ``chart``."""
     return _data("types")

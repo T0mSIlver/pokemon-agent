@@ -90,16 +90,47 @@ class StalledMilestones:
     about *why*. That is the thinking session's job.
     """
 
-    #: Presses, and it has to fit inside the policy's window, which is counted in
-    #: *receipts*. Measured over 212 real windows: the median 120-receipt window
-    #: holds 411 presses and only 5 of them ever reached 800, so at 800 this
-    #: detector -- the one aimed squarely at "the run is not progressing" -- fired
-    #: in 2% of the windows it was asked about. A threshold above the window is a
-    #: detector that is switched off, not a strict one.
+    #: The window fallback, in presses, used only when the run cannot say how
+    #: long it has really been. It has to fit inside the policy's window, which
+    #: is counted in *receipts*: the median 120-receipt window holds 411 presses,
+    #: so a threshold above that is a detector switched off rather than a strict
+    #: one. That constraint is also why this number alone was never a stall
+    #: measurement -- the median gap between milestones in a real run is 2,892
+    #: presses, seven times the whole window, so "nothing in the last 400" was
+    #: true almost always and fired on 9 of 12 consecutive interventions.
     presses: int = 400
+
+    #: What a stall is when the run *can* say. Set from the same measurement:
+    #: the median gap between first-earned milestones is 2,892 presses and the
+    #: mean is 4,078, so this fires when the run has spent about a typical
+    #: milestone's worth of buttons without reaching one. A detector that is
+    #: always true says as little as one that never fires; this one has to be
+    #: able to be false.
+    run_presses: int = 3000
     name: str = "stalled"
 
     def check(self, window: Sequence[Receipt], state: Mapping[str, Any]) -> Optional[Trigger]:
+        # The run-wide count when the caller supplies it, because the window
+        # cannot reach back far enough to see a real stall.
+        since = state.get("presses_since_milestone")
+        if isinstance(since, int):
+            if since < self.run_presses:
+                return None
+            maps = sorted({r.map_name for r in window if r.map_name})
+            return Trigger(
+                name=self.name,
+                priority=PRIORITY_STUCK,
+                reason=(
+                    f"{since} button presses since the last milestone, against a run median of "
+                    f"about 2,900 between them. Maps visited recently: "
+                    f"{', '.join(maps) or 'unknown'}."
+                ),
+                question=(
+                    "Progress has stopped. Work out what is blocking it and give "
+                    "the next concrete sequence of moves."
+                ),
+                payload={"presses_since_milestone": since, "maps": maps},
+            )
         if _presses(window) < self.presses:
             return None
         recent = _tail(window, self.presses)

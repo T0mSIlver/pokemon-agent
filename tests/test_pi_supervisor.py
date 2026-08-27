@@ -3105,8 +3105,13 @@ async def test_the_first_message_carries_ground_truth_off_the_receipts(tmp_path:
     # No star legend, because no exit here is starred: measured on the live run's
     # session 6, that legend cost 22 bytes over a line with no `*` in it.
     assert "Every way off Route 3: walk north -> Route 4" in message
-    # The escape hatch it never lists for itself.
-    assert "`./poke load <name>`: pewter_start." in message
+    # Named so a branch can be recognised, but not offered. This line used to
+    # end "loadable with `./poke load <name>`" and sat at the top of every
+    # session, advertising the run's most expensive behaviour: 143 loads and at
+    # least thirteen rungs handed back, Misty and the Cascade Badge each bought
+    # three times.
+    assert "Saves on disk, newest first: pewter_start." in message
+    assert "poke load" not in message
     assert "auto__" not in message
     # The critic's own words come after the facts, under their own heading.
     assert message.index(FACTS_HEADING) < message.index(HANDOFF_HEADING)

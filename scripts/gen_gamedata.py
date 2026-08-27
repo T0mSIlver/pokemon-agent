@@ -1267,6 +1267,32 @@ def build_moves(fetcher: Fetcher, names: NameTables) -> Dict[str, Any]:
 
 
 # ===================================================================
+# tms.json
+# ===================================================================
+
+
+def build_tms(names: NameTables) -> Dict[str, str]:
+    """``{"TM28": "Dig", ..., "HM01": "Cut"}`` -- which move each TM teaches.
+
+    ``NameTables`` already builds this while numbering ``add_tm``/``add_hm`` in
+    item_constants.asm; it was thrown away after being used to label each
+    species' ``tm_hm`` list. Without it the bag and the moveset cannot be joined
+    at all: "TM28 x1" and "Charmeleon can learn TM28" are both in the payload
+    and neither of them says Dig.
+    """
+    out: Dict[str, str] = {}
+    for const, label in names.tm_hm_of_move.items():
+        if label in out:
+            raise GenError(f"{label} teaches two moves: {out[label]!r} and {const!r}")
+        out[label] = names.move(const)
+    tms = [label for label in out if label.startswith("TM")]
+    hms = [label for label in out if label.startswith("HM")]
+    if len(tms) != 50 or len(hms) != 5:
+        raise GenError(f"{len(tms)} TMs and {len(hms)} HMs parsed, expected 50 and 5")
+    return dict(sorted(out.items()))
+
+
+# ===================================================================
 # types.json
 # ===================================================================
 
@@ -1356,6 +1382,7 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
     services = build_services(fetcher, maps, objects, report)
     species = build_species(fetcher, names)
     moves = build_moves(fetcher, names)
+    tms = build_tms(names)
     types = build_types(fetcher, names, report)
 
     outputs = [
@@ -1367,6 +1394,7 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
         ("services.json", with_sha(sha, services), f"{len(services)} maps with a service"),
         ("species.json", with_sha(sha, species), f"{len(species)} species"),
         ("moves.json", with_sha(sha, moves), f"{len(moves)} moves"),
+        ("tms.json", with_sha(sha, tms), f"{len(tms)} TMs and HMs"),
         ("types.json", with_sha(sha, types), f"{len(types['types'])} types"),
     ]
 

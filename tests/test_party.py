@@ -15,6 +15,7 @@ from pathlib import Path
 
 import pytest
 
+from pokemon_agent import gamedata
 from pokemon_agent import party as pf
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
@@ -286,6 +287,98 @@ def test_no_prompt_and_no_party_produce_no_line():
     assert pf.learn_cost(_prompt(FORGET_LIST), []) is None
 
 
+# --- the machines in the bag -----------------------------------------------
+
+#: The bag that Charmeleon carried into Vermilion, item for item, as `poke state`
+#: printed it. TM28 had been in it since Mt. Moon.
+VERMILION_BAG = [
+    {"item": "Town Map", "quantity": 1},
+    {"item": "Poke Ball", "quantity": 11},
+    {"item": "TM34", "quantity": 1},
+    {"item": "Potion", "quantity": 9},
+    {"item": "Helix Fossil", "quantity": 1},
+    {"item": "Nugget", "quantity": 1},
+    {"item": "S.S. Ticket", "quantity": 1},
+    {"item": "TM28", "quantity": 1},
+    {"item": "HM01", "quantity": 1},
+    {"item": "Super Potion", "quantity": 2},
+    {"item": "TM11", "quantity": 1},
+    {"item": "Bicycle", "quantity": 1},
+]
+
+
+def test_the_tm_that_was_carried_for_sixty_thousand_presses_is_named():
+    """TM28 is Dig, 100 power, and Charmeleon's hardest attack is Cut at 50.
+
+    Both halves were already in the harness -- the bag said TM28, species.json
+    said Charmeleon can learn TM28 -- and nothing joined them, so the machine
+    rode along unused from Mt. Moon to Vermilion.
+    """
+    line = pf.teachable_tms([CHARMELEON], VERMILION_BAG)
+    assert line is not None
+    assert "TM28 teaches Dig (Ground 100)" in line
+    assert "Charmeleon can learn it" in line
+    # And what it would be traded against, so the cost of the slot is on the
+    # same line as the gain.
+    assert "Cut 50" in line and "Ember 40" in line
+
+
+def test_a_machine_the_species_cannot_learn_is_not_offered():
+    """TM11 is Bubble Beam and it was in the same bag. Charmeleon cannot learn it."""
+    line = pf.teachable_tms([CHARMELEON], VERMILION_BAG)
+    assert "TM11" not in line
+    assert "Bubble Beam" not in line
+
+
+def test_a_machine_with_no_power_is_not_an_upgrade():
+    """TM34 is Bide, which Charmeleon *can* learn and which deals no damage."""
+    line = pf.teachable_tms([CHARMELEON], VERMILION_BAG)
+    assert "TM34" not in line and "Bide" not in line
+
+
+def test_a_move_already_known_is_not_an_upgrade():
+    """HM01 is Cut and Charmeleon is holding Cut."""
+    assert "HM01" not in pf.teachable_tms([CHARMELEON], VERMILION_BAG)
+
+
+def test_a_machine_weaker_than_what_is_carried_says_nothing():
+    """Once Dig is taught there is nothing left in that bag to say."""
+    taught = _mon(
+        "Charmeleon",
+        33,
+        ["Fire"],
+        {"attack": 66, "defense": 54, "speed": 71, "special": 57},
+        [("Cut", 29), ("Dig", 10), ("Ember", 23), ("Leer", 30)],
+    )
+    assert pf.teachable_tms([taught], VERMILION_BAG) is None
+
+
+def test_a_fainted_member_is_not_offered_a_machine():
+    fainted = dict(CHARMELEON, hp=0)
+    assert pf.teachable_tms([fainted], VERMILION_BAG) is None
+
+
+def test_an_empty_bag_or_party_says_nothing():
+    assert pf.teachable_tms([CHARMELEON], []) is None
+    assert pf.teachable_tms([], VERMILION_BAG) is None
+
+
+def test_at_most_three_machines_are_named():
+    """A late-game bag holds a dozen; a field that grows without bound is wallpaper."""
+    weak = _mon(
+        "Charmeleon",
+        33,
+        ["Fire"],
+        {"attack": 66, "defense": 54, "speed": 71, "special": 57},
+        [("Growl", 40), ("Leer", 30)],
+    )
+    bag = [{"item": label, "quantity": 1} for label in ("TM01", "TM03", "TM06", "TM28", "TM38")]
+    line = pf.teachable_tms([weak], bag)
+    assert line.count(" teaches ") == pf.TEACHABLE_LIMIT
+    # Sorted by how much power it adds, so the cut falls on the least useful.
+    assert "TM38 teaches Fire Blast" in line
+
+
 # --- how often it is said --------------------------------------------------
 
 
@@ -410,5 +503,99 @@ def test_a_tm_on_a_full_moveset_is_warned_about_before_the_press():
             assert party[0]["moves"][0]["name"] in seen[-1]
             return
         pytest.skip("no save has a teachable TM and a four-move lead")
+    finally:
+        emulator.close()
+
+
+@needs_rom
+@pytest.mark.skipif(os.environ.get("POKEMON_SKIP_SLOW") == "1", reason="drives ~40 button presses")
+def test_the_machine_table_agrees_with_what_the_rom_boots_up():
+    """tms.json is generated from pokered; this is the ROM's own answer.
+
+    Booting up a TM puts the move it teaches in ``wMoveNum``, which the reader
+    surfaces as ``move_learn["incoming"]``. If the generated table and the ROM
+    ever disagreed, the payload would name the wrong move on the one frame where
+    naming the wrong move deletes a slot for good.
+    """
+    from pokemon_agent.emulator import PyBoyEmulator
+    from pokemon_agent.memory.red import RedBlueMemoryReader
+
+    emulator = PyBoyEmulator()
+    emulator.load(str(SAVES_DIR / "PokemonRed.gb"))
+    checked: list = []
+    try:
+        for state in sorted(SAVES_DIR.glob("*.state"), reverse=True):
+            emulator.load_state(str(state))
+            emulator.tick(60)
+            reader = RedBlueMemoryReader(emulator)
+            party, bag = reader.read_party(), reader.read_bag()
+            if not party or (reader.read_battle() or {}).get("in_battle"):
+                continue
+            if reader.read_dialog()["active"]:
+                continue
+            learnable = (gamedata.species(str(party[0].get("species") or "")) or {}).get("tm_hm")
+            known = set(pf.move_names(party[0]))
+            picks = [
+                (index, str(item.get("item")))
+                for index, item in enumerate(bag)
+                if str(item.get("item")) in (learnable or ())
+                and gamedata.tm_move(str(item.get("item"))) not in known
+            ]
+            if not picks:
+                continue
+
+            def press(button, times=1, wait=30):
+                for _ in range(times):
+                    emulator.press(button, 8)
+                    emulator.tick(wait)
+
+            def open_the_bag():
+                """Both menus remember where they were left, so nothing is counted.
+
+                The start menu is a different length before the Pokedex, and the
+                bag list scrolls under a cursor that stops at row 2, so a fixed
+                number of Down presses lands somewhere different on every save.
+                `at_bag_list` and `read_list_menu` say where it actually is.
+                """
+                press("start", wait=60)
+                for _ in range(8):
+                    press("a", wait=60)
+                    if reader.at_bag_list():
+                        return True
+                    press("b", wait=40)
+                    press("down", wait=30)
+                return False
+
+            for index, label in picks:
+                if label in checked:
+                    continue
+                emulator.load_state(str(state))
+                emulator.tick(60)
+                assert open_the_bag(), f"{state.name}: never reached the bag"
+                for _ in range(len(bag) + 2):
+                    here = reader.read_list_menu()["index"]
+                    if here == index:
+                        break
+                    press("down" if here < index else "up", wait=25)
+                assert reader.read_list_menu()["index"] == index
+                press("a")
+                press("a")  # USE
+                for _ in range(10):
+                    press("a")
+                    incoming = (reader.read_move_learn() or {}).get("incoming")
+                    if incoming:
+                        assert incoming == gamedata.tm_move(label), (
+                            f"{label}: the ROM booted up {incoming!r}, tms.json says "
+                            f"{gamedata.tm_move(label)!r}"
+                        )
+                        checked.append(label)
+                        break
+                else:
+                    raise AssertionError(f"{state.name}: {label} booted up nothing")
+            # Enough saves to cover a few different machines; the bag of any one
+            # of them holds two or three.
+            if len(checked) >= 4:
+                break
+        assert checked, "no save has a machine its lead Pokemon can still learn"
     finally:
         emulator.close()

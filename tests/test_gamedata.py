@@ -25,7 +25,7 @@ DATA_DIR = Path(gamedata.DATA_DIR)
 
 #: Files whose top-level keys are map names.
 MAP_KEYED_FILES = ("trainers", "encounters", "items", "shops")
-ALL_FILES = ("world", *MAP_KEYED_FILES, "species", "moves", "types")
+ALL_FILES = ("world", *MAP_KEYED_FILES, "species", "moves", "tms", "types")
 
 MAP_NAME_SET = set(MAP_NAMES.values())
 
@@ -242,6 +242,41 @@ def test_tackle():
         "pp": 35,
         "effect": "NO_ADDITIONAL_EFFECT",
     }
+
+
+def test_every_machine_teaches_a_real_move():
+    """55 machines, and the item name is the join between a bag and a moveset.
+
+    ``TM28 x1`` in the bag and ``"TM28"`` in Charmeleon's ``tm_hm`` are the same
+    string, and until this table existed neither of them said Dig.
+    """
+    table = gamedata.tms()
+    assert len(table) == 55
+    assert sorted(table) == sorted(
+        [f"HM{n:02d}" for n in range(1, 6)] + [f"TM{n:02d}" for n in range(1, 51)]
+    )
+    for label, move in table.items():
+        assert gamedata.move(move), f"{label} teaches {move!r}, which is not a move"
+
+
+def test_the_machines_the_run_was_carrying():
+    assert gamedata.tm_move("TM28") == "Dig"
+    assert gamedata.tm_move("TM11") == "Bubble Beam"
+    assert gamedata.tm_move("TM34") == "Bide"
+    assert gamedata.tm_move("HM01") == "Cut"
+    assert gamedata.tm_move("Potion") is None
+    assert gamedata.tm_move(None) is None
+
+
+def test_every_label_a_species_can_learn_is_in_the_machine_table():
+    """species.json and tms.json are generated apart and have to agree.
+
+    A label in one and not the other is the silent half-join this table was
+    added to close.
+    """
+    labels = {label for entry in gamedata.all_species().values() for label in entry["tm_hm"]}
+    assert labels <= set(gamedata.tms())
+    assert len(labels) == 55
 
 
 def test_every_learnset_move_exists():

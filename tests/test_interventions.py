@@ -1615,3 +1615,40 @@ def test_the_thinking_session_is_told_the_player_can_be_walked_somewhere():
     # And it still forbids recalling geography, which is what the old wording
     # was protecting and must survive the change.
     assert "must come from the facts above" in prompt
+
+
+class TestStallIsMeasuredAgainstTheRunNotTheWindow:
+    """The detector could only see its own window, and the window is too short.
+
+    120 receipts is about 411 presses; the median gap between first-earned
+    milestones in a real run is 2,892. So "no milestone in the last 400 presses"
+    was true almost always, and `stalled` fired on nine of twelve consecutive
+    interventions while carrying no information about whether anything was
+    actually wrong. A detector that cannot be false is not a detector.
+    """
+
+    def test_a_normal_gap_between_milestones_is_not_a_stall(self):
+        window = walk(120, presses=10)
+        state = {"presses_since_milestone": 1200}
+        assert StalledMilestones().check(window, state) is None
+
+    def test_a_gap_longer_than_a_typical_milestone_is(self):
+        window = walk(120, presses=10)
+        trigger = StalledMilestones().check(window, {"presses_since_milestone": 3200})
+        assert trigger is not None
+        assert trigger.payload["presses_since_milestone"] == 3200
+        assert "3200 button presses since the last milestone" in trigger.reason
+        # The comparison is in the reason, so the thinking session knows whether
+        # this is unusual rather than merely true.
+        assert "run median" in trigger.reason
+
+    def test_without_the_run_count_it_falls_back_to_the_window(self):
+        """A caller that cannot say still gets the old behaviour, not silence."""
+        window = walk(120, presses=10)
+        assert StalledMilestones().check(window, {}) is not None
+        assert StalledMilestones().check(window, {"presses_since_milestone": None}) is not None
+
+    def test_the_run_count_wins_over_the_window(self):
+        """Both are available and they disagree; the run-wide one is the truth."""
+        window = walk(120, presses=10)  # 1,200 presses, no milestones: window says stalled
+        assert StalledMilestones().check(window, {"presses_since_milestone": 50}) is None

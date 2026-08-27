@@ -1852,20 +1852,103 @@ def shop_payload(map_name: Optional[str], money: Optional[int]) -> dict:
     """
     shop = shop_at(map_name)
     if shop is None:
-        raise NotFound(f"{map_name} is not a mart. Nothing here is for sale.")
+        # NOT "nothing here is for sale". shops.json covers the twelve Poke
+        # Marts and nothing else, so absence from it is a fact about the table,
+        # never a fact about the room. The old wording said the second thing:
+        # standing in the Cerulean Bike Shop holding the Bike Voucher, with the
+        # Bicycle two tiles away, this answered "Nothing here is for sale" — a
+        # confident wrong answer, which this project ranks below both a refusal
+        # and silence. Say what is missing and let the counter line say the rest.
+        raise NotFound(
+            f"{map_name} is not one of the twelve Poke Marts, so there is no price list "
+            "for it. That is all this says — other counters trade and hand over things "
+            "without being a mart, and the frame names the ones that are known."
+        )
     prices = shop.get("prices") or {}
     stock = [{"item": item, "price": prices.get(item)} for item in shop.get("items") or ()]
     return {"map": map_name, "money": int(money or 0), "stock": stock}
 
 
 # ---------------------------------------------------------------------------
-# Healers
+# Healers and the other counters
 # ---------------------------------------------------------------------------
+
+#: Counters that hand something over without being a mart or a Poke Center.
+#:
+#: services.json is generated from the decomp and its classifier only ever
+#: matched one thing, `predef HealParty`, so every service in it is a nurse and
+#: every other working counter in the game reads as an empty room. Measured cost
+#: on one run's receipts: 1,233 presses across 543 receipts inside the Cerulean
+#: Shop in a 69-minute window, 41% of every press in it, holding the Bike Voucher
+#: with the Bicycle six A presses away the whole time. 213 of those receipts
+#: moved nothing.
+#:
+#: The room is winnable without any of this -- the same run traded the voucher
+#: correctly once, at 09:54, from this exact tile, in six A presses. What it
+#: could not do was find that tile twice. The failing window shows it reach
+#: (4,2), press A five separate times, and walk off on the sixth. So the fact
+#: has to carry the tile, the facing *and* the press count; any two of the three
+#: is what it already had.
+#:
+#: Hand-written rather than generated, and only for rooms whose sequence has
+#: actually been driven in the emulator. Extending the generator to classify a
+#: `text_asm` body that calls GiveItem is a real piece of work -- forty-three map
+#: scripts hit that primitive, the item name has to be resolved out of assembly,
+#: some of the counters are bg_events rather than object_events (the Game Corner
+#: prize vendors are three signs), and EXPECTED_SERVICES has to come out exactly
+#: right or nothing generates at all. Until that is done, an unverified entry
+#: here would be the same confident wrong answer in a new coat, so this table
+#: grows one measured room at a time and stays small on purpose.
+#:
+#: `at` is where the *person* stands, the same convention services.json uses.
+#: `stand`/`face` are the tile and direction that were actually driven in the
+#: emulator, not derived: services.json leaves that to live collision precisely
+#: because a guess would be wrong, and a measurement is not a guess. In a room
+#: this small the difference between the right tile and the one beside it was
+#: the whole failure, so the measurement is the fact worth carrying.
+SPECIAL_COUNTERS: dict[str, dict] = {
+    # Verified on save auto__20260827T190800Z: from the door at (2,7), the walk
+    # `up right right up up up up` lands on (4,2), `right` faces the counter,
+    # and the sixth A press puts the Bicycle in the bag and takes the voucher.
+    # (4,1) -- the tile `poke map` calls "nearest unexplored", and the tile the
+    # failing window stood on 131 times -- faces (6,1), where nobody is
+    # standing, and does nothing at all. The two are one tile apart.
+    #
+    # `presses` is an upper bound and is meant to be overshot. Driven from the
+    # door it lands on the sixth press; driven from a save already standing in
+    # the room it lands on the fifth, because how much of the clerk's text has
+    # scrolled differs. Extra presses hit a closed box and cost nothing; one too
+    # few is the mistake that was actually made.
+    "Cerulean Bike Shop": {
+        "service": "trade",
+        "at": [6, 2],
+        "stand": [4, 2],
+        "face": "right",
+        "presses": 6,
+        "wants": "Bike Voucher",
+        "gives": "Bicycle",
+    },
+}
+
+
+def counter_at(map_name: Optional[str]) -> Optional[dict]:
+    """The trading counter on this map, or None. See SPECIAL_COUNTERS."""
+    return SPECIAL_COUNTERS.get(str(map_name)) if map_name else None
 
 
 def services_at(map_name: Optional[str]) -> list[dict]:
-    """The service NPCs on this map, from services.json. Empty on most maps."""
-    return list(gamedata.services(str(map_name))) if map_name else []
+    """The service NPCs on this map: the generated nurses plus SPECIAL_COUNTERS.
+
+    Empty on most maps. The overlay is merged here rather than in gamedata so
+    that services.json stays exactly what the generator wrote.
+    """
+    if not map_name:
+        return []
+    services = list(gamedata.services(str(map_name)))
+    counter = counter_at(map_name)
+    if counter is not None:
+        services.append(dict(counter))
+    return services
 
 
 def healer_at(map_name: Optional[str]) -> Optional[dict]:
@@ -2359,8 +2442,10 @@ __all__ = [
     "catch_payload",
     "heal_item_line",
     "heal_item_payload",
+    "SPECIAL_COUNTERS",
     "shop_at",
     "shop_payload",
+    "counter_at",
     "services_at",
     "healer_at",
     "heal_shortfall",
