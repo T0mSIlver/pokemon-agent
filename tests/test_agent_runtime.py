@@ -196,6 +196,122 @@ def test_objective_engine_reaches_brock_phase():
     assert cut["current"]["id"] == "phase_complete_cut_access"
 
 
+#: A run that has just been handed HM01 by the captain, as the milestone oracle
+#: reads it: the whole chain that leads there and nothing past it.
+REACHED_AT_HM01 = [
+    "EVENT_GOT_STARTER",
+    "EVENT_BATTLED_RIVAL_IN_OAKS_LAB",
+    "EVENT_GOT_OAKS_PARCEL",
+    "EVENT_OAK_GOT_PARCEL",
+    "EVENT_GOT_POKEDEX",
+    "EVENT_GOT_TOWN_MAP",
+    "EVENT_BEAT_BROCK",
+    "BADGE_BOULDER",
+    "EVENT_BEAT_CERULEAN_RIVAL",
+    "EVENT_MET_BILL",
+    "EVENT_GOT_SS_TICKET",
+    "EVENT_RUBBED_CAPTAINS_BACK",
+    "EVENT_GOT_HM01",
+]
+
+
+def state_past_cut(milestones=None) -> dict:
+    state = make_state(
+        map_name="Vermilion City",
+        has_pokedex=True,
+        badge_count=1,
+        bag=[{"item": "HM01", "quantity": 1}],
+    )
+    if milestones is not None:
+        state["milestones"] = milestones
+    return state
+
+
+def test_written_packs_still_own_everything_before_the_handoff():
+    engine = ObjectiveEngine()
+
+    # Milestone data present and rich, at a point the packs still cover: the
+    # frontier must not get a word in.
+    state = make_state(map_name="Pewter City", has_pokedex=True)
+    state["milestones"] = REACHED_AT_HM01
+
+    result = engine.evaluate(state)
+
+    assert result["current"]["id"] == "reach_pewter_gym"
+    assert result["current"]["pack_id"] == "red_intro_to_brock"
+    assert result["phase_complete"] is False
+
+
+def test_handoff_objective_comes_from_the_live_frontier():
+    engine = ObjectiveEngine()
+
+    result = engine.evaluate(state_past_cut(REACHED_AT_HM01))
+    current = result["current"]
+
+    assert result["phase_complete"] is True
+    assert current["pack_id"] == "milestone_frontier"
+    assert current["id"].startswith("milestone_frontier_")
+    # Several real options, each a milestone whose prerequisites are met.
+    assert "Defeated Misty" in current["summary"]
+    assert "Got the Bike Voucher" in current["summary"]
+    assert (
+        "Got HM05 Flash (opens dark caves, once the Boulder Badge allows it)"
+        in (current["summary"])
+    )
+    # Not a promise about geography.
+    assert "not a claim that any of them can be reached on foot" in current["summary"]
+    # Behind Cut, which needs a badge this run has not got: not on the frontier,
+    # so not in the objective.
+    assert "Defeated Lt. Surge" not in current["summary"]
+    # Exactly one current objective, and the pack rung it replaced is done.
+    assert [item["id"] for item in result["objectives"] if item["current"]] == [current["id"]]
+    handoff = [item for item in result["objectives"] if item["id"] == "phase_complete_cut_access"]
+    assert handoff and handoff[0]["status"] == "completed"
+    assert set(current) == set(result["objectives"][0])
+
+
+def test_a_changed_frontier_changes_the_objective():
+    engine = ObjectiveEngine()
+
+    before = engine.evaluate(state_past_cut(REACHED_AT_HM01))["current"]
+    after = engine.evaluate(state_past_cut(REACHED_AT_HM01 + ["EVENT_BEAT_MISTY"]))["current"]
+
+    assert before["id"] != after["id"]
+    assert "Defeated Misty" not in after["summary"]
+    assert "Cascade Badge" in after["summary"]
+
+
+def test_the_same_frontier_keeps_the_same_objective_id():
+    engine = ObjectiveEngine()
+
+    first = engine.evaluate(state_past_cut(REACHED_AT_HM01))["current"]
+    # A milestone that was already banked, arriving in a different order.
+    shuffled = list(reversed(REACHED_AT_HM01))
+    second = engine.evaluate(state_past_cut(shuffled))["current"]
+
+    assert first["id"] == second["id"]
+
+
+def test_unreadable_milestones_fall_back_to_the_written_objective():
+    engine = ObjectiveEngine()
+
+    for milestones in (None, [], (), 17, {"nope": True}, ["NOT_A_MILESTONE"]):
+        result = engine.evaluate(state_past_cut(milestones))
+        assert result["current"]["id"] == "phase_complete_cut_access", milestones
+        assert result["phase_complete"] is True
+
+
+def test_finished_ladder_falls_back_rather_than_offering_nothing():
+    from pokemon_agent.milestones import MILESTONES
+
+    engine = ObjectiveEngine()
+
+    everything = [milestone.id for milestone in MILESTONES]
+    result = engine.evaluate(state_past_cut(everything))
+
+    assert result["current"]["id"] == "phase_complete_cut_access"
+
+
 def test_objective_record_surfaces_only_the_lean_fields():
     engine = ObjectiveEngine()
 

@@ -309,6 +309,48 @@ def test_supervisor_takes_the_milestone_score_off_the_facts(tmp_path):
     assert supervisor._notes_progress(object()) is None
 
 
+def test_ram_beats_the_run_score_when_a_reload_has_taken_a_badge_back(tmp_path):
+    """The receipts are a high-water mark and the cartridge is not.
+
+    Measured live: after a reload dropped the Cascade badge, the run score read
+    21/58 "Got the Bicycle" while the game held 16/58 and stood before Misty.
+    The whole point of the block is that the model stops reading a stale number
+    out of its own notes, so the live reading has to win.
+    """
+
+    supervisor = _supervisor(tmp_path)
+
+    class Peaked:
+        done_count = 21
+        rung_done = "Got the Bicycle"
+
+    live = {"count": 16, "furthest": "EVENT_SS_ANNE_LEFT", "total": 58}
+    assert supervisor._notes_progress(Peaked(), live) == {
+        "count": 16,
+        "furthest": "The S.S. Anne set sail",
+    }
+    # No live reading: the score is still better than nothing.
+    assert supervisor._notes_progress(Peaked(), None)["count"] == 21
+    # A live reading the harness could not parse must not be preferred.
+    assert supervisor._notes_progress(Peaked(), {"count": None})["count"] == 21
+
+
+def test_the_block_carries_the_live_count_end_to_end(tmp_path):
+    supervisor = _supervisor(tmp_path)
+
+    class Peaked:
+        done_count = 21
+        rung_done = "Got the Bicycle"
+
+    supervisor._refresh_notes(
+        {"game_state": STATE, "milestones": {"count": 16, "furthest": "EVENT_SS_ANNE_LEFT"}},
+        Peaked(),
+    )
+    written = (supervisor.workspace_dir / notes.NOTES_FILENAME).read_text(encoding="utf-8")
+    assert "16/58, furthest: The S.S. Anne set sail" in written
+    assert "Bicycle" not in written
+
+
 def test_a_failed_refresh_never_raises_and_names_the_exception_type(tmp_path, monkeypatch):
     supervisor = _supervisor(tmp_path)
 

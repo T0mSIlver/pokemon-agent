@@ -161,7 +161,8 @@
     },
     {
       "id": "phase_complete_cut_access",
-      "summary": "HM01 Cut is secured. Stabilize the run and prepare the next progression pack.",
+      "handoff_to_frontier": true,
+      "summary": "HM01 Cut is secured and the written objectives end here. Pick the next goal yourself from the milestones poke progress lists as open.",
       "completion_predicate": "The bag contains HM01.",
       "failure_hints": [
         "Keep a durable save after receiving HM01 before attempting the next badge route."

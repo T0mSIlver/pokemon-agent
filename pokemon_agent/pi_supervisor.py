@@ -22,6 +22,7 @@ from urllib.parse import urlparse
 
 from pokemon_agent import notes as notes_module
 from pokemon_agent.agent_runtime import utc_now
+from pokemon_agent.milestones import MILESTONES_BY_ID
 from pokemon_agent.run_recorder import RunRecorder
 
 JsonDict = dict[str, Any]
@@ -1927,17 +1928,22 @@ class PiSupervisor:
             )
             return None
 
-    def _notes_progress(self, facts: Any) -> Optional[JsonDict]:
+    def _notes_progress(self, facts: Any, live: Any = None) -> Optional[JsonDict]:
         """Milestone count and furthest rung for the notes block, or None.
 
-        Off the receipts, which is where the rest of the harness reads the score
-        from: ``baseline_milestones`` is a RAM snapshot taken when the run opened
-        and every rung since is a RAM-observed delta. Reading it here rather than
-        asking the server again keeps the number in ``NOTES.md`` identical to the
-        one in the facts block of the same session's first message, so the two
-        can never disagree in front of the model.
+        From RAM when the caller has it, and from the receipts only when it does
+        not. The receipts looked like the tidier source — every rung in them is a
+        RAM-observed delta on a RAM baseline — but the deltas only ever add. A
+        reload that hands a badge back is not observed as a subtraction, so the
+        score is a high-water mark. It said 21/58, "Got the Bicycle", to a game
+        holding 16/58 and standing before Misty. This block exists to stop the
+        model reading a stale number out of its own notes; sourcing the one
+        number in it from the score was that bug wearing the fix's clothes.
         """
 
+        if isinstance(live, dict) and isinstance(live.get("count"), int):
+            rung = MILESTONES_BY_ID.get(live.get("furthest") or "")
+            return {"count": live["count"], "furthest": rung.label if rung else ""}
         if facts is None:
             return None
         count = getattr(facts, "done_count", None)
@@ -1965,11 +1971,12 @@ class PiSupervisor:
         """
 
         state = context.get("game_state") if isinstance(context, dict) else None
+        live = context.get("milestones") if isinstance(context, dict) else None
         try:
             notes_module.refresh_notes(
                 self.workspace_dir,
                 state=state if isinstance(state, dict) else None,
-                progress=self._notes_progress(facts),
+                progress=self._notes_progress(facts, live),
             )
         except Exception as exc:  # noqa: BLE001 - a stale block, never a dead session
             self._push_recent_event(

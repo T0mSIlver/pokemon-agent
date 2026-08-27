@@ -587,6 +587,13 @@ def _get_state_dict() -> dict:
             state["screen"] = read_text()
         except Exception:  # noqa: BLE001 — an unreadable screen must not fail a batch
             pass
+    # Every ladder milestone the game currently satisfies, on the same channel
+    # each of the other RAM facts above reaches the runtime by. The objective
+    # engine reads it here: when the written objective packs run out, the goal
+    # comes from the frontier these ids imply. `_milestone_ids_sync` never
+    # raises and answers `()` when the reader cannot, which the engine treats as
+    # "no data" rather than "nothing reached".
+    state["milestones"] = list(_milestone_ids_sync())
     try:
         snapshot = _emulator.get_navigation_snapshot(_reader)
     except NotImplementedError:
@@ -813,6 +820,14 @@ async def _critic_context() -> dict:
     if _emulator is not None and _reader is not None:
         with contextlib.suppress(Exception):
             payload["game_state"] = await _run_emulator_sync(_get_state_dict)
+        # Read from RAM, not from the run's score. The receipts' milestone count
+        # is a max() and never falls, which is right for pricing a run and wrong
+        # for saying what the game holds: after a reload took the Cascade badge
+        # back, the receipts still said 21/58 while the cartridge said 16/58.
+        # NOTES.md exists to stop the model believing a stale number, so the one
+        # number in it that came from the score was the whole bug again.
+        with contextlib.suppress(Exception):
+            payload["milestones"] = await _run_emulator_sync(_milestone_summary_sync)
     if _explored_maps is not None:
         with contextlib.suppress(Exception):
             target = _explored_maps.current_map_id

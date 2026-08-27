@@ -140,10 +140,37 @@ and first arrival on one of eighteen known-hard maps.
 The harness fires these. The model is never asked to notice it is stuck and call
 for help, because that is the advisory pattern that has failed every time.
 
+The thinker runs at `--thinking medium` inside a 240s budget, split 170s for the
+first attempt and the rest for one `low` retry. Both halves are measured. On this
+box the model decodes about 40 tokens a second, so the thinking level *is* the
+latency: on the 600-word intervention prompt `off` spends 222 output tokens,
+`low` 628, `medium` 1,900-3,600 and `high` 4,400-10,200. `high` bought no better
+an instruction for four times the tokens — on the sample it was measured against
+it told the player to re-enter the warp it was already looping through, which
+`medium` explicitly warned against. The first 57 interventions ran at `high` and
+5 returned nothing at all: four hit the old 300s wall, one exited 0 empty at
+259s.
+
+The budget is larger than those generation figures because generation is not the
+whole clock. The swap almost never happens, so the thinking session queues on the
+slot the player is driving — a two-token probe submitted mid-run took 119s to
+come back. End to end against the live box, the shipped settings answered in 143s
+and 156s.
+
 `slots.py` does the borrowing, and the dangerous half is the giving back:
 between the erase and the restore the player's whole context exists only as a
 file. `borrowed_slot` refuses to hand the slot over unless the save is confirmed
 non-empty, and raises `SlotLost` with the filename rather than failing quietly.
+
+The swap is best-effort and everything else degrades around it. Waiting for the
+slot to go idle guards the save and nothing else, because a slot cannot be
+serialised mid-generation — so a busy slot costs the swap, not the intervention,
+and once the save is known to fail on this server the wait is skipped outright.
+This matters more than it sounds: watched live at 4Hz, a run driving itself with
+`auto_continue` leaves idle windows of 0.3-0.4 seconds between turns, so the old
+2-second poll could not see one and the old 300s wait ended in "slot 0 still busy
+after 300s" every time, losing the intervention before the model was asked
+anything.
 
 ## Coordinates
 

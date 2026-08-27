@@ -274,6 +274,51 @@ class TestHarnessFacts:
         # The objective's own destination, routed.
         assert "The objective names Cerulean City: 1 hop from Route 4" in prompt
 
+    def test_a_pack_objective_still_gets_its_destination_routed(self):
+        prompt = self.route4_prompt(
+            observation={
+                "objective": {
+                    "current": {
+                        "pack_id": "red_brock_to_cut",
+                        "summary": "Cross Mt. Moon and emerge into Cerulean City.",
+                    }
+                }
+            }
+        )
+        assert "The objective names Cerulean City: 1 hop from Route 4" in prompt
+
+    def test_the_frontier_menu_is_not_mined_for_a_destination(self):
+        """A menu is not a journey, so the last map it names means nothing.
+
+        Once the written packs run out the objective becomes the open milestone
+        frontier: several genuine options, deliberately unranked, because the
+        model is the one that picks. Reading a destination out of it returns
+        whichever milestone sorts last on the ladder and routes to it, which is
+        the harness choosing one of five and printing the choice as a fact
+        about the goal.
+        """
+
+        menu = (
+            "The written objectives end here, so the next goal is yours to pick. "
+            "These milestones have every prerequisite the ladder knows about "
+            "already met: Defeated Misty; Got the Bike Voucher; "
+            "Beat the rival on Route 22."
+        )
+        prompt = self.route4_prompt(
+            observation={
+                "objective": {"current": {"pack_id": "milestone_frontier", "summary": menu}}
+            }
+        )
+        assert "The objective names" not in prompt
+        # The operator's own goal is still a journey and still routed.
+        routed = self.route4_prompt(
+            goal="Cross Mt. Moon and emerge into Cerulean City.",
+            observation={
+                "objective": {"current": {"pack_id": "milestone_frontier", "summary": menu}}
+            },
+        )
+        assert "The objective names Cerulean City: 1 hop from Route 4" in routed
+
     def test_the_answer_it_gave_is_not_in_the_facts_it_now_gets(self):
         prompt = self.route4_prompt(goal="Cross Mt. Moon and emerge into Cerulean City.")
         for invented in ("Vermilion", "Celadon", "Route 24"):

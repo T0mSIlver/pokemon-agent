@@ -34,6 +34,7 @@ from dataclasses import dataclass, field
 from typing import Any, Iterable, Mapping, Optional, Protocol, Sequence
 
 from pokemon_agent.bench.registry import Receipt
+from pokemon_agent.objectives import FRONTIER_PACK_ID
 
 #: Priorities. A higher number wins when two detectors fire on the same batch.
 #: Ordered by how badly the run is doing, not by how interesting the answer
@@ -852,8 +853,14 @@ def _observed(observation: Optional[Mapping[str, Any]]) -> dict[str, Any]:
     objective = source.get("objective")
     if isinstance(objective, Mapping):
         current = objective.get("current")
+        # The frontier objective is a menu, not a journey, so the rule that
+        # reads a destination out of a goal — the last map it names — has
+        # nothing to read. It would return whichever open milestone happens to
+        # sort last on the ladder and route to it, which is the harness picking
+        # one of five for the model while calling it a fact about the goal.
         if isinstance(current, Mapping) and current.get("summary"):
-            goals.append(str(current["summary"]))
+            if current.get("pack_id") != FRONTIER_PACK_ID:
+                goals.append(str(current["summary"]))
 
     position = None
     player = state.get("player")
