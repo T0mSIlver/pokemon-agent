@@ -64,10 +64,56 @@ DEFAULT_SLOT_MODEL = "qwen38-27b"
 #: What the player's borrowed cache is written to under ``--slot-save-path``.
 DEFAULT_SLOT_FILENAME = "pokemon-player-slot0.bin"
 
-#: The thinking session is the whole point of the swap, so it thinks hard. It is
-#: also answering a 20-line prompt, not reading a session, so it stays cheap.
-DEFAULT_THINKING = "high"
-DEFAULT_TIMEOUT_SECONDS = 300.0
+#: The thinking session is the whole point of the swap, so it thinks — but not
+#: at ``high``, which is what this ran at for its first 57 interventions and is
+#: measured, on this box and this prompt shape, as the wrong end of the curve.
+#: Timed against the real prompts out of two firings that timed out, each sample
+#: started only once the slot was idle so the clock is the model and not the
+#: queue (600-word prompt / 300-word prompt, median of the samples at each
+#: level):
+#:
+#:     level    seconds          output tokens     samples
+#:     off        6.3 /   7.6      222 /   114     2
+#:     low       15.4 /  11.9      628 /   385     2
+#:     medium    41.0 /  28.3    1,903 / 1,067     5
+#:     high     153.1 / 121.0    6,734 / 4,405     3
+#:
+#: The box decodes about 40 tokens a second, so the level *is* the latency: an
+#: intervention's cost is whatever the reasoning trace runs to. ``high`` spends
+#: four times ``medium``'s tokens on the same question and does not buy a better
+#: instruction with them — on the 600-word sample it told the player to re-enter
+#: the warp it was already looping through, which ``medium`` explicitly warned
+#: against. The live journal agrees about the tail: 55 firings at ``high``,
+#: median 90s, and 4 that hit the old 300s wall with nothing to show.
+DEFAULT_THINKING = "medium"
+
+#: What a first attempt that answers nothing falls back to. Cheap on purpose:
+#: ``low`` still writes concrete directions and does it in a quarter of a minute,
+#: so the retry is nearly free against the budget it has left.
+DEFAULT_RETRY_THINKING = "low"
+
+#: The whole budget one intervention gets, both attempts together.
+#:
+#: Bigger than the generation numbers above want, because generation is not the
+#: whole clock. The swap almost never happens — the save fails on this server —
+#: so the thinking session queues on the same slot the player is driving, and a
+#: two-token probe submitted mid-run took 119 seconds to come back. A budget cut
+#: to the generation figures alone (150s, 110s for the first attempt) was
+#: measured failing both attempts against the live box; at these numbers the
+#: same prompt answered in 143s and 156s. The queue is why this is 240.
+DEFAULT_TIMEOUT_SECONDS = 240.0
+
+#: What the first attempt may spend of that budget. Capped below the total on
+#: purpose: :func:`pokemon_agent.critic.run_critic` hands its first attempt the
+#: entire budget and retries out of the remainder, which works for an attempt
+#: that fails fast and does nothing at all for one that times out — and timing
+#: out is the failure this exists for.
+FIRST_ATTEMPT_SECONDS = 170.0
+
+#: Under this there is no room for a second answer, so the failure stands rather
+#: than being replaced by a second timeout. ``low`` decodes 628 tokens on this
+#: prompt, twenty seconds of model time, and the rest of this is queue.
+RETRY_MIN_SECONDS = 50.0
 
 #: An answer is handed to the player as one instruction; past this it stops
 #: being an instruction and starts being a wall of text it will skim.
@@ -85,7 +131,15 @@ STREAM_SOURCE = "intervention"
 #: How long to wait for the player to stop generating before taking its slot,
 #: how many times to try handing it back, and how long to back off between those
 #: tries. The restore is the half that must not give up early.
-SLOT_WAIT_SECONDS = 300.0
+#:
+#: The wait used to be 300s, and on a run driven with ``auto_continue`` the
+#: player's idle windows between turns are 0.3-0.4 seconds long — measured at
+#: 4Hz against the live server. So the first intervention of one live session
+#: waited the whole five minutes and then gave up without asking the model
+#: anything. The wait only ever guarded the save — a slot cannot be serialised
+#: mid-generation — so it is now short enough to catch a turn that is already
+#: ending, and missing it costs the swap rather than the intervention.
+SLOT_WAIT_SECONDS = 20.0
 SLOT_RESTORE_ATTEMPTS = 3
 SLOT_BACKOFF_SECONDS = 2.0
 
@@ -154,31 +208,72 @@ def pi_thinker(
     model: Optional[str] = None,
     thinking: str = DEFAULT_THINKING,
     timeout_seconds: float = DEFAULT_TIMEOUT_SECONDS,
+    first_attempt_seconds: float = FIRST_ATTEMPT_SECONDS,
+    retry_thinking: str = DEFAULT_RETRY_THINKING,
+    retry_min_seconds: float = RETRY_MIN_SECONDS,
     cwd: Optional[Path] = None,
 ) -> Advise:
-    """An :data:`Advise` that shells out to ``pi``. Blocking, by design."""
+    """An :data:`Advise` that shells out to ``pi``. Blocking, by design.
+
+    Two attempts, same shape as :func:`pokemon_agent.critic.run_critic`: the
+    first at ``thinking`` inside ``first_attempt_seconds``, and if that answers
+    nothing, one more at ``retry_thinking`` out of whatever is left of
+    ``timeout_seconds``.
+
+    "Answers nothing" covers both ways this has actually failed live, because
+    they cost the same and they are the same problem — the game is stopped and
+    no instruction is coming. Four firings ran into the old 300s wall; one
+    more spent 259s and exited 0 with an empty reply, which the old code
+    reported as a different error and handled identically: not at all. A
+    ``low`` retry writes usable directions in about fifteen seconds, so what
+    used to be five minutes of nothing is now a cheaper answer inside two.
+    """
 
     from pokemon_agent.critic import parse_final_text
 
-    def advise(prompt: str) -> str:
+    def attempt(prompt: str, level: str, budget: float) -> tuple[str, str]:
+        """The answer, or ``""`` and why there is none. Never raises."""
+
         command = build_thinking_command(
-            pi_binary, prompt, provider=provider, model=model, thinking=thinking
+            pi_binary, prompt, provider=provider, model=model, thinking=level
         )
-        completed = subprocess.run(  # noqa: S603 — argv list, no shell
-            command,
-            capture_output=True,
-            text=True,
-            timeout=timeout_seconds,
-            cwd=str(cwd) if cwd else None,
-        )
-        answer = parse_final_text(completed.stdout)
-        if not answer:
-            detail = (completed.stderr or "").strip()[-400:]
-            raise RuntimeError(
-                f"thinking session produced no text (exit {completed.returncode})"
-                + (f": {detail}" if detail else "")
+        try:
+            completed = subprocess.run(  # noqa: S603 — argv list, no shell
+                command,
+                capture_output=True,
+                text=True,
+                timeout=budget,
+                cwd=str(cwd) if cwd else None,
             )
-        return answer
+        except subprocess.TimeoutExpired:
+            # Deliberately not re-raising the TimeoutExpired: it carries the
+            # whole prompt in its argv, and the journal has the prompt already.
+            return "", f"{level} gave up after {budget:.0f}s"
+        except OSError as exc:
+            return "", f"{level} could not start: {exc}"
+        answer = parse_final_text(completed.stdout)
+        if answer:
+            return answer, ""
+        detail = (completed.stderr or "").strip()[-200:]
+        return "", (
+            f"{level} produced no text (exit {completed.returncode})"
+            + (f": {detail}" if detail else "")
+        )
+
+    def advise(prompt: str) -> str:
+        started = time.monotonic()
+        answer, why = attempt(prompt, thinking, min(first_attempt_seconds, timeout_seconds))
+        if answer:
+            return answer
+
+        remaining = timeout_seconds - (time.monotonic() - started)
+        if retry_thinking and remaining >= retry_min_seconds:
+            _log(f"{why}; retrying at {retry_thinking} with {remaining:.0f}s left")
+            answer, retry_why = attempt(prompt, retry_thinking, remaining)
+            if answer:
+                return answer
+            why = f"{why}; {retry_why}"
+        raise RuntimeError(f"thinking session produced no answer ({why})")
 
     return advise
 
@@ -699,9 +794,13 @@ __all__ = [
     "DEFAULT_SLOT_BASE_URL",
     "DEFAULT_SLOT_FILENAME",
     "DEFAULT_SLOT_MODEL",
+    "DEFAULT_RETRY_THINKING",
     "DEFAULT_THINKING",
+    "DEFAULT_TIMEOUT_SECONDS",
+    "FIRST_ATTEMPT_SECONDS",
     "FOLLOW_UP_BATCHES",
     "JOURNAL_FILENAME",
+    "RETRY_MIN_SECONDS",
     "STREAM_SOURCE",
     "Advise",
     "Deliver",

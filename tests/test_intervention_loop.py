@@ -7,16 +7,24 @@ and what it does when the player's context does not come back.
 """
 
 import json
+import subprocess
 import sys
+import time
 import types
 
 import pytest
 
 from pokemon_agent.bench.registry import Receipt
 from pokemon_agent.intervention_loop import (
+    DEFAULT_RETRY_THINKING,
+    DEFAULT_THINKING,
+    DEFAULT_TIMEOUT_SECONDS,
+    FIRST_ATTEMPT_SECONDS,
+    RETRY_MIN_SECONDS,
     InterventionRunner,
     build_thinking_command,
     live_observation,
+    pi_thinker,
 )
 from pokemon_agent.interventions import (
     InterventionPolicy,
@@ -37,6 +45,9 @@ class FakeSlot:
         self.calls: list[str] = []
         self.restore_fails = restore_fails
         self.saved_tokens = saved_tokens
+        #: Set on the real client once a save has failed server-side, which is
+        #: what tells `borrowed_slot` there is no longer anything to wait for.
+        self.save_unavailable: str | None = None
 
     def wait_idle(self, timeout: float = 300.0, poll: float = 2.0) -> bool:
         self.calls.append("wait_idle")
@@ -257,6 +268,27 @@ async def test_a_thinking_session_that_blows_up_is_recorded_and_the_run_continue
     assert runner.active is True
 
 
+async def test_a_thinking_session_that_gives_up_still_hands_the_slot_back():
+    # The failure mode that would wedge the run: a timeout inside the borrowed
+    # slot leaving the player's context on disk and the loop marked busy. The
+    # restore lives in `borrowed_slot`'s `finally`, so it runs on the way out
+    # of the exception too -- and this is what says so.
+    slot = RestoringSlot()
+
+    def give_up(prompt: str) -> str:
+        raise RuntimeError("medium gave up after 110s; low gave up after 40s")
+
+    runner, log = make_runner(advise=give_up, slot_client=slot)
+
+    record = await runner.after_batch(failing_pair(), total_presses=900)
+
+    assert slot.calls == ["wait_idle", "save", "erase", "restore"]
+    assert record.error and "gave up" in record.error
+    assert runner.status()["busy"] is False
+    assert runner.status()["slot_lost"] is None
+    assert runner.active is True
+
+
 # ---------------------------------------------------------------------------
 # Budget
 # ---------------------------------------------------------------------------
@@ -438,6 +470,134 @@ def test_the_thinking_session_runs_one_shot_with_no_tools_and_no_session():
 @pytest.mark.parametrize("flag", ["-ne", "-ns", "-nc", "-np", "--offline"])
 def test_the_thinking_session_keeps_the_headless_flags(flag):
     assert flag in build_thinking_command("/usr/bin/pi", "what now?")
+
+
+# ---------------------------------------------------------------------------
+# Two attempts, one budget
+#
+# Every test here fakes `subprocess.run`, so the levels and the budgets are the
+# only things being asserted on. What they are worth is measured elsewhere: on
+# this box, at 40 tokens a second, `high` spends 6,700-10,200 tokens on the
+# 600-word prompt and `medium` spends 1,900 for a better instruction.
+# ---------------------------------------------------------------------------
+
+
+def _json_answer(text: str) -> str:
+    message = {"role": "assistant", "content": [{"type": "text", "text": text}]}
+    return json.dumps({"type": "turn_end", "message": message})
+
+
+class FakePi:
+    """`subprocess.run`, as a list of the levels and budgets it was called with.
+
+    Carries its own clock, because the property under test is how the budget is
+    divided and a fake that returns instantly would leave the whole budget
+    intact for the retry -- the one thing the real timeout never does. A call
+    that raises `TimeoutExpired` spends its entire budget; one that answers
+    spends a second.
+    """
+
+    def __init__(self, *replies, monkeypatch) -> None:
+        #: One per call: either the text to answer with, or an exception to raise.
+        self.replies = list(replies)
+        self.calls: list[tuple[str, float]] = []
+        self.now = 1_000.0
+        monkeypatch.setattr(time, "monotonic", lambda: self.now)
+        monkeypatch.setattr(subprocess, "run", self)
+
+    def __call__(self, command, **kwargs):
+        level = command[command.index("--thinking") + 1]
+        budget = kwargs["timeout"]
+        self.calls.append((level, budget))
+        reply = self.replies[len(self.calls) - 1]
+        if isinstance(reply, BaseException):
+            self.now += budget
+            raise reply
+        self.now += 1.0
+        return types.SimpleNamespace(stdout=_json_answer(reply), stderr="", returncode=0)
+
+
+def test_the_thinking_session_thinks_at_medium_and_falls_back_to_low():
+    assert DEFAULT_THINKING == "medium"
+    assert DEFAULT_RETRY_THINKING == "low"
+
+
+def test_the_first_attempt_cannot_spend_the_whole_budget(monkeypatch):
+    # The bug this exists for: give attempt one the lot and a timeout leaves
+    # nothing to retry out of, which is the one case a retry is needed for.
+    assert FIRST_ATTEMPT_SECONDS + RETRY_MIN_SECONDS <= DEFAULT_TIMEOUT_SECONDS
+
+    fake = FakePi("north four tiles, then the door", monkeypatch=monkeypatch)
+
+    pi_thinker("/usr/bin/pi")("what now?")
+
+    assert fake.calls == [("medium", FIRST_ATTEMPT_SECONDS)]
+
+
+def test_an_attempt_that_times_out_buys_a_cheaper_one_instead_of_five_minutes(monkeypatch):
+    fake = FakePi(
+        subprocess.TimeoutExpired(cmd=["pi"], timeout=FIRST_ATTEMPT_SECONDS),
+        "north four tiles, then the door",
+        monkeypatch=monkeypatch,
+    )
+
+    answer = pi_thinker("/usr/bin/pi")("what now?")
+
+    assert answer == "north four tiles, then the door"
+    levels = [level for level, _ in fake.calls]
+    assert levels == ["medium", "low"]
+    assert sum(budget for _, budget in fake.calls) <= DEFAULT_TIMEOUT_SECONDS
+
+
+def test_an_attempt_that_exits_cleanly_with_no_text_buys_the_same_retry(monkeypatch):
+    # Live, this cost 259 seconds and reported a different error than the
+    # timeouts did. Same hole in the run, so it takes the same way out.
+    def empty(command, **kwargs):
+        return types.SimpleNamespace(stdout="", stderr="", returncode=0)
+
+    calls: list[str] = []
+
+    def either(command, **kwargs):
+        level = command[command.index("--thinking") + 1]
+        calls.append(level)
+        if level == "medium":
+            return empty(command, **kwargs)
+        return types.SimpleNamespace(
+            stdout=_json_answer("press left twice"), stderr="", returncode=0
+        )
+
+    monkeypatch.setattr(subprocess, "run", either)
+
+    assert pi_thinker("/usr/bin/pi")("what now?") == "press left twice"
+    assert calls == ["medium", "low"]
+
+
+def test_both_attempts_failing_says_what_each_one_did(monkeypatch):
+    FakePi(
+        subprocess.TimeoutExpired(cmd=["pi"], timeout=FIRST_ATTEMPT_SECONDS),
+        subprocess.TimeoutExpired(cmd=["pi"], timeout=RETRY_MIN_SECONDS),
+        monkeypatch=monkeypatch,
+    )
+
+    with pytest.raises(RuntimeError) as failure:
+        pi_thinker("/usr/bin/pi")("what now?")
+
+    assert "medium gave up" in str(failure.value)
+    assert "low gave up" in str(failure.value)
+    # The prompt is in the journal already; it must not also be in the error,
+    # which is what made the live TimeoutExpired 2KB of argv.
+    assert "what now?" not in str(failure.value)
+
+
+def test_a_retry_with_no_time_left_is_not_started(monkeypatch):
+    # Two timeouts in a row is not a fallback, it is twice the hole.
+    spent = DEFAULT_TIMEOUT_SECONDS - RETRY_MIN_SECONDS + 1.0
+    fake = FakePi(subprocess.TimeoutExpired(cmd=["pi"], timeout=spent), monkeypatch=monkeypatch)
+
+    with pytest.raises(RuntimeError):
+        pi_thinker("/usr/bin/pi", first_attempt_seconds=spent)("what now?")
+
+    assert [level for level, _ in fake.calls] == ["medium"]
 
 
 # ---------------------------------------------------------------------------

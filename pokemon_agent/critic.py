@@ -52,6 +52,13 @@ DEFAULT_CRITIC_THINKING = "xhigh"
 DEFAULT_CRITIC_RETRY_THINKING = "medium"
 #: A retry is only worth starting with at least this much of the budget left.
 CRITIC_RETRY_MIN_SECONDS = 45.0
+#: What the first pass may spend, so a retry can still be afforded after it.
+#: It used to be handed the whole budget, which made the retry unreachable in
+#: the one case it exists for: a first pass that times out has by definition
+#: spent everything, leaving a remainder of nothing to retry out of. The retry
+#: only ever ran when the first pass failed *fast*. A fallback that cannot fire
+#: is the shape of bug this project keeps finding, so the cap is explicit.
+CRITIC_FIRST_ATTEMPT_SECONDS = 430.0
 CRITIC_TOOLS = ["read"]
 
 HANDOFF_FILENAME = "HANDOFF.md"
@@ -3045,6 +3052,7 @@ async def run_critic(
     retry_enabled: bool = True,
     retry_thinking: str = DEFAULT_CRITIC_RETRY_THINKING,
     retry_min_seconds: float = CRITIC_RETRY_MIN_SECONDS,
+    first_attempt_seconds: float = CRITIC_FIRST_ATTEMPT_SECONDS,
     event_sink: Optional[CriticEventSink] = None,
     process_sink: Optional[Callable[[Any], None]] = None,
 ) -> CriticResult:
@@ -3099,7 +3107,8 @@ async def run_critic(
         attempts.append(attempt)
         return attempt
 
-    attempt = await attempt_once(thinking, immediate=False, budget=timeout_seconds)
+    first_budget = min(timeout_seconds, first_attempt_seconds) if retry_enabled else timeout_seconds
+    attempt = await attempt_once(thinking, immediate=False, budget=first_budget)
     if not attempt.usable and retry_enabled:
         remaining = timeout_seconds - (time.monotonic() - started)
         if remaining >= retry_min_seconds:

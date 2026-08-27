@@ -1,7 +1,9 @@
 """Slot borrowing, against a fake llama.cpp that can be made to misbehave."""
 
+import inspect
 import json
 import threading
+import time
 from http.server import BaseHTTPRequestHandler, HTTPServer
 
 import pytest
@@ -142,6 +144,12 @@ class TestState:
     def test_wait_idle_returns_once_it_settles(self, client):
         assert client.wait_idle(timeout=2, poll=0.1) is True
 
+    def test_wait_idle_polls_faster_than_the_gap_it_is_looking_for(self):
+        # Measured against the live server at 4Hz: between turns of a run
+        # driving itself with `auto_continue` the slot is idle for 0.3-0.4s.
+        # A poll wider than that never sees idle, whatever the timeout is.
+        assert inspect.signature(SlotClient.wait_idle).parameters["poll"].default <= 0.3
+
 
 class TestSaveRestore:
     def test_save_reports_what_it_wrote(self, client):
@@ -205,8 +213,36 @@ class TestBorrowedSlot:
     def test_a_busy_slot_is_never_taken(self, client, fake):
         fake.processing = True
         with pytest.raises(SlotError, match="still busy"):
-            with borrowed_slot(client, "player.bin", wait=0.4):
+            with borrowed_slot(client, "player.bin", wait=0.4, allow_unsaved=False):
                 pytest.fail("body must not run")
+        assert not any("action=save" in p for m, p in fake.calls if m == "POST")
+
+    def test_a_busy_slot_costs_the_swap_and_not_the_thinking_session(self, client, fake):
+        # A run driven with `auto_continue` is generating nearly all of the
+        # time, so waiting for idle and then raising loses the intervention
+        # before the model is asked anything -- which is what happened on the
+        # first firing of one live session. Nothing was taken, so nothing is
+        # stranded, and the body runs against the shared slot.
+        fake.processing = True
+        ran = False
+        with borrowed_slot(client, "player.bin", wait=0.4) as saved:
+            ran = True
+            assert saved is None
+        assert ran
+        posts = [p for m, p in fake.calls if m == "POST"]
+        assert not any("action=save" in p for p in posts)
+        assert not any("action=erase" in p for p in posts)
+
+    def test_a_save_known_to_be_unavailable_is_not_waited_for(self, client, fake):
+        # The wait guards the save. Once the save has failed once there is
+        # nothing left to guard, and the wait is only the thinking session
+        # sitting out of the queue instead of queueing behind the player.
+        fake.processing = True
+        client.save_unavailable = "500 Unable to save slot"
+        started = time.monotonic()
+        with borrowed_slot(client, "player.bin", wait=30.0) as saved:
+            assert saved is None
+        assert time.monotonic() - started < 1.0
         assert not any("action=save" in p for m, p in fake.calls if m == "POST")
 
     def test_it_retries_a_failing_restore(self, client, fake):

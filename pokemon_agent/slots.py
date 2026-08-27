@@ -185,8 +185,18 @@ class SlotClient:
                 return SlotState.from_dict(entry)
         raise SlotError(f"no slot with id {self.slot_id}")
 
-    def wait_idle(self, timeout: float = 300.0, poll: float = 2.0) -> bool:
-        """Block until the slot stops generating. False if it never does."""
+    def wait_idle(self, timeout: float = 300.0, poll: float = 0.2) -> bool:
+        """Block until the slot stops generating. False if it never does.
+
+        ``poll`` was 2.0 and could not work. Watched live at 4Hz for three
+        minutes while the run drove itself with ``auto_continue``, the slot's
+        idle windows between turns were 0.3-0.4 seconds long, every one of
+        them: a two-second poll is five times wider than the gap it is looking
+        for, so it reported "still busy" for the full timeout no matter how
+        long that timeout was. Even at this rate the answer is often no, which
+        is why :func:`borrowed_slot` treats no as "skip the swap" rather than
+        as a reason to abandon the whole intervention.
+        """
 
         deadline = time.monotonic() + timeout
         while time.monotonic() < deadline:
@@ -264,12 +274,31 @@ def borrowed_slot(
     erase and the restore: nothing was stored, so there is nothing to strand.
     With it off, a failed save raises and the body never runs.
 
+    A busy slot is the same kind of problem and gets the same answer. ``wait``
+    exists because a slot cannot be saved mid-generation, so it protects the
+    save and nothing else — and once the save is known to be unavailable there
+    is nothing left to protect, so the wait is skipped outright and the body
+    runs against the shared slot. A run driven with ``auto_continue`` generates
+    almost continuously, and the first version of this waited the full five
+    minutes and then raised: the intervention was lost before the model was
+    asked anything, in exactly the conditions the feature exists for.
+
     Restores on the way out whether the body succeeded or raised, and retries
     before giving up.
     """
 
+    if allow_unsaved and client.save_unavailable:
+        # Waiting guards the save. With no save to guard it is only the
+        # thinking session not being in the queue, which is worse than being in
+        # it behind the player.
+        yield None
+        return
+
     if not client.wait_idle(timeout=wait):
-        raise SlotError(f"slot {client.slot_id} still busy after {wait:.0f}s")
+        if not allow_unsaved:
+            raise SlotError(f"slot {client.slot_id} still busy after {wait:.0f}s")
+        yield None
+        return
 
     try:
         saved: Optional[SaveResult] = client.save(filename)

@@ -1051,6 +1051,41 @@ async def test_an_empty_first_pass_buys_one_cheaper_retry(tmp_path: Path):
 
 
 @pytest.mark.asyncio
+async def test_a_first_pass_that_times_out_still_buys_the_retry(tmp_path: Path):
+    """The case the retry exists for, and the one it could not reach.
+
+    The first pass used to be handed the whole budget, so a pass that ran out
+    of time had by definition spent everything and the remainder the retry is
+    sized against was nothing. The retry only ever fired when the first pass
+    failed *fast* — an empty answer, a non-zero exit — which is not why it was
+    written. Capping the first pass below the total is what makes it reachable.
+    """
+
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+    fake_pi = make_fake_print_pi(
+        tmp_path,
+        hang=True,
+        overrides={"medium": {"hang": False, "text": "Take the west path from (5,6)."}},
+    )
+
+    result = await run_critic(
+        pi_binary=str(fake_pi),
+        workspace_dir=workspace,
+        digest="# Finished session digest\n",
+        timeout_seconds=6.0,
+        first_attempt_seconds=1.0,
+        retry_min_seconds=0.5,
+    )
+
+    assert [attempt["thinking"] for attempt in result.attempts] == ["xhigh", "medium"]
+    assert result.text == "Take the west path from (5,6)."
+    assert result.ok is True
+    # The whole budget was never spent: the cap is what left room to retry.
+    assert result.duration_seconds < 6.0
+
+
+@pytest.mark.asyncio
 @pytest.mark.parametrize(
     "kwargs",
     [{"retry_enabled": False}, {"timeout_seconds": 1.0}],
