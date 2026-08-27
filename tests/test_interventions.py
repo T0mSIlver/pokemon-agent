@@ -832,3 +832,55 @@ def test_a_refusal_note_names_what_the_map_says_instead():
     note = refusal_note(check_advice("Walk west to Cerulean City.", here="Route 4"))
     assert note.startswith("map data contradicts: ")
     assert "east edge of Route 4" in note
+
+
+def test_a_detector_that_goes_quiet_can_fire_again_when_it_comes_back():
+    """`answered` was a permanent silencer, because nothing ever cleared it.
+
+    The design said a detector "stops winning until something changes" and left
+    "something changes" to the caller. No caller was ever written --
+    `clear_answered` had one reference in the whole repo, and it was in this
+    file. So every detector fired once per session and was silenced for the
+    rest of it, whatever happened afterwards.
+
+    Measured cost: the run spent 12,312 presses, 14.3% of its entire press
+    total, on 324 byte-identical batches at one tile. `circling` would have
+    fired on that trivially. It had been answered hours earlier.
+    """
+    circling_only = InterventionPolicy(
+        detectors=(Circling(ratio=2.0, min_samples=10),), cooldown_presses=0
+    )
+    # Twelve batches, all ending on the same tile: the shape of the real loop.
+    stuck = [receipt(seq=n, pos=(4, 4)) for n in range(12)]
+
+    first = circling_only.evaluate(stuck)
+    assert first is not None and first.name == "circling"
+    circling_only.record(first, total_presses=100)
+    assert "circling" in circling_only.answered
+
+    # The condition stops: `walk` visits a fresh tile each batch.
+    circling_only.evaluate(walk(12))
+    assert "circling" not in circling_only.answered, "a quiet detector is no longer answered"
+
+    # It comes back. That is a new episode, and it gets a turn. `total_presses`
+    # moves forward so the cooldown from the first firing has elapsed.
+    again = circling_only.evaluate(stuck, total_presses=500)
+    assert again is not None and again.name == "circling"
+
+
+def test_a_condition_that_never_stops_is_still_only_answered_once():
+    """The original point stands: repeating a standing condition says nothing new.
+
+    HP sat at 15-30% for 59% of one run and `low_hp` outranks `circling`, so all
+    13 interventions fired on `low_hp` while the detector aimed at the actual
+    failure never got a turn.
+    """
+    window = _hurt_and_circling()
+    policy = InterventionPolicy(
+        detectors=(LowHP(), Circling(ratio=2.0, min_samples=10)), cooldown_presses=0
+    )
+
+    policy.record(policy.evaluate(window), total_presses=100)
+
+    # Both are still firing, so low_hp stays answered and circling gets its turn.
+    assert policy.evaluate(window).name == "circling"

@@ -456,10 +456,6 @@ class InterventionPolicy:
 
         state = state or {}
         spent = _presses(receipts) if total_presses is None else total_presses
-        if len(self.fired) >= self.max_per_session:
-            return None
-        if self.fired and spent - self.fired[-1][0] < self.cooldown_presses:
-            return None
 
         window = list(receipts[-self.window :])
         candidates = [
@@ -467,7 +463,24 @@ class InterventionPolicy:
             for trigger in (d.check(window, state) for d in self.detectors)
             if trigger is not None
         ]
+
+        # A detector that has gone quiet is no longer answered: if it comes back
+        # it is a new episode and deserves a turn. See the note below for what
+        # `answered` is for and what leaving it uncleared cost.
+        #
+        # This runs before the budget and cooldown gates on purpose. Whether a
+        # condition has ended is a fact about the game, not about what we can
+        # afford to say, and a condition that stopped and restarted inside one
+        # cooldown would otherwise never be seen to have stopped. Detectors are
+        # pure functions over a window of receipts, so asking them costs nothing
+        # but arithmetic.
+        self.answered &= {trigger.name for trigger in candidates}
+
         if not candidates:
+            return None
+        if len(self.fired) >= self.max_per_session:
+            return None
+        if self.fired and spent - self.fired[-1][0] < self.cooldown_presses:
             return None
 
         # A standing condition must not mask an episodic one. Measured over one
@@ -479,6 +492,18 @@ class InterventionPolicy:
         # So a detector that has already been answered stops winning until
         # something changes. Repeating it says nothing new: the thinker was told
         # about the low HP, it answered, and the HP is still low.
+        #
+        # "Until something changes" was left to the caller, and no caller was
+        # ever written -- `clear_answered` had exactly one reference in the
+        # whole repo, in a test. So every detector fired ONCE per session and
+        # was silenced for the rest of it, whatever happened next. Measured
+        # cost: the run spent 12,312 presses, 14.3% of its whole press total,
+        # on 324 byte-identical batches at one tile, and `circling` would have
+        # fired on that trivially. It had already been answered.
+        #
+        # A condition that stops and starts again is a new episode, and that
+        # needs no caller to adjudicate: the detector itself has gone quiet.
+        # The clearing happens above, before the no-candidates return.
         fresh = [t for t in candidates if t.name not in self.answered]
         return max(fresh or candidates, key=lambda t: t.priority)
 
