@@ -173,10 +173,11 @@ multi-hour debugging sessions.
 | `<data_dir>/explored_maps.json` | per-map fog of war, survives restarts |
 | `<workspace>/debug/run_log.jsonl` | every turn, appended |
 | `<workspace>/debug/critic_last.jsonl` | last retrospective, raw |
-| `<workspace>/NOTES.md` | the model's own notes, written and read by it alone |
+| `<workspace>/NOTES.md` | the model's own notes below a `harness-state` block the harness rewrites from the game at session start and end |
 
 The workspace is the model's home directory. Nothing in it is generated on the
-model's behalf except the two frames and the staged `poke` binary.
+model's behalf except the two frames, the staged `poke` binary, and the
+`harness-state` block at the top of `NOTES.md`.
 
 ## Prefix caching
 

@@ -16,6 +16,7 @@ import io
 import json
 import mimetypes
 import os
+import tempfile
 import time
 from collections import deque
 from collections.abc import AsyncIterator
@@ -58,7 +59,7 @@ from pokemon_agent.memory.red import (
     MAP_NAMES,
     MOVE_NAMES,
 )
-from pokemon_agent.milestones import MilestoneTracker
+from pokemon_agent.milestones import MILESTONES_BY_ID, MilestoneTracker
 from pokemon_agent.pi_supervisor import NoLiveSessionError, PiSupervisor
 from pokemon_agent.pockets import PocketGraph
 from pokemon_agent.progress import AUTO_SAVE_PREFIX
@@ -221,6 +222,10 @@ class SaveRequest(BaseModel):
     """
 
     name: str
+
+    #: ``POST /load`` only: go through with a load that would lose milestones.
+    #: See :func:`load_state`. Ignored by ``POST /save``, which loses nothing.
+    force: bool = False
 
     @field_validator("name")
     @classmethod
@@ -1848,7 +1853,7 @@ async def _write_receipt(
     presses: int,
     bundle: Optional[dict],
     outcome: Optional[dict],
-    milestone_ids: tuple = (),
+    milestone_ids: Optional[Sequence[str]] = None,
     exit_code: int = 0,
     reloaded: bool = False,
     extra: Optional[dict] = None,
@@ -2029,7 +2034,7 @@ async def _run_actions(
         presses=outcome.get("presses") or 0,
         bundle=bundle,
         outcome=outcome,
-        milestone_ids=outcome.get("milestones") or (),
+        milestone_ids=outcome.get("milestones"),
     )
     return {
         "actions_executed": executed,
@@ -3074,7 +3079,7 @@ async def _run_battle_sequence(intent: dict, func, *args) -> dict:
         presses=outcome.get("presses") or 0,
         bundle=bundle,
         outcome=outcome,
-        milestone_ids=outcome.get("milestones") or (),
+        milestone_ids=outcome.get("milestones"),
         extra={"intent": intent},
     )
     return {
@@ -3843,6 +3848,17 @@ async def save_state(req: SaveRequest):
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Save error: {e}")
     await _broadcast_runtime_refresh(result)
+    # A save costs no buttons and still belongs in the record: this run wrote
+    # 129 load receipts and not one save receipt, so nothing could pair a load
+    # with the save it came from, or say what the branch it went back to held.
+    await _write_receipt(
+        tool="save",
+        presses=0,
+        bundle=result["bundle"],
+        outcome=None,
+        milestone_ids=await _run_emulator_sync(_milestone_ids_sync),
+        extra={"save": req.name},
+    )
     return {
         "success": True,
         "save": {"name": req.name, "path": str(save_path)},
@@ -3850,22 +3866,198 @@ async def save_state(req: SaveRequest):
     }
 
 
+#: How many lost milestones the refusal names before it stops listing them.
+#: Long enough to be specific, short enough that the sentence stays a sentence.
+REGRESSION_NAMES_SHOWN = 6
+
+
+def _milestone_labels(ids: Sequence[str]) -> list[str]:
+    """Ladder labels for *ids*, in ladder order. An unknown id names itself."""
+    known = [MILESTONES_BY_ID[item] for item in ids if item in MILESTONES_BY_ID]
+    unknown = sorted(item for item in ids if item not in MILESTONES_BY_ID)
+    return [rung.label for rung in sorted(known, key=lambda rung: rung.ladder_index)] + unknown
+
+
+def _regression_refusal(lost: Sequence[str]) -> str:
+    """What the agent reads when a load would cost it milestones it already has.
+
+    Names the loss, then names the cheaper tool. Most of this run's 129 loads
+    were checkpoint-and-retry pathfinding — six saves for one problem, getting
+    east on Route 4, with ``_v2`` and ``_v3`` in their names — and ``poke sim``
+    answers that question for nothing. Like every refusal here, the escape it
+    offers has to work from the frame that produced it: ``/sim`` never touches
+    the game, so it does.
+    """
+    labels = _milestone_labels(lost)
+    shown = labels[:REGRESSION_NAMES_SHOWN]
+    names = ", ".join(shown)
+    if len(labels) > len(shown):
+        names += f", and {len(labels) - len(shown)} more"
+    it = "it" if len(labels) == 1 else "them"
+    return (
+        f"Refusing: that save is missing {names}. You would lose {it}. "
+        "To try a route, `poke sim` walks a plan without touching the game; "
+        "a reload rewinds it. Load it anyway with --force."
+    )
+
+
+def _snapshot_sync(path: str) -> None:
+    """Write the live frame to *path*, under the emulator lock. Never observes."""
+    _emulator.save_state(path)
+
+
+async def _take_load_snapshot() -> Optional[Path]:
+    """Bank the live frame so a regressive load can be undone. ``None`` if it cannot.
+
+    A save's milestones cannot be read without loading it, so the guard has to
+    load first and put the world back afterwards. Without somewhere to put the
+    world back *from* there is no guard, and the load simply proceeds.
+    """
+    if not _config:
+        return None
+    scratch = Path(_config.data_dir).expanduser().resolve() / "tmp"
+    try:
+        scratch.mkdir(parents=True, exist_ok=True)
+        handle = tempfile.NamedTemporaryFile(
+            prefix="load_guard__", suffix=".state", dir=str(scratch), delete=False
+        )
+        handle.close()
+        path = Path(handle.name)
+        await _run_emulator_sync(_snapshot_sync, str(path))
+        return path
+    except Exception as exc:  # noqa: BLE001 — an unguarded load beats a broken one
+        print(f"[server] WARNING: could not snapshot before a load: {exc}")
+        return None
+
+
+def _discard_snapshot(path: Optional[Path]) -> None:
+    """Drop a guard snapshot. A file that will not delete is not worth a 500."""
+    if path is None:
+        return
+    try:
+        path.unlink(missing_ok=True)
+    except OSError as exc:
+        print(f"[server] WARNING: could not remove {path}: {exc}")
+
+
+async def _refuse_if_regressive(
+    *,
+    name: str,
+    held_before: frozenset,
+    loaded: dict,
+    snapshot: Path,
+) -> Optional[HTTPException]:
+    """Undo the load that just happened if it cost milestones, and name them.
+
+    Returns the refusal for the caller to raise, or ``None`` when the save is
+    level with the live game or ahead of it — the ordinary case, which gets here
+    having spent one extra RAM read and nothing else.
+    """
+    held_after = frozenset(await _run_emulator_sync(_milestone_ids_sync))
+    lost = held_before - held_after
+    if not lost:
+        return None
+
+    detail = _regression_refusal(sorted(lost))
+    try:
+        restored = await _coordinator.load_settle_and_observe(
+            path=str(snapshot),
+            reason=f"load_refused:{name}",
+        )
+    except Exception as exc:  # noqa: BLE001 — the world moved, and stayed moved
+        # Putting the world back is the only thing that makes this a refusal
+        # rather than a load. It failed, so the game *is* the save that was
+        # asked for: reset the guard the way any load does, and say plainly
+        # that the undo did not hold rather than report a clean refusal.
+        _repeat_guard.reset()
+        _repeat_context.clear()
+        stuck = f"{detail} The undo failed ({exc}): the game is on that save now."
+        await _write_receipt(
+            tool="load",
+            presses=0,
+            bundle=loaded["bundle"],
+            outcome=None,
+            milestone_ids=sorted(held_after),
+            exit_code=1,
+            reloaded=True,
+            extra={
+                "error": stuck[:200],
+                "save": name,
+                "load_refused": sorted(lost)[:8],
+                "undo_failed": True,
+            },
+        )
+        return HTTPException(status_code=500, detail=stuck)
+
+    # A refusal costs a receipt for the same reason the repeat guard's does: a
+    # run whose records hold only what it spent cannot show what it was stopped
+    # from spending. No presses, and `reloaded` is false — nothing was rewound,
+    # the world is the frame it was already on.
+    await _write_receipt(
+        tool="load",
+        presses=0,
+        bundle=restored["bundle"],
+        outcome=None,
+        milestone_ids=sorted(await _run_emulator_sync(_milestone_ids_sync)),
+        exit_code=1,
+        extra={"error": detail[:200], "save": name, "load_refused": sorted(lost)[:8]},
+    )
+    return HTTPException(status_code=409, detail=detail)
+
+
 @app.post("/load")
 async def load_state(req: SaveRequest):
-    """Load emulator state from disk, let it settle, and report where it landed."""
+    """Load emulator state from disk, let it settle, and report where it landed.
+
+    A load that would leave the game holding *fewer* milestones than it holds
+    right now is refused and undone. The model treated ``poke load`` as a
+    fast-travel menu — 129 loads in one run, seven of them inside four minutes
+    hopping between three different timelines — and the run finished on the
+    pre-Misty branch, one badge and five rungs behind the peak it had already
+    reached. Prose in the skill said not to; a refusal is what it reads.
+
+    The only way to know what a save holds is to load it, so this banks the live
+    frame first, loads, compares, and puts the world back if the target is a
+    step down. ``force`` goes through anyway, which is what recovering from a
+    genuinely lost branch needs.
+    """
     _ensure_emulator()
     save_path = _save_path_for(req.name)
     if not save_path.exists():
         raise HTTPException(status_code=404, detail=f"Save not found: {req.name}")
+
+    held_before = frozenset(await _run_emulator_sync(_milestone_ids_sync))
+    # Nothing to lose, or an operator who has already said they know: no snapshot,
+    # no second milestone read, no extra friction on the load that goes forward.
+    snapshot = None if req.force or not held_before else await _take_load_snapshot()
+
     try:
         result = await _coordinator.load_settle_and_observe(
             path=str(save_path),
             reason=f"manual_load:{req.name}",
         )
     except HTTPException:
+        _discard_snapshot(snapshot)
         raise
     except Exception as e:
+        _discard_snapshot(snapshot)
         raise HTTPException(status_code=500, detail=f"Load error: {e}")
+
+    if snapshot is not None:
+        try:
+            refusal = await _refuse_if_regressive(
+                name=req.name,
+                held_before=held_before,
+                loaded=result,
+                snapshot=snapshot,
+            )
+        finally:
+            _discard_snapshot(snapshot)
+        if refusal is not None:
+            # The world is back where it started, so the repeat guard is still
+            # describing the frame it was built on: leaving it alone is the
+            # point. Only a load that stands may reset it, below.
+            raise refusal
 
     bundle = result["bundle"]
     # A load rewinds the world underneath the guard, so whatever it had proved

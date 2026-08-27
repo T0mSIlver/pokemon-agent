@@ -228,8 +228,18 @@ class FakeEmulator:
         self.frame_count += frames
 
     def save_state(self, path: str) -> None:
+        # The event flags travel with the state, exactly as they do in a real
+        # save: they are what makes one save a step behind another, which is
+        # the whole question `POST /load` now has to answer.
         Path(path).write_text(
-            json.dumps({"x": self.x, "y": self.y, "facing": self.facing}),
+            json.dumps(
+                {
+                    "x": self.x,
+                    "y": self.y,
+                    "facing": self.facing,
+                    "event_bits": sorted(self.event_bits),
+                }
+            ),
             encoding="utf-8",
         )
 
@@ -238,6 +248,7 @@ class FakeEmulator:
         self.x = payload["x"]
         self.y = payload["y"]
         self.facing = payload["facing"]
+        self.event_bits = set(payload.get("event_bits") or ())
 
     def get_navigation_snapshot(self, reader) -> LiveNavigationSnapshot:
         return LiveNavigationSnapshot(
@@ -2645,6 +2656,173 @@ def test_a_reload_leaves_a_receipt_and_never_rewinds_the_bill(server_app):
     assert reloads[0]["presses"] == 0
     assert reloads[0]["tool"] == "load"
     assert server_app.http.get("/progress").json()["presses"] == 6
+
+
+# ---------------------------------------------------------------------------
+# The load guard
+#
+# `poke load` was used 129 times in one run at 0 presses a call, as a fast-travel
+# menu rather than as recovery: seven loads in four minutes across three
+# timelines, and the run ended on the pre-Misty branch a badge behind the peak it
+# had already reached. A load that would hand milestones back is refused.
+# ---------------------------------------------------------------------------
+
+
+def event_rungs(count: int) -> list:
+    """The first *count* ladder rungs the fake's event bits can satisfy."""
+    from pokemon_agent.milestones import MILESTONES
+
+    return [rung for rung in MILESTONES if rung.kind == "event"][:count]
+
+
+def earn(app, *rungs) -> None:
+    """Set the event bits for *rungs*, as the game would on reaching them."""
+    from pokemon_agent.milestones import ALL_EVENTS
+
+    app.emulator.event_bits |= {ALL_EVENTS[rung.source] for rung in rungs}
+
+
+def world_of(app) -> tuple:
+    return (app.emulator.x, app.emulator.y, frozenset(app.emulator.event_bits))
+
+
+def test_a_load_that_would_hand_a_milestone_back_is_refused(server_app):
+    rung = event_rungs(1)[0]
+    server_app.http.post("/save", json={"name": "before_it"})
+    earn(server_app, rung)
+
+    response = server_app.http.post("/load", json={"name": "before_it"})
+
+    assert response.status_code == 409
+    detail = response.json()["detail"]
+    assert detail == (
+        f"Refusing: that save is missing {rung.label}. You would lose it. "
+        "To try a route, `poke sim` walks a plan without touching the game; "
+        "a reload rewinds it. Load it anyway with --force."
+    )
+
+
+def test_the_refusal_names_every_rung_it_is_protecting(server_app):
+    first, second = event_rungs(2)
+    server_app.http.post("/save", json={"name": "before_both"})
+    earn(server_app, first, second)
+
+    detail = server_app.http.post("/load", json={"name": "before_both"}).json()["detail"]
+
+    assert first.label in detail and second.label in detail
+    assert "You would lose them." in detail
+
+
+def test_a_refused_load_leaves_the_world_exactly_where_it_was(server_app):
+    rung = event_rungs(1)[0]
+    server_app.http.post("/save", json={"name": "before_it"})
+    earn(server_app, rung)
+    server_app.http.post("/action", json={"actions": ["walk_up", "walk_left"]})
+    before = world_of(server_app)
+
+    assert server_app.http.post("/load", json={"name": "before_it"}).status_code == 409
+
+    assert world_of(server_app) == before
+    assert server_app.http.get("/progress").json()["count"] == 1
+
+
+def test_force_loads_the_earlier_branch_anyway(server_app):
+    """Recovering a branch that really was lost is the one load that goes back."""
+    rung = event_rungs(1)[0]
+    server_app.http.post("/save", json={"name": "before_it"})
+    earn(server_app, rung)
+
+    response = server_app.http.post("/load", json={"name": "before_it", "force": True})
+
+    assert response.status_code == 200
+    assert server_app.emulator.event_bits == set()
+
+
+def test_a_save_level_with_the_game_loads_with_no_extra_friction(server_app):
+    rung = event_rungs(1)[0]
+    earn(server_app, rung)
+    server_app.http.post("/save", json={"name": "after_it"})
+    server_app.http.post("/action", json={"actions": ["walk_up"]})
+
+    response = server_app.http.post("/load", json={"name": "after_it"})
+
+    assert response.status_code == 200
+    assert server_app.emulator.event_bits != set()
+
+
+def test_a_save_ahead_of_the_game_loads(server_app):
+    """A superset is not a regression: nothing is handed back."""
+    rung = event_rungs(1)[0]
+    earn(server_app, rung)
+    server_app.http.post("/save", json={"name": "ahead"})
+    server_app.emulator.event_bits = set()
+
+    assert server_app.http.post("/load", json={"name": "ahead"}).status_code == 200
+
+
+def test_a_refused_load_leaves_a_receipt_priced_at_nothing(server_app):
+    """The guard is worth exactly the milestones it refuses, which has to be countable."""
+    run_id = open_run()
+    rung = event_rungs(1)[0]
+    server_app.http.post("/save", json={"name": "before_it"})
+    earn(server_app, rung)
+
+    assert server_app.http.post("/load", json={"name": "before_it"}).status_code == 409
+
+    refusals = [entry for entry in receipts(server_app, run_id) if "load_refused" in entry]
+    assert len(refusals) == 1
+    entry = refusals[0]
+    assert entry["tool"] == "load"
+    assert entry["presses"] == 0
+    assert entry["exit"] == 1
+    assert entry["reloaded"] is False  # nothing was rewound
+    assert entry["load_refused"] == [rung.id]
+    assert entry["milestones_held"] == 1
+    assert rung.label in entry["error"]
+
+
+def test_a_refused_load_leaves_the_repeat_guard_alone(server_app):
+    """The world did not move, so what the guard had proved is still true."""
+    rung = event_rungs(1)[0]
+    server_app.http.post("/save", json={"name": "before_it"})
+    earn(server_app, rung)
+    _into_a_wall(server_app)
+    assert server_app.http.post("/action", json={"actions": ["walk_up"]}).status_code == 400
+
+    assert server_app.http.post("/load", json={"name": "before_it"}).status_code == 409
+
+    assert server_app.http.post("/action", json={"actions": ["walk_up"]}).status_code == 400
+
+
+def test_a_forced_load_backwards_shows_up_as_a_fall_in_what_the_game_holds(server_app):
+    """`milestone_count` is a running maximum and never falls. This one does."""
+    run_id = open_run()
+    rung = event_rungs(1)[0]
+    server_app.http.post("/save", json={"name": "before_it"})
+    earn(server_app, rung)
+    server_app.http.post("/action", json={"actions": ["press_a"]})
+
+    server_app.http.post("/load", json={"name": "before_it", "force": True})
+
+    written = receipts(server_app, run_id)
+    peak = [entry for entry in written if entry["tool"] == "action"][-1]
+    after = [entry for entry in written if entry["reloaded"]][-1]
+    assert (peak["milestone_count"], peak["milestones_held"]) == (1, 1)
+    assert after["milestone_count"] == 1  # the bill never rewinds
+    assert after["milestones_held"] == 0  # the game just did
+
+
+def test_a_save_leaves_a_receipt_naming_it(server_app):
+    """129 load receipts and no save receipts: nothing could pair the two."""
+    run_id = open_run()
+
+    server_app.http.post("/save", json={"name": "before_brock"})
+
+    saves = [entry for entry in receipts(server_app, run_id) if entry["tool"] == "save"]
+    assert len(saves) == 1
+    assert saves[0]["presses"] == 0
+    assert saves[0]["save"] == "before_brock"
+    assert saves[0]["milestones_held"] == 0
 
 
 def test_progress_reports_the_runs_total_and_not_this_processs(server_app):

@@ -158,6 +158,13 @@ class Receipt:
     party_size: int = 0
     milestones_new: tuple[str, ...] = ()
     milestone_count: int = 0
+    #: How many milestones the game actually held at this receipt, as read off
+    #: RAM. ``milestone_count`` is a running maximum and by design never falls,
+    #: which is right for cost accounting and blind to a reload that lands on an
+    #: earlier branch: a run once lost a badge and five rungs without the count
+    #: moving a digit. ``None`` on a receipt whose caller never read the oracle,
+    #: and on every receipt written before the field existed.
+    milestones_held: Optional[int] = None
     tool: str = ""
     exit_code: int = 0
     reloaded: bool = False
@@ -178,6 +185,7 @@ class Receipt:
             "party_size",
             "milestones_new",
             "milestone_count",
+            "milestones_held",
             "tool",
             "exit",
             "reloaded",
@@ -202,6 +210,7 @@ class Receipt:
             party_size=_as_int(payload.get("party_size")),
             milestones_new=_as_ids(payload.get("milestones_new")),
             milestone_count=_as_int(payload.get("milestone_count")),
+            milestones_held=_as_optional_int(payload.get("milestones_held")),
             tool=_as_text(payload.get("tool")),
             exit_code=_as_int(payload.get("exit")),
             reloaded=bool(payload.get("reloaded")),
@@ -224,6 +233,7 @@ class Receipt:
             "party_size": self.party_size,
             "milestones_new": list(self.milestones_new),
             "milestone_count": self.milestone_count,
+            "milestones_held": self.milestones_held,
             "tool": self.tool,
             "exit": self.exit_code,
             "reloaded": self.reloaded,

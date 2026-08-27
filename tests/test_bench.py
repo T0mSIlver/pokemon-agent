@@ -180,6 +180,10 @@ def test_on_disk_layout_is_one_directory_per_run(tmp_path):
         "party_size",
         "milestones_new",
         "milestone_count",
+        # The live count beside the running maximum. `milestone_count` never
+        # falls by design; this one does, which is how a reload onto an earlier
+        # branch is visible at all.
+        "milestones_held",
         "tool",
         "exit",
         "reloaded",

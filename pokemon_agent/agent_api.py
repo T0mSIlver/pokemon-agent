@@ -1546,8 +1546,15 @@ class Client:
     def save(self, name: str) -> Result:
         return Result.from_payload(self._json("/save", method="POST", payload={"name": name}))
 
-    def load(self, name: str) -> Result:
-        return Result.from_payload(self._json("/load", method="POST", payload={"name": name}))
+    def load(self, name: str, force: bool = False) -> Result:
+        """Load a save. Refused if it holds fewer milestones than the live game.
+
+        ``force=True`` overrides that, for a branch that really was lost.
+        """
+
+        return Result.from_payload(
+            self._json("/load", method="POST", payload={"name": name, "force": bool(force)})
+        )
 
     def saves(self) -> list[str]:
         """Named saves, newest first.

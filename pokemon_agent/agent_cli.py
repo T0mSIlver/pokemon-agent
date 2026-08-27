@@ -916,7 +916,17 @@ def cmd_save(args: argparse.Namespace, url: str) -> int:
 
 
 def cmd_load(args: argparse.Namespace, url: str) -> int:
-    payload = fetch_json(url, "/load", method="POST", payload={"name": args.name})
+    """Load a save. The server refuses one that would cost you milestones.
+
+    ``--force`` is how you say you meant it: recovering a branch you really have
+    lost needs a load that goes backwards, and nothing else does.
+    """
+    payload = fetch_json(
+        url,
+        "/load",
+        method="POST",
+        payload={"name": args.name, "force": bool(getattr(args, "force", False))},
+    )
     print(f"loaded {args.name} -> {(payload.get('save') or {}).get('path')}")
     return EXIT_OK
 
@@ -1098,6 +1108,11 @@ def build_parser() -> argparse.ArgumentParser:
 
     load = subparsers.add_parser("load", parents=[common], help="load a named save")
     load.add_argument("name")
+    load.add_argument(
+        "--force",
+        action="store_true",
+        help="load even if that save is behind the game you have now",
+    )
     load.set_defaults(func=cmd_load)
 
     saves = subparsers.add_parser("saves", parents=[common], help="list saves")

@@ -566,12 +566,32 @@ class InterventionPolicy:
 FACT_BUDGET_CHARS = 1600
 
 #: Caps on the long lists, so one crowded map cannot eat the budget by itself.
-MAX_EXITS_SHOWN = 6
+#: Every one of them truncates *visibly*: the line that carries a cut list says
+#: how many it is showing out of how many there are. A cap that elides in
+#: silence under a header calling itself authoritative is worse than no line at
+#: all, because the reader is told in the same breath that geography absent
+#: from here is not known. S.S. Anne 2F Rooms has twelve warps and the player
+#: was standing on the eleventh when this was measured; at six, the one exit
+#: that mattered was inside the "and 6 more warps" the sentence swallowed.
+MAX_EXITS_SHOWN = 12
 MAX_CENTERS_SHOWN = 3
 MAX_CENTER_ROUTES = 2
 MAX_HOPS_SHOWN = 4
 MAX_FRONTIER_SHOWN = 3
+MAX_REPEAT_TILES = 3
+MAX_ACTIONS_SHOWN = 8
 MAX_ERROR_CHARS = 160
+
+#: And a character ceiling on the joined list, because a count alone does not
+#: bound the cost: names run from "Route 4" to "Fuchsia Bill's Grandpa's House"
+#: and a step count rides on every measured exit. Measured over the whole
+#: generated graph, 218 of the 221 maps with exits have twelve or fewer; with
+#: every exit measured and a two-digit step count on each — the fattest the
+#: line can ever be — 9 of those 221 still spill and are cut, and the cut says
+#: so. The rest, which is 96% of the game's maps, carry the word "every"
+#: honestly. Against `FACT_BUDGET_CHARS` that costs at worst one INFERRED fact
+#: on the most crowded maps, and `format_facts` now names what it dropped.
+MAX_EXITS_CHARS = 460
 
 #: The button that leaves a map by each edge. North is up: ``walk_up``
 #: decreases y, exactly as in :mod:`pokemon_agent.pathfinding`.
@@ -662,13 +682,12 @@ class MapFacts:
             return None
         return self._world.route(source, target)
 
-    def poke_centers(self, source: Optional[str], limit: int = MAX_CENTERS_SHOWN) -> list[tuple]:
-        """Poke Centers by graph distance from *source*, nearest first.
+    def reachable_poke_centers(self, source: Optional[str]) -> list[tuple]:
+        """*Every* Poke Center the graph can route to from *source*, nearest first.
 
-        Distance is hops in the map graph and nothing more: it does not know
-        whether the walk to the first exit is currently possible, which is why
-        the caller prints it under INFERRED and hands over the whole ranking
-        rather than a single recommendation.
+        The whole list, so a caller that shows three of eleven can say eleven.
+        :meth:`poke_centers` is the same answer cut to a length a prompt can
+        carry, and it is the cut that has to be declared.
         """
 
         if not source:
@@ -680,7 +699,18 @@ class MapFacts:
                 continue
             ranked.append((len(hops), name, hops))
         ranked.sort(key=lambda item: (item[0], item[1]))
-        return ranked[:limit]
+        return ranked
+
+    def poke_centers(self, source: Optional[str], limit: int = MAX_CENTERS_SHOWN) -> list[tuple]:
+        """Poke Centers by graph distance from *source*, nearest first.
+
+        Distance is hops in the map graph and nothing more: it does not know
+        whether the walk to the first exit is currently possible, which is why
+        the caller prints it under INFERRED and hands over the whole ranking
+        rather than a single recommendation.
+        """
+
+        return self.reachable_poke_centers(source)[:limit]
 
     def find_map(self, text: str) -> Optional[str]:
         """The last map this text names, or ``None`` if it names none.
@@ -884,6 +914,156 @@ def _walked(explored: Optional[Mapping[str, Any]]) -> Optional[set]:
     return {tuple(tile) for tile in walked}
 
 
+def _edge_steps(region, edge: Optional[str], size: Optional[tuple[int, int]]) -> Optional[int]:
+    """Steps to the nearest tile on *edge*, which is where you walk off the map.
+
+    An edge connection has no single warp tile — the whole side is the door —
+    so its distance is the cheapest tile on that side the flood actually
+    reached. Without the map's dimensions there is no way to say which tiles
+    those are, and this answers ``None`` rather than picking the extreme of
+    whatever the flood happened to cover.
+    """
+
+    if not edge or size is None:
+        return None
+    width, height = int(size[0]), int(size[1])
+    limits = {
+        "north": ("y", 0),
+        "south": ("y", height - 1),
+        "west": ("x", 0),
+        "east": ("x", width - 1),
+    }
+    axis = limits.get(edge)
+    if axis is None:
+        return None
+    index = 1 if axis[0] == "y" else 0
+    costs = [cost for tile, cost in region.distance.items() if tile[index] == axis[1]]
+    return min(costs) if costs else None
+
+
+def _exit_steps(
+    exits: Sequence[Any],
+    size: Optional[tuple[int, int]],
+    snapshot: Mapping[str, Any],
+    explored: Optional[Mapping[str, Any]],
+    position: Optional[Sequence[int]],
+) -> dict[int, int]:
+    """Walking steps from the player to each exit, keyed by index into ``exits``.
+
+    One flood over the same collision :func:`_frontier_fact` is measured on, so
+    this is real ground and not a straight line: a warp in another pocket of
+    this map is a wall with a door painted on it, and it simply gets no number.
+    :meth:`Region.approach` rather than ``steps_to`` because a doorway reads as
+    blocked collision — you walk *into* it, you never stand on it.
+
+    An exit missing from the result was not measured. That is a third state, not
+    a synonym for unreachable: the flood only crosses ground somebody has looked
+    at, so an exit behind unexplored floor is absent from here too, and the
+    caller must not print either claim.
+    """
+
+    if position is None or not snapshot or not exits:
+        return {}
+    collision = _collision(snapshot, explored or {})
+    if collision is None:
+        return {}
+    try:
+        from pokemon_agent.world import reachable_region
+
+        region = reachable_region(collision, (int(position[0]), int(position[1])))
+    except Exception:  # noqa: BLE001 — a fact that cannot be computed is omitted
+        return {}
+    steps: dict[int, int] = {}
+    for index, hop in enumerate(exits):
+        if getattr(hop, "at", None) is None:
+            cost = _edge_steps(region, getattr(hop, "edge", None), size)
+            if cost is not None:
+                steps[index] = cost
+            continue
+        try:
+            found = region.approach((int(hop.at[0]), int(hop.at[1])))
+        except Exception:  # noqa: BLE001
+            continue
+        if found is not None:
+            steps[index] = found[1]
+    return steps
+
+
+def _exit_order(
+    exits: Sequence[Any], steps: Mapping[int, int], position: Optional[Sequence[int]]
+) -> tuple[list[int], Optional[int]]:
+    """Indices into ``exits``, best first, and which one is under the player.
+
+    The warp you are standing on goes first and nothing outranks it: the next
+    button press takes it, so every other exit on the map is a longer answer to
+    the same question. After it come the exits a flood measured, nearest first,
+    and behind those the ones it could not measure, in the map data's own
+    order — which is the order the whole list used to be in, and is meaningless.
+    """
+
+    here = (int(position[0]), int(position[1])) if position is not None else None
+    underfoot: Optional[int] = None
+    if here is not None:
+        for index, hop in enumerate(exits):
+            at = getattr(hop, "at", None)
+            if at is not None and (int(at[0]), int(at[1])) == here:
+                underfoot = index
+                break
+    order = sorted(
+        range(len(exits)),
+        key=lambda index: (
+            index != underfoot,
+            index not in steps,
+            steps.get(index, 0),
+            index,
+        ),
+    )
+    return order, underfoot
+
+
+def _exits_fact(
+    map_name: str,
+    exits: Sequence[Any],
+    steps: Mapping[int, int],
+    position: Optional[Sequence[int]],
+) -> Fact:
+    """Where this map leads, best first, and honestly about what it left out.
+
+    The sentence used to open "Every exit from ..." and then end "and 6 more
+    warps", under a header that tells the reader geography it does not carry is
+    not known. On S.S. Anne 2F Rooms — twelve warps, player standing on the
+    eleventh — that sentence named six exits, none of them the one underfoot.
+    "Every" is now said only when every exit is in the line; a cut list gives
+    the true total instead, and "nearest first" is claimed only over the exits a
+    flood actually measured, never over the ones it did not.
+    """
+
+    order, underfoot = _exit_order(exits, steps, position)
+    parts: list[str] = []
+    for index in order:
+        text = _describe_hop(exits[index])
+        if index == underfoot:
+            text += " [you are standing on this one]"
+        elif index in steps:
+            cost = steps[index]
+            text += f", {cost} step{'' if cost == 1 else 's'}"
+        parts.append(text)
+
+    shown = parts[:MAX_EXITS_SHOWN]
+    while len(shown) > 1 and len("; ".join(shown)) > MAX_EXITS_CHARS:
+        shown.pop()
+    if len(shown) == len(parts):
+        lead = f"Every exit from {map_name}"
+    else:
+        lead = f"{len(shown)} of {len(parts)} exits from {map_name}"
+    if steps:
+        measured = (
+            "nearest first" if len(steps) == len(exits) else "measured exits first, nearest first"
+        )
+        lead += f" ({measured})"
+    return Fact(f"{lead}: {'; '.join(shown)}.")
+
+
 def _frontier_fact(
     snapshot: Mapping[str, Any],
     explored: Optional[Mapping[str, Any]],
@@ -923,9 +1103,46 @@ def _frontier_fact(
     )
 
 
-def _repeated_tiles(recent: Sequence[Receipt], map_name: str, limit: int = 3) -> list[tuple]:
+def _repeated_tiles(recent: Sequence[Receipt], map_name: str) -> list[tuple]:
+    """Tiles stood on more than once on this map, most stood on first.
+
+    Uncapped, because the caller has to know how many there are before it can
+    say honestly how many it is showing. Once only is not "repeated": the
+    circling detector reads a whole window across every map, this line reads one
+    map, and a player who has just walked onto a fresh one has every tile at x1.
+    The captured S.S. Anne payload said "Tiles you keep standing on: (22,15) x1"
+    about a tile the player had stood on exactly once.
+    """
+
     counts = Counter(r.pos for r in recent if r.pos is not None and r.map_name == map_name)
-    return counts.most_common(limit)
+    return [(pos, count) for pos, count in counts.most_common() if count > 1]
+
+
+def _repeat_fact(
+    recent: Sequence[Receipt], map_name: str
+) -> tuple[Optional[Fact], Optional[tuple]]:
+    """The tiles being stood on over and over, and the most stood-on tile.
+
+    The tile comes back separately from the sentence, and survives it: the
+    caller's next fact — which step off that tile has never been walked — is
+    worth having even on a map where nothing has been stood on twice yet, and
+    re-deriving the tile from the sentence would be reading the prompt back.
+    """
+
+    counts = Counter(r.pos for r in recent if r.pos is not None and r.map_name == map_name)
+    if not counts:
+        return None, None
+    worst = counts.most_common(1)[0][0]
+    repeated = [(pos, count) for pos, count in counts.most_common() if count > 1]
+    if not repeated:
+        return None, worst
+    shown = repeated[:MAX_REPEAT_TILES]
+    spread = ", ".join(f"{_coord_text(pos)} x{count}" for pos, count in shown)
+    if len(shown) == len(repeated):
+        lead = "Tiles you keep standing on"
+    else:
+        lead = f"{len(shown)} of {len(repeated)} tiles you keep standing on, worst first"
+    return Fact(f"{lead}: {spread}."), worst
 
 
 def _neighbour_fact(
@@ -964,7 +1181,13 @@ def _neighbour_fact(
 
 
 def _failure_fact(recent: Sequence[Receipt]) -> Optional[Fact]:
-    """The error text itself, which is the one thing a retry loop never reads."""
+    """The error text itself, which is the one thing a retry loop never reads.
+
+    Both halves say when they were cut. A server refusal often puts the part
+    that matters last — "walk_left is blocked by a wall, try walk_up" — so an
+    error clipped in silence at 160 characters reads as a complete sentence that
+    simply did not explain itself.
+    """
 
     for receipt in reversed(recent):
         if not receipt.exit_code:
@@ -975,9 +1198,21 @@ def _failure_fact(recent: Sequence[Receipt]) -> Optional[Fact]:
         parts: list[str] = []
         if error:
             tool = receipt.tool or "the command"
-            parts.append(f"`{tool}` failed with: {error[:MAX_ERROR_CHARS]}")
+            clipped = error[:MAX_ERROR_CHARS]
+            cut = (
+                f" [first {MAX_ERROR_CHARS} of {len(error)} characters]"
+                if len(error) > MAX_ERROR_CHARS
+                else ""
+            )
+            parts.append(f"`{tool}` failed with: {clipped}{cut}")
         if isinstance(actions, (list, tuple)) and actions:
-            parts.append("actions sent: " + " ".join(str(action) for action in actions[:8]))
+            shown = [str(action) for action in actions[:MAX_ACTIONS_SHOWN]]
+            label = (
+                "actions sent"
+                if len(shown) == len(actions)
+                else f"first {len(shown)} of {len(actions)} actions sent"
+            )
+            parts.append(f"{label}: " + " ".join(shown))
         return Fact(". ".join(parts) + ".") if parts else None
     return None
 
@@ -1020,10 +1255,8 @@ def harness_facts(
 
     exits = maps.exits(map_name)
     if exits:
-        shown = [_describe_hop(hop) for hop in exits[:MAX_EXITS_SHOWN]]
-        rest = len(exits) - len(shown)
-        tail = f", and {rest} more warp{'s' if rest > 1 else ''}" if rest else ""
-        known.append(Fact(f"Every exit from {map_name}: {'; '.join(shown)}{tail}."))
+        steps = _exit_steps(exits, size, live["snapshot"], live["explored"], position)
+        known.append(_exits_fact(map_name, exits, steps, position))
 
     if trigger.name == "repeated_failure":
         failure = _failure_fact(recent)
@@ -1031,24 +1264,27 @@ def harness_facts(
             known.append(failure)
 
     if trigger.name == "circling":
-        repeated = _repeated_tiles(recent, map_name)
-        if repeated:
-            spread = ", ".join(f"{_coord_text(pos)} x{count}" for pos, count in repeated)
-            known.append(Fact(f"Tiles you keep standing on: {spread}."))
-            neighbours = _neighbour_fact(repeated[0][0], live["snapshot"], live["explored"])
-            if neighbours is not None:
-                known.append(neighbours)
+        repeat, worst = _repeat_fact(recent, map_name)
+        if repeat is not None:
+            known.append(repeat)
+        neighbours = _neighbour_fact(worst, live["snapshot"], live["explored"])
+        if neighbours is not None:
+            known.append(neighbours)
 
-    centers = maps.poke_centers(map_name)
+    centers = maps.reachable_poke_centers(map_name)
     if centers:
+        shown = centers[:MAX_CENTERS_SHOWN]
         parts = []
-        for index, (distance, name, hops) in enumerate(centers):
+        for index, (distance, name, hops) in enumerate(shown):
             plural = "" if distance == 1 else "s"
             detail = f" [{_describe_route(hops)}]" if index < MAX_CENTER_ROUTES else ""
             parts.append(f"{name} {distance} hop{plural}{detail}")
-        inferred.append(
-            Fact(f"Poke Centers from {map_name}, nearest first: {'; '.join(parts)}.", known=False)
+        lead = (
+            f"Poke Centers from {map_name}, nearest first"
+            if len(shown) == len(centers)
+            else f"{len(shown)} of {len(centers)} Poke Centers from {map_name}, nearest first"
         )
+        inferred.append(Fact(f"{lead}: {'; '.join(parts)}.", known=False))
 
     destination = next((found for found in (maps.find_map(text) for text in goals) if found), None)
     if destination:
@@ -1098,19 +1334,30 @@ def format_facts(facts: Sequence[Fact], *, budget: int = FACT_BUDGET_CHARS) -> s
     to exactly: facts are dropped from the end once it is spent, which is the
     whole reason :func:`harness_facts` returns them in the order it does. An
     empty list gives an empty string — no block, no header, no apology.
+
+    A drop is *said*, and the room to say it is reserved before the last fact
+    is fitted. The header above this block tells the reader that geography not
+    written here is not known; a block that quietly loses its whole INFERRED
+    section turns that into "the harness has nothing else", which is a
+    different and false claim. One line, and the reader knows to ask.
     """
 
-    known: list[Fact] = []
-    inferred: list[Fact] = []
-    spent = len(FACTS_HEADER)
-    for fact in facts:
-        section = known if fact.known else inferred
-        header = 0 if section else len(FACTS_KNOWN_HEADER if fact.known else FACTS_INFERRED_HEADER)
-        cost = len(fact.text) + 5 + (header + 2 if header else 0)
-        if spent + cost > budget:
-            continue
-        section.append(fact)
-        spent += cost
+    known, inferred, dropped = _fit_facts(facts, budget)
+    note = ""
+    if dropped:
+        # Reserve room for the note, then refit inside what is left. Two passes
+        # at most: the reservation only grows by the digits in the count. A
+        # budget too small to hold both one fact and the note keeps the fact —
+        # at that size there is nothing to qualify.
+        for _ in range(3):
+            candidate = _overflow_note(dropped)
+            fitted = _fit_facts(facts, budget - len(candidate) - 2)
+            if not (fitted[0] or fitted[1]):
+                break
+            known, inferred, dropped = fitted
+            note = _overflow_note(dropped)
+            if candidate == note:
+                break
     if not known and not inferred:
         return ""
 
@@ -1121,7 +1368,36 @@ def format_facts(facts: Sequence[Fact], *, budget: int = FACT_BUDGET_CHARS) -> s
     if inferred:
         lines += ["", FACTS_INFERRED_HEADER]
         lines += [f"  - {fact.text}" for fact in inferred]
+    if note:
+        lines += ["", note]
     return "\n".join(lines)
+
+
+def _overflow_note(dropped: int) -> str:
+    """What the block says when it could not carry everything it computed."""
+
+    if dropped == 1:
+        return "(1 further computed fact did not fit in this block and was left out.)"
+    return f"({dropped} further computed facts did not fit in this block and were left out.)"
+
+
+def _fit_facts(facts: Sequence[Fact], budget: int) -> tuple[list[Fact], list[Fact], int]:
+    """Split ``facts`` into the two sections at this budget, and count the losses."""
+
+    known: list[Fact] = []
+    inferred: list[Fact] = []
+    dropped = 0
+    spent = len(FACTS_HEADER)
+    for fact in facts:
+        section = known if fact.known else inferred
+        header = 0 if section else len(FACTS_KNOWN_HEADER if fact.known else FACTS_INFERRED_HEADER)
+        cost = len(fact.text) + 5 + (header + 2 if header else 0)
+        if spent + cost > budget:
+            dropped += 1
+            continue
+        section.append(fact)
+        spent += cost
+    return known, inferred, dropped
 
 
 def build_prompt(
@@ -1233,8 +1509,24 @@ MAX_ADVICE_HOPS = 3
 #: The gap excludes "(" and ":" so a list — "(11,5), (18,5), (24,5): they warp
 #: into Mt Moon" — never binds its first tile to the destination of its last.
 #: Three tiles and one phrase is not a claim about any one of them.
+#:
+#: It also stops at a conjunction, because a conjunction hands the verb to a
+#: new subject and the tile is no longer what the sentence is about. Both
+#: refusals this run were that mistake and both threw away a correct answer:
+#: "(20,19) is the loop and the east edge leads to Route 11" was read as a
+#: claim that (20,19) leads to Route 11, and refused for it. The east edge does
+#: lead to Route 11 — the facts block says so three lines further up. A comma
+#: ends the gap for the same reason, except before "which" or "that", where the
+#: relative pronoun keeps the tile as the subject: "(11,5), which leads to the
+#: Mt Moon Pokecenter" is still a claim about (11,5).
+#:
+#: Measured over all 57 answers the run has produced: 23 of the 27 matches
+#: survive, and the four dropped are the two false refusals plus two fragments
+#: that were never warp claims at all ("(12,19) and enter the gym").
 _ADVICE_WARP_RE = re.compile(
-    r"\((\d+)\s*,\s*(\d+)\)[^.;:\n(]{0,60}?"
+    r"\((\d+)\s*,\s*(\d+)\)"
+    r"(?:,\s*(?:which|that)\b|(?!\b(?:and|but|or|then|while|because)\b)[^.;:,\n(])"
+    r"{0,60}?"
     r"(?:->|→|warps?\s+(?:you\s+)?(?:to|into)|leads?\s+(?:to|into)|"
     r"takes\s+you\s+(?:to|into)|enters?)\s+(?:the\s+)?"
     r"([A-Za-z][A-Za-z0-9.']*(?:\s+[A-Za-z0-9.'][A-Za-z0-9.']*){0,3})",

@@ -412,10 +412,34 @@ def test_save_and_load(stub, capsys):
     assert run(stub, "save", "brock") == 0
     assert run(stub, "load", "brock") == 0
 
-    assert [request["body"] for request in stub.requests] == [{"name": "brock"}, {"name": "brock"}]
+    assert [request["body"] for request in stub.requests] == [
+        {"name": "brock"},
+        {"name": "brock", "force": False},
+    ]
     out = capsys.readouterr().out
     assert "saved brock -> /s/brock" in out
     assert "loaded brock -> /s/brock" in out
+
+
+def test_load_force_says_so_in_the_body(stub, capsys):
+    """The only way past a save that would cost milestones."""
+    stub.route("POST", "/load", {"success": True, "save": {"name": "old", "path": "/s/old"}})
+
+    assert run(stub, "load", "old", "--force") == 0
+
+    assert stub.requests[-1]["body"] == {"name": "old", "force": True}
+
+
+def test_a_regressive_load_prints_what_it_would_have_cost(stub, capsys):
+    stub.route(
+        "POST",
+        "/load",
+        {"detail": "Refusing: that save is missing Cascade Badge. You would lose it."},
+        status=409,
+    )
+
+    assert run(stub, "load", "old") == agent_cli.EXIT_HTTP_ERROR
+    assert "missing Cascade Badge" in capsys.readouterr().err
 
 
 def test_load_missing_save_surfaces_the_detail(stub, capsys):

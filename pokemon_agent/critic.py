@@ -27,6 +27,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Awaitable, Callable, Iterable, Iterator, Mapping, Optional, Sequence
 
+from pokemon_agent import notes as notes_module
 from pokemon_agent.agent_cli import ActionError, expand_actions
 from pokemon_agent.bench.metrics import compute as compute_run_metrics
 from pokemon_agent.bench.metrics import whiteout_events
@@ -552,9 +553,18 @@ def format_stats(stats: JsonDict) -> list[str]:
 
 
 def read_notes(workspace_dir: Path, limit: int = NOTES_CHAR_LIMIT) -> str:
+    """The half of ``NOTES.md`` the model wrote, which is the half that is a claim.
+
+    The harness owns a delimited block at the top of that file and rewrites it
+    from the game — see :mod:`pokemon_agent.notes`. It is dropped here, because
+    every heading this text appears under says "CLAIMS, not facts, and
+    unverified", and filing a measurement under that heading is how a
+    measurement gets argued with.
+    """
+
     path = Path(workspace_dir) / NOTES_FILENAME
     try:
-        text = path.read_text(encoding="utf-8").strip()
+        text = notes_module.strip_state_block(path.read_text(encoding="utf-8")).strip()
     except (OSError, UnicodeDecodeError):
         return ""
     if len(text) <= limit:

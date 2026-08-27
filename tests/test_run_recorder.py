@@ -196,6 +196,51 @@ async def test_a_checkpoint_the_run_resumed_from_is_history_not_progress(tmp_pat
     assert RunRegistry(tmp_path).load_meta(recorder.run_id).start_checkpoint == "four-badges"
 
 
+async def test_the_live_count_falls_when_the_bill_cannot(tmp_path):
+    """A reload onto an earlier branch hands rungs back. The bill still holds.
+
+    One run lost a badge and five milestones to a burst of loads and
+    `milestone_count` did not move a digit across 19,705 receipts — correctly,
+    because it is a running maximum and a gym won on the fourth attempt costs
+    what all four attempts cost. `milestones_held` is the number beside it.
+    """
+    oracle = FakeOracle()
+    recorder = make_recorder(tmp_path, oracle)
+    await recorder.begin_session(goal="Beat Misty", model="qwen")
+
+    await walk(recorder, 40, milestones=("EVENT_GOT_STARTER", "EVENT_BEAT_BROCK"))
+    peak = await walk(
+        recorder,
+        60,
+        milestones=("EVENT_GOT_STARTER", "EVENT_BEAT_BROCK", "EVENT_BEAT_MISTY"),
+    )
+    # `poke load before_misty`, which this run did fifteen times.
+    rewound = await recorder.append(
+        tool="load",
+        presses=0,
+        reloaded=True,
+        milestone_ids=("EVENT_GOT_STARTER",),
+    )
+
+    assert (peak.milestone_count, peak.milestones_held) == (3, 3)
+    assert rewound.milestone_count == 3  # what the run has spent, which never rewinds
+    assert rewound.milestones_held == 1  # what the game is holding, which just did
+    assert compute(RunRegistry(tmp_path).load(recorder.run_id)).final_milestone_count == 3
+
+
+async def test_a_receipt_that_never_read_the_oracle_claims_nothing_about_it(tmp_path):
+    """`None` is not zero. A refused batch reads no RAM and is not a regression."""
+    oracle = FakeOracle()
+    recorder = make_recorder(tmp_path, oracle)
+    await recorder.begin_session(goal="Beat Misty", model="qwen")
+    await walk(recorder, 10, milestones=("EVENT_GOT_STARTER",))
+
+    refused = await recorder.append(tool="action", presses=0, exit_code=1)
+
+    assert refused.milestones_held is None
+    assert refused.milestone_count == 1
+
+
 # ---------------------------------------------------------------------------
 # Durability
 # ---------------------------------------------------------------------------

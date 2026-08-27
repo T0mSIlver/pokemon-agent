@@ -384,11 +384,13 @@ Save before anything you would hate to redo, so a gym leader, a long cave, a one
 
 Load when you have lost a fight you needed to win, or when you have wandered somewhere unrecoverable. Losing a few minutes beats grinding back from a whiteout. Do not reload to undo a single bad step, because walking back is cheaper.
 
+A load that holds fewer milestones than the game you are playing is refused, and the refusal names the badges and events you would have handed back. `poke load <name> --force` goes through anyway. Force it only when the branch you are on is genuinely lost.
+
 ## Notes
 
-`NOTES.md` in your workspace is yours, and it is the only memory that survives. The harness keeps none for you. Read it at the start of a session and keep it current as you play.
+`NOTES.md` in your workspace is your memory and the only one that survives; read it at the start of a session and keep it current as you play. The delimited `harness-state` block at the top of it is not yours: the harness rewrites it from the game every session, so never edit inside it and never copy position, map, party, levels, HP, moves, PP, money, badges, bag or milestone counts anywhere else in the file — skip those items in the list below, because your copy of them goes stale and the block does not.
 
-Worth writing down: where you are and what you are trying to do next, warp coordinates and map layouts you had to work out, routes between places you will revisit, your party with levels and moves, items and key items you hold, and what you already tried that failed and why. Keep it tight enough to reread every session. Delete notes that stop being true.
+Worth writing down: what you are trying to do next, warp coordinates and map layouts you had to work out, routes between places you will revisit, and what you already tried that failed and why. Keep it tight enough to reread every session. Delete notes that stop being true.
 
 ## Walkthroughs
 

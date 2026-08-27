@@ -20,6 +20,7 @@ from pathlib import Path
 from typing import Any, Awaitable, Callable, Optional, Union
 from urllib.parse import urlparse
 
+from pokemon_agent import notes as notes_module
 from pokemon_agent.agent_runtime import utc_now
 from pokemon_agent.run_recorder import RunRecorder
 
@@ -1352,6 +1353,11 @@ class PiSupervisor:
         # thing in the log a watcher scrolls to.
         await self._begin_run()
         self._mark_session_start()
+        # After `_begin_run`, so a run opening for the first time has its
+        # baseline receipt on disk and the milestone line is not blank on the
+        # one session most likely to guess at it; before the task, so the child
+        # process cannot read `NOTES.md` until it is true.
+        self._refresh_notes(self._session_start_context, self._current_session_facts())
         self._task = asyncio.create_task(self._run_loop(resume=False, force_single_turn=False))
         return self.state_snapshot()
 
@@ -1781,6 +1787,12 @@ class PiSupervisor:
             await self._shutdown_process()
             self.current_pid = None
             self.next_auto_continue_at = None
+            # The model's process is already gone, so nothing is editing NOTES.md
+            # while this writes it. In the `finally` rather than in the critic
+            # pass because the critic is skippable and this is not: a session
+            # that errored is exactly the one whose notes are furthest from the
+            # game.
+            self._refresh_notes(await self._collect_critic_context(), self._current_session_facts())
             # The watchdog starts the next session the moment the status turns
             # terminal, so the critique has to finish first, under `critiquing`.
             terminal_status, terminal_reason = self.status, self.status_reason
@@ -1914,6 +1926,56 @@ class PiSupervisor:
                 "pi_session_facts_failed", _truncate(str(exc), ERROR_TEXT_LIMIT)
             )
             return None
+
+    def _notes_progress(self, facts: Any) -> Optional[JsonDict]:
+        """Milestone count and furthest rung for the notes block, or None.
+
+        Off the receipts, which is where the rest of the harness reads the score
+        from: ``baseline_milestones`` is a RAM snapshot taken when the run opened
+        and every rung since is a RAM-observed delta. Reading it here rather than
+        asking the server again keeps the number in ``NOTES.md`` identical to the
+        one in the facts block of the same session's first message, so the two
+        can never disagree in front of the model.
+        """
+
+        if facts is None:
+            return None
+        count = getattr(facts, "done_count", None)
+        if not isinstance(count, int):
+            return None
+        return {"count": count, "furthest": getattr(facts, "rung_done", "") or ""}
+
+    def _refresh_notes(self, context: Optional[JsonDict], facts: Any) -> None:
+        """Rewrite the harness-owned block at the top of ``NOTES.md``.
+
+        Twice a session, and deliberately not more often. Session start is where
+        the damage was: the model reads the file as its own ground truth before
+        it has read anything else, and one live file had every checkable line in
+        it wrong, including a moveset that denied it was carrying Cut. Session
+        end costs one more state read and makes the file on disk true even when
+        the next session never reaches :meth:`start` - a crash, an operator
+        restart, a human opening it. Per turn it is not written at all: the
+        model has ``poke state`` for live truth, and a write landing while the
+        model is editing the same file would put the harness in a race with the
+        one thing here it must never damage.
+
+        Never raises into the run. The failure is named with its exception type,
+        because a swallowed ``TypeError`` in a ``/route`` fallback once cost an
+        hour of debugging a graph that was correct all along.
+        """
+
+        state = context.get("game_state") if isinstance(context, dict) else None
+        try:
+            notes_module.refresh_notes(
+                self.workspace_dir,
+                state=state if isinstance(state, dict) else None,
+                progress=self._notes_progress(facts),
+            )
+        except Exception as exc:  # noqa: BLE001 - a stale block, never a dead session
+            self._push_recent_event(
+                "pi_notes_refresh_failed",
+                _truncate(f"{type(exc).__name__}: {exc}", ERROR_TEXT_LIMIT),
+            )
 
     def _mark_session_start(self) -> None:
         """Stamp this session into the workspace for whichever session comes next."""

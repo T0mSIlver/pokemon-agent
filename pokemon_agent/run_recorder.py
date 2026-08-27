@@ -187,6 +187,11 @@ class RunRecorder:
         self.presses_to: dict[str, int] = {}
         self.attainments: list[dict[str, Any]] = []
         self.milestone_count: int = 0
+        #: Milestones the game held at the last receipt that read the oracle, or
+        #: ``None`` before any did. Unlike ``milestone_count`` this one falls: a
+        #: load onto an earlier branch hands rungs back, and the running maximum
+        #: is right not to notice while nothing else is looking.
+        self.milestones_held: Optional[int] = None
         self.receipts_written: int = 0
         self.last_error: Optional[str] = None
         self.recent: deque[Receipt] = deque(maxlen=RECENT_RECEIPT_WINDOW)
@@ -421,8 +426,22 @@ class RunRecorder:
             self._first_t = now
         # The one line that makes the metric honest: no branch on `reloaded`.
         self.total_presses += max(0, int(presses))
-        gained = self._price(milestone_ids or (), seq, now)
+        # `None` is "this caller never read the oracle" and is not the same
+        # answer as "the game holds none", so it is kept apart from the empty
+        # set all the way onto the receipt.
+        live = None if milestone_ids is None else frozenset(str(item) for item in milestone_ids)
+        gained = self._price(() if live is None else live, seq, now)
         self.milestone_count = max(self.milestone_count, len(self._known))
+        # The live count, beside the running maximum. `_known` accumulates and
+        # never shrinks -- that is what prices a rung once and only once -- so it
+        # cannot answer "how many does the game hold *now*". Only the ids just
+        # read off RAM can, and `_price` has already folded them into `_known`,
+        # so the intersection is the live set reconciled against the run's own
+        # history. A reload onto an earlier branch shows up here as a fall while
+        # `milestone_count` holds its peak, which is what the bill should do.
+        held = None if live is None else len(self._known & live)
+        if held is not None:
+            self.milestones_held = held
 
         receipt = Receipt(
             seq=seq,
@@ -436,6 +455,7 @@ class RunRecorder:
             party_size=int(party_size or 0),
             milestones_new=gained,
             milestone_count=self.milestone_count,
+            milestones_held=held,
             tool=str(tool or ""),
             exit_code=int(exit_code or 0),
             reloaded=bool(reloaded),
@@ -492,7 +512,7 @@ def receipt_from_batch(
     presses: int,
     bundle: Optional[Mapping[str, Any]],
     outcome: Optional[Mapping[str, Any]] = None,
-    milestone_ids: Sequence[str] = (),
+    milestone_ids: Optional[Sequence[str]] = None,
     exit_code: int = 0,
     reloaded: bool = False,
     extra: Optional[Mapping[str, Any]] = None,
@@ -535,7 +555,7 @@ def receipt_from_batch(
         "blocked_after": (outcome or {}).get("blocked_after"),
         "hp": hp,
         "party_size": len(party),
-        "milestone_ids": tuple(milestone_ids),
+        "milestone_ids": None if milestone_ids is None else tuple(milestone_ids),
         "exit_code": int(exit_code or 0),
         "reloaded": bool(reloaded),
         "whiteout": whiteout,

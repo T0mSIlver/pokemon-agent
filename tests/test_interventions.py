@@ -414,6 +414,272 @@ class TestFactsFromTheLiveFrame:
         assert not any("never walked on" in fact.text for fact in facts)
 
 
+# ---------------------------------------------------------------------------
+# The S.S. Anne 2F Rooms firing.
+#
+# Captured live. The player was standing at (22,15), on a warp, and the payload
+# said `on_warp: True, warp: {'to': 'S.S. Anne 2F', 'step': 'down'}` in one
+# section and, in the section headed "These are authoritative ... geography that
+# is not written here is not known":
+#
+#   Every exit from S.S. Anne 2F Rooms: warp (2,5) -> S.S. Anne 2F; warp (3,5)
+#   -> S.S. Anne 2F; warp (12,5) -> S.S. Anne 2F; warp (13,5) -> S.S. Anne 2F;
+#   warp (22,5) -> S.S. Anne 2F; warp (23,5) -> S.S. Anne 2F, and 6 more warps.
+#
+# Twelve warps, six named, "every" claimed, and the one under the player's feet
+# inside the six it swallowed. These tests pin all three halves of the fix.
+# ---------------------------------------------------------------------------
+
+
+class TestExitsAreRankedAndHonestAboutTruncation:
+    """The warp underfoot first, the near ones next, and no false "every"."""
+
+    ROOMS = "S.S. Anne 2F Rooms"
+
+    def stalled(self):
+        return Trigger(name="stalled", priority=PRIORITY_STUCK, reason="r", question="q")
+
+    def rooms_observation(self, position=(22, 15), walkable=None):
+        """A frame on S.S. Anne 2F Rooms with a decoded floor under it.
+
+        `map_terrain` is the field the live navigation snapshot really carries —
+        `LiveNavigationSnapshot.to_dict` puts the whole decoded floor there — so
+        this is the same input `harness_facts` sees on the live path, not a
+        stand-in for it.
+        """
+
+        # The south corridor, (0,15) to (23,15): the row the four lower doors
+        # open onto and the row the player was measured standing on.
+        floor = walkable if walkable is not None else [[x, 15] for x in range(24)]
+        snapshot = {
+            "map_name": self.ROOMS,
+            "map_id": 103,
+            "player_position": {"x": position[0], "y": position[1]},
+            "window_top_left": {"x": 0, "y": 0},
+            "terrain": [],
+            "sprites": [],
+            "map_terrain": {"width": 24, "height": 16, "walkable": floor, "ledges": {}},
+        }
+        return {
+            "state": {
+                "map": {"map_name": self.ROOMS},
+                "player": {"position": {"x": position[0], "y": position[1]}},
+            },
+            "navigation": {"snapshot": snapshot},
+        }
+
+    def exits_line(self, **kwargs):
+        facts = harness_facts(self.stalled(), recent=[], **kwargs)
+        return next(fact.text for fact in facts if " exit" in fact.text)
+
+    def test_the_map_really_does_have_twelve_warps(self):
+        """Guard the fixture: without twelve, the rest of this class proves nothing."""
+
+        exits = MapFacts().exits(self.ROOMS)
+        assert len(exits) == 12
+        assert (22, 15) in [hop.at for hop in exits]
+
+    def test_the_warp_under_your_feet_is_first_and_says_so(self):
+        line = self.exits_line(observation=self.rooms_observation())
+        head = line.split(": ", 1)[1]
+        assert head.startswith("warp (22,15) -> S.S. Anne 2F [you are standing on this one]")
+
+    def test_every_one_of_the_twelve_is_named_and_none_is_elided(self):
+        line = self.exits_line(observation=self.rooms_observation())
+        for x, y in [(2, 5), (3, 5), (12, 5), (13, 5), (22, 5), (23, 5)] + [
+            (2, 15),
+            (3, 15),
+            (12, 15),
+            (13, 15),
+            (22, 15),
+            (23, 15),
+        ]:
+            assert f"warp ({x},{y}) -> S.S. Anne 2F" in line
+        assert "more warp" not in line
+
+    def test_near_exits_outrank_far_ones_by_walked_steps_not_map_order(self):
+        """(23,15) is one step away and eleventh in the warp table."""
+
+        line = self.exits_line(observation=self.rooms_observation())
+        assert "warp (23,15) -> S.S. Anne 2F, 1 step" in line
+        assert "warp (13,15) -> S.S. Anne 2F, 9 steps" in line
+        order = [line.index(f"warp ({x},{y})") for x, y in [(22, 15), (23, 15), (13, 15), (2, 15)]]
+        assert order == sorted(order)
+
+    def test_a_measured_line_says_so_and_an_unmeasured_one_claims_no_order(self):
+        with_frame = self.exits_line(observation=self.rooms_observation())
+        assert "nearest first" in with_frame
+        # No frame, no flood, no distances — and so no ranking to claim.
+        without = self.exits_line(observation={"state": {"map": {"map_name": self.ROOMS}}})
+        assert "nearest first" not in without
+        assert without.startswith("Every exit from S.S. Anne 2F Rooms:")
+
+    def test_an_exit_the_flood_never_reached_gets_no_step_count(self):
+        """A warp in another pocket is a wall with a door painted on it."""
+
+        line = self.exits_line(observation=self.rooms_observation())
+        # The six upper doors sit on y=5 and nothing on this floor connects to
+        # them, so they are named without a number rather than guessed at.
+        assert "warp (2,5) -> S.S. Anne 2F;" in line or line.endswith("warp (2,5) -> S.S. Anne 2F.")
+        assert "warp (2,5) -> S.S. Anne 2F," not in line
+
+    def test_a_map_whose_exits_fit_still_says_every(self):
+        line = self.exits_line(
+            observation={"state": {"map": {"map_name": "Route 4"}}},
+        )
+        assert line.startswith("Every exit from Route 4:")
+        assert "of 5 exits" not in line
+
+    def test_a_map_whose_exits_do_not_fit_gives_the_true_total_and_never_says_every(self):
+        """Saffron Gym has thirty-two warps and no honest line can carry them."""
+
+        line = self.exits_line(observation={"state": {"map": {"map_name": "Saffron Gym"}}})
+        assert line.startswith("12 of 32 exits from Saffron Gym")
+        assert "every" not in line.lower()
+        assert "more warp" not in line
+
+    def test_the_character_ceiling_cuts_the_list_and_the_count_follows_it(self):
+        """A cut made by the byte budget is declared the same way as one made by count."""
+
+        line = self.exits_line(observation={"state": {"map": {"map_name": "Celadon City"}}})
+        shown, total = line.split(" of ")[0], line.split(" of ")[1].split(" ")[0]
+        assert total == "15"
+        assert int(shown) <= 12
+        assert len(line) < 560
+
+    def test_standing_on_a_warp_beats_a_nearer_one_that_is_not_under_you(self):
+        """Rank, do not choose — but the free exit is not a choice, it is a fact."""
+
+        line = self.exits_line(observation=self.rooms_observation(position=(23, 15)))
+        head = line.split(": ", 1)[1]
+        assert head.startswith("warp (23,15) -> S.S. Anne 2F [you are standing on this one]")
+        assert "warp (22,15) -> S.S. Anne 2F, 1 step" in line
+
+    def test_an_edge_connection_is_measured_to_the_edge_it_walks_off(self):
+        """A whole side is the door, so its distance is the nearest tile on it.
+
+        Route 4 is 90x18. Standing at (19,5) on an open floor, Route 3 is twelve
+        steps south and Cerulean City is seventy east — which is why the exit
+        list must not simply hand edge connections to the front, and why it must
+        not bury them at the back either.
+        """
+
+        snapshot = {
+            "map_name": "Route 4",
+            "map_id": 15,
+            "player_position": {"x": 19, "y": 5},
+            "window_top_left": {"x": 0, "y": 0},
+            "terrain": [],
+            "sprites": [],
+            "map_terrain": {
+                "width": 90,
+                "height": 18,
+                "walkable": [[x, y] for y in range(18) for x in range(90)],
+                "ledges": {},
+            },
+        }
+        line = self.exits_line(
+            observation={
+                "state": {"map": {"map_name": "Route 4"}},
+                "navigation": {"snapshot": snapshot},
+            }
+        )
+        assert line.startswith("Every exit from Route 4 (nearest first):")
+        assert "south edge (walk_down) -> Route 3, 12 steps" in line
+        assert "east edge (walk_right) -> Cerulean City, 70 steps" in line
+        order = [
+            line.index(part)
+            for part in ("warp (18,5)", "warp (24,5)", "warp (11,5)", "south edge", "east edge")
+        ]
+        assert order == sorted(order)
+
+
+class TestOtherFactLinesDoNotPromiseWhatTheyElide:
+    def test_the_poke_center_line_gives_the_total_it_is_cutting_from(self):
+        trigger, window = TestHarnessFacts().route4_trigger()
+        line = next(
+            fact.text
+            for fact in harness_facts(trigger, recent=window)
+            if "Poke Centers from" in fact.text
+        )
+        assert line.startswith("3 of 11 Poke Centers from Route 4, nearest first:")
+
+    def test_a_tile_stood_on_once_is_not_a_tile_you_keep_standing_on(self):
+        """The captured payload said "Tiles you keep standing on: (22,15) x1"."""
+
+        window = [receipt(seq=i, map_name="Route 4", pos=(i, 5)) for i in range(60)]
+        trigger = Circling(min_samples=10, ratio=0.0).check(window, {})
+        assert trigger is not None
+        facts = harness_facts(trigger, recent=window)
+        assert not any("standing on" in fact.text for fact in facts)
+
+    def test_a_cut_list_of_repeated_tiles_says_how_many_there_were(self):
+        window = []
+        for index, tile in enumerate([(1, 1), (2, 1), (3, 1), (4, 1), (5, 1)]):
+            window += [receipt(seq=index * 10 + n, map_name="Route 4", pos=tile) for n in range(3)]
+        trigger = Circling(min_samples=10).check(window, {})
+        assert trigger is not None
+        line = next(
+            fact.text
+            for fact in harness_facts(trigger, recent=window)
+            if "standing on" in fact.text
+        )
+        assert line.startswith("3 of 5 tiles you keep standing on, worst first:")
+
+    def test_a_clipped_error_says_it_was_clipped(self):
+        long_error = ("400: " + "walk_left is blocked by a wall. " * 12).strip()
+        window = [
+            receipt(
+                seq=i,
+                map_name="Route 4",
+                tool="poke act",
+                exit_code=1,
+                extra={"error": long_error, "actions": [f"walk_{n}" for n in range(12)]},
+            )
+            for i in range(2)
+        ]
+        trigger = RepeatedFailure().check(window, {})
+        assert trigger is not None
+        line = next(
+            fact.text
+            for fact in harness_facts(trigger, recent=window)
+            if "failed with" in fact.text
+        )
+        assert f"[first 160 of {len(long_error)} characters]" in line
+        assert "first 8 of 12 actions sent:" in line
+
+    def test_a_short_error_is_carried_whole_with_no_apology(self):
+        window = [
+            receipt(
+                seq=i,
+                map_name="Route 4",
+                tool="poke act",
+                exit_code=1,
+                extra={"error": "400: walk_left is not a known action", "actions": ["walk_left"]},
+            )
+            for i in range(2)
+        ]
+        trigger = RepeatedFailure().check(window, {})
+        assert trigger is not None
+        line = next(
+            fact.text
+            for fact in harness_facts(trigger, recent=window)
+            if "failed with" in fact.text
+        )
+        assert "characters]" not in line
+        assert line.endswith("actions sent: walk_left.")
+
+    def test_the_block_says_when_it_could_not_carry_everything(self):
+        facts = [Fact("x" * 200, known=bool(index % 2)) for index in range(12)]
+        rendered = format_facts(facts)
+        assert "further computed facts did not fit in this block and were left out." in rendered
+        assert len(rendered) <= FACT_BUDGET_CHARS
+
+    def test_a_block_that_carried_everything_says_nothing_about_fitting(self):
+        rendered = format_facts([Fact("a short measured fact"), Fact("an inferred one", False)])
+        assert "did not fit" not in rendered
+
+
 class TestRepeatedFailureFacts:
     def test_the_error_text_itself_is_carried(self):
         window = [
@@ -663,6 +929,52 @@ class TestCheckAdviceRefusesWhatTheMapContradicts:
             "On Route 4, go to the warp at (11,5), which leads to the Mt Moon Pokecenter."
         )
         assert check_advice(text, here="Mt Moon 1F") == ()
+
+    def test_a_conjunction_hands_the_verb_to_a_new_subject(self):
+        """Intervention 56, refused, and the refusal was the error.
+
+        The sentence is about two things: a tile the player keeps looping back
+        to, and where the east edge goes. Reading sixty characters forward from
+        (20,19) to the nearest "leads to" bound the tile to Route 11 and refused
+        the message for it. The east edge does lead to Route 11 — the facts
+        block said so, three lines above the answer — and the advice was right
+        in every particular: it named the gym warp at (12,19) and a route to it.
+        A whole thinking session was spent and thrown away.
+        """
+
+        text = (
+            "Do not press right again: (20,19) is the loop and the east edge "
+            "leads to Route 11, not your target."
+        )
+        assert check_advice(text, here="Vermilion City") == ()
+
+    def test_a_conjunction_after_a_distance_clause_is_not_a_warp_claim(self):
+        """Intervention 47, refused after 253 seconds of a thinking session.
+
+        Same mistake, one map earlier. "(11,5) are 63 tiles away the wrong way,
+        and the south edge leads to Route 3" says nothing about where (11,5)
+        goes; it says the Mt Moon warps are behind the player. Both halves are
+        true and both are quoted from the facts block.
+        """
+
+        text = (
+            "Do not go west: the Mt Moon warps (11,5) are 63 tiles away the "
+            "wrong way, and the south edge leads to Route 3."
+        )
+        assert check_advice(text, here="Route 4") == ()
+
+    def test_a_relative_pronoun_keeps_the_tile_as_the_subject(self):
+        """A comma ends the gap, but "which" is not a new subject.
+
+        Intervention 28 wrote "(11,5), which leads to the Mt Moon Pokecenter",
+        which is a claim about (11,5) and has to stay checkable. Refusing
+        conjunctions must not cost the checker the sentences it exists for.
+        """
+
+        wrong = "Go to (11,5), which leads to Mt Moon 1F."
+        right = "Go to (11,5), which leads to Mt Moon Pokecenter."
+        assert [claim.kind for claim in check_advice(wrong, here="Route 4")] == ["warp"]
+        assert check_advice(right, here="Route 4") == ()
 
     def test_a_coordinate_off_every_named_map_is_caught(self):
         claims = check_advice("Head for (99,99) and press A.", here="Mt Moon 1F")
