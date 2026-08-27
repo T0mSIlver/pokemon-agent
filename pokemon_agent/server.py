@@ -285,6 +285,12 @@ class PiSupervisorStartRequest(BaseModel):
     max_turns: Optional[int] = None
     continue_delay_seconds: float = 1.0
     skill_path: Optional[str] = None
+    #: Context tokens a session may spend before it is retired and a fresh one
+    #: takes over. The default is sized for the local model's 140k window; a
+    #: model with a million-token context was being retired at 11% of what it
+    #: could hold, which measures the harness's configuration rather than the
+    #: model. Omit to keep the default.
+    token_budget: Optional[int] = None
 
 
 class PiSupervisorContinueRequest(BaseModel):
@@ -840,6 +846,11 @@ def _compact_supervisor_status(snapshot: Optional[dict]) -> Optional[dict]:
         "provider": snapshot.get("provider"),
         "thinking": snapshot.get("thinking"),
         "goal": snapshot.get("goal"),
+        # The ceiling that retires a session. Compact because it is read on
+        # every poll, but present because its absence is what made a session
+        # dying at 110,000 tokens look like a stalled run rather than a limit
+        # sized for a different model's context window.
+        "token_budget": snapshot.get("token_budget"),
     }
 
 
@@ -3951,6 +3962,7 @@ async def supervisor_start(req: PiSupervisorStartRequest):
             max_turns=req.max_turns,
             continue_delay_seconds=req.continue_delay_seconds,
             skill_path=req.skill_path,
+            token_budget=req.token_budget,
         )
         return {"success": True, "supervisor": _compact_supervisor_status(state)}
     except HTTPException:

@@ -834,6 +834,11 @@ class PiSupervisor:
             "session_id": self.session_id,
             "session_file": str(self.session_file) if self.session_file else None,
             "session_dir": str(self.session_dir),
+            # What retires a session, and until now the one setting that decided
+            # it was invisible from outside. A model with a million-token window
+            # was being cut off at 110,000 because that is sized for a different
+            # model's context, and nothing in any payload said so.
+            "token_budget": self.token_budget,
             "skill_path": str(self.skill_path),
             "server_url": self.server_url,
             "current_pid": self.current_pid,

@@ -4121,3 +4121,36 @@ def test_an_ordinary_load_keeps_no_undo_frame(server_app):
     assert answer.status_code == 200
     assert "undo" not in answer.json()
     assert not list((server_app.saves_dir).glob("undo__*.state"))
+
+
+def test_the_token_budget_is_settable_and_visible(server_app):
+    """The one setting that decides when a session dies, and it was invisible.
+
+    110,000 is sized for a 140k-context model. A model with a million-token
+    window was retired at 11% of what it could hold, and nothing in any payload
+    said what the ceiling was — so the run looked like it stalled rather than
+    like it hit a limit meant for something else.
+    """
+
+    from pokemon_agent import server as server_module
+    from pokemon_agent.pi_supervisor import DEFAULT_TOKEN_BUDGET
+
+    sup = server_module._supervisor
+    if sup is None:
+        pytest.skip("no supervisor on this app")
+
+    original = sup.token_budget
+    try:
+        assert sup.state_snapshot()["token_budget"] == DEFAULT_TOKEN_BUDGET
+
+        sup.token_budget = 400_000
+        assert sup.state_snapshot()["token_budget"] == 400_000
+        # Zero means no ceiling, and has to stay distinguishable from unset.
+        sup.token_budget = 0
+        assert sup.state_snapshot()["token_budget"] == 0
+    finally:
+        # The supervisor is a module global shared with every other test in this
+        # file. Leaving it mutated is how one assertion here turns into a
+        # failure somewhere else entirely, which is exactly the intermittent
+        # this file has been showing.
+        sup.token_budget = original

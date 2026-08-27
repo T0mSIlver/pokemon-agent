@@ -242,7 +242,15 @@ def test_simulate_predicts_what_the_emulator_actually_does(emulator, reader, cor
         for direction in DIRECTIONS:
             emulator.load_state(str(path))
             emulator.settle()
-            predicted = world.simulate([f"walk_{direction}"], snapshot, start[1], snapshot.facing)
+            # Re-read the snapshot here, in the state the press is about to
+            # happen from. The one above is taken 90 ticks later so the save can
+            # be checked for being at rest, and NPCs walk in 90 ticks: predicting
+            # from it and pressing from this state compares two different
+            # moments, and reports the difference as a simulator error. A real
+            # sprite at (9,27) in Cerulean is what surfaced it — `simulate`
+            # answered `blocked_by="npc"` correctly for the frame it was given.
+            frame = emulator.get_navigation_snapshot(reader)
+            predicted = world.simulate([f"walk_{direction}"], frame, start[1], frame.facing)
             if direction in snapshot.ledge_hops:
                 ledge_directions += 1
             emulator.press_and_settle(direction)
