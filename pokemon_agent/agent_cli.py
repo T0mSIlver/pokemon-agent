@@ -777,12 +777,22 @@ def cmd_sim(args: argparse.Namespace, url: str) -> int:
     if args.json:
         print(compact(payload))
         return EXIT_OK
+    # Lead with the tile the plan starts on, because the model cannot choose it
+    # and kept forgetting it. `sim` walks from wherever the player actually is;
+    # its answer used to name only the endpoint, so a chain of sims printed a
+    # column of hypothetical tiles and nothing else, and the model wrote "From
+    # (14,8) check left" about a tile it had never stood on. Naming the origin
+    # costs one clause of the line it is already reading.
+    start = payload.get("start")
+    where = ""
+    if isinstance(start, (list, tuple)) and len(start) == 2:
+        where = f"from {payload.get('map') or 'here'} ({start[0]},{start[1]}): "
     blocked = payload.get("blocked_at")
     if blocked is None:
-        print(f"clean: ends at {tuple(payload['end'])} facing {payload.get('facing')}")
+        print(f"{where}clean: ends at {tuple(payload['end'])} facing {payload.get('facing')}")
     else:
         print(
-            f"blocked at step {blocked} ({actions[blocked]}) by "
+            f"{where}blocked at step {blocked} ({actions[blocked]}) by "
             f"{payload.get('blocked_by')}, stops at {tuple(payload['end'])}"
         )
     if payload.get("warp_at") is not None:

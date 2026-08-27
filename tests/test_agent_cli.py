@@ -942,6 +942,39 @@ def test_sim_reports_a_clean_plan(stub, capsys):
     assert "clean" in capsys.readouterr().out
 
 
+def test_sim_says_which_tile_it_walked_the_plan_from(stub, capsys):
+    """The model cannot choose the origin, and kept planning as though it had.
+
+    `sim` always walks from the live tile and its answer named only the endpoint.
+    Over one 34-hour run the model chained 3,859 sims, 1,878 of them in runs of
+    three or more with nothing that presses a button in between — one run of 538
+    — so for those stretches every tile it read was a hypothetical one. It then
+    wrote "From (14,8) check left" about a tile it had never stood on, 616 times.
+    """
+    stub.route(
+        "POST",
+        "/sim",
+        {
+            "start": [17, 11],
+            "map": "Mt Moon B1F",
+            "end": [14, 8],
+            "facing": "up",
+            "blocked_at": 6,
+            "blocked_by": "wall",
+        },
+    )
+    assert run(stub, "sim", "left:3", "up:4") == agent_cli.EXIT_OK
+    assert "from Mt Moon B1F (17,11):" in capsys.readouterr().out
+
+
+def test_sim_still_answers_when_the_server_sends_no_origin(stub, capsys):
+    """An older server, or one that could not read the tile, must not crash the verb."""
+    stub.route("POST", "/sim", {"end": [12, 2], "facing": "up", "blocked_at": None})
+    assert run(stub, "sim", "up:6") == agent_cli.EXIT_OK
+    out = capsys.readouterr().out
+    assert out.startswith("clean:")
+
+
 def test_sim_refuses_a_bad_plan_without_asking_the_server(stub):
     assert run(stub, "sim", "sideways") == agent_cli.EXIT_BAD_USAGE
     assert stub.requests == []

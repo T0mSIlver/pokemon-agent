@@ -1342,6 +1342,14 @@ def simulate_payload(
             "there on is read off the remembered map and may be stale."
         )
     return {
+        # Where the plan was walked from. The server always simulates from the
+        # live tile, and the answer never said so: over one 34-hour run the model
+        # chained 3,859 sims, 1,878 of them in runs of three or more with no
+        # acting verb in between, so for stretches of up to 538 calls the only
+        # tile any answer named was a simulated one. It then planned from the
+        # last endpoint as though it were standing there.
+        "start": list(position),
+        "map": snapshot.get("map_name"),
         "end": list(result.end_pos),
         "facing": result.end_facing,
         "steps": result.steps_taken,

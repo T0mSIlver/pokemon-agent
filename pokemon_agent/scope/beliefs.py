@@ -27,11 +27,24 @@ Three rules keep the verdicts honest:
 * Nothing here parses natural language beyond coordinates and map names. There
   is no model in this loop and no scoring of intent — only claims a table can
   settle.
+
+A fourth rule was learned the expensive way: **before accusing the model, check
+that the answer key was read.** This module reported 1,164 of 2,055 position
+claims false — 57% — over one 34-hour run, and the number was almost entirely
+its own. ``poke act`` stopped printing JSON on 2026-08-26 and the reader here
+only knew JSON, so 9,029 of that run's 13,400 position answers were invisible
+and every claim after one of them was settled against a tile the player had left
+hours earlier. It also read ``poke sim`` waypoints, and sentences about the wall
+ahead, as claims about where the player stood. With those three fixed the same
+transcripts read 8%; on the calls that actually press a button, 2,503 of 2,708
+position claims are right. The payload was never wrong and the model mostly was
+not either.
 """
 
 from __future__ import annotations
 
 import re
+from collections import deque
 from dataclasses import dataclass
 from typing import Any, Iterable, Optional
 
@@ -59,6 +72,40 @@ _DESTINATION_RE = re.compile(r"\bto\s*" + _COORD, re.IGNORECASE)
 #: "warp (3,7)", "the door at (11,5)", "ladder (25,9)".
 _FEATURE_RE = re.compile(
     r"\b(warp|door|ladder|stairs|staircase|exit)\b[^().]{0,24}?" + _COORD,
+    re.IGNORECASE,
+)
+
+#: ``Mt Moon 1F (15,34) facing up`` — how every acting verb has answered since
+#: ``poke act`` stopped printing JSON. Not anchored to the start of the line
+#: because the model pipes the answer through its own scripts.
+_PROSE_POSITION_RE = re.compile(
+    r"(?P<map>[A-Za-z][A-Za-z0-9 .'’-]*?)\s*\((?P<x>\d{1,3}),\s*(?P<y>\d{1,3})\)\s+facing\b"
+)
+
+#: ``clean: ends at (24, 7)``, ``blocked at step 3 ... stops at (14, 11)`` — a
+#: tile ``poke sim`` reported, which is a tile on paper and not one the player
+#: is standing on.
+_SIM_END_RE = re.compile(r"(?:ends at|stops at)\s*\((\d{1,3}),\s*(\d{1,3})\)")
+
+#: ``from Mt Moon B1F (17,11): clean: ends at ...`` — the tile ``poke sim``
+#: walked the plan from, which *is* where the player is standing. Worth reading:
+#: a chain of sims answers nothing else, and one such chain ran 538 calls.
+_SIM_START_RE = re.compile(
+    r"\bfrom\s+(?P<map>[A-Za-z][A-Za-z0-9 .'’-]*?)\s*\((?P<x>\d{1,3}),\s*(?P<y>\d{1,3})\):"
+)
+
+#: How many simulated endpoints stay in scope. The model chains sims — sim,
+#: read the endpoint, sim the same prefix plus one more leg — and it names the
+#: endpoint of a sim a handful of calls back, not one from an hour ago.
+_SIM_MEMORY = 8
+
+#: "(22,20) has an NPC on it", "(63,4) is a wall" — a bare leading coordinate
+#: followed by a property of *that* tile. The model writes its own tile with
+#: "from" or "I'm at"; this shape names the obstacle in front of it, and 176 of
+#: the 318 such sentences the checker called false were the model correctly
+#: describing the tile it had just been refused.
+_TILE_PROPERTY_RE = re.compile(
+    r"\b(?:blocked|block|wall|walled|npc|ledge|rock|impassable|trainer|boulder|sign|water)\b",
     re.IGNORECASE,
 )
 
@@ -147,16 +194,60 @@ def _coords(text: str) -> list[Coord]:
     return [(int(a), int(b)) for a, b in _COORD_RE.findall(text)]
 
 
+def _prose_position(text: str) -> Optional[tuple[str, Coord]]:
+    """``(map, (x, y))`` off the ``Route 3 (63,0) facing up`` line, if there is one.
+
+    The last match in the output wins, because a line that runs two verbs prints
+    two answers and the second one is where the player ended up. ``poke sim``'s
+    ``from Mt Moon B1F (17,11):`` counts as one of them: it is the live tile the
+    plan was walked from, and during a chain of sims it is the only answer there.
+
+    A match only counts when a real map name sits in front of the tile. The model
+    pipes the answer through its own scripts — ``now at Route 4 (13,11) facing
+    up``, ``y=0 -> Route 3 (63,0) facing up`` — so the name is taken as the
+    longest suffix of the leading text that the game actually has. Insisting on
+    that is what keeps ``clean: ends at (24, 7) facing right`` out: ``poke sim``
+    answers in the same shape and is reporting a tile on paper, and reading it
+    as the live one is the whole failure this reader exists to stop.
+    """
+
+    if not truth.known_maps():
+        return None
+    found: Optional[tuple[str, Coord]] = None
+    matches = sorted(
+        [*_PROSE_POSITION_RE.finditer(text), *_SIM_START_RE.finditer(text)],
+        key=lambda match: match.start(),
+    )
+    for match in matches:
+        words = match.group("map").split()
+        for start in range(len(words)):
+            name = " ".join(words[start:])
+            if truth.map_truth(name) is not None:
+                found = (name, (int(match.group("x")), int(match.group("y"))))
+                break
+    return found
+
+
 def _result_position(call: Call) -> Optional[tuple[str, Coord]]:
-    """``(map, (x, y))`` from a call that answered with the player's state."""
+    """``(map, (x, y))`` from a call that answered with the player's state.
+
+    Both answer shapes count. ``poke act`` printed a JSON object until
+    2026-08-26 and has printed ``Mt Moon 1F (15,34) facing up`` since, and a
+    reader that only knew the first shape went blind the moment the second
+    shipped: 9,029 of the 13,400 position answers in the 34-hour run were
+    invisible to it. Every claim after one of them was then judged against a
+    tile the player had left hours earlier, which is what turned 1,201 correct
+    sentences into "wrong about where it stood" — the report's own worst
+    example, ``(63,0)`` against an actual ``(15,34)``, was the player standing
+    exactly where it said, on Route 3, while the checker still believed Mt Moon.
+    """
 
     payload = call.result_json
-    if not payload:
-        return None
-    x, y = payload.get("x"), payload.get("y")
-    if not isinstance(x, int) or not isinstance(y, int):
-        return None
-    return str(payload.get("map") or ""), (x, y)
+    if payload:
+        x, y = payload.get("x"), payload.get("y")
+        if isinstance(x, int) and isinstance(y, int):
+            return str(payload.get("map") or ""), (x, y)
+    return _prose_position(call.result_text or "")
 
 
 def _movement_calls(command: str) -> int:
@@ -230,6 +321,7 @@ def extract_claims(session: Session) -> list[Claim]:
 
     claims: list[Claim] = []
     here: Optional[tuple[str, Coord]] = None
+    simulated: deque[Coord] = deque(maxlen=_SIM_MEMORY)
 
     for call in session.calls:
         if call.tool != "bash":
@@ -255,7 +347,7 @@ def extract_claims(session: Session) -> list[Claim]:
 
         if said:
             coords = _coords(said)
-            claims.extend(_position_claims(call, said, coords, here, map_now))
+            claims.extend(_position_claims(call, said, coords, here, map_now, simulated))
             claims.extend(_warp_claims(call, said, map_now))
             if len(coords) == 1 and _movement_calls(call.command) == 1:
                 claims.extend(_destination_claims(call, said, here, after, map_now))
@@ -272,6 +364,8 @@ def extract_claims(session: Session) -> list[Claim]:
                     )
                 )
 
+        for x_text, y_text in _SIM_END_RE.findall(call.result_text or ""):
+            simulated.append((int(x_text), int(y_text)))
         if after is not None:
             here = after
     return claims
@@ -283,14 +377,47 @@ def _position_claims(
     coords: list[Coord],
     here: Optional[tuple[str, Coord]],
     map_now: str,
+    simulated: "deque[Coord]",
 ) -> list[Claim]:
     match = _ORIGIN_RE.search(said)
     if match:
         claimed = (int(match.group(1)), int(match.group(2)))
     elif said.startswith("(") and coords:
         claimed = coords[0]
+        # "(22,20) has an NPC on it" is a true sentence about the tile ahead,
+        # written by a model standing next to it. Reading it as "I am at
+        # (22,20)" invents a lie the model never told.
+        if _TILE_PROPERTY_RE.search(said):
+            return [
+                Claim(
+                    step=call.step,
+                    kind="position",
+                    said=said,
+                    map_name=map_now,
+                    claimed=claimed,
+                    verdict=UNCHECKED,
+                    why="names a property of that tile, not where the player stands",
+                )
+            ]
     else:
         return []
+    # A plan waypoint is not a standing claim. `poke sim` walks a plan on paper
+    # from the live tile and answers with where it would stop; the model then
+    # sims the same prefix plus one more leg and calls the last endpoint "from
+    # (14,8)". 616 of the 701 such sentences in the 34-hour run named a tile a
+    # sim had just printed, and the player had not moved for any of them.
+    if claimed in simulated and _movement_calls(call.command) == 0:
+        return [
+            Claim(
+                step=call.step,
+                kind="position",
+                said=said,
+                map_name=map_now,
+                claimed=claimed,
+                verdict=UNCHECKED,
+                why="a tile poke sim just reported; a plan waypoint, not a standing claim",
+            )
+        ]
     if here is None:
         return [
             Claim(
