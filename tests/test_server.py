@@ -68,6 +68,9 @@ class FakeEmulator:
         # Where walking off the top of the map lands, if anywhere.
         self.north_map: tuple | None = None
         self.dialog_active = False
+        #: The words the real reader decodes off wTileMap. Blank on an overworld
+        #: frame, exactly as `read_screen_text` answers there.
+        self.screen_text = ""
         self.interaction = None
         self.warps = []
         self.warp_exit_directions: list[str] = []
@@ -95,6 +98,10 @@ class FakeEmulator:
         ]
         self.turn_pending = False
         self.fled = False
+        #: Whether RUN gets away. Gen 1 flees on a speed roll, and a Pokemon
+        #: faster than yours never passes it: Route 6 (1,15) answered "could not
+        #: get away" to 331 consecutive `poke run` calls.
+        self.flee_succeeds = True
         #: The move that has taken the turn away, as `battle_lock_in` reports it.
         #: On the real game a Rage means the top menu never comes back.
         self.locked_in: str | None = None
@@ -193,8 +200,9 @@ class FakeEmulator:
             self.battle_menu = "moves"
             self.selected_move_id = self.battle_moves[self.move_cursor]["id"]
         elif entry == "RUN":
-            self.in_battle = False
-            self.fled = True
+            if self.flee_succeeds:
+                self.in_battle = False
+                self.fled = True
             self.battle_menu = "other"
         else:
             self.battle_menu = "other"
@@ -358,6 +366,9 @@ class FakeReader:
             "waiting_for_input": self.emulator.dialog_active,
             "printing": False,
         }
+
+    def read_screen_text(self) -> str:
+        return self.emulator.screen_text
 
     def read_map_info(self) -> dict:
         return {"map_id": self.emulator.map_id, "map_name": self.emulator.map_name}
@@ -3307,3 +3318,154 @@ def test_a_move_about_to_be_overwritten_is_named_before_the_press():
 def test_an_ordinary_frame_carries_no_learn_line():
     """It costs nothing on the frames it is absent from, which is nearly all of them."""
     assert "learn" not in server._observation_summary(_gym_bundle())
+
+
+# ---------------------------------------------------------------------------
+# The repeat guard, over HTTP
+#
+# The rule itself is tested in tests/test_repeats.py and proved against the ROM
+# in tests/test_repeats_live.py. These are about the wiring: which endpoints
+# carry it, that a refusal costs nothing, and that it never wedges the agent.
+# ---------------------------------------------------------------------------
+
+from pokemon_agent.repeats import REPEAT_LIMIT  # noqa: E402
+
+
+def _into_a_wall(app, times=REPEAT_LIMIT + 1):
+    """A step that cannot be taken, sent over and over. Vermilion City (33,4).
+
+    One more call than the limit, because the first one turns the player to face
+    the wall and turning is a real change. Everything after it is the same
+    command against the same frame.
+    """
+    app.emulator.walls = {(app.emulator.x, app.emulator.y - 1)}
+    last = None
+    for _ in range(times):
+        last = app.http.post("/action", json={"actions": ["walk_up"]})
+    return last
+
+
+def test_a_batch_proved_inert_is_refused_rather_than_run_again(server_app):
+    # The run sent `act up:1` from Vermilion (33,4) 362 times and got `moved 0`
+    # 362 times. Nothing about the 363rd could have been different.
+    assert _into_a_wall(server_app).status_code == 200
+
+    response = server_app.http.post("/action", json={"actions": ["walk_up"]})
+
+    assert response.status_code == 400
+    detail = response.json()["detail"]
+    assert "blocked" in detail
+    assert "different direction" in detail
+
+
+def test_the_refusal_spends_no_buttons(server_app):
+    _into_a_wall(server_app)
+    spent = len(server_app.emulator.pressed)
+
+    server_app.http.post("/action", json={"actions": ["walk_up"]})
+
+    assert len(server_app.emulator.pressed) == spent
+
+
+def test_a_refused_batch_still_lands_in_the_receipts(server_app):
+    # A run whose records hold only what it spent cannot show what it was
+    # stopped from spending.
+    run_id = open_run()
+    _into_a_wall(server_app)
+    server_app.http.post("/action", json={"actions": ["walk_up"]})
+
+    refusals = [
+        entry for entry in receipts(server_app, run_id) if "repeat_refused" in json.dumps(entry)
+    ]
+    assert len(refusals) == 1
+    assert refusals[0]["presses"] == 0
+    assert refusals[0]["exit"] == 1
+
+
+def test_the_agent_is_never_left_without_a_legal_move(server_app):
+    # Every escape the refusal names has to actually work from the frame that
+    # produced it, or the guard has replaced a loop with a dead end.
+    _into_a_wall(server_app)
+    assert server_app.http.post("/action", json={"actions": ["walk_up"]}).status_code == 400
+
+    for escape in (["press_b"], ["wait_60"], ["walk_down"]):
+        assert server_app.http.post("/action", json={"actions": escape}).status_code == 200
+
+
+def test_a_different_command_clears_the_block(server_app):
+    _into_a_wall(server_app)
+    server_app.http.post("/action", json={"actions": ["press_b"]})
+
+    assert server_app.http.post("/action", json={"actions": ["walk_up"]}).status_code == 200
+
+
+def test_a_walk_that_keeps_moving_is_never_refused(server_app):
+    for _ in range(REPEAT_LIMIT * 2):
+        response = server_app.http.post("/action", json={"actions": ["walk_left"]})
+        if not response.json().get("moved"):
+            server_app.emulator.x = 10  # walked into the map edge; step back out
+    assert server_app.http.post("/action", json={"actions": ["walk_left"]}).status_code == 200
+
+
+def test_a_plan_simulated_over_and_over_is_refused_too(server_app):
+    # `sim` presses nothing and writes no receipt, which is why 531 identical
+    # calls in one session went unnoticed until the session died on its token
+    # budget rather than on its press budget.
+    for _ in range(REPEAT_LIMIT):
+        assert server_app.http.post("/sim", json={"actions": ["walk_up"]}).status_code == 200
+
+    response = server_app.http.post("/sim", json={"actions": ["walk_up"]})
+
+    assert response.status_code == 400
+    assert "never touches the game" in response.json()["detail"]
+    assert server_app.http.post("/sim", json={"actions": ["walk_down"]}).status_code == 200
+
+
+def test_a_load_forgets_what_it_had_proved(server_app):
+    # A load rewinds the world underneath the guard, so whatever it had proved
+    # inert may not be any more.
+    server_app.http.post("/save", json={"name": "before_the_wall"})
+    _into_a_wall(server_app)
+    assert server_app.http.post("/action", json={"actions": ["walk_up"]}).status_code == 400
+
+    server_app.http.post("/load", json={"name": "before_the_wall"})
+
+    assert server_app.http.post("/action", json={"actions": ["walk_up"]}).status_code == 200
+
+
+def test_a_repeated_flee_is_refused_with_the_verbs_that_are_not_fleeing(server_app):
+    # Route 6 (1,15): 331 `poke run` calls over 15.3 minutes, "could not get
+    # away" every one of them. Fleeing is a speed roll; it does not warm up.
+    server_app.emulator.enemy = {"species": "Zubat", "level": 12, "hp": 30, "max_hp": 30}
+    server_app.emulator.in_battle = True
+    server_app.emulator.flee_succeeds = False
+    for _ in range(REPEAT_LIMIT):
+        assert server_app.http.post("/battle/run").status_code == 200
+
+    response = server_app.http.post("/battle/run")
+
+    assert response.status_code == 400
+    assert "poke fight" in response.json()["detail"]
+
+
+def test_a_dialog_whose_words_keep_changing_is_never_refused(server_app):
+    # The decoded box is the only thing that separates a conversation being
+    # advanced from one being toggled, and it has to survive both state reads
+    # the server makes around a batch or the guard is judging a blank screen.
+    server_app.emulator.dialog_active = True
+    for page in range(REPEAT_LIMIT * 2):
+        server_app.emulator.screen_text = f"page {page} of a very long speech"
+        response = server_app.http.post("/action", json={"actions": ["press_a"]})
+        assert response.status_code == 200, response.json()
+
+
+def test_a_dialog_stuck_on_words_already_read_is_refused(server_app):
+    server_app.emulator.dialog_active = True
+    server_app.emulator.screen_text = "SLOWBRO took a snooze..."
+    for _ in range(REPEAT_LIMIT):
+        assert server_app.http.post("/action", json={"actions": ["press_a"]}).status_code == 200
+
+    response = server_app.http.post("/action", json={"actions": ["press_a"]})
+
+    assert response.status_code == 400
+    assert "poke act b:2" in response.json()["detail"]
