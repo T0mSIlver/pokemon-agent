@@ -130,8 +130,14 @@ def board(live):
 
     Reloading is what makes "walking into that wall is blocked" a fact rather
     than a fact about whatever the previous test left behind.
+
+    ``force`` because the repeat-load guard is right to refuse this and wrong to
+    refuse it here: going back to one save over and over with no milestone in
+    between is the model looping, and it is also exactly what a fixture resetting
+    to a known tile does. The flag is what separates a deliberate reset from a
+    search that will not terminate.
     """
-    result = live.load("start")
+    result = live.load("start", force=True)
     assert result.map, result.raw
     walls = [way for way in ("up", "down", "left", "right") if way not in result.directions]
     assert result.directions, f"nowhere to walk from {result}"

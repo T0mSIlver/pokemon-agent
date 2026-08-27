@@ -2807,6 +2807,33 @@ def test_reaching_a_rung_clears_the_count(server_app):
     assert server_app.http.post("/load", json={"name": "checkpoint"}).status_code == 200
 
 
+def test_a_run_resumed_mid_ladder_still_counts_from_the_first_load(server_app):
+    """The rungs a session starts holding are a baseline, not a gain.
+
+    The tests above all begin on an empty ladder, so the first receipt of the
+    session reports nothing new and the counter survives. A real session
+    resumes from a save holding sixteen rungs, and reading those as *just
+    earned* clears the counter on the first load every time. Loading one save
+    four times against a live server is what exposed it: the guard stayed
+    silent through all four.
+    """
+
+    from pokemon_agent import server as server_module
+
+    earn(server_app, *event_rungs(2))
+    server_app.http.post("/save", json={"name": "checkpoint"})
+    # `/save` writes a receipt, which seeds the baseline and hides the bug. A
+    # restarted process has seen no receipt at all when the first load arrives,
+    # so put the module back in that state — this is exactly the live sequence.
+    server_module._last_milestone_ids = None
+    server_module._loads_since_milestone.clear()
+
+    for _ in range(3):
+        assert server_app.http.post("/load", json={"name": "checkpoint"}).status_code == 200
+
+    assert server_app.http.post("/load", json={"name": "checkpoint"}).status_code == 409
+
+
 def test_the_count_is_per_save_not_global(server_app):
     """Three different saves is exploring. The same save four times is not."""
     for name in ("one", "two", "three", "four"):

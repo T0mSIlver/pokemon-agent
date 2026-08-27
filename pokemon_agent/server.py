@@ -375,8 +375,12 @@ MAX_LOADS_PER_SAVE = 3
 _loads_since_milestone: dict[str, int] = {}
 
 #: The milestone set the last receipt saw, so the counter above can tell a rung
-#: being reached from a rung merely being present.
-_last_milestone_ids: frozenset[str] = frozenset()
+#: being reached from a rung merely being present. ``None`` until the first
+#: receipt, and deliberately not an empty set: a run resumed from a save holding
+#: sixteen rungs would read all sixteen as *just earned* and clear the counter
+#: on the first load of every session. Caught by loading one save four times
+#: against a live server and watching the guard stay silent.
+_last_milestone_ids: Optional[frozenset[str]] = None
 
 #: The note for the next model-facing payload, read once and cleared. It is a
 #: global rather than a return value because POST /goto whites out inside a walk
@@ -1897,7 +1901,9 @@ def _note_milestones_for_load_guard(milestone_ids: Optional[Sequence[str]]) -> N
     if milestone_ids is None:
         return
     seen = frozenset(milestone_ids)
-    if seen - _last_milestone_ids:
+    # The first reading is a baseline, not a gain. Everything the run already
+    # held would otherwise look like it had just been earned.
+    if _last_milestone_ids is not None and seen - _last_milestone_ids:
         _loads_since_milestone.clear()
     _last_milestone_ids = seen
 
