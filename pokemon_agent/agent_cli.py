@@ -525,6 +525,12 @@ def action_lines(payload: dict) -> str:
             lines.append("no battle menu up - this frame is text or an animation")
         elif menu:
             lines.append(f"menu {menu} on {highlighted}" if highlighted else f"menu {menu}")
+    # Above `screen_text` and below the fight, because both of them describe the
+    # frame and these two describe the button about to be pressed.
+    if payload.get("learn"):
+        lines.append(str(payload["learn"]))
+    if payload.get("ahead"):
+        lines.append(str(payload["ahead"]))
     if payload.get("screen_text"):
         lines.append(str(payload["screen_text"]))
     return "\n".join(lines)

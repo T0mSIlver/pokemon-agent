@@ -3136,3 +3136,106 @@ def test_the_same_frame_out_of_battle_keeps_its_exits():
     summary = server._observation_summary(bundle)
 
     assert summary["exits"], "the way off the floor is the fact this payload is for"
+
+
+# ---------------------------------------------------------------------------
+# The party against what is ahead, and the move about to be deleted.
+# ---------------------------------------------------------------------------
+
+#: The live party at 33 hours played: one Pokemon, four moves, two of which
+#: damage anything, one Boulder Badge, standing in the gym it lost 40 times in.
+_LIVE_PARTY = [
+    {
+        "species": "Charmeleon",
+        "level": 33,
+        "hp": 95,
+        "max_hp": 95,
+        "types": ["Fire"],
+        "stats": {"attack": 66, "defense": 54, "speed": 71, "special": 57},
+        "moves": [
+            {"name": "Cut", "pp": 29},
+            {"name": "Growl", "pp": 40},
+            {"name": "Ember", "pp": 23},
+            {"name": "Leer", "pp": 30},
+        ],
+    }
+]
+
+
+def _gym_bundle(map_name="Cerulean Gym", in_battle=False):
+    return {
+        "state": {
+            "map": {"map_name": map_name},
+            "player": {"position": {"x": 4, "y": 6}, "facing": "up", "badges": ["Boulder"]},
+            "party": _LIVE_PARTY,
+            "battle": {"in_battle": in_battle},
+        },
+        "navigation": {"snapshot": {"map_name": map_name, "player_position": {"x": 4, "y": 6}}},
+    }
+
+
+def test_standing_in_an_unwon_gym_prices_the_leader_against_the_party():
+    """3,044 presses in Cerulean Gym and no answer ever named Misty's team.
+
+    `poke calc` prices the Pokemon in front of you, which is the wrong room. The
+    fight worth pricing is the one being walked toward, and the verb that could
+    have priced it was called zero times in a 457-call session -- so it goes in
+    the payload the agent already reads.
+    """
+    server._ahead_said.reset()
+    summary = server._observation_summary(_gym_bundle())
+    server._annotate_gym_outlook(summary, _gym_bundle())
+
+    assert "Misty" in summary["ahead"]
+    assert "Staryu L18" in summary["ahead"] and "Starmie L21" in summary["ahead"]
+
+
+def test_the_gym_outlook_is_said_once_and_not_on_every_frame_after():
+    """113 bytes x 3,044 presses is 344 kB against a 95 kB median session.
+
+    The whole point of the field is that it arrives at the door. Repeating it on
+    every frame inside would cost more than everything else the run reads.
+    """
+    server._ahead_said.reset()
+    first, second = {}, {}
+    server._annotate_gym_outlook(first, _gym_bundle())
+    server._annotate_gym_outlook(second, _gym_bundle())
+
+    assert "ahead" in first
+    assert "ahead" not in second
+
+
+def test_a_gym_already_won_costs_nothing():
+    """Pewter is on the way to everywhere. Its leader is not news any more."""
+    server._ahead_said.reset()
+    summary = {}
+    server._annotate_gym_outlook(summary, _gym_bundle("Pewter Gym"))
+
+    assert "ahead" not in summary
+
+
+def test_a_move_about_to_be_overwritten_is_named_before_the_press():
+    """Cut went over an attack on the live run and Gen 1 will not delete an HM.
+
+    No advice undoes that afterwards, so the cost has to be in the payload of
+    the frame that still has a B button available.
+    """
+    bundle = _gym_bundle()
+    bundle["state"]["move_learn"] = {
+        "screen_text": (
+            "      CUT\n      GROWL\n      EMBER\n      LEER\n\n Which move should\n be forgotten?"
+        ),
+        "incoming": "Dig",
+        "cursor": 2,
+        "slot": 0,
+    }
+
+    summary = server._observation_summary(bundle)
+
+    assert "A here deletes Ember (40)" in summary["learn"]
+    assert "Dig (100)" in summary["learn"]
+
+
+def test_an_ordinary_frame_carries_no_learn_line():
+    """It costs nothing on the frames it is absent from, which is nearly all of them."""
+    assert "learn" not in server._observation_summary(_gym_bundle())

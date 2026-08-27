@@ -30,6 +30,7 @@ from pydantic import BaseModel, field_validator
 from starlette.routing import Mount
 
 from pokemon_agent import capabilities
+from pokemon_agent import party as party_facts
 from pokemon_agent.agent_runtime import AgentRuntime
 from pokemon_agent.coordinator import (
     MAX_FRAMES_PER_BATCH,
@@ -438,7 +439,7 @@ class _ServerOps:
         return outcome
 
     def reject_unsafe_battle_actions(self, actions: list[str]) -> None:
-        _reject_unsafe_battle_actions(actions)
+        _reject_unsafe_dialog_actions(actions)
 
     def refresh_bundle(self, **kwargs) -> Optional[dict]:
         return _refresh_agent_bundle_sync(**kwargs)
@@ -503,6 +504,9 @@ def _get_state_dict() -> dict:
     lock = _battle_lock_sync(state)
     if lock is not None:
         state["battle_lock"] = lock
+    learn = _move_learn_sync()
+    if learn is not None:
+        state["move_learn"] = learn
     try:
         snapshot = _emulator.get_navigation_snapshot(_reader)
     except NotImplementedError:
@@ -541,6 +545,22 @@ def _battle_mon_sync(state: dict) -> Optional[dict]:
     if not ((state.get("battle") or {}).get("in_battle")):
         return None
     read = getattr(_reader, "read_battle_mon", None)
+    if read is None:
+        return None
+    try:
+        return read()
+    except Exception:  # noqa: BLE001 — perception must never fail a state read
+        return None
+
+
+def _move_learn_sync() -> Optional[dict]:
+    """The move-replacement prompt on screen, or None on every other frame.
+
+    Not gated on the battle flag or the dialog flag: a level-up learn happens
+    mid-battle and a TM happens in the item menu, and the same prompt is the
+    hazard in both.
+    """
+    read = getattr(_reader, "read_move_learn", None)
     if read is None:
         return None
     try:
@@ -1215,6 +1235,16 @@ def _observation_summary(bundle: Optional[dict]) -> dict:
         if state.get("battle_lock"):
             summary["locked_in"] = locked_in_note(str(state["battle_lock"]))
 
+    # What the next button press would delete. Unconditional -- battle frame or
+    # menu frame, it is the same prompt and the same irreversible press. It
+    # costs nothing on the frames it is absent from, which is nearly all of
+    # them, and no advice afterwards undoes a move that is gone: the run this
+    # was written for taught Cut over an attack, and Gen 1 will not delete an HM
+    # move, so that slot stayed spent for the next 33 hours.
+    learn_line = party_facts.learn_cost(state.get("move_learn"), party)
+    if learn_line:
+        summary["learn"] = learn_line
+
     # Real on-screen words only. The reader falls back to a fixed placeholder --
     # "Dialog box visible (waiting for input)." -- when it cannot extract any, and
     # all 660 payloads that ever carried this field carried exactly that string,
@@ -1293,6 +1323,40 @@ def _annotate_explored_map(summary: dict, bundle: Optional[dict]) -> None:
             summary["here_before"] = visits - 1
     except Exception as exc:  # noqa: BLE001 — hints must never fail an action
         print(f"[server] WARNING: explored-map hints failed: {exc}")
+
+
+#: One per process. See `party.SayOnce`: the outlook is repeated when it becomes
+#: newly true -- a different gym, a fight starting, a party that changed -- and
+#: not on the frames in between.
+_ahead_said = party_facts.SayOnce()
+
+
+def _annotate_gym_outlook(summary: dict, bundle: Optional[dict]) -> None:
+    """Price the fight in this room against the party actually carried.
+
+    The per-move table answers "what do I hit *this* Pokemon with". Nothing
+    answered "is this a gym my party can beat", and the run that needed it spent
+    3,044 presses in Cerulean Gym on one Charmeleon and came out with no badge
+    and 40 whiteouts. Facts, not steering: the numbers are printed and which
+    fight to take is still the agent's call.
+    """
+    state = ((bundle or {}).get("state")) or {}
+    party = state.get("party") or []
+    badges = (
+        (state.get("player") or {}).get("badges") or (state.get("flags") or {}).get("badges") or []
+    )
+    map_name = (state.get("map") or {}).get("map_name")
+    in_battle = bool((state.get("battle") or {}).get("in_battle"))
+    try:
+        leader = party_facts.unbeaten_leader(map_name, badges)
+        if leader is None:
+            return
+        line = party_facts.leader_outlook(party, leader)
+    except Exception as exc:  # noqa: BLE001 — a hint must never fail an action
+        print(f"[server] WARNING: gym outlook failed: {exc}")
+        return
+    if line and _ahead_said.fresh((map_name, in_battle, line)):
+        summary["ahead"] = line
 
 
 def _make_runtime_save_event(name: str, path: Path, source: str, reason: str) -> dict:
@@ -1465,8 +1529,8 @@ def _check_action_rate() -> None:
     _action_call_times.append(now)
 
 
-def _reject_unsafe_battle_actions(actions: list[str]) -> None:
-    """A battle menu reads as an active dialog, so A-mashing confirms menu entries.
+def _reject_unsafe_dialog_actions(actions: list[str]) -> None:
+    """Two dialogs that A-mashing does real damage to: a battle menu, and a learn prompt.
 
     Pressing A until "the dialog" clears moves through FIGHT -> ITEM -> the bag and
     picks whatever is highlighted, which is indistinguishable from the agent trying
@@ -1475,6 +1539,23 @@ def _reject_unsafe_battle_actions(actions: list[str]) -> None:
     if "a_until_dialog_end" not in actions:
         return
     state = _get_state_dict()
+    # A move-replacement prompt is a dialog too, and mashing A through it says
+    # YES to "Delete an older move" and then deletes whatever the cursor is
+    # sitting on -- the first move in the list, which is where the cursor
+    # starts. This is the one dialog in the game that cannot be undone.
+    learn = state.get("move_learn")
+    if learn:
+        cost = party_facts.learn_cost(learn, state.get("party") or [])
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                "a_until_dialog_end is unsafe here: a move is being replaced, and "
+                "pressing A through this prompt confirms the replacement and deletes "
+                "whichever move the cursor is on. "
+                + (cost or "")
+                + " Move the cursor and press A yourself, or press B to back out."
+            ),
+        )
     if not ((state.get("battle") or {}).get("in_battle")):
         return
     raise HTTPException(
@@ -2662,6 +2743,7 @@ async def execute_actions(req: ActionRequest):
         summary = _observation_summary(result["bundle"])
         _annotate_batch_outcome(summary, result.get("outcome"))
         _annotate_explored_map(summary, result["bundle"])
+        _annotate_gym_outlook(summary, result["bundle"])
         return {"actions_executed": result["actions_executed"], **summary}
     except HTTPException:
         raise
@@ -2679,6 +2761,7 @@ async def battle_fight(req: BattleFightRequest):
         result = await _run_battle_sequence({"fight": req.move}, _battle_fight_sync, req.move)
         outcome = result["outcome"]
         payload = {"used": outcome["used"], **_observation_summary(result["bundle"])}
+        _annotate_gym_outlook(payload, result["bundle"])
         if outcome["retried"]:
             payload["retried"] = True
         return payload
@@ -2696,10 +2779,12 @@ async def battle_run():
     _ensure_emulator()
     try:
         result = await _run_battle_sequence({"run": True}, _battle_run_sync)
-        return {
+        payload = {
             "fled": result["outcome"]["fled"],
             **_observation_summary(result["bundle"]),
         }
+        _annotate_gym_outlook(payload, result["bundle"])
+        return payload
     except HTTPException:
         raise
     except ValueError as e:
