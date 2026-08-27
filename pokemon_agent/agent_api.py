@@ -490,6 +490,9 @@ class Result:
     #: Inside a mart: the money, the stock and the prices. Never set anywhere
     #: else, because 211 of the game's 223 maps sell nothing.
     shop: Optional[str] = None
+    #: On a map with a nurse: her tile, and what she would fix. Never set
+    #: anywhere else, because 210 of the game's 223 maps have no nurse.
+    heal: Optional[str] = None
     menu: Optional[str] = None
     highlighted: Optional[str] = None
     #: Only ``goto`` sets these three.
@@ -550,6 +553,7 @@ class Result:
             locked_in=payload.get("locked_in"),
             catch=payload.get("catch"),
             shop=payload.get("shop"),
+            heal=payload.get("heal"),
             menu=payload.get("menu"),
             highlighted=payload.get("highlighted"),
             walked=payload.get("walked"),
@@ -594,8 +598,9 @@ class Result:
         # the first line still gets a well-formed position, and one printing the
         # whole thing cannot miss the reason the map changed under it.
         shop = f"\n  for sale {self.shop}" if self.shop else ""
+        heal = f"\n  {self.heal}" if self.heal else ""
         whiteout = f"\n  {self.whiteout}" if self.whiteout else ""
-        return where + moved + blocked + warp + shop + whiteout
+        return where + moved + blocked + warp + shop + heal + whiteout
 
 
 @dataclass
@@ -956,6 +961,9 @@ class MapView:
     player: Optional[Coord] = None
     warps: list[Coord] = field(default_factory=list)
     unexplored_nearest: Optional[Coord] = None
+    #: Who is in the room and where — ``[{"service": "heal", "at": [3, 1]}]``.
+    #: Empty on the 210 maps with nobody worth naming on them.
+    services: list[dict] = field(default_factory=list)
     image_path: Optional[str] = None
     raw: dict = field(default_factory=dict)
 
@@ -974,6 +982,7 @@ class MapView:
             player=_coord(payload.get("player")),
             warps=warps,
             unexplored_nearest=_coord(payload.get("unexplored_nearest")),
+            services=list(payload.get("services") or []),
             image_path=payload.get("image_path"),
             raw=payload,
         )
@@ -1465,6 +1474,11 @@ class Client:
 
         return Result.from_payload(self._act_json("/mart/buy", {"item": item, "count": int(count)}))
 
+    def heal(self) -> Result:
+        """Heal the party at the nurse on this map, walking to her counter first."""
+
+        return Result.from_payload(self._act_json("/pokecenter/heal", {}))
+
     def goto(self, target: Union[str, Coord], y: Optional[int] = None) -> Result:
         """Walk toward a map or a tile, the server re-planning on each map.
 
@@ -1662,6 +1676,10 @@ def buy(item: str, count: int = 1) -> Result:
     return client().buy(item, count)
 
 
+def heal() -> Result:
+    return client().heal()
+
+
 def goto(target: Union[str, Coord], y: Optional[int] = None) -> Result:
     return client().goto(target, y)
 
@@ -1751,6 +1769,7 @@ __all__ = [
     "Walk",
     "act",
     "buy",
+    "heal",
     "calc",
     "catch",
     "chunks",

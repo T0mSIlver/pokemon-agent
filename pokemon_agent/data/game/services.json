@@ -1,0 +1,133 @@
+{
+ "generated_from": "0cd19d3b877b7dc66d12c7050bed9a7f38154d4b",
+ "Celadon Pokecenter": [
+  {
+   "service": "heal",
+   "text": "TEXT_CELADONPOKECENTER_NURSE",
+   "at": [
+    3,
+    1
+   ]
+  }
+ ],
+ "Cerulean Pokecenter": [
+  {
+   "service": "heal",
+   "text": "TEXT_CERULEANPOKECENTER_NURSE",
+   "at": [
+    3,
+    1
+   ]
+  }
+ ],
+ "Cinnabar Pokecenter": [
+  {
+   "service": "heal",
+   "text": "TEXT_CINNABARPOKECENTER_NURSE",
+   "at": [
+    3,
+    1
+   ]
+  }
+ ],
+ "Fuchsia Pokecenter": [
+  {
+   "service": "heal",
+   "text": "TEXT_FUCHSIAPOKECENTER_NURSE",
+   "at": [
+    3,
+    1
+   ]
+  }
+ ],
+ "Indigo Plateau Lobby": [
+  {
+   "service": "heal",
+   "text": "TEXT_INDIGOPLATEAULOBBY_NURSE",
+   "at": [
+    7,
+    5
+   ]
+  }
+ ],
+ "Lavender Pokecenter": [
+  {
+   "service": "heal",
+   "text": "TEXT_LAVENDERPOKECENTER_NURSE",
+   "at": [
+    3,
+    1
+   ]
+  }
+ ],
+ "Mt Moon Pokecenter": [
+  {
+   "service": "heal",
+   "text": "TEXT_MTMOONPOKECENTER_NURSE",
+   "at": [
+    3,
+    1
+   ]
+  }
+ ],
+ "Pewter Pokecenter": [
+  {
+   "service": "heal",
+   "text": "TEXT_PEWTERPOKECENTER_NURSE",
+   "at": [
+    3,
+    1
+   ]
+  }
+ ],
+ "Rock Tunnel Pokecenter": [
+  {
+   "service": "heal",
+   "text": "TEXT_ROCKTUNNELPOKECENTER_NURSE",
+   "at": [
+    3,
+    1
+   ]
+  }
+ ],
+ "Saffron Pokecenter": [
+  {
+   "service": "heal",
+   "text": "TEXT_SAFFRONPOKECENTER_NURSE",
+   "at": [
+    3,
+    1
+   ]
+  }
+ ],
+ "Silph Co 9F": [
+  {
+   "service": "heal",
+   "text": "TEXT_SILPHCO9F_NURSE",
+   "at": [
+    3,
+    14
+   ]
+  }
+ ],
+ "Vermilion Pokecenter": [
+  {
+   "service": "heal",
+   "text": "TEXT_VERMILIONPOKECENTER_NURSE",
+   "at": [
+    3,
+    1
+   ]
+  }
+ ],
+ "Viridian Pokecenter": [
+  {
+   "service": "heal",
+   "text": "TEXT_VIRIDIANPOKECENTER_NURSE",
+   "at": [
+    3,
+    1
+   ]
+  }
+ ]
+}

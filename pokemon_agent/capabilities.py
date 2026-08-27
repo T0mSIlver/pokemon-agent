@@ -16,7 +16,7 @@ from __future__ import annotations
 
 import functools
 import math
-from typing import Any, Awaitable, Callable, Collection, Optional, Sequence
+from typing import Any, Awaitable, Callable, Collection, Mapping, Optional, Sequence
 
 from pokemon_agent import gamedata, guides
 from pokemon_agent import world as world_mod
@@ -1697,6 +1697,88 @@ def shop_payload(map_name: Optional[str], money: Optional[int]) -> dict:
 
 
 # ---------------------------------------------------------------------------
+# Healers
+# ---------------------------------------------------------------------------
+
+
+def services_at(map_name: Optional[str]) -> list[dict]:
+    """The service NPCs on this map, from services.json. Empty on most maps."""
+    return list(gamedata.services(str(map_name))) if map_name else []
+
+
+def healer_at(map_name: Optional[str]) -> Optional[dict]:
+    """The nurse on this map, or None.
+
+    Thirteen maps in the game have one and 210 do not, so this is None almost
+    everywhere and the frame pays nothing for it.
+    """
+    return next((s for s in services_at(map_name) if s.get("service") == "heal"), None)
+
+
+def _max_pp(move: Mapping) -> Optional[int]:
+    """A move's PP when full, or None when the table does not know the move.
+
+    PP Ups raise the real ceiling above the table's number, so this is the
+    *floor* of full: a mon at or above it is not reported as needing a nurse.
+    Under-reporting a PP shortfall costs one avoidable trip; over-reporting it
+    would put "go and heal" on the frame of a party that is already fit, which
+    is the wallpaper this project keeps deleting.
+    """
+    record = gamedata.move(str(move.get("name") or "")) or {}
+    pp = record.get("pp")
+    return int(pp) if pp else None
+
+
+def heal_shortfall(party: Sequence[Mapping]) -> list[str]:
+    """What is wrong with the party that a nurse would fix, one phrase per mon.
+
+    Empty when the party is fit, which is the answer that stops a second visit:
+    68% of the presses spent inside Mt. Moon's Center were re-walking tiles the
+    agent had already stood on, and nothing it read ever said the trip was
+    already done.
+    """
+    rows: list[str] = []
+    for mon in party or ():
+        if not isinstance(mon, Mapping):
+            continue
+        name = str(mon.get("species") or "?")
+        parts: list[str] = []
+        hp, max_hp = mon.get("hp"), mon.get("max_hp")
+        if max_hp and hp is not None and int(hp) < int(max_hp):
+            parts.append(f"{int(hp)}/{int(max_hp)}")
+        status = str(mon.get("status") or "OK")
+        if status and status.upper() not in ("OK", "NONE"):
+            parts.append(status)
+        empty = [
+            str(move.get("name"))
+            for move in mon.get("moves") or ()
+            if isinstance(move, Mapping)
+            and (full := _max_pp(move)) is not None
+            and int(move.get("pp") or 0) < full
+        ]
+        if empty:
+            parts.append(f"{len(empty)} move{'' if len(empty) == 1 else 's'} short of PP")
+        if parts:
+            rows.append(f"{name} " + ", ".join(parts))
+    return rows
+
+
+def heal_payload(map_name: Optional[str], party: Sequence[Mapping]) -> dict:
+    """The nurse on this map and what she would fix, or a refusal naming neither."""
+    healer = healer_at(map_name)
+    if healer is None:
+        raise NotFound(
+            f"{map_name} has no nurse. Healing happens at a Poke Center — "
+            "the building with the red roof in every town."
+        )
+    return {
+        "map": map_name,
+        "nurse": list(healer.get("at") or ()),
+        "needs": heal_shortfall(party),
+    }
+
+
+# ---------------------------------------------------------------------------
 # /guide
 # ---------------------------------------------------------------------------
 
@@ -2065,6 +2147,10 @@ __all__ = [
     "catch_payload",
     "shop_at",
     "shop_payload",
+    "services_at",
+    "healer_at",
+    "heal_shortfall",
+    "heal_payload",
     "canonical_map_name",
     "collision_from",
     "collision_basis",

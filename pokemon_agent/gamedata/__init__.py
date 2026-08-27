@@ -100,6 +100,16 @@ def shops(map_name: str) -> Optional[Dict[str, Any]]:
     return _data("shops").get(map_name)
 
 
+def services(map_name: str) -> List[Dict[str, Any]]:
+    """The people on a map who do something for you, with the tile they stand on.
+
+    ``[{"service": "heal", "text": "TEXT_..._NURSE", "at": [3, 1]}]``. ``at`` is
+    where the *person* is; a Center counter is a talk-over tile, so the tile to
+    stand on is worked out from live collision rather than stored here.
+    """
+    return _data("services").get(map_name, [])
+
+
 # ===================================================================
 # Species and moves
 # ===================================================================

@@ -357,7 +357,16 @@ direction of travel between two areas, or when you have whited out and need to r
 
 Watch `hp` in every response. Below about a third of maximum you are one wild encounter from fainting, and fainting costs you far more time than healing does.
 
-Healing is a place, not a button. Every town has a Poke Center, the building with the red roof. Walk in, step to the counter, face the nurse, `press_a`, and answer the prompt. It is free and it fully restores your party.
+Healing is free and it fully restores HP, PP and status. Every town has a Poke Center, the building with the red roof. Walk in and call `poke heal`:
+
+```
+Cerulean Pokecenter (3,6) facing up  moved 1  hp 47/95
+nurse (3,1): Charmeleon 47/95, 2 moves short of PP — poke heal
+```
+
+You do not have to find her. `poke heal` walks to her counter, talks to her, answers YES, reads the conversation out, and checks the party came back full. Her counter is a talk-over tile: the tile to stand on is two out, not one, and pressing A from the wrong tile does nothing at all.
+
+Every frame inside a Center carries that `nurse` line, and when there is nothing to heal it says so — `nurse (3,1): the party is already full — nothing to heal`. That is your cue to leave rather than walk the room again.
 
 Buy Potions when you pass a Poke Mart (blue roof) and have money — `poke buy potion 5`, see Buying. Walking into tall grass with no healing items and a hurt lead Pokemon is how runs end.
 
@@ -417,6 +426,7 @@ If the same action fails three times, stop repeating it. Something in your model
 - `poke fight <move>`: attack with a named move. `poke run` flees. Both under Battles above.
 - `poke catch [ball]`: throw a ball at a wild Pokemon. Under Catching above.
 - `poke buy <item> [count]`: buy from the mart you are standing in. Under Buying above.
+- `poke heal`: heal at the nurse on this map. Under Staying alive above.
 - `poke calc`: the same move table the battle payload already carries, on demand. Under Battles.
 - `poke sim <actions>`: try a plan against the collision map without spending it.
 - `poke route <map>`: which maps lie between here and there. `poke goto <map|x,y>` walks it.
