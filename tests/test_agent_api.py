@@ -820,9 +820,14 @@ def test_game_lookups_are_objects(stub, poke):
     stub.route(
         "GET",
         "/gamedata/shops?map=Pewter+Mart",
-        {"map": "Pewter Mart", "items": ["Potion", "Poke Ball"]},
+        {
+            "map": "Pewter Mart",
+            "items": ["Potion", "Poke Ball"],
+            "prices": {"Potion": 300, "Poke Ball": 200},
+        },
     )
-    assert poke.game.shops("Pewter Mart") == ["Potion", "Poke Ball"]
+    # Priced, so "can I afford to stock up" is answerable before walking there.
+    assert poke.game.shops("Pewter Mart") == {"Potion": 300, "Poke Ball": 200}
 
     stub.route(
         "GET",

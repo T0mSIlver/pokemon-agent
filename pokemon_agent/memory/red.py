@@ -49,10 +49,43 @@ BATTLE_MON_SIZE = 29
 ADDR_BAG_COUNT = 0xD31D
 ADDR_BAG_ITEMS = 0xD31E  # pairs (item_id, qty)
 
+BAG_ITEM_CAPACITY = 20
+
 # -- PC items --
 ADDR_PC_COUNT = 0xD53A  # wNumBoxItems
 ADDR_PC_ITEMS = 0xD53B  # wBoxItems, pairs (item_id, qty)
 PC_ITEM_CAPACITY = 50
+
+# -- Item lists: the bag in a battle, and a mart's counter --
+# Both are the same widget, so both are read the same way. Every address here
+# was diffed off a running game rather than copied from a listing: talking to
+# the Vermilion Mart clerk and pressing A on POKE BALL moved 0xCF91 from a stale
+# 14 to 4 (POKE_BALL) and 0xCF97 from 1 to 99 (buy up to 99), and 0xD12A read 6
+# on a counter that stocks exactly six things. 0xCC36 is the fourth press of
+# Down on that list, where the cursor stops and the window scrolls instead.
+ADDR_LIST_SCROLL_OFFSET = 0xCC36  # wListScrollOffset — rows scrolled off the top
+ADDR_ITEM_LIST = 0xCF7B  # wItemList — count byte, then item ids, $FF-terminated
+ADDR_CUR_ITEM = 0xCF91  # wCurItem — the entry A last confirmed
+ADDR_LIST_MENU_ID = 0xCF94  # wListMenuID — which list widget is open
+ADDR_ITEM_QUANTITY = 0xCF96  # wItemQuantity — the x01 in the quantity roller
+ADDR_MAX_ITEM_QUANTITY = 0xCF97  # wMaxItemQuantity
+ADDR_LIST_COUNT = 0xD12A  # wListCount — entries in the open list
+#: wListMenuID values. 2 is a mart's priced list, 3 the plain bag list.
+PRICED_ITEM_LIST_MENU = 2
+ITEM_LIST_MENU = 3
+#: wTextBoxID while either is up. Not the battle menu's 11.
+LIST_MENU_TEXT_BOX_ID = 13
+#: wTextBoxID for the BUY/SELL/QUIT frame and for the YES/NO under "That will be
+#: $2000. OK?". Both are steps a purchase has to wait for rather than press
+#: through: A sent before the prompt is drawn is swallowed, and a run that did
+#: that read back an unchanged $7198 and an unchanged bag.
+BUY_SELL_QUIT_TEXT_BOX_ID = 14
+TWO_OPTION_TEXT_BOX_ID = 20
+
+#: Ball item ids, weakest first. Order is what "throw a ball" resolves to when
+#: no ball is named: spend the cheapest thing that can work before the Ultra
+#: Ball you cannot buy back, and never spend the Master Ball by accident.
+BALL_ITEM_IDS = (4, 3, 2, 1)  # Poke, Great, Ultra, Master
 
 # -- Battle --
 ADDR_BATTLE_TYPE = 0xD057  # 0=none, 1=wild, 2=trainer
@@ -60,6 +93,14 @@ ADDR_ENEMY_COUNT = 0xD89C
 ADDR_ENEMY_SPECIES = 0xD89D
 ADDR_ENEMY_DATA = 0xD8A4  # 44 bytes per mon (party struct)
 ADDR_ENEMY_MON = 0xCFE5  # active enemy battle mon (live HP/stats)
+#: wEnemyMonActualCatchRate — the number ItemUseBall compares its first random
+#: roll against, and the only input to a catch the species table cannot supply:
+#: the Safari Zone's bait and rocks halve and double *this* byte, not the base
+#: rate. Derived twice over from addresses this file already trusts: wEnemyMon
+#: (0xCFE5) plus one 29-byte battle_struct plus wEnemyMonBaseStats (5) lands on
+#: it, and one byte further plus an 11-byte nickname lands exactly on wBattleMon
+#: (0xD014).
+ADDR_ENEMY_CATCH_RATE = 0xD007
 
 # -- Battle menus --
 # Every address and every literal in this block was read off a running battle and
@@ -1492,7 +1533,13 @@ class RedBlueMemoryReader(GameMemoryReader):
             for index in range(4)
             if data[8 + index] != 0
         ]
-        return {**self._read_battle_struct(ADDR_ENEMY_MON), "moves": moves}
+        return {
+            **self._read_battle_struct(ADDR_ENEMY_MON),
+            "moves": moves,
+            # Half of whether this one is worth a ball, and free to read here.
+            # Behind a separate call it is a number nobody ever asks for.
+            "catch_rate": self.enemy_catch_rate(),
+        }
 
     # -- public interface ---------------------------------------------------
 
@@ -1554,6 +1601,111 @@ class RedBlueMemoryReader(GameMemoryReader):
                 }
             )
         return items
+
+    def bag_index_of(self, item_id: int) -> Optional[int]:
+        """Where an item sits in the bag list, or None if it is not carried.
+
+        The row number is the target of the cursor walk, and nothing else knows
+        that the Town Map sits above the Poke Ball. It is *not* the number of
+        Down presses on its own: the list remembers where it was left, so the
+        walk is the difference between this row and the one it opens on.
+        """
+        for index, entry in enumerate(self.read_bag()):
+            if entry["id"] == item_id:
+                return index
+        return None
+
+    def read_list_menu(self) -> Dict[str, Any]:
+        """The open item list, as the row the cursor is really on.
+
+        ``index`` is the entry in the *list*, which is what a caller counting
+        Down presses needs: the cursor stops at row 2 and the window scrolls
+        underneath it, so wCurrentMenuItem alone reads 2 for every entry from
+        the third one down.
+        """
+        menu_id = self.emu.read_u8(ADDR_LIST_MENU_ID)
+        row = self.emu.read_u8(ADDR_CURRENT_MENU_ITEM)
+        scroll = self.emu.read_u8(ADDR_LIST_SCROLL_OFFSET)
+        return {
+            "menu_id": menu_id,
+            "open": self.emu.read_u8(ADDR_TEXT_BOX_ID) == LIST_MENU_TEXT_BOX_ID
+            and menu_id in (PRICED_ITEM_LIST_MENU, ITEM_LIST_MENU),
+            "index": row + scroll,
+            "count": self.emu.read_u8(ADDR_LIST_COUNT),
+        }
+
+    def at_bag_list(self) -> bool:
+        """Is the plain item list — the bag — the thing taking input?"""
+        menu = self.read_list_menu()
+        return bool(menu["open"]) and menu["menu_id"] == ITEM_LIST_MENU
+
+    def at_mart_counter(self) -> bool:
+        """Is a mart's priced list — its BUY menu — the thing taking input?"""
+        menu = self.read_list_menu()
+        return bool(menu["open"]) and menu["menu_id"] == PRICED_ITEM_LIST_MENU
+
+    def selected_item_id(self) -> int:
+        """The item id the last A press confirmed on an item list.
+
+        A postcondition for a purchase, where nothing else touches the byte, and
+        **not** one for a throw: a successful capture runs the nickname and
+        Pokedex routines through the same address, so it holds something
+        unrelated by the time the ball has finished wobbling.
+        """
+        return self.emu.read_u8(ADDR_CUR_ITEM)
+
+    def item_quantity(self) -> int:
+        """The number showing in a mart's quantity roller."""
+        return self.emu.read_u8(ADDR_ITEM_QUANTITY)
+
+    def at_quantity_roller(self) -> bool:
+        """Is the ``x01  $200`` counter the thing Up and Down are driving?
+
+        The roller shares its text box with the list underneath it, so what
+        separates them is wMaxItemQuantity: the list leaves it at 1 and opening
+        the roller sets it to how many you may buy.
+        """
+        return (
+            self.emu.read_u8(ADDR_TEXT_BOX_ID) == LIST_MENU_TEXT_BOX_ID
+            and self.emu.read_u8(ADDR_MAX_ITEM_QUANTITY) > 1
+        )
+
+    def at_purchase_prompt(self) -> bool:
+        """Is "That will be $N. OK?" up, waiting on YES or NO?"""
+        return self.emu.read_u8(ADDR_TEXT_BOX_ID) == TWO_OPTION_TEXT_BOX_ID
+
+    def at_buy_sell_quit(self) -> bool:
+        """Is the clerk's BUY / SELL / QUIT menu up, with BUY under the cursor?
+
+        The screen between talking to a clerk and seeing anything for sale. A
+        purchase has to wait for it rather than count presses through it: the
+        greeting before it is a text box that can take one press or two.
+        """
+        return self.emu.read_u8(ADDR_TEXT_BOX_ID) == BUY_SELL_QUIT_TEXT_BOX_ID
+
+    def read_shop_list(self) -> List[int]:
+        """The item ids a mart counter is offering, in the order it lists them.
+
+        Read off wItemList rather than taken from the static table, because the
+        cursor walk has to match the rows actually on screen. Only meaningful
+        while a counter is open.
+        """
+        data = self.emu.read_range(ADDR_ITEM_LIST, 18)
+        count = min(data[0], 16)
+        ids: List[int] = []
+        for value in data[1 : 1 + count]:
+            if value == 0xFF:
+                break
+            ids.append(value)
+        return ids
+
+    def enemy_catch_rate(self) -> int:
+        """The live catch rate of the Pokemon on the other side.
+
+        The engine's own byte, not the species table's: bait and rocks move it,
+        and reading it costs nothing while re-deriving it can be wrong.
+        """
+        return self.emu.read_u8(ADDR_ENEMY_CATCH_RATE)
 
     def read_pc_items(self) -> List[Dict[str, Any]]:
         """Read the item PC's list, same shape as :meth:`read_bag`.

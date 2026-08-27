@@ -483,6 +483,13 @@ class Result:
     #: Set when the engine has taken the turn — Rage keeps swinging and gives no
     #: menu — so ``fight`` and ``run`` will both refuse until it ends.
     locked_in: Optional[str] = None
+    #: On a wild encounter: the balls carried and what each would do, or what a
+    #: ball costs when none are carried. ``"Poke Ball x11 36% now / 100% worn
+    #: down"``. Never set in a trainer battle, where a ball bounces off.
+    catch: Optional[str] = None
+    #: Inside a mart: the money, the stock and the prices. Never set anywhere
+    #: else, because 211 of the game's 223 maps sell nothing.
+    shop: Optional[str] = None
     menu: Optional[str] = None
     highlighted: Optional[str] = None
     #: Only ``goto`` sets these three.
@@ -541,6 +548,8 @@ class Result:
             incoming=payload.get("incoming"),
             no_damage=payload.get("no_damage"),
             locked_in=payload.get("locked_in"),
+            catch=payload.get("catch"),
+            shop=payload.get("shop"),
             menu=payload.get("menu"),
             highlighted=payload.get("highlighted"),
             walked=payload.get("walked"),
@@ -571,15 +580,22 @@ class Result:
             for note in (self.locked_in, self.no_damage):
                 if note:
                     head += f"\n  {note}"
+            # The other thing this turn could be spent on. Printed here for the
+            # same reason `no_damage` is: a script that only reads this line has
+            # to see it, or the ball in the bag stays in the bag.
+            if self.catch:
+                head += f"\n  catch: {self.catch}"
             return head
         where = f"{self.map} {self._where}" + (f" facing {self.facing}" if self.facing else "")
         moved = "" if self.moved is None else f" moved {self.moved}"
         blocked = "" if self.blocked_after is None else f" blocked after {self.blocked_after}"
         warp = " on a warp" if self.on_warp else ""
-        # On its own line and last, so a script reading only the first line still
-        # gets a well-formed position, and one printing the whole thing cannot
-        # miss the reason the map changed under it.
-        return where + moved + blocked + warp + (f"\n  {self.whiteout}" if self.whiteout else "")
+        # Both of these go on their own line and last, so a script reading only
+        # the first line still gets a well-formed position, and one printing the
+        # whole thing cannot miss the reason the map changed under it.
+        shop = f"\n  for sale {self.shop}" if self.shop else ""
+        whiteout = f"\n  {self.whiteout}" if self.whiteout else ""
+        return where + moved + blocked + warp + shop + whiteout
 
 
 @dataclass
@@ -1213,10 +1229,18 @@ class _Game:
             for entry in payload.get("items") or []
         ]
 
-    def shops(self, map_name: str) -> list[str]:
-        """What a mart sells. Empty when the map has no mart — not an error."""
+    def shops(self, map_name: str) -> dict[str, Optional[int]]:
+        """What a mart sells, priced. Empty when the map has no mart — not an error.
 
-        return list(self._fetch("shops", map=map_name).get("items") or [])
+        ``{"Poke Ball": 200, "Potion": 300, ...}``, so a shopping list three
+        towns ahead is one subtraction rather than a guess. The live payload
+        prints the same prices while you are standing in the shop; this is for
+        deciding to go.
+        """
+
+        answer = self._fetch("shops", map=map_name)
+        prices = answer.get("prices") or {}
+        return {item: prices.get(item) for item in answer.get("items") or []}
 
     def types(self, move_type: Optional[str] = None) -> dict:
         """Type names, or what one type beats and bounces off."""
@@ -1431,6 +1455,16 @@ class Client:
 
         return Result.from_payload(self._act_json("/battle/run"))
 
+    def catch(self, ball: Optional[str] = None) -> Result:
+        """Throw a ball at the wild Pokemon. No ball named throws the weakest carried."""
+
+        return Result.from_payload(self._act_json("/battle/catch", {"ball": ball} if ball else {}))
+
+    def buy(self, item: str, count: int = 1) -> Result:
+        """Buy from the mart on this map, walking to the counter first if need be."""
+
+        return Result.from_payload(self._act_json("/mart/buy", {"item": item, "count": int(count)}))
+
     def goto(self, target: Union[str, Coord], y: Optional[int] = None) -> Result:
         """Walk toward a map or a tile, the server re-planning on each map.
 
@@ -1620,6 +1654,14 @@ def flee() -> Result:
     return client().flee()
 
 
+def catch(ball: Optional[str] = None) -> Result:
+    return client().catch(ball)
+
+
+def buy(item: str, count: int = 1) -> Result:
+    return client().buy(item, count)
+
+
 def goto(target: Union[str, Coord], y: Optional[int] = None) -> Result:
     return client().goto(target, y)
 
@@ -1708,7 +1750,9 @@ __all__ = [
     "Unreachable",
     "Walk",
     "act",
+    "buy",
     "calc",
+    "catch",
     "chunks",
     "client",
     "connect",
