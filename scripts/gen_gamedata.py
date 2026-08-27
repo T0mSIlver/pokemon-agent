@@ -414,6 +414,12 @@ class NameTables:
             raise GenError(f"item constant {const!r} does not resolve to an item id")
         return ITEM_NAMES[item_id]
 
+    def item_by_id(self, item_id: int) -> str:
+        """The display name for a raw item id, for tables indexed by id."""
+        if item_id not in ITEM_NAMES:
+            raise GenError(f"item id {item_id} is not in red.py's ITEM_NAMES")
+        return ITEM_NAMES[item_id]
+
     def type_(self, const: str) -> str:
         value = self.type_value_of_const.get(const)
         if value is None or value not in TYPE_NAMES:
@@ -486,6 +492,11 @@ def parse_objects(fetcher: Fetcher, maps: MapNames) -> Dict[str, Dict[str, Any]]
                 # 6 args: a person. 7: a ground item. 8: a trainer or a static
                 # wild encounter (Snorlax, the birds, Mewtwo).
                 entry = {"x": numeric(args[0]), "y": numeric(args[1]), "sprite": args[2]}
+                # The text id is what joins an object to the script it runs, and
+                # it is the only way to tell which of a mart's three NPCs is the
+                # one standing behind the till. See build_shops.
+                if len(args) >= 6:
+                    entry["text"] = args[5]
                 if len(args) == 7:
                     entry["item"] = args[6]
                 elif len(args) == 8:
@@ -877,8 +888,62 @@ def build_items(
 CLERK_SUFFIX = re.compile(r"(Clerk\d*|Cashier\d*)$")
 
 
-def build_shops(fetcher: Fetcher, maps: MapNames, names: NameTables, report: List[str]) -> Dict:
+def _clerk_key(name: str) -> str:
+    """A clerk's name with the spelling taken out, so two spellings of it join.
+
+    A mart script label and the object's text id name the same person
+    differently: ``CeladonMart2FClerk1Text`` against
+    ``TEXT_CELADONMART2F_CLERK1``. Strip the decoration off each and they are
+    the same string, which is what lets a counter carry the tile its clerk
+    stands on. Checked on all fourteen referenced marts; every one joins, and
+    :func:`build_shops` raises rather than emit a counter that does not.
+    """
+    return re.sub(r"[^A-Z0-9]", "", name.upper())
+
+
+def parse_item_prices(fetcher: Fetcher, names: NameTables) -> Dict[str, int]:
+    """Every item's shop price, by display name.
+
+    Two tables, because the game keeps them apart: ItemPrices is one BCD entry
+    per item id starting at MASTER_BALL = $01, and the TMs are nybbles of
+    thousands in a second table indexed by TM number. A mart that sells TMs
+    (Celadon 2F) needs both, and a price of 0 means "not for sale" rather than
+    "free", so those are dropped instead of recorded.
+    """
+    prices: Dict[str, int] = {}
+    item_id = 0
+    for line in joined_lines(fetcher.text("data/items/prices.asm")):
+        head, args = directive(line)
+        if head != "bcd3" or not args:
+            continue
+        item_id += 1  # the first bcd3 entry is item id $01
+        value = numeric(args[0])
+        if value:
+            prices[names.item_by_id(item_id)] = value
+    tm = 0
+    for line in joined_lines(fetcher.text("data/items/tm_prices.asm")):
+        head, args = directive(line)
+        if head != "nybble" or not args:
+            continue
+        tm += 1
+        value = numeric(args[0]) * 1000
+        if value:
+            prices[f"TM{tm:02d}"] = value
+    for check, expect in (("Poke Ball", 200), ("Potion", 300), ("TM01", 3000)):
+        if prices.get(check) != expect:
+            raise GenError(f"{check} priced {prices.get(check)}, expected {expect}")
+    return prices
+
+
+def build_shops(
+    fetcher: Fetcher,
+    maps: MapNames,
+    names: NameTables,
+    objects: Dict[str, Dict[str, Any]],
+    report: List[str],
+) -> Dict:
     text = fetcher.text("data/items/marts.asm")
+    prices = parse_item_prices(fetcher, names)
     out: Dict[str, Dict[str, Any]] = {}
     label: Optional[str] = None
     skipped: List[str] = []
@@ -897,11 +962,24 @@ def build_shops(fetcher: Fetcher, maps: MapNames, names: NameTables, report: Lis
             continue
         map_name = maps.label(base)
         items = [names.item(a) for a in args]
-        entry = out.setdefault(map_name, {"items": [], "counters": []})
-        entry["counters"].append({"label": label, "items": items})
+        # The tile the clerk stands on. Without it "buy a Potion" starts with
+        # "find the till in a room with three identical-looking NPCs in it",
+        # which is a walk the agent has to guess its way through.
+        wanted = _clerk_key(label.removesuffix("Text"))
+        at = [
+            [obj["x"], obj["y"]]
+            for obj in objects.get(base, {}).get("objects", ())
+            if _clerk_key(str(obj.get("text") or "").removeprefix("TEXT_")) == wanted
+        ]
+        if len(at) != 1:
+            raise GenError(f"{label}: matched {len(at)} objects on {map_name}, expected 1")
+        entry = out.setdefault(map_name, {"items": [], "prices": {}, "counters": []})
+        entry["counters"].append({"label": label, "at": at[0], "items": items})
         for item in items:
             if item not in entry["items"]:
                 entry["items"].append(item)
+            if item in prices:
+                entry["prices"][item] = prices[item]
         label = None
     if skipped:
         report.append(f"marts with no map of their own, skipped: {', '.join(sorted(skipped))}")
@@ -1154,7 +1232,7 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
     )
     encounters = build_encounters(fetcher, names, parse_slot_chances(fetcher))
     items = build_items(fetcher, objects, maps, names)
-    shops = build_shops(fetcher, maps, names, report)
+    shops = build_shops(fetcher, maps, names, objects, report)
     species = build_species(fetcher, names)
     moves = build_moves(fetcher, names)
     types = build_types(fetcher, names, report)

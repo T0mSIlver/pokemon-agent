@@ -100,8 +100,14 @@ def test_items_carry_the_tile_and_flag_the_hidden_ones(http):
     assert visible[0] == {"item": "Antidote", "at": [25, 11]}
 
 
-def test_shops_list_stock_and_answer_null_for_a_map_with_no_mart(http):
-    assert "Poke Ball" in ask(http, "shops", map="Pewter Mart")["items"]
+def test_shops_price_their_stock_and_answer_null_for_a_map_with_no_mart(http):
+    # Prices are what make this answerable before you get there. A run that
+    # reached Vermilion with 7,198 unspent had no way to ask what the money was
+    # worth anywhere, and the live mart line only describes the floor you are on.
+    pewter = ask(http, "shops", map="Pewter Mart")
+    assert "Poke Ball" in pewter["items"]
+    assert pewter["prices"]["Poke Ball"] == 200
+    assert pewter["prices"]["Potion"] == 300
     assert ask(http, "shops", map="Pewter Gym")["items"] is None
 
 

@@ -7,9 +7,19 @@
    "Parlyz Heal",
    "Burn Heal"
   ],
+  "prices": {
+   "Poke Ball": 200,
+   "Antidote": 100,
+   "Parlyz Heal": 200,
+   "Burn Heal": 250
+  },
   "counters": [
    {
     "label": "ViridianMartClerkText",
+    "at": [
+     0,
+     5
+    ],
     "items": [
      "Poke Ball",
      "Antidote",
@@ -29,9 +39,22 @@
    "Awakening",
    "Parlyz Heal"
   ],
+  "prices": {
+   "Poke Ball": 200,
+   "Potion": 300,
+   "Escape Rope": 550,
+   "Antidote": 100,
+   "Burn Heal": 250,
+   "Awakening": 200,
+   "Parlyz Heal": 200
+  },
   "counters": [
    {
     "label": "PewterMartClerkText",
+    "at": [
+     0,
+     5
+    ],
     "items": [
      "Poke Ball",
      "Potion",
@@ -54,9 +77,22 @@
    "Awakening",
    "Parlyz Heal"
   ],
+  "prices": {
+   "Poke Ball": 200,
+   "Potion": 300,
+   "Repel": 350,
+   "Antidote": 100,
+   "Burn Heal": 250,
+   "Awakening": 200,
+   "Parlyz Heal": 200
+  },
   "counters": [
    {
     "label": "CeruleanMartClerkText",
+    "at": [
+     0,
+     5
+    ],
     "items": [
      "Poke Ball",
      "Potion",
@@ -78,9 +114,21 @@
    "Parlyz Heal",
    "Repel"
   ],
+  "prices": {
+   "Poke Ball": 200,
+   "Super Potion": 700,
+   "Ice Heal": 250,
+   "Awakening": 200,
+   "Parlyz Heal": 200,
+   "Repel": 350
+  },
   "counters": [
    {
     "label": "VermilionMartClerkText",
+    "at": [
+     0,
+     5
+    ],
     "items": [
      "Poke Ball",
      "Super Potion",
@@ -104,9 +152,24 @@
    "Ice Heal",
    "Parlyz Heal"
   ],
+  "prices": {
+   "Great Ball": 600,
+   "Super Potion": 700,
+   "Revive": 1500,
+   "Escape Rope": 550,
+   "Super Repel": 500,
+   "Antidote": 100,
+   "Burn Heal": 250,
+   "Ice Heal": 250,
+   "Parlyz Heal": 200
+  },
   "counters": [
    {
     "label": "LavenderMartClerkText",
+    "at": [
+     0,
+     5
+    ],
     "items": [
      "Great Ball",
      "Super Potion",
@@ -142,9 +205,33 @@
    "TM09",
    "TM17"
   ],
+  "prices": {
+   "Great Ball": 600,
+   "Super Potion": 700,
+   "Revive": 1500,
+   "Super Repel": 500,
+   "Antidote": 100,
+   "Burn Heal": 250,
+   "Ice Heal": 250,
+   "Awakening": 200,
+   "Parlyz Heal": 200,
+   "TM32": 1000,
+   "TM33": 1000,
+   "TM02": 2000,
+   "TM07": 2000,
+   "TM37": 2000,
+   "TM01": 3000,
+   "TM05": 3000,
+   "TM09": 3000,
+   "TM17": 3000
+  },
   "counters": [
    {
     "label": "CeladonMart2FClerk1Text",
+    "at": [
+     5,
+     3
+    ],
     "items": [
      "Great Ball",
      "Super Potion",
@@ -159,6 +246,10 @@
    },
    {
     "label": "CeladonMart2FClerk2Text",
+    "at": [
+     6,
+     3
+    ],
     "items": [
      "TM32",
      "TM33",
@@ -181,9 +272,20 @@
    "Water Stone",
    "Leaf Stone"
   ],
+  "prices": {
+   "Poke Doll": 1000,
+   "Fire Stone": 2100,
+   "Thunder Stone": 2100,
+   "Water Stone": 2100,
+   "Leaf Stone": 2100
+  },
   "counters": [
    {
     "label": "CeladonMart4FClerkText",
+    "at": [
+     5,
+     7
+    ],
     "items": [
      "Poke Doll",
      "Fire Stone",
@@ -209,9 +311,27 @@
    "Carbos",
    "Calcium"
   ],
+  "prices": {
+   "X Accuracy": 950,
+   "Guard Spec.": 700,
+   "Dire Hit": 650,
+   "X Attack": 500,
+   "X Defend": 550,
+   "X Speed": 350,
+   "X Special": 350,
+   "HP Up": 9800,
+   "Protein": 9800,
+   "Iron": 9800,
+   "Carbos": 9800,
+   "Calcium": 9800
+  },
   "counters": [
    {
     "label": "CeladonMart5FClerk1Text",
+    "at": [
+     5,
+     3
+    ],
     "items": [
      "X Accuracy",
      "Guard Spec.",
@@ -224,6 +344,10 @@
    },
    {
     "label": "CeladonMart5FClerk2Text",
+    "at": [
+     6,
+     3
+    ],
     "items": [
      "HP Up",
      "Protein",
@@ -243,9 +367,21 @@
    "Full Heal",
    "Super Repel"
   ],
+  "prices": {
+   "Ultra Ball": 1200,
+   "Great Ball": 600,
+   "Super Potion": 700,
+   "Revive": 1500,
+   "Full Heal": 600,
+   "Super Repel": 500
+  },
   "counters": [
    {
     "label": "FuchsiaMartClerkText",
+    "at": [
+     0,
+     5
+    ],
     "items": [
      "Ultra Ball",
      "Great Ball",
@@ -267,9 +403,22 @@
    "Full Heal",
    "Revive"
   ],
+  "prices": {
+   "Ultra Ball": 1200,
+   "Great Ball": 600,
+   "Hyper Potion": 1500,
+   "Max Repel": 700,
+   "Escape Rope": 550,
+   "Full Heal": 600,
+   "Revive": 1500
+  },
   "counters": [
    {
     "label": "CinnabarMartClerkText",
+    "at": [
+     0,
+     5
+    ],
     "items": [
      "Ultra Ball",
      "Great Ball",
@@ -291,9 +440,21 @@
    "Full Heal",
    "Revive"
   ],
+  "prices": {
+   "Great Ball": 600,
+   "Hyper Potion": 1500,
+   "Max Repel": 700,
+   "Escape Rope": 550,
+   "Full Heal": 600,
+   "Revive": 1500
+  },
   "counters": [
    {
     "label": "SaffronMartClerkText",
+    "at": [
+     0,
+     5
+    ],
     "items": [
      "Great Ball",
      "Hyper Potion",
@@ -315,9 +476,22 @@
    "Revive",
    "Max Repel"
   ],
+  "prices": {
+   "Ultra Ball": 1200,
+   "Great Ball": 600,
+   "Full Restore": 3000,
+   "Max Potion": 2500,
+   "Full Heal": 600,
+   "Revive": 1500,
+   "Max Repel": 700
+  },
   "counters": [
    {
     "label": "IndigoPlateauLobbyClerkText",
+    "at": [
+     0,
+     5
+    ],
     "items": [
      "Ultra Ball",
      "Great Ball",

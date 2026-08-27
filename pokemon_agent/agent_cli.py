@@ -517,6 +517,10 @@ def action_lines(payload: dict) -> str:
         for key in ("no_damage", "locked_in"):
             if payload.get(key):
                 lines.append(f"  {payload[key]}")
+        # Under the moves, because it is the other thing this turn could be
+        # spent on and it is only ever sent on a wild encounter.
+        if payload.get("catch"):
+            lines.append(f"  catch: {payload['catch']}")
         menu, highlighted = payload.get("menu"), payload.get("highlighted")
         if menu == "other":
             # `other` is the reader saying neither battle menu is up, so there is
@@ -525,6 +529,11 @@ def action_lines(payload: dict) -> str:
             lines.append("no battle menu up - this frame is text or an animation")
         elif menu:
             lines.append(f"menu {menu} on {highlighted}" if highlighted else f"menu {menu}")
+    # Twelve maps in the game carry this and none of the others do, so it never
+    # competes with anything: on a mart floor it is the only line that says what
+    # standing there is for.
+    if payload.get("shop"):
+        lines.append(f"for sale  {payload['shop']}")
     if payload.get("screen_text"):
         lines.append(str(payload["screen_text"]))
     return "\n".join(lines)
@@ -565,6 +574,51 @@ def cmd_fight(args: argparse.Namespace, url: str) -> int:
 
 def cmd_run(args: argparse.Namespace, url: str) -> int:
     return _print_battle_result(fetch_json(url, "/battle/run", method="POST"), args.json)
+
+
+def cmd_catch(args: argparse.Namespace, url: str) -> int:
+    """Throw a ball at the wild Pokemon. No ball named means the weakest carried."""
+    payload = {"ball": " ".join(args.ball)} if args.ball else {}
+    answer = fetch_json(url, "/battle/catch", method="POST", payload=payload)
+    if args.json:
+        print(compact(answer))
+        return EXIT_OK
+    threw, species = answer.get("threw"), answer.get("species")
+    if answer.get("caught"):
+        print(f"caught {species} with a {threw}")
+    else:
+        print(f"threw a {threw}, {species} broke free  ({answer.get('balls_left')} left)")
+    print(action_lines(answer))
+    return EXIT_OK
+
+
+def split_buy_tokens(tokens: list[str]) -> tuple[str, int]:
+    """``poke buy poke ball 10`` as the item and the count.
+
+    The item is words and the count is a number, so a trailing number is the
+    count and everything before it is the name. Two positionals would have
+    argparse swallow the number into the name — and no item in the game ends in
+    a digit except the TMs, which are one token and never the last of several.
+    """
+    if len(tokens) > 1 and tokens[-1].isdigit():
+        return " ".join(tokens[:-1]), int(tokens[-1])
+    return " ".join(tokens), 1
+
+
+def cmd_buy(args: argparse.Namespace, url: str) -> int:
+    """Buy from the counter on this map. Walks to the till first if you are not at it."""
+    item, count = split_buy_tokens(list(args.item))
+    payload = {"item": item, "count": count}
+    answer = fetch_json(url, "/mart/buy", method="POST", payload=payload)
+    if args.json:
+        print(compact(answer))
+        return EXIT_OK
+    print(
+        f"bought {answer.get('count')} x {answer.get('bought')} for ${answer.get('spent')}"
+        f"  (${answer.get('money')} left, holding {answer.get('have')})"
+    )
+    print(action_lines(answer))
+    return EXIT_OK
 
 
 def cmd_state(args: argparse.Namespace, url: str) -> int:
@@ -907,6 +961,42 @@ def build_parser() -> argparse.ArgumentParser:
     run = subparsers.add_parser("run", parents=[common], help="flee the current battle")
     run.add_argument("--json", action="store_true", help="the whole payload instead of a summary")
     run.set_defaults(func=cmd_run)
+
+    catch = subparsers.add_parser(
+        "catch",
+        parents=[common],
+        help="throw a ball at the wild Pokemon, e.g. poke catch",
+        description=(
+            "Throw a ball. With no ball named it throws the weakest one you carry, "
+            "so a Poke Ball goes before a Great Ball and the Master Ball is never "
+            "spent by accident; name one to override.\n"
+            "The odds are already on every wild battle frame, under `catch`: what the "
+            "throw does now and what it does once the Pokemon is worn down. It refuses "
+            "in a trainer battle, where the ball bounces off and the turn is wasted."
+        ),
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+    )
+    catch.add_argument("ball", nargs="*", metavar="BALL")
+    catch.add_argument("--json", action="store_true", help="the whole payload instead of a summary")
+    catch.set_defaults(func=cmd_catch)
+
+    buy = subparsers.add_parser(
+        "buy",
+        parents=[common],
+        help="buy from the mart you are standing in, e.g. poke buy poke ball 10",
+        description=(
+            "Buy from the counter on this map. A unique prefix is enough, so "
+            "`poke buy poke` and `poke buy 'poke ball'` are the same call.\n"
+            "You do not have to be at the till: it walks to the counter, talks to the "
+            "clerk, picks the quantity and confirms, then backs out to the overworld. "
+            "It refuses if the map is not a mart, if this counter does not stock the "
+            "item, or if the money will not cover it — and says what it will cover."
+        ),
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+    )
+    buy.add_argument("item", nargs="+", metavar="ITEM [COUNT]")
+    buy.add_argument("--json", action="store_true", help="the whole payload instead of a summary")
+    buy.set_defaults(func=cmd_buy)
 
     state = subparsers.add_parser("state", parents=[common], help="party, bag, badges, position")
     state.add_argument("--json", action="store_true", help="raw payload")

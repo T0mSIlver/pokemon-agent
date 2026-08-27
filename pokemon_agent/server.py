@@ -21,7 +21,7 @@ from collections import deque
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 from pathlib import Path
-from typing import Any, Optional, Set
+from typing import Any, Optional, Sequence, Set
 
 from fastapi import FastAPI, HTTPException, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
@@ -50,7 +50,13 @@ from pokemon_agent.intervention_loop import (
     build_slot_client,
     pi_thinker,
 )
-from pokemon_agent.memory.red import MAP_NAMES, MOVE_NAMES
+from pokemon_agent.memory.red import (
+    BAG_ITEM_CAPACITY,
+    BALL_ITEM_IDS,
+    ITEM_NAMES,
+    MAP_NAMES,
+    MOVE_NAMES,
+)
 from pokemon_agent.milestones import MilestoneTracker
 from pokemon_agent.pi_supervisor import NoLiveSessionError, PiSupervisor
 from pokemon_agent.pockets import PocketGraph
@@ -220,6 +226,19 @@ class BattleFightRequest(BaseModel):
     """Body for POST /battle/fight."""
 
     move: str
+
+
+class BattleCatchRequest(BaseModel):
+    """Body for POST /battle/catch. No ball named means the weakest one carried."""
+
+    ball: Optional[str] = None
+
+
+class MartBuyRequest(BaseModel):
+    """Body for POST /mart/buy."""
+
+    item: str
+    count: int = 1
 
 
 class PiSupervisorStartRequest(BaseModel):
@@ -1075,6 +1094,62 @@ def _battle_facts(state: dict) -> dict:
     return facts
 
 
+def _catch_line(state: dict) -> Optional[str]:
+    """What a ball would do to the Pokemon on the field, or how to get one.
+
+    One line, in the payload rather than behind a verb, for the same reason
+    `_battle_facts` is: the run this was measured on never once asked a question
+    it was not already being handed the answer to. It carried a Poke Ball for 33
+    hours through hundreds of wild encounters, threw it none of them, finished
+    with one Pokemon and 40 whiteouts, and no payload it ever read mentioned
+    that a ball was in the bag or what throwing one would do.
+
+    Both halves are actionable. With balls it is the odds now against the odds
+    after one more hit, which is the whole decision. Without them it is the
+    price beside the money, because "no Poke Balls" was already true and already
+    known, and $7,198 sat unspent beside it the entire run.
+    """
+    battle = state.get("battle") or {}
+    if battle.get("type") != "wild":
+        return None  # a trainer's Pokemon cannot be caught at all
+    enemy = battle.get("enemy") or {}
+    if not enemy.get("max_hp"):
+        return None
+    bag = state.get("bag") or []
+    try:
+        payload = capabilities.catch_payload(battle, bag, enemy.get("catch_rate") or 0)
+    except Exception:  # noqa: BLE001 — perception must never fail a state read
+        return None
+    if not payload["balls"]:
+        money = int((state.get("player") or {}).get("money") or 0)
+        price = capabilities.cheapest_ball_price()
+        return f"no balls in the bag: ${money} buys {min(99, money // price)} at a Poke Mart"
+    rows = [
+        f"{row['ball']} x{row['held']} {row['now']:.0%} now / {row['weakened']:.0%} worn down"
+        for row in payload["balls"]
+    ]
+    return "; ".join(rows) + " — poke catch"
+
+
+def _shop_line(state: dict) -> Optional[str]:
+    """A mart's price list against the money in hand, on every frame inside one.
+
+    A mart is twelve maps out of 223, so this costs nothing anywhere else, and
+    on those twelve it is the only thing that turns standing in a shop into
+    buying something. The run walked into Vermilion Mart with $7,198 and left
+    with $7,198.
+    """
+    money = (state.get("player") or {}).get("money")
+    try:
+        payload = capabilities.shop_payload((state.get("map") or {}).get("map_name"), money)
+    except Exception:  # noqa: BLE001 — not a mart is the common case, not an error
+        return None
+    rows = [f"{row['item']} {row['price']}" for row in payload["stock"] if row.get("price")]
+    if not rows:
+        return None
+    return f"${payload['money']}: " + ", ".join(rows) + " — poke buy <item> <n>"
+
+
 def _observation_summary(bundle: Optional[dict]) -> dict:
     """Where the player is and what it may do next — the whole model-facing payload.
 
@@ -1117,6 +1192,11 @@ def _observation_summary(bundle: Optional[dict]) -> dict:
     exits = _exits(snapshot)
     if exits:
         summary["exits"] = exits
+
+    # What is for sale here, if anything is. See _shop_line.
+    shop = _shop_line(state)
+    if shop:
+        summary["shop"] = shop
 
     # What press_a would hit. "object" is an NPC or item ball, "sign" is readable.
     # Anything else is scenery and not worth a button.
@@ -1170,7 +1250,7 @@ def _observation_summary(bundle: Optional[dict]) -> dict:
         # battle`, which is the payload contradicting itself. 26 bytes there,
         # 70 on Route 4, on every frame of every fight. The exit has not moved
         # and the overworld answer names it again the moment the fight ends.
-        for key in ("on_warp", "warp", "faces", "exits"):
+        for key in ("on_warp", "warp", "faces", "exits", "shop"):
             summary.pop(key, None)
         # Facing goes with them, and says so: see FACING_UNREAD_IN_BATTLE. It is
         # the one field here that a battle frame holds a *wrong* value for.
@@ -1202,6 +1282,10 @@ def _observation_summary(bundle: Optional[dict]) -> dict:
             summary["your_moves"] = move_names
         # Priced, where the numbers are readable. Replaces the bare names above.
         summary.update(_battle_facts(state))
+        # The other thing a wild encounter is for. See _catch_line.
+        catch = _catch_line(state)
+        if catch:
+            summary["catch"] = catch
 
         # Which menu is open and which entry A would fire. Perception, not advice:
         # the move cursor remembers where it was last turn and wraps at both ends,
@@ -1912,6 +1996,29 @@ def battle_run_keys() -> list[str]:
     return ["press_down", "press_down", "press_right", "press_right", "press_a"]
 
 
+#: From any of the four top-menu entries to ITEM, and open the bag. ITEM sits
+#: under FIGHT, so it is the corner walk RUN uses with the column pressed the
+#: other way.
+BATTLE_OPEN_BAG = ("press_down", "press_down", "press_left", "press_left", "press_a")
+
+
+def item_list_walk_keys(target_index: int, current_index: int) -> list[str]:
+    """The presses that move an open item list from one row to another.
+
+    One function for the bag and for a mart counter, because they are one
+    widget. It remembers where its cursor was left, exactly as the move list
+    does — measured: a second `poke catch` in the same fight opened the bag
+    already on row 1, and a walk that assumed row 0 pressed Down once more and
+    landed on row 2, one entry past the Poke Ball. Unlike the move list it does
+    *not* wrap, so the direction is the sign of the difference and over-running
+    is not a way round.
+    """
+    if target_index < 0 or current_index < 0:
+        raise ValueError(f"row {min(target_index, current_index)} is not a list row")
+    steps = target_index - current_index
+    return ["press_down" if steps > 0 else "press_up"] * abs(steps)
+
+
 def _battle_state_sync() -> dict:
     return (_reader.read_battle() if _reader is not None else None) or {}
 
@@ -2079,6 +2186,434 @@ def _battle_run_sync() -> dict:
         _execute_action_sync(key)
     _settle_battle_sync()
     return {"actions": keys, "fled": not _battle_state_sync().get("in_battle")}
+
+
+def _tick_until(predicate, *, rounds: int = 20, frames: int = 20) -> bool:
+    """Let the game run until *predicate* holds. True if it did.
+
+    Every step of a purchase is a screen being drawn, and a press sent before
+    the screen is there is eaten with no error: pressing A on "That will be
+    $2000. OK?" one beat early left the money at $7198 and the bag unchanged,
+    while every menu byte still read exactly as though the purchase had worked.
+    """
+    for _ in range(rounds):
+        if predicate():
+            return True
+        _emulator.tick(frames)
+    return bool(predicate())
+
+
+def _read_dialog_active_sync() -> bool:
+    return bool((_reader.read_dialog() or {}).get("active"))
+
+
+#: How long a thrown ball takes to resolve. The wobble animation, the text under
+#: it and the nickname prompt on a capture are all longer than a move's, so the
+#: eight presses `_settle_battle_sync` allows a turn run out mid-shake.
+CATCH_SETTLE_MAX_PRESSES = 24
+
+
+def _resolve_ball_sync(named: Optional[str], bag: list[dict]) -> dict:
+    """Which ball to throw, and where it sits in the bag.
+
+    With nothing named this is the weakest ball carried, because the balls form
+    a price ladder and the cheap one is usually enough: a Poke Ball at a Pidgey
+    on half HP is better than even odds, and the Ultra Balls are for the fights
+    that only come once.
+    """
+    carried = {entry["id"]: entry for entry in bag}
+    by_name = {name.lower(): spec for name, spec in capabilities.BALLS.items()}
+    if named:
+        spec = by_name.get(named.strip().lower())
+        if spec is None:
+            raise HTTPException(
+                status_code=400,
+                detail=f"No ball called {named!r}. Balls: {', '.join(capabilities.BALLS)}.",
+            )
+        if spec["id"] not in carried:
+            raise HTTPException(
+                status_code=409,
+                detail=f"No {named} in the bag. Carrying: {_ball_stock_note(bag)}.",
+            )
+        chosen = spec["id"]
+    else:
+        chosen = next((ball for ball in BALL_ITEM_IDS if ball in carried), None)
+        if chosen is None:
+            raise HTTPException(status_code=409, detail=_no_balls_note())
+    index = _reader.bag_index_of(chosen)
+    if index is None:  # unreachable: the id came out of the bag we just read
+        raise HTTPException(status_code=409, detail="That ball is no longer in the bag.")
+    return {"id": chosen, "name": carried[chosen]["item"], "index": index}
+
+
+def _ball_stock_note(bag: list[dict]) -> str:
+    held = [f"{e['item']} x{e['quantity']}" for e in bag if e["id"] in BALL_ITEM_IDS]
+    return ", ".join(held) or "no balls at all"
+
+
+def _no_balls_note() -> str:
+    """Why a throw is impossible, said as the thing to do about it.
+
+    A refusal that only says "no Poke Balls" is a fact the agent already had.
+    The money and the price are the half it never joins up: one run reached
+    Vermilion with 7,198 unspent, one Poke Ball it never threw, and 501 of its
+    790 battle commands spent running away.
+    """
+    money = ((_get_state_dict().get("player") or {}).get("money")) or 0
+    price = capabilities.cheapest_ball_price()
+    return (
+        f"No balls in the bag, so there is nothing to throw. You have ${money}. "
+        f"A Poke Ball is ${price} at any Poke Mart (blue roof) — `poke buy poke ball 10` "
+        "inside one buys ten."
+    )
+
+
+def _battle_catch_sync(named: Optional[str]) -> dict:
+    """Open the bag mid-battle, throw a ball, and say whether it stuck."""
+    battle = _require_battle_sync()
+    if battle.get("type") != "wild":
+        raise HTTPException(
+            status_code=409,
+            detail=(
+                "This is a trainer battle. A thrown ball bounces off a trainer's "
+                "Pokemon and the turn is wasted — attack or run instead."
+            ),
+        )
+    bag = _reader.read_bag()
+    ball = _resolve_ball_sync(named, bag)
+    party_before = len(_reader.read_party())
+
+    _normalise_to_battle_menu_sync()
+    keys = list(BATTLE_OPEN_BAG)
+    for key in keys:
+        _execute_action_sync(key)
+    if not _tick_until(_reader.at_bag_list):
+        raise HTTPException(
+            status_code=409,
+            detail="The bag did not open from the battle menu. Nothing was used. Read the frame.",
+        )
+    # Where the list actually opened, not where it ought to have. Everything
+    # before the confirming press is free to get wrong and fix; after it an item
+    # has been spent, so the check goes here and nowhere else.
+    walk = item_list_walk_keys(ball["index"], _reader.read_list_menu()["index"])
+    for key in walk:
+        _execute_action_sync(key)
+    keys.extend(walk)
+    menu = _reader.read_list_menu()
+    if not (menu["open"] and menu["index"] == ball["index"]):
+        raise HTTPException(
+            status_code=409,
+            detail=(
+                f"The bag list is not sitting on {ball['name']} (row {ball['index']}); "
+                f"it reads row {menu['index']}. Nothing was used, so no turn was spent. "
+                "Read the frame."
+            ),
+        )
+    keys.append("press_a")
+    # No postcondition on wCurItem after this press, unlike `poke fight`'s on
+    # wPlayerSelectedMove. A successful capture runs the nickname and Pokedex
+    # routines, which reuse that byte: the sixth throw of this demonstration
+    # caught an Oddish and left 185 in wCurItem, so the check called a catch a
+    # failure while "ODDISH was caught!" was on the screen. The cursor read
+    # above is the one that can be trusted, and it is taken before anything is
+    # spent. What happened afterwards is read off the bag and the party below.
+    _execute_action_sync(keys[-1])
+
+    # B, never A. A successful capture ends with "Do you want to give a nickname
+    # to ODDISH?" over a YES/NO box whose cursor opens on YES, so a settle that
+    # mashes A walks into the name-entry keyboard and types whatever it lands
+    # on. B advances Gen 1 text exactly as A does and answers that box NO, which
+    # is the only answer this harness has any business giving.
+    for _ in range(CATCH_SETTLE_MAX_PRESSES):
+        _emulator.tick(30)
+        if _reader.at_battle_top_menu():
+            break
+        if not _battle_state_sync().get("in_battle") and not _read_dialog_active_sync():
+            break
+        _execute_action_sync("press_b")
+    else:
+        _emulator.tick(60)
+
+    party_after = _reader.read_party()
+    in_battle = bool(_battle_state_sync().get("in_battle"))
+    caught = len(party_after) > party_before
+    if not caught and party_before >= 6:
+        # A sixth Pokemon goes to the box, where nothing this reader can see
+        # counts it. The battle ending with the lead still standing is the
+        # remaining evidence, and it is said as evidence rather than as fact.
+        caught = not in_battle and bool((party_after[0] or {}).get("hp"))
+    remaining = next((e["quantity"] for e in _reader.read_bag() if e["id"] == ball["id"]), 0)
+    return {
+        "threw": ball["name"],
+        "caught": caught,
+        "species": (battle.get("enemy") or {}).get("species"),
+        "balls_left": remaining,
+        "in_battle": in_battle,
+        "actions": keys,
+    }
+
+
+# ---------------------------------------------------------------------------
+# Marts
+# ---------------------------------------------------------------------------
+
+#: A presses allowed to get from the quantity box to the YES/NO prompt.
+PURCHASE_PROMPT_MAX_PRESSES = 4
+
+
+def _mart_stand_tiles_sync(counter: dict) -> list[tuple[int, int]]:
+    """The tiles you can talk to this counter's clerk from, nearest first.
+
+    A clerk stands *behind* the till, and the till itself is a talk-over tile —
+    solid to walk on, transparent to an A press. So the tile to stand on is two
+    out, not one: measured in Vermilion Mart, where the clerk is at (0,5), the
+    counter fills (1,5) and the purchase happens from (2,5) facing left.
+    Distance 1 is offered too because nothing guarantees every counter in the
+    game is one tile deep, and both directions on both axes because the town
+    marts face right off their till and the Celadon floors face down off theirs.
+    """
+    x, y = int(counter["at"][0]), int(counter["at"][1])
+    return [
+        (x + dx * step, y + dy * step)
+        for step in (2, 1)
+        for dx, dy in ((1, 0), (-1, 0), (0, 1), (0, -1))
+    ]
+
+
+def _mart_face(clerk: tuple[int, int], stand: tuple[int, int]) -> str:
+    """The direction that turns the player from *stand* toward the clerk."""
+    if clerk[0] < stand[0]:
+        return "left"
+    if clerk[0] > stand[0]:
+        return "right"
+    return "up" if clerk[1] < stand[1] else "down"
+
+
+def _resolve_stock_item(wanted: str, ids: Sequence[int]) -> int:
+    """The row a named item sits on at this counter: exact name, then unique prefix."""
+    names = [ITEM_NAMES.get(item_id, f"???({item_id})") for item_id in ids]
+    listing = ", ".join(names) or "nothing"
+    text = wanted.strip().lower()
+    if not text:
+        raise HTTPException(status_code=400, detail=f"No item named. This counter sells {listing}.")
+    lowered = [name.lower() for name in names]
+    if text in lowered:
+        return lowered.index(text)
+    hits = [index for index, name in enumerate(lowered) if name.startswith(text)]
+    if len(hits) == 1:
+        return hits[0]
+    if len(hits) > 1:
+        matched = ", ".join(names[index] for index in hits)
+        raise HTTPException(
+            status_code=400,
+            detail=f"{wanted!r} matches more than one item: {matched}. Spell out more of it.",
+        )
+    raise HTTPException(
+        status_code=409,
+        detail=f"This counter does not sell {wanted!r}. It sells {listing}.",
+    )
+
+
+def _mart_leave_sync() -> None:
+    """Back out to the overworld, so the frame after a purchase is one you can walk from.
+
+    Four levels to climb out of: the quantity roller, the item list,
+    BUY/SELL/QUIT, and the clerk's parting line. B is inert once you are outside
+    all of them, so over-pressing costs nothing and under-pressing costs the
+    next command: a buy that stopped one level early left the counter on screen
+    and the following `poke goto` was refused with "a text box is open".
+
+    The dialog flag alone is not the test. It reads false for a frame while the
+    list redraws, and trusting that single read is what left the list up. So the
+    counter has to be gone as well, and the frame after it has to agree.
+    """
+    for _ in range(8):
+        _execute_action_sync("press_b")
+        _emulator.tick(30)
+        if _reader.at_mart_counter() or _read_dialog_active_sync():
+            continue
+        _emulator.tick(30)
+        if not _read_dialog_active_sync():
+            return
+
+
+def _open_mart_counter_sync(shop: dict) -> None:
+    """Walk to a counter and talk to the clerk behind it.
+
+    This is the half that decides whether buying happens at all. The verb that
+    only worked from the one tile in front of the till is a verb the agent has
+    to find that tile for first, in a room with three identical NPCs in it —
+    and across 33 hours the run walked into a mart and bought nothing. The
+    clerk's tile is in the game data, so the walk is a short search around it.
+    """
+    snapshot = _navigation_snapshot_sync()
+    if not snapshot:
+        raise HTTPException(
+            status_code=503, detail="The map is not readable right now, so no walk can be planned."
+        )
+    collision = capabilities.collision_from(snapshot, _explored_grid(snapshot.get("map_id")))
+    start = _player_coord_sync()
+    if start is None:
+        raise HTTPException(status_code=503, detail="The player's tile is not readable right now.")
+    walkable = collision.get("walkable") or set()
+    best: Optional[tuple[list[str], tuple[int, int], tuple[int, int]]] = None
+    for counter in shop.get("counters") or ():
+        clerk = (int(counter["at"][0]), int(counter["at"][1]))
+        for stand in _mart_stand_tiles_sync(counter):
+            # Only a tile you can stand on. `plan_within` will happily plan a
+            # walk that *ends by stepping into* an unwalkable goal, which is the
+            # right answer for a door and the wrong one here: the till is solid,
+            # so that plan stops one tile short and the walk reads as a failure.
+            if stand not in walkable:
+                continue
+            plan = capabilities.plan_within(collision, start, stand)
+            if plan is None:
+                continue
+            if best is None or len(plan) < len(best[0]):
+                best = (plan, stand, clerk)
+    if best is None:
+        raise HTTPException(
+            status_code=409,
+            detail=(
+                "No walkable tile beside any counter on this map can be reached from "
+                f"{start}. Walk toward the till and ask again."
+            ),
+        )
+    plan, stand, clerk = best
+    for action in plan:
+        _execute_action_sync(action)
+    if _player_coord_sync() != stand:
+        raise HTTPException(
+            status_code=409,
+            detail=f"The walk to the counter stopped at {_player_coord_sync()}, not {stand}.",
+        )
+    # Face the clerk. Walking into the till is refused by collision, which is
+    # exactly what turns the player without moving them.
+    _execute_action_sync(f"walk_{_mart_face(clerk, stand)}")
+    _execute_action_sync("press_a")
+    # Two screens before the list: the clerk's greeting, then BUY/SELL/QUIT with
+    # BUY already under the cursor.
+    _tick_until(_reader.at_buy_sell_quit)
+    _execute_action_sync("press_a")
+
+
+def _mart_buy_sync(item: str, count: int) -> dict:
+    """Walk to the till if needed, buy *count* of *item*, and check the money moved."""
+    if not 1 <= count <= 99:
+        raise HTTPException(status_code=400, detail=f"Buy between 1 and 99 at a time, not {count}.")
+    map_name = _current_map_name_sync()
+    shop = capabilities.shop_at(map_name)
+    if shop is None:
+        raise HTTPException(
+            status_code=409,
+            detail=(
+                f"{map_name} is not a Poke Mart, so there is no counter to buy from. "
+                "A mart is the building with the blue roof in every town."
+            ),
+        )
+    money_before = int((_reader.read_player() or {}).get("money") or 0)
+    bag_before = {entry["id"]: entry["quantity"] for entry in _reader.read_bag()}
+    if not _reader.at_mart_counter():
+        _open_mart_counter_sync(shop)
+    if not _tick_until(_reader.at_mart_counter):
+        raise HTTPException(
+            status_code=409,
+            detail="The counter did not open. Read the frame — something else is on screen.",
+        )
+
+    stock = _reader.read_shop_list()
+    row = _resolve_stock_item(item, stock)
+    item_id = stock[row]
+    name = ITEM_NAMES.get(item_id, str(item_id))
+    price = (shop.get("prices") or {}).get(name)
+    if price and price * count > money_before:
+        affordable = money_before // price
+        raise HTTPException(
+            status_code=409,
+            detail=(
+                f"{count} x {name} costs ${price * count} and you have ${money_before}. "
+                f"You can afford {affordable}."
+            ),
+        )
+    if len(bag_before) >= BAG_ITEM_CAPACITY and item_id not in bag_before:
+        raise HTTPException(
+            status_code=409,
+            detail=f"The bag already holds {BAG_ITEM_CAPACITY} different items and {name} "
+            "is not one of them. Deposit something in an item PC first.",
+        )
+
+    # From wherever the list opened, not from row 0. A counter is the same
+    # widget as the bag and remembers its cursor the same way.
+    for key in item_list_walk_keys(row, _reader.read_list_menu()["index"]):
+        _execute_action_sync(key)
+    if _reader.read_list_menu()["index"] != row:
+        raise HTTPException(
+            status_code=409,
+            detail=f"The counter cursor would not settle on {name}. Nothing was bought.",
+        )
+    _execute_action_sync("press_a")
+    if not _tick_until(_reader.at_quantity_roller):
+        raise HTTPException(
+            status_code=409, detail=f"The quantity box never opened for {name}. Nothing was bought."
+        )
+    # The row is what was walked; this is what the game says it accepted. Money
+    # has not moved yet, so a mismatch here still costs nothing.
+    if _reader.selected_item_id() != item_id:
+        _mart_leave_sync()
+        raise HTTPException(
+            status_code=409,
+            detail=(
+                f"Asked for {name} but the counter opened its quantity box on item "
+                f"{_reader.selected_item_id()}. Nothing was bought."
+            ),
+        )
+    for _ in range(count - 1):
+        _execute_action_sync("press_up")
+    showing = _reader.item_quantity()
+    if showing != count:
+        _mart_leave_sync()
+        raise HTTPException(
+            status_code=409,
+            detail=f"The quantity box reads {showing}, not {count}. Nothing was bought.",
+        )
+    _execute_action_sync("press_a")
+    # "POKE BALL? That will be" pauses mid-sentence and waits for A before it
+    # prints the price and puts YES/NO up. Waiting on the prompt without
+    # advancing the text waits for ever; a fixed number of A presses runs past
+    # it and re-opens the quantity box on the entry underneath. So: advance
+    # only while the prompt is not there yet, and stop the instant it is.
+    for _ in range(PURCHASE_PROMPT_MAX_PRESSES):
+        if _reader.at_purchase_prompt():
+            break
+        _execute_action_sync("press_a")
+        _emulator.tick(20)
+    if not _reader.at_purchase_prompt():
+        raise HTTPException(
+            status_code=409,
+            detail=f"The 'That will be $...' prompt never appeared for {count} x {name}.",
+        )
+    _execute_action_sync("press_a")  # YES is where the prompt opens
+    _tick_until(lambda: int((_reader.read_player() or {}).get("money") or 0) != money_before)
+    _mart_leave_sync()
+
+    money_after = int((_reader.read_player() or {}).get("money") or 0)
+    bag_after = {entry["id"]: entry["quantity"] for entry in _reader.read_bag()}
+    gained = bag_after.get(item_id, 0) - bag_before.get(item_id, 0)
+    if gained <= 0:
+        raise HTTPException(
+            status_code=409,
+            detail=(
+                f"The bag still holds {bag_after.get(item_id, 0)} x {name} and the money "
+                f"read ${money_after}. Nothing was bought — read the frame."
+            ),
+        )
+    return {
+        "bought": name,
+        "count": gained,
+        "spent": money_before - money_after,
+        "money": money_after,
+        "have": bag_after.get(item_id, 0),
+    }
 
 
 async def _run_battle_sequence(intent: dict, func, *args) -> dict:
@@ -2706,6 +3241,72 @@ async def battle_run():
         raise HTTPException(status_code=400, detail=str(e))
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Battle error: {e}")
+
+
+@app.post("/battle/catch")
+async def battle_catch(req: BattleCatchRequest):
+    """Throw a ball at the wild Pokemon on the field.
+
+    The bag is reachable from the battle menu with the d-pad and always was, so
+    this endpoint is not new capability — it is the capability said out loud.
+    Across one 33-hour run the agent carried a Poke Ball through hundreds of
+    wild encounters, threw it none of them, and ran from 501 of 790 battle
+    commands; the only two verbs it had were `fight` and `run`, and
+    `a_until_dialog_end` is refused in a battle precisely because it opens this
+    menu by accident.
+    """
+    _ensure_emulator()
+    try:
+        result = await _run_battle_sequence(
+            {"catch": req.ball or "any"}, _battle_catch_sync, req.ball
+        )
+        outcome = result["outcome"]
+        return {
+            "threw": outcome["threw"],
+            "caught": outcome["caught"],
+            "species": outcome["species"],
+            "balls_left": outcome["balls_left"],
+            **_observation_summary(result["bundle"]),
+        }
+    except HTTPException:
+        raise
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    except Exception as e:  # noqa: BLE001
+        raise HTTPException(status_code=500, detail=f"Battle error: {e}")
+
+
+@app.post("/mart/buy")
+async def mart_buy(req: MartBuyRequest):
+    """Buy from the counter on this map, walking to the till first if need be."""
+    _ensure_emulator()
+    if await _run_emulator_sync(_in_battle_sync):
+        raise HTTPException(status_code=409, detail="In a battle. Nothing here is for sale.")
+    _check_action_rate()
+    try:
+        result = await _coordinator.battle_and_observe(
+            func=_mart_buy_sync,
+            args=(req.item, req.count),
+            reason="mart_buy",
+            source="mart",
+        )
+    except capabilities.CapabilityError as exc:
+        raise _capability_error(exc) from exc
+    outcome = result["outcome"]
+    bundle = result["bundle"]
+    await _broadcast_runtime_refresh(result)
+    await _record_and_broadcast(
+        "action_result",
+        {
+            "actions": [],
+            "actions_executed": 0,
+            "source": "mart",
+            "intent": {"buy": req.item, "count": req.count},
+            "state_after": result["state_after"],
+            "screen_text": bundle.get("screen_text"),
+        },
+    )
+    return {**outcome, **_observation_summary(bundle)}
 
 
 def _saves_dir() -> Path:

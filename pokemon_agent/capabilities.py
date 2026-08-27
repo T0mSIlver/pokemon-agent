@@ -14,6 +14,7 @@ two as coroutines rather than reaching for the emulator itself.
 
 from __future__ import annotations
 
+import functools
 import math
 from typing import Any, Awaitable, Callable, Collection, Optional, Sequence
 
@@ -1554,6 +1555,166 @@ def calc_payload(
 
 
 # ---------------------------------------------------------------------------
+# Catching
+# ---------------------------------------------------------------------------
+
+#: Balls, by the two numbers ItemUseBall reads off them: the top of the range
+#: its first random roll is drawn from, and the divisor in the HP term. Ordered
+#: weakest first, which is also the order a ball is picked when none is named.
+BALLS: dict[str, dict[str, int]] = {
+    "Poke Ball": {"id": 4, "roll": 256, "factor": 12},
+    "Great Ball": {"id": 3, "roll": 201, "factor": 8},
+    "Ultra Ball": {"id": 2, "roll": 151, "factor": 12},
+    "Master Ball": {"id": 1, "roll": 256, "factor": 12},
+}
+
+#: What a status ailment is worth, subtracted from the first roll. Sleep and
+#: freeze are worth twice what the rest are, which is why "put it to sleep
+#: first" is the whole of Gen 1 catching strategy.
+STATUS_BONUS = (("SLP", 25), ("FRZ", 25), ("PAR", 12), ("BRN", 12), ("PSN", 12))
+
+
+def catch_chance(
+    ball: str,
+    catch_rate: int,
+    hp: int,
+    max_hp: int,
+    status: Optional[str] = None,
+) -> float:
+    """The exact probability that one throw of *ball* catches it, 0.0 to 1.0.
+
+    This is ItemUseBall from pokered transcribed, not the folk formula. It
+    matters that it is exact, because the number is the whole reason to throw:
+    a full-HP Pidgey is a coin flip and a full-HP Kadabra is one throw in
+    thirty, and "catch rate 255" does not tell those apart.
+
+    The engine draws Rand1 over a range that depends on the ball, subtracts the
+    status bonus, and captures outright if that goes negative. Otherwise the
+    throw needs Rand1 - bonus <= the catch rate, and then a second roll against
+    ``W``, which is the HP term::
+
+        W = ((max_hp * 255) // factor) // max(hp // 4, 1)
+
+    W > 255 captures without the second roll -- that is why a Pokemon at 1 HP is
+    nearly a certainty whatever it is -- and every division floors, so this
+    reproduces the engine's arithmetic rather than approximating it.
+    """
+    spec = BALLS.get(ball)
+    if spec is None:
+        raise NotFound(f"No ball called {ball!r}. Balls: {', '.join(BALLS)}.")
+    if ball == "Master Ball":
+        return 1.0
+    if max_hp <= 0 or hp <= 0:
+        return 0.0
+    bonus = 0
+    for name, value in STATUS_BONUS:
+        if name in (status or "").upper():
+            bonus = max(bonus, value)
+    rolls = spec["roll"]
+    # Rand1 below the bonus is an outright capture, before anything else is read.
+    certain = min(max(bonus, 0), rolls)
+    # Otherwise the roll has to land inside the catch rate, counted over the
+    # same range: Rand1 in [bonus, bonus + catch_rate], clipped to the range.
+    passing = max(0, min(rolls - 1, bonus + int(catch_rate)) - bonus + 1)
+    if not passing:
+        return certain / rolls
+    w = ((max_hp * 255) // spec["factor"]) // max(hp // 4, 1)
+    second = 1.0 if w > 255 else (w + 1) / 256
+    return (certain + passing * second) / rolls
+
+
+def catch_payload(battle: dict, bag: Sequence[dict], catch_rate: int) -> dict:
+    """What the balls in the bag would do against the Pokemon on the field.
+
+    Every ball carried gets a row, plus the odds once it is worn down to a
+    third of its HP, because that is the decision: throw now, or hit it once
+    more first. An empty bag is not an error -- it is a real answer with no
+    rows, and the caller is what decides to talk about money instead.
+
+    A trainer's Pokemon is refused outright rather than priced at zero: the ball
+    bounces off and the turn is wasted, so there is no number to print.
+    """
+    if not battle.get("in_battle"):
+        raise Conflict("Not in a battle. There is nothing to throw a ball at.")
+    if battle.get("type") != "wild":
+        raise Conflict("Only a wild Pokemon can be caught: a trainer blocks the ball.")
+    enemy = battle.get("enemy") or {}
+    max_hp = int(enemy.get("max_hp") or 0)
+    hp = int(enemy.get("hp") or 0)
+    if not max_hp:
+        raise Conflict("The enemy Pokemon is not readable yet — the battle is still starting.")
+    carried = {str(entry.get("item")): int(entry.get("quantity") or 0) for entry in bag}
+    rows = []
+    for name in BALLS:
+        held = carried.get(name, 0)
+        if held <= 0:
+            continue
+        rows.append(
+            {
+                "ball": name,
+                "held": held,
+                "now": catch_chance(name, catch_rate, hp, max_hp, enemy.get("status")),
+                "weakened": catch_chance(
+                    name, catch_rate, max(1, max_hp // 3), max_hp, enemy.get("status")
+                ),
+            }
+        )
+    return {
+        "species": enemy.get("species"),
+        "hp": [hp, max_hp],
+        "catch_rate": int(catch_rate),
+        "balls": rows,
+    }
+
+
+# ---------------------------------------------------------------------------
+# Marts
+# ---------------------------------------------------------------------------
+
+
+@functools.lru_cache(maxsize=1)
+def cheapest_ball_price() -> int:
+    """What the cheapest ball anywhere in the game costs.
+
+    Read out of the shop table rather than written down as 200, so it stays true
+    if the table is ever regenerated against a different ROM. It is the number
+    an empty bag is measured against: "$7,198" means nothing on its own and
+    "thirty-five Poke Balls" is a reason to walk into a shop. Cached because it
+    is a scan of every map and it is asked on every wild encounter.
+    """
+    prices = [
+        price
+        for name in gamedata.map_names()
+        for item, price in ((gamedata.shops(name) or {}).get("prices") or {}).items()
+        if item in BALLS and price
+    ]
+    return min(prices) if prices else 200
+
+
+def shop_at(map_name: Optional[str]) -> Optional[dict]:
+    """The mart on this map, or None. Stock is per map, so this is the whole answer."""
+    return gamedata.shops(str(map_name)) if map_name else None
+
+
+def shop_payload(map_name: Optional[str], money: Optional[int]) -> dict:
+    """A mart's stock, its prices, and the money standing next to them.
+
+    The money is in here rather than left to a separate `poke state` call
+    because the two are only useful together: "$7,198" and "Poke Ball 200" are
+    each half of a decision, and one 33-hour run held both halves in different
+    places and never made it. What it will not do is tell the agent what to buy;
+    a Repel and a Poke Ball are both defensible and the payload is not the thing
+    that should choose.
+    """
+    shop = shop_at(map_name)
+    if shop is None:
+        raise NotFound(f"{map_name} is not a mart. Nothing here is for sale.")
+    prices = shop.get("prices") or {}
+    stock = [{"item": item, "price": prices.get(item)} for item in shop.get("items") or ()]
+    return {"map": map_name, "money": int(money or 0), "stock": stock}
+
+
+# ---------------------------------------------------------------------------
 # /guide
 # ---------------------------------------------------------------------------
 
@@ -1828,10 +1989,23 @@ def gamedata_items(map_name: Optional[str], limit: Optional[int] = None) -> dict
 
 
 def gamedata_shops(map_name: Optional[str]) -> dict:
-    """What a mart sells. Empty stock is not an error: most maps sell nothing."""
+    """What a mart sells and what it charges. Empty stock is not an error.
+
+    Prices are here so a mart three towns away can be planned for — Lavender is
+    the first Great Balls in the game and Vermilion the first Super Potions —
+    which is the one thing the live `shop` line on a mart frame cannot answer,
+    because it only ever describes the floor you are standing on.
+    """
     resolved = _gamedata_map_name(map_name)
     shop = gamedata.shops(resolved)
-    return {"map": resolved, "items": list(shop.get("items") or ()) if shop else None}
+    if not shop:
+        return {"map": resolved, "items": None}
+    prices = shop.get("prices") or {}
+    return {
+        "map": resolved,
+        "items": list(shop.get("items") or ()),
+        "prices": {item: prices[item] for item in shop.get("items") or () if item in prices},
+    }
 
 
 def gamedata_types(move_type: Optional[str] = None, against: Optional[str] = None) -> dict:
@@ -1898,11 +2072,17 @@ def gamedata_payload(
 
 
 __all__ = [
+    "BALLS",
     "CapabilityError",
     "Conflict",
     "MAX_GOTO_ROUNDS",
     "NotFound",
     "calc_payload",
+    "catch_chance",
+    "cheapest_ball_price",
+    "catch_payload",
+    "shop_at",
+    "shop_payload",
     "canonical_map_name",
     "collision_from",
     "collision_basis",

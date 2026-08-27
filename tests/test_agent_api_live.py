@@ -226,7 +226,7 @@ def test_the_game_database_answers_over_http(live):
     assert live.game.move("Ember").damage_class == "special"
     assert live.game.encounters("Route 3").grass.rate == 20
     assert any(item.hidden for item in live.game.items("Viridian Forest"))
-    assert "Poke Ball" in live.game.shops("Pewter Mart")
+    assert live.game.shops("Pewter Mart")["Poke Ball"] == 200
     assert live.game.effectiveness("Water", ["Rock", "Ground"]) == 4.0
 
     with pytest.raises(agent_api.ServerError, match="Did you mean"):

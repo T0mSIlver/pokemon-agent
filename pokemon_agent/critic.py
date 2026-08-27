@@ -1383,7 +1383,9 @@ EXPLORED_STORE_FILENAME = "explored_maps.json"
 #: edit; the literal list is the fallback for when that introspection breaks.
 FALLBACK_VERBS = (
     "act",
+    "buy",
     "calc",
+    "catch",
     "fight",
     "frame",
     "frontier",

@@ -17,6 +17,8 @@ import poke
 s = poke.state()  # .map .position .facing .lead .hp
 if poke.sim("up:6", "right:3").ok:  # would that plan work?
     poke.walk("up:6", "right:3")  # walks it, splitting into legal batches
+poke.catch()  # throw a ball; r.catch on any battle result has the odds
+poke.buy("poke ball", 10)  # from the mart you are standing in
 poke.frontier()[:5]  # tiles here you have never stood on
 poke.game.trainers("Pewter Gym")  # who is in there and what they have
 poke.game.encounters("Route 3").grass  # what appears in the grass
@@ -200,6 +202,55 @@ vs Onix L14 43 HP (Rock/Ground)
 
 Run from a fight you cannot win — `incoming` close to your `hp`, nothing that damages it, a trainer's Pokemon far above your level — with `poke run`. Fleeing costs a turn and the experience you would have won.
 
+## Catching
+
+`poke catch` throws a ball at the wild Pokemon in front of you.
+
+```bash
+poke catch
+poke catch great ball
+```
+
+With no ball named it throws the weakest one you carry, so a Poke Ball goes before a Great Ball and the Master Ball is never spent by accident. It refuses in a trainer battle — the ball bounces off and the turn is wasted — and it refuses with an empty bag, saying what a ball costs and how many your money buys.
+
+Every wild battle answer already carries the odds, so you never have to ask:
+
+```
+BATTLE Charmeleon L33 vs Oddish L13 38/38 (Grass/Poison)
+  Ember Fire 25PP 66-78 x2 KO in 1
+  catch: Poke Ball x10 35% now / 100% worn down — poke catch
+```
+
+- `35% now` is the exact chance this throw works, out of the game's own formula: the species, the ball, its current HP and any status all count.
+- `100% worn down` is the same throw once it is down to about a third of its HP. Hitting it once and then throwing is nearly always the better turn, and against an easy species it is the difference between a coin flip and a certainty.
+- Sleep and freeze help most, paralysis, burn and poison about half as much. Against something hard to catch that is worth a turn — it is the only catching tactic Gen 1 has.
+- Wearing it down has a ceiling and the ceiling is the species, so `worn down` is what tells you whether the fight is worth having. A Pidgey at 1 HP is a certainty; a Chansey at 1 HP is one Poke Ball in eight, and no amount of further chipping moves that — sleep and a better ball each roughly double it, and even then you should expect to spend several.
+- When the bag has no balls the line says so, with the money and the price: `no balls in the bag: $7198 buys 35 at a Poke Mart`.
+
+**A second Pokemon is the difference between losing a fight and losing a run.** One Pokemon means one fainting is a whiteout. One run played 33 hours with a single Charmeleon, fled 501 of 790 battle commands, and whited out 40 times — while carrying an unthrown Poke Ball and $7,198 it never spent. Catch a second type early: something that resists what your lead is weak to.
+
+## Buying
+
+`poke buy <item> [count]` buys from the mart you are standing in.
+
+```bash
+poke buy poke ball 10
+poke buy potion 5
+```
+
+You do not have to find the till. It walks to the counter, talks to the clerk, picks the quantity, confirms, and backs out to the overworld. A unique prefix is enough, and a trailing number is the count.
+
+It refuses when the map is not a mart, when that counter does not stock the item — it lists what it does stock — and when the money will not cover it, saying how many you can afford.
+
+Every frame inside a mart carries the stock and the prices, so you never need a separate lookup:
+
+```
+Vermilion Mart (3,7) facing up
+for sale  $7198: Poke Ball 200, Super Potion 700, Ice Heal 250, Awakening 200, Parlyz Heal 200, Repel 350
+```
+
+Money is only useful spent. Stock up whenever you pass a mart: balls to catch with, potions to stay out longer. What is on sale changes town by town — Vermilion sells Super Potions, Lavender sells Great Balls — so buy the good stuff where it exists.
+
 ## Warps
 
 Warps in Pokemon Red are counter-intuitive, and this is the single most common way to get stuck. Standing next to a doorway does nothing. To use a warp:
@@ -279,7 +330,7 @@ Watch `hp` in every response. Below about a third of maximum you are one wild en
 
 Healing is a place, not a button. Every town has a Poke Center, the building with the red roof. Walk in, step to the counter, face the nurse, `press_a`, and answer the prompt. It is free and it fully restores your party.
 
-Buy Potions when you pass a Poke Mart (blue roof) and have money. Walking into tall grass with no healing items and a hurt lead Pokemon is how runs end.
+Buy Potions when you pass a Poke Mart (blue roof) and have money — `poke buy potion 5`, see Buying. Walking into tall grass with no healing items and a hurt lead Pokemon is how runs end.
 
 If your lead Pokemon faints you white out, lose money, and wake up at the last Poke Center. You keep your progress but lose the walk. Prefer heading back to heal over pushing on at low HP.
 
@@ -335,6 +386,8 @@ If the same action fails three times, stop repeating it. Something in your model
 ## The rest of `poke`
 
 - `poke fight <move>`: attack with a named move. `poke run` flees. Both under Battles above.
+- `poke catch [ball]`: throw a ball at a wild Pokemon. Under Catching above.
+- `poke buy <item> [count]`: buy from the mart you are standing in. Under Buying above.
 - `poke calc`: the same move table the battle payload already carries, on demand. Under Battles.
 - `poke sim <actions>`: try a plan against the collision map without spending it.
 - `poke route <map>`: which maps lie between here and there. `poke goto <map|x,y>` walks it.
