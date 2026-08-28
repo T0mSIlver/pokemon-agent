@@ -1527,6 +1527,16 @@ class Client:
 
         return Result.from_payload(self._act_json("/field/bike", {"on": bool(on)}))
 
+    def surf(self) -> Result:
+        """Ride onto the water you are facing.
+
+        Needs HM03 on a party Pokemon and the Soul Badge. Refused anywhere the
+        game will not start it, checked against the travel state afterwards
+        rather than assumed from the menu closing.
+        """
+
+        return Result.from_payload(self._act_json("/field/surf", {}))
+
     def buy(self, item: str, count: int = 1) -> Result:
         """Buy from the mart on this map, walking to the counter first if need be."""
 
@@ -1749,6 +1759,10 @@ def cut(x: Optional[int] = None, y: Optional[int] = None) -> Result:
     return client().cut(x, y)
 
 
+def surf() -> Result:
+    return client().surf()
+
+
 def buy(item: str, count: int = 1) -> Result:
     return client().buy(item, count)
 
@@ -1875,5 +1889,6 @@ __all__ = [
     "screenshot",
     "sim",
     "state",
+    "surf",
     "walk",
 ]

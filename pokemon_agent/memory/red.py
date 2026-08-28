@@ -1538,13 +1538,32 @@ class RedBlueMemoryReader(GameMemoryReader):
             for index in range(4)
             if data[8 + index] != 0
         ]
+        struct = self._read_battle_struct(ADDR_ENEMY_MON)
         return {
-            **self._read_battle_struct(ADDR_ENEMY_MON),
+            **struct,
             "moves": moves,
             # Half of whether this one is worth a ball, and free to read here.
             # Behind a separate call it is a number nobody ever asks for.
             "catch_rate": self.enemy_catch_rate(),
+            # The other half, and the half a run short of species needs: a ball
+            # thrown at a Pokemon already in the Pokedex buys a team member, and
+            # one thrown at a new species also buys a rung. HM05 Flash is gated
+            # on ten registered, and one run reached Vermilion holding three.
+            "registered": self.owns_species(struct.get("pokedex_id")),
         }
+
+    def owns_species(self, dex_id: Optional[int]) -> Optional[bool]:
+        """Whether a Pokedex number is registered as owned. ``None`` if unknown.
+
+        ``read_flags`` counts these bits and throws the identities away, which is
+        the count the frontier needs and not the fact a battle frame needs.
+        """
+        if not dex_id or dex_id < 1 or dex_id > 151:
+            return None
+        # The dex is a bit array, species N at bit N-1, LSB first per byte --
+        # the same order `read_bits` and pokered's flag_array use.
+        index = dex_id - 1
+        return bool(self.read_bits(ADDR_DEX_OWNED, index // 8 + 1)[index])
 
     # -- public interface ---------------------------------------------------
 

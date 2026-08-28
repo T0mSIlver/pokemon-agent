@@ -724,6 +724,17 @@ def cmd_bike(args: argparse.Namespace, url: str) -> int:
     return EXIT_OK
 
 
+def cmd_surf(args: argparse.Namespace, url: str) -> int:
+    """Ride onto the water in front of you."""
+    answer = fetch_json(url, "/field/surf", method="POST", payload={})
+    if args.json:
+        print(compact(answer))
+        return EXIT_OK
+    print("surfing" if answer.get("surfing") else "still on land")
+    print(action_lines(answer))
+    return EXIT_OK
+
+
 def cmd_cut(args: argparse.Namespace, url: str) -> int:
     """Cut down a small tree. Walks to it first."""
     payload: dict = {}
@@ -1194,6 +1205,22 @@ def build_parser() -> argparse.ArgumentParser:
     bike.add_argument("state", nargs="?", choices=("on", "off"), default="on")
     bike.add_argument("--json", action="store_true", help="the whole payload instead of a summary")
     bike.set_defaults(func=cmd_bike)
+
+    surf = subparsers.add_parser(
+        "surf",
+        parents=[common],
+        help="ride onto the water in front of you, e.g. poke surf",
+        description=(
+            "Surf onto the water you are facing. Needs HM03 on a party Pokemon and "
+            "the Soul Badge.\n"
+            "Like `poke cut`, the menu is driven by reading it rather than counting "
+            "presses, and the result is checked against the game's own travel state "
+            "before this reports success."
+        ),
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+    )
+    surf.add_argument("--json", action="store_true", help="the whole payload instead of a summary")
+    surf.set_defaults(func=cmd_surf)
 
     cut = subparsers.add_parser(
         "cut",

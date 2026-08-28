@@ -67,8 +67,14 @@ from pokemon_agent.memory.red import (
     MOVE_NAMES,
     ON_BIKE,
     ON_FOOT,
+    SURFING,
 )
-from pokemon_agent.milestones import MILESTONES_BY_ID, MilestoneTracker
+from pokemon_agent.milestones import (
+    COUNTED_REQUIREMENTS,
+    MILESTONES_BY_ID,
+    MilestoneTracker,
+    counted_shortfall,
+)
 from pokemon_agent.pathfinding import DIRECTIONS
 from pokemon_agent.pi_supervisor import NoLiveSessionError, PiSupervisor
 from pokemon_agent.pockets import PocketGraph
@@ -1381,7 +1387,50 @@ def _catch_line(state: dict) -> Optional[str]:
         f"{row['ball']} x{row['held']} {row['now']:.0%} now / {row['weakened']:.0%} worn down"
         for row in payload["balls"]
     ]
-    return "; ".join(rows) + " — poke catch"
+    line = "; ".join(rows) + " — poke catch"
+    why = _worth_catching(state, enemy)
+    return f"{line}. {why}" if why else line
+
+
+def _worth_catching(state: dict, enemy: dict) -> str:
+    """Why this one, beyond the odds. Empty when there is no reason beyond them.
+
+    The odds line above has been in the payload for a while and did not move
+    the behaviour: the run it was built for threw 7 balls in 1,944 battle calls
+    and fled 922 of them, finishing with one Pokemon and three species
+    registered. Odds answer "will it work". They do not answer "why bother",
+    and the answer to that had gone missing between two parts of the harness
+    that each knew half of it — the frontier knows Oak's aide wants ten species
+    and the battle frame knows which species is standing there.
+    """
+    if enemy.get("registered") is not False:
+        # None means the species could not be read; already-owned means the
+        # only argument left is the odds, which are printed either way.
+        return ""
+    species = enemy.get("species") or "this one"
+    flags = state.get("flags") or {}
+    # No check against rungs already held: the shortfall is the check. A run
+    # cannot be holding HM05 and be short of the ten species it is handed for,
+    # and the state dict carries no milestone list to test against anyway — a
+    # condition that can never be false is the bug this file keeps finding.
+    owed = [
+        (MILESTONES_BY_ID[rung].label, counted_shortfall(rung, flags))
+        for rung in COUNTED_REQUIREMENTS
+        if counted_shortfall(rung, flags)
+    ]
+    if not owed:
+        return f"{species} is not in the Pokedex yet"
+    label, short = owed[0]
+    wanted = short.split(" ", 1)[0]
+    have = short.rsplit(" ", 1)[-1]
+    try:
+        left = int(wanted) - int(have)
+    except ValueError:
+        return f"{species} is not in the Pokedex yet, and {label} wants {short}"
+    return (
+        f"{species} is not in the Pokedex yet, and {label} wants {short} "
+        f"— {left} more registered opens it"
+    )
 
 
 def _shop_line(state: dict) -> Optional[str]:
@@ -3012,112 +3061,26 @@ def _front_tile_sync() -> tuple[Optional[tuple[int, int]], Optional[int], Option
     return front, terrain["tile_ids"].get(front), terrain.get("tileset")
 
 
-def _field_cut_sync(tree: tuple[int, int], facing: str) -> dict:
-    """Face the tree, use Cut from the party menu, and check the tree is gone.
+def _settle_for_menu_sync() -> None:
+    """Let whatever just happened finish before opening a menu.
 
-    Every step is read back off the cartridge rather than assumed, because the
-    failure this replaces was not a wrong button — it was a model reading the
-    160x144 screen, misreading `CUT STATS SWITCH CANCEL` as `FIGHT STATUS SWITCH
-    CANCEL`, and concluding from that that Gen 1 has no field moves at all.
+    START pressed into an animation is eaten with no error, and the driver then
+    reads wTopMenuItemY, finds no menu and refuses a call that would have worked
+    a beat later. Measured against the cartridge: `poke bike` immediately after
+    `poke cut` answered "Pressing START did not open the main menu", and the
+    identical call one wait later rode the bike.
+
+    A spurious refusal is not harmless here. The behaviour this whole area
+    exists to fix is a model trying a capability twice, being told no, and
+    concluding the capability does not exist.
+
+    The dialog flag alone is not the test — it reads clear while the cut
+    animation is still playing, and a settle keyed on it returned instantly and
+    changed nothing. `settle` waits on the emulator coming to rest, which is
+    what "the game will take a button now" actually means.
     """
-    party = _reader.read_party() or []
-    slot = next(
-        (
-            index
-            for index, mon in enumerate(party)
-            if capabilities.field_move_row(mon.get("moves") or [], "cut") is not None
-        ),
-        None,
-    )
-    if slot is None:
-        carried = ", ".join(str(mon.get("species")) for mon in party) or "nothing"
-        raise HTTPException(
-            status_code=409,
-            detail=(
-                f"No Pokemon in the party knows Cut, so there is nothing to cut with. "
-                f"Carrying: {carried}. HM01 teaches it."
-            ),
-        )
-    row = capabilities.field_move_row(party[slot].get("moves") or [], "cut")
-
-    # Turn to face it. The tree is solid, so this press turns and does not walk.
-    spent = _menu_presses_sync([f"walk_{facing}"])
-    landed = str(_reader.read_facing() or "").lower()
-    if landed != facing:
-        raise HTTPException(
-            status_code=409,
-            detail=f"Asked to face {facing} to cut {list(tree)} but ended up facing {landed}.",
-        )
-
-    spent += _menu_presses_sync(["press_start"])
-    if _menu_top_y_sync() != START_MENU_TOP_Y:
-        _escape_menus_sync()
-        raise HTTPException(
-            status_code=409,
-            detail="Pressing START did not open the main menu. Nothing was confirmed.",
-        )
-    spent += _walk_cursor_to_sync(START_MENU_POKEMON_ROW, what="POKEMON")
-    spent += _menu_presses_sync(["press_a"])
-    if _menu_top_y_sync() != PARTY_MENU_TOP_Y:
-        _escape_menus_sync()
-        raise HTTPException(
-            status_code=409, detail="The party list did not open. Nothing was confirmed."
-        )
-    spent += _walk_cursor_to_sync(slot, what=str(party[slot].get("species")))
-    spent += _menu_presses_sync(["press_a"])
-    if _menu_top_y_sync() != FIELD_MOVE_MENU_TOP_Y:
-        _escape_menus_sync()
-        raise HTTPException(
-            status_code=409,
-            detail=(f"{party[slot].get('species')}'s menu did not open. Nothing was confirmed."),
-        )
-    # The submenu is the mon's field moves and then STATS, SWITCH, CANCEL, so
-    # this many rows is what a moveset with `row` field moves before Cut looks
-    # like. A mismatch means the row worked out from the moveset is not the row
-    # the game drew, and confirming it would use the wrong move.
-    field_moves = sum(
-        1
-        for slot_move in party[slot].get("moves") or []
-        if str(slot_move.get("name") or "").lower() in capabilities.FIELD_MOVES
-    )
-    if _emulator.read_u8(ADDR_MAX_MENU_ITEM) != field_moves + 2:
-        _escape_menus_sync()
-        raise HTTPException(
-            status_code=409,
-            detail=(
-                f"{party[slot].get('species')}'s menu has "
-                f"{_emulator.read_u8(ADDR_MAX_MENU_ITEM) + 1} rows, not the "
-                f"{field_moves + 3} its moves say it should. Nothing was confirmed."
-            ),
-        )
-    spent += _walk_cursor_to_sync(row, what="CUT")
-    spent += _menu_presses_sync(["press_a", "a_until_dialog_end"])
-
-    terrain = _emulator._read_map_terrain()
-    if tree in terrain["walkable"]:
-        return {
-            "cut": list(tree),
-            "used": party[slot].get("species"),
-            "slot": slot + 1,
-            "presses": spent,
-        }
-    _escape_menus_sync()
-    raise HTTPException(
-        status_code=409,
-        detail=(
-            f"The tree at {list(tree)} is still standing after Cut was chosen from "
-            f"{party[slot].get('species')}'s menu. Nothing about the map changed. "
-            "Read the frame before trying again."
-        ),
-    )
-
-
-#: The bag list, by wTopMenuItemY. Its cursor is a row *within the visible
-#: window*, so the item under it is ``wCurrentMenuItem + wListScrollOffset``.
-#: Measured against the cartridge in `tests/test_field_moves_live.py`.
-BAG_MENU_TOP_Y = 4
-#: Row of ITEM in the start menu, below POKEDEX and POKEMON.
-START_MENU_ITEM_ROW = 2
+    _emulator.settle()
+    _tick_until(lambda: not _read_dialog_active_sync(), rounds=12, frames=20)
 
 
 def _menu_presses_sync(actions: Sequence[str]) -> int:
@@ -3136,11 +3099,19 @@ def _menu_presses_sync(actions: Sequence[str]) -> int:
     return spent
 
 
+#: The bag list, by wTopMenuItemY. Its cursor is a row *within the visible
+#: window*, so the item under it is ``wCurrentMenuItem + wListScrollOffset``.
+#: Measured against the cartridge in `tests/test_field_moves_live.py`.
+BAG_MENU_TOP_Y = 4
+#: Row of ITEM in the start menu, below POKEDEX and POKEMON.
+START_MENU_ITEM_ROW = 2
+
+
 def _field_bike_sync(want: int) -> dict:
     """Use the Bicycle from the bag, and check the game agrees you are on it.
 
-    Same four screens as Cut and the same rule: read the menu rather than count
-    presses. The bag list adds a scroll offset, because its cursor is a row on
+    Same shape as the field moves and the same rule: read the menu rather than
+    count presses. The bag adds a scroll offset, because its cursor is a row on
     screen and the bag is longer than the screen.
 
     Riding is roughly twice walking speed, and the last run never once got on
@@ -3160,6 +3131,7 @@ def _field_bike_sync(want: int) -> dict:
             detail="No Bicycle in the bag. The Bike Voucher from the Vermilion Fan Club buys one.",
         )
 
+    _settle_for_menu_sync()
     spent = _menu_presses_sync(["press_start"])
     if _menu_top_y_sync() != START_MENU_TOP_Y:
         _escape_menus_sync()
@@ -3201,6 +3173,187 @@ def _field_bike_sync(want: int) -> dict:
             f"The Bicycle was used and the game still has you "
             f"{'on foot' if landed == ON_FOOT else 'travelling some other way'}. "
             f"It cannot be ridden {where}."
+        ),
+    )
+
+
+#: Which HM teaches each field move, for the refusal when nobody knows it.
+FIELD_MOVE_SOURCE = {
+    "cut": "HM01",
+    "fly": "HM02",
+    "surf": "HM03",
+    "strength": "HM04",
+    "flash": "HM05",
+}
+
+#: The badge each one needs before the game will use it outside battle, from
+#: pokered's `UsedCut`/`UsedSurf` etc. A move known but not permitted opens the
+#: submenu and answers with a refusal dialog, which looks identical to success
+#: from the menu variables -- so this is checked before any button is spent.
+FIELD_MOVE_BADGE = {
+    "cut": "Cascade",
+    "fly": "Thunder",
+    "surf": "Soul",
+    "strength": "Rainbow",
+    "flash": "Boulder",
+}
+
+
+def _field_move_slot_sync(move: str) -> tuple[int, int, list]:
+    """Which party member knows `move`, and which submenu row it sits on."""
+    party = _reader.read_party() or []
+    for index, mon in enumerate(party):
+        row = capabilities.field_move_row(mon.get("moves") or [], move)
+        if row is not None:
+            return index, row, party
+    carried = ", ".join(str(mon.get("species")) for mon in party) or "nothing"
+    raise HTTPException(
+        status_code=409,
+        detail=(
+            f"No Pokemon in the party knows {move.title()}. Carrying: {carried}. "
+            f"{FIELD_MOVE_SOURCE.get(move, 'An HM')} teaches it."
+        ),
+    )
+
+
+def _require_field_badge_sync(move: str) -> None:
+    wanted = FIELD_MOVE_BADGE.get(move)
+    if not wanted:
+        return
+    badges = ((_get_state_dict().get("player")) or {}).get("badges") or []
+    if wanted not in badges:
+        raise HTTPException(
+            status_code=409,
+            detail=(
+                f"{move.title()} outside battle needs the {wanted} Badge, and this run "
+                f"does not have it. Holding: {', '.join(badges) or 'none'}."
+            ),
+        )
+
+
+def _use_field_move_sync(move: str) -> tuple[int, dict]:
+    """Drive START -> POKEMON -> the mon -> the move, reading every screen.
+
+    The presses are returned so the caller can bill them; the caller also owns
+    the *verification*, because what proves a field move worked is different for
+    each one and none of it is visible in the menu. This function deliberately
+    does not decide whether it succeeded.
+
+    Reading rather than counting is the whole point. The cursor is remembered
+    between openings and it wraps, and the run this replaces drove it blind and
+    reached the save screen twice and the options screen once before giving up.
+    """
+    slot, row, party = _field_move_slot_sync(move)
+    mon = party[slot]
+
+    _settle_for_menu_sync()
+    spent = _menu_presses_sync(["press_start"])
+    if _menu_top_y_sync() != START_MENU_TOP_Y:
+        _escape_menus_sync()
+        raise HTTPException(
+            status_code=409,
+            detail="Pressing START did not open the main menu. Nothing was confirmed.",
+        )
+    spent += _walk_cursor_to_sync(START_MENU_POKEMON_ROW, what="POKEMON")
+    spent += _menu_presses_sync(["press_a"])
+    if _menu_top_y_sync() != PARTY_MENU_TOP_Y:
+        _escape_menus_sync()
+        raise HTTPException(
+            status_code=409, detail="The party list did not open. Nothing was confirmed."
+        )
+    spent += _walk_cursor_to_sync(slot, what=str(mon.get("species")))
+    spent += _menu_presses_sync(["press_a"])
+    if _menu_top_y_sync() != FIELD_MOVE_MENU_TOP_Y:
+        _escape_menus_sync()
+        raise HTTPException(
+            status_code=409,
+            detail=f"{mon.get('species')}'s menu did not open. Nothing was confirmed.",
+        )
+    # The submenu is the mon's field moves and then STATS, SWITCH, CANCEL, so
+    # this many rows is what its moveset says it should have. A mismatch means
+    # the row worked out here is not the row the game drew, and confirming it
+    # would use the wrong move.
+    known = sum(
+        1
+        for entry in mon.get("moves") or []
+        if str(entry.get("name") or "").lower() in capabilities.FIELD_MOVES
+    )
+    drawn = _emulator.read_u8(ADDR_MAX_MENU_ITEM)
+    if drawn != known + 2:
+        _escape_menus_sync()
+        raise HTTPException(
+            status_code=409,
+            detail=(
+                f"{mon.get('species')}'s menu has {drawn + 1} rows, not the {known + 3} "
+                f"its moves say it should. Nothing was confirmed."
+            ),
+        )
+    spent += _walk_cursor_to_sync(row, what=move.upper())
+    spent += _menu_presses_sync(["press_a", "a_until_dialog_end"])
+    return spent, {"slot": slot, "mon": mon}
+
+
+def _field_cut_sync(tree: tuple[int, int], facing: str) -> dict:
+    """Face the tree, use Cut, and check the tree is gone.
+
+    The check is the point. The failure this replaces was not a wrong button --
+    it was a model reading the 160x144 screen, misreading `CUT STATS SWITCH
+    CANCEL` as `FIGHT STATUS SWITCH CANCEL`, and concluding from that that Gen 1
+    has no field moves outside battle at all.
+    """
+    _require_field_badge_sync("cut")
+    _field_move_slot_sync("cut")  # refuse before turning if nobody knows it
+
+    # Turn to face it. The tree is solid, so this press turns and does not walk.
+    spent = _menu_presses_sync([f"walk_{facing}"])
+    landed = str(_reader.read_facing() or "").lower()
+    if landed != facing:
+        raise HTTPException(
+            status_code=409,
+            detail=f"Asked to face {facing} to cut {list(tree)} but ended up facing {landed}.",
+        )
+
+    used, who = _use_field_move_sync("cut")
+    spent += used
+    terrain = _emulator._read_map_terrain()
+    if tree in terrain["walkable"]:
+        return {
+            "cut": list(tree),
+            "used": who["mon"].get("species"),
+            "slot": who["slot"] + 1,
+            "presses": spent,
+        }
+    _escape_menus_sync()
+    raise HTTPException(
+        status_code=409,
+        detail=(
+            f"The tree at {list(tree)} is still standing after Cut was chosen from "
+            f"{who['mon'].get('species')}'s menu. Nothing about the map changed. "
+            "Read the frame before trying again."
+        ),
+    )
+
+
+def _field_surf_sync() -> dict:
+    """Use Surf, and check the game agrees you are on the water.
+
+    Verified by ``wWalkBikeSurfState``, the same byte the Bicycle moves: 0 on
+    foot, 1 riding, 2 surfing. Nothing else in RAM moves, and the sprite change
+    is a few pixels.
+    """
+    _require_field_badge_sync("surf")
+    if _reader.read_travel_state() == SURFING:
+        raise HTTPException(status_code=409, detail="Already surfing.")
+    spent, who = _use_field_move_sync("surf")
+    landed = _reader.read_travel_state()
+    if landed == SURFING:
+        return {"surfing": True, "used": who["mon"].get("species"), "presses": spent}
+    _escape_menus_sync()
+    raise HTTPException(
+        status_code=409,
+        detail=(
+            f"Surf was chosen from {who['mon'].get('species')}'s menu and the game still "
+            "has you on land. Surf only starts from a tile facing water."
         ),
     )
 
@@ -4762,6 +4915,29 @@ async def field_bike(req: FieldBikeRequest):
         outcome=None,
         milestone_ids=await _run_emulator_sync(_milestone_ids_sync),
         extra={"riding": outcome.get("riding")},
+    )
+    return {**outcome, **_observation_summary(bundle)}
+
+
+@app.post("/field/surf")
+async def field_surf():
+    """Ride onto the water in front of you. Refused anywhere it will not start."""
+    _ensure_emulator()
+    if await _run_emulator_sync(_in_battle_sync):
+        raise HTTPException(
+            status_code=409,
+            detail="In a battle, so there is no water in front of you. Finish the fight first.",
+        )
+    _check_action_rate()
+    outcome = await _run_emulator_sync(_field_surf_sync)
+    bundle = await _refresh_and_broadcast(reason="surf", source="surf")
+    await _write_receipt(
+        tool="surf",
+        presses=outcome.pop("presses", 0),
+        bundle=bundle,
+        outcome=None,
+        milestone_ids=await _run_emulator_sync(_milestone_ids_sync),
+        extra={"surfing": outcome.get("surfing")},
     )
     return {**outcome, **_observation_summary(bundle)}
 

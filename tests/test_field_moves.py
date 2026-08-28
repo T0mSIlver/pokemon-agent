@@ -224,3 +224,53 @@ def test_a_cursor_already_on_the_row_costs_nothing():
         assert server._walk_cursor_to_sync(1, what="POKEMON") == 0
     finally:
         server._menu_row_sync, server._execute_action_sync = original_row, original_press
+
+
+# ---------------------------------------------------------------------------
+# The wiring itself
+# ---------------------------------------------------------------------------
+
+
+def test_every_field_verb_is_reachable_over_http():
+    """A driver nothing calls is a driver nobody notices losing.
+
+    Refactoring Cut into a shared driver deleted `_field_bike_sync` and
+    `_menu_presses_sync` outright, and the whole suite still passed: the live
+    tests exercise the cartridge's menu constants directly and never go through
+    the server, so nothing here noticed the server could no longer ride a bike.
+    Only an unused-import warning caught it.
+    """
+    from pokemon_agent import server
+
+    routes = {getattr(route, "path", None) for route in server.app.routes}
+    for path in ("/field/cut", "/field/bike", "/field/surf"):
+        assert path in routes, f"{path} is not registered"
+
+
+def test_every_field_driver_the_endpoints_reach_for_exists():
+    """The endpoints call these by name, so a missing one is a 500 at runtime."""
+    from pokemon_agent import server
+
+    for name in (
+        "_menu_presses_sync",
+        "_settle_for_menu_sync",
+        "_walk_cursor_to_sync",
+        "_escape_menus_sync",
+        "_use_field_move_sync",
+        "_field_cut_sync",
+        "_field_bike_sync",
+        "_field_surf_sync",
+        "_field_move_slot_sync",
+        "_require_field_badge_sync",
+    ):
+        assert callable(getattr(server, name, None)), f"{name} is missing"
+
+
+def test_every_field_move_names_the_hm_and_badge_it_needs():
+    """A refusal that cannot say what is missing sends the model looking blind."""
+    from pokemon_agent import capabilities, server
+
+    for move in ("cut", "fly", "surf", "strength", "flash"):
+        assert move in capabilities.FIELD_MOVES
+        assert server.FIELD_MOVE_SOURCE[move].startswith("HM")
+        assert server.FIELD_MOVE_BADGE[move]
