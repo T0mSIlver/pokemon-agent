@@ -353,9 +353,19 @@ def test_a_machine_weaker_than_what_is_carried_says_nothing():
     assert pf.teachable_tms([taught], VERMILION_BAG) is None
 
 
-def test_a_fainted_member_is_not_offered_a_machine():
+def test_a_fainted_member_is_still_offered_a_machine():
+    """Fainting decides whether it can fight, not whether it can learn.
+
+    The Gen 1 TM screen teaches a Pokemon at 0 HP without complaint, so filtering
+    the teaching advice on HP dropped the strongest member exactly when it had
+    just fainted and fell through to whatever was left standing. Measured over
+    one run: 222 of 292 impressions of this line recommended teaching a level-3
+    Rattata, and none of the 292 was ever acted on.
+    """
     fainted = dict(CHARMELEON, hp=0)
-    assert pf.teachable_tms([fainted], VERMILION_BAG) is None
+    assert pf.teachable_tms([fainted], VERMILION_BAG) == pf.teachable_tms(
+        [CHARMELEON], VERMILION_BAG
+    )
 
 
 def test_an_empty_bag_or_party_says_nothing():

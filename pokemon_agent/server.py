@@ -1895,6 +1895,11 @@ def _annotate_gym_outlook(summary: dict, bundle: Optional[dict]) -> None:
 #: taught move is then the mon's strongest and there is no upgrade left to name.
 _tm_said = party_facts.SayOnce()
 
+#: The same, for the wasted-slot line. Separate because the two go quiet for
+#: different reasons: the machine line ends when the machine is taught, and this
+#: one ends when the slot stops being worth nothing.
+_moveset_said = party_facts.SayOnce()
+
 
 def _annotate_teachable_tm(summary: dict, bundle: Optional[dict]) -> None:
     """A machine in the bag that teaches a party member a harder-hitting move.
@@ -1915,6 +1920,19 @@ def _annotate_teachable_tm(summary: dict, bundle: Optional[dict]) -> None:
         return
     if line and _tm_said.fresh((map_name, line)):
         summary["tm"] = line
+
+    # The slot the Pokemon that actually fights is wasting, and the level-up
+    # move that would take it. `learn_cost` speaks only during a replacement
+    # prompt and `tm` only when a machine fits; between them is where a Charizard
+    # carried Leer for seventy hours and 74 of its 1,436 attacks were a move
+    # that does no damage at all.
+    try:
+        gaps = party_facts.moveset_gaps(state.get("party") or [])
+    except Exception as exc:  # noqa: BLE001 — a hint must never fail an action
+        print(f"[server] WARNING: moveset-gap hint failed: {exc}")
+        return
+    if gaps and _moveset_said.fresh((map_name, gaps)):
+        summary["moveset"] = gaps
 
 
 def _make_runtime_save_event(name: str, path: Path, source: str, reason: str) -> dict:
@@ -2145,9 +2163,30 @@ def _reject_unsafe_dialog_actions(actions: list[str]) -> None:
     picks whatever is highlighted, which is indistinguishable from the agent trying
     to use an item on purpose. Make it a refusal with an explanation instead.
     """
-    if "a_until_dialog_end" not in actions:
+    confirms = sum(1 for action in actions if str(action).strip().lower() == "press_a")
+    if "a_until_dialog_end" not in actions and confirms < 2:
         return
     state = _get_state_dict()
+    # A second A in one batch, while a move is being replaced, is a press into a
+    # screen whoever wrote the batch could not see: the first one already
+    # committed. Measured: `down a down a down` was sent to move the cursor past
+    # an HM slot, the first A deleted Slash, and the session then reasoned that
+    # Flamethrower over Slash was "a net gain" -- reading the accident as the
+    # plan. One A is fine, and `down a` is the pattern that worked four times.
+    if confirms >= 2 and state.get("move_learn"):
+        cost = party_facts.learn_cost(state["move_learn"], state.get("party") or [])
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                f"{confirms} A presses in one batch while a move is being replaced: the "
+                "first one confirms, and every press after it lands on a screen this "
+                "batch cannot see. "
+                + (cost or "")
+                + " Send the cursor moves and a single A, then read the frame."
+            ),
+        )
+    if "a_until_dialog_end" not in actions:
+        return
     # A move-replacement prompt is a dialog too, and mashing A through it says
     # YES to "Delete an older move" and then deletes whatever the cursor is
     # sitting on -- the first move in the list, which is where the cursor

@@ -69,9 +69,44 @@ LEARN_PROMPT_PHRASES: Tuple[str, ...] = (
 FORGET_LIST_PHRASE = "be forgotten"
 
 
+#: Effects whose move spends a turn going nowhere before it lands. Read off the
+#: move's own effect byte in ``moves.json``, so "Dig is 100 power" and "Dig hits
+#: every other turn" are the same fact from the same table: 100 power once per
+#: two turns is 50 a turn, which is *under* Slash at 70. The payload printed Dig
+#: as a strict upgrade over Slash on the other arithmetic, 292 times.
+#:
+#: Hyper Beam is deliberately not here. Its recharge turn is skipped when it
+#: knocks the target out, so halving it would be a claim the data does not make.
+TWO_TURN_EFFECTS: Tuple[str, ...] = ("CHARGE_EFFECT", "FLY_EFFECT")
+
+
+def hm_moves() -> Dict[str, str]:
+    """``{"Cut": "HM01", ...}`` -- the five moves Gen 1 will never let go of.
+
+    Read out of ``tms.json`` rather than typed here, so it is the same join that
+    turns "HM01 x1" into "Cut". A slot an HM move goes into is spent for the
+    rest of the run, which is the most expensive fact in this file and was in
+    none of the lines it printed.
+    """
+    return {move: label for label, move in gamedata.tms().items() if label.startswith("HM")}
+
+
 def _able(party: Sequence[JsonDict]) -> List[JsonDict]:
     """Party members that can still take a turn. A fainted one answers nothing."""
     return [mon for mon in party or () if isinstance(mon, dict) and (mon.get("hp") or 0) > 0]
+
+
+def _teachable(party: Sequence[JsonDict]) -> List[JsonDict]:
+    """Party members a machine could be taught to, which is all of them.
+
+    Not :func:`_able`. Whether a Pokemon has fainted decides whether it can take
+    a turn and has nothing to do with whether it can learn a move -- the Gen 1
+    TM screen is happy to teach one at 0 HP. Filtering on HP meant the strongest
+    member dropped out of the teaching advice exactly when it had just fainted,
+    and the line fell through to whatever was left: measured over one run, 222
+    of 292 impressions recommended teaching a level-3 Rattata.
+    """
+    return [mon for mon in party or () if isinstance(mon, dict)]
 
 
 def move_names(mon: JsonDict) -> List[str]:
@@ -104,6 +139,120 @@ def damaging_moves(mon: JsonDict) -> List[Tuple[str, int]]:
         if record and record.get("power"):
             out.append((name, int(record["power"])))
     return out
+
+
+def mon_types(mon: JsonDict) -> List[str]:
+    """The mon's types, from the reader's own field or from ``species.json``."""
+    if mon.get("types"):
+        return [str(kind) for kind in mon["types"]]
+    entry = gamedata.species(str(mon.get("species") or "")) or {}
+    return [str(kind) for kind in entry.get("types") or ()]
+
+
+def power_per_turn(mon: JsonDict, name: str) -> int:
+    """What one turn of *name* is worth on *mon*, in power.
+
+    Base power is the number every line in this file used to print, and it is
+    wrong three ways over. Each correction is a column the game's own tables
+    already carry, so every factor is checkable against pokered:
+
+    * **STAB.** ``species.json`` gives the mon's types, ``moves.json`` the
+      move's, and Gen 1 multiplies by 3/2 where they meet. Ember on a Charmeleon
+      is 60, not 40. Thunderbolt on a Pikachu is 142, not 95 -- and the payload
+      offered that machine to a level 3 Rattata instead, 222 times.
+    * **Accuracy.** ``moves.json`` carries it. Cut misses one turn in twenty,
+      Mega Kick one in four.
+    * **The charge turn.** See ``TWO_TURN_EFFECTS``.
+
+    Fixed-damage moves -- the ones whose power byte is 1: Seismic Toss, Dragon
+    Rage, Psywave -- answer 0 and stay out of every ranking here rather than
+    being compared as though 1 were their power. They still damage, and
+    ``damaging_moves`` still lists them.
+    """
+    record = gamedata.move(name)
+    if not record:
+        return 0
+    power = int(record.get("power") or 0)
+    if power <= 1:
+        return 0
+    value = float(power)
+    if record.get("type") in mon_types(mon):
+        value *= 1.5
+    value *= int(record.get("accuracy") or 100) / 100.0
+    if record.get("effect") in TWO_TURN_EFFECTS:
+        value /= 2
+    return int(value)
+
+
+def ranked_attacks(mon: JsonDict) -> List[Tuple[str, int]]:
+    """``(name, power a turn)`` for the mon's attacks, hardest first."""
+    rows = [(name, power_per_turn(mon, name)) for name in move_names(mon)]
+    return sorted([row for row in rows if row[1] > 0], key=lambda row: -row[1])
+
+
+def best_attack(mon: JsonDict) -> Optional[Tuple[str, int]]:
+    """The mon's hardest hit per turn, or None when it has none."""
+    rows = ranked_attacks(mon)
+    return rows[0] if rows else None
+
+
+def attack_types(mon: JsonDict) -> List[str]:
+    """The types this mon can actually take HP off something with."""
+    out: List[str] = []
+    for name, _ in ranked_attacks(mon):
+        kind = (gamedata.move(name) or {}).get("type")
+        if kind and str(kind) not in out:
+            out.append(str(kind))
+    return out
+
+
+def cheapest_slot(mon: JsonDict) -> Optional[Tuple[str, int, int]]:
+    """``(name, power a turn, slot index)`` for the move that costs least to lose.
+
+    Never an HM move: the game refuses to delete those, so naming one as the
+    cheapest slot is an instruction the button cannot carry out. Ties go to the
+    earlier slot, which is the one fewer presses from where the cursor starts.
+    """
+    hms = hm_moves()
+    rows = [
+        (name, power_per_turn(mon, name), index)
+        for index, name in enumerate(move_names(mon))
+        if name not in hms
+    ]
+    if not rows:
+        return None
+    return min(rows, key=lambda row: (row[1], row[2]))
+
+
+def level_up_move(mon: JsonDict) -> Optional[Tuple[int, str, bool]]:
+    """``(level, move, due_now)`` for the move the species is about to teach itself.
+
+    Straight off the ``learnset`` in ``species.json``, which is pokered's table.
+    ``due_now`` means the entry sits at exactly this level and the mon does not
+    hold it -- the prompt is live or one battle away. A Charizard at L46 without
+    Flamethrower is exactly that, and it is what the live party is.
+
+    Entries *below* the level are not reported at all. The game offered them
+    once and the run either declined or spent the slot elsewhere -- this party
+    passed on Rage at 24 and Scratch before it -- so calling them due would be a
+    prompt that is never coming back.
+    """
+    entry = gamedata.species(str(mon.get("species") or "")) or {}
+    level = int(mon.get("level") or 0)
+    known = set(move_names(mon))
+    rows = [
+        (int(row.get("level") or 0), str(row.get("move")))
+        for row in entry.get("learnset") or ()
+        if str(row.get("move")) not in known and int(row.get("level") or 0) > 1
+    ]
+    due = [row for row in rows if row[0] == level]
+    if due:
+        return (due[0][0], due[0][1], True)
+    ahead = [row for row in rows if row[0] > level]
+    if not ahead:
+        return None
+    best = min(ahead)
+    return (best[0], best[1], False)
 
 
 def expected_opponent(species: str, level: int) -> Optional[JsonDict]:
@@ -227,15 +376,152 @@ def party_shape(able: Sequence[JsonDict]) -> Optional[str]:
     return "; ".join(parts) if parts else None
 
 
-#: How many machines one line is allowed to name. A bag late in the game holds
-#: a dozen, and a payload field that grows without bound becomes wallpaper; the
-#: rows are sorted by how much power they add, so the cut falls on the least
-#: useful ones.
-TEACHABLE_LIMIT = 3
+#: How many machines one line is allowed to name. Two, not three: each row now
+#: carries the learner's level, the move's power a turn, the type it adds and
+#: the slot it costs, so a row is roughly twice the length it was and two of
+#: them cost what three used to. The third row was also the one that measurably
+#: went to the wrong Pokemon -- with the ranking fixed, rows 1 and 2 of the live
+#: party are Dig for the L46 Charizard and Thunderbolt for the Pikachu that gets
+#: STAB off it, and row 3 was Bubble Beam for a level 3 Rattata.
+TEACHABLE_LIMIT = 2
+
+
+def _slot_cost(mon: JsonDict) -> str:
+    """What teaching this mon costs it: a spare slot, or a named move."""
+    if len(move_names(mon)) < 4:
+        return "a slot is free"
+    slot = cheapest_slot(mon)
+    if slot is None:
+        return "every slot holds an HM move and Gen 1 deletes none of them"
+    name, per_turn, _ = slot
+    return f"costs the {name} slot" + (" (no damage)" if per_turn == 0 else f" ({per_turn} a turn)")
+
+
+def _machine_row(label: str, taught: str, record: JsonDict, mon: JsonDict, gained: int) -> str:
+    """One machine, as the numbers that decide whether to spend it."""
+    species = str(mon.get("species") or "it")
+    kind = str(record.get("type"))
+    held = ", ".join(f"{name} {value}" for name, value in damaging_moves(mon)) or "nothing"
+    best = best_attack(mon)
+    if best is None:
+        against = "and nothing it carries damages anything"
+    elif gained > best[1]:
+        against = f"over its best {best[0]} at {best[1]}"
+    elif gained == best[1]:
+        against = f"level with its best {best[0]} at {best[1]}"
+    else:
+        against = f"under its best {best[0]} at {best[1]}"
+    reasons = [f"{gained} a turn {against}"]
+    if record.get("effect") in TWO_TURN_EFFECTS:
+        reasons.append(f"{record.get('power')} halved by its 2-turn charge")
+    if kind not in attack_types(mon):
+        reasons.append(f"adds {kind}, which nothing it carries hits with")
+    return (
+        f"{label} teaches {taught} ({kind} {record.get('power')}) and {species} can learn it "
+        f"(L{mon.get('level')}): "
+        + "; ".join(reasons)
+        + f"; it attacks with {held}; {_slot_cost(mon)}"
+    )
+
+
+def tm_audit(party: Sequence[JsonDict], bag: Sequence[JsonDict]) -> List[JsonDict]:
+    """Every machine in the bag and what became of it. The mechanism, not a mirror.
+
+    ``teachable_tms`` is built out of this list rather than beside it, so a
+    machine that never reaches the payload carries a recorded reason instead of
+    a silence. That silence is the failure this whole file exists for: TM28 rode
+    along in the bag for 60,000 presses and nothing in the harness could say
+    whether it had been considered and dropped or never looked at.
+
+    Each row is ``{"item", "teaches", "status", "detail", "mon", "per_turn"}``
+    and ``status`` is one of ``named``, ``unknown_move``, ``no_power``,
+    ``nobody_can_learn``, ``already_known``, ``no_gain``. Every machine in the
+    bag produces exactly one row; nothing else does. ``named`` rows are the
+    candidates ``teachable_tms`` then cuts to ``TEACHABLE_LIMIT``, so a row that
+    is ``named`` here and absent from the line was crowded out rather than
+    rejected.
+    """
+    able = _teachable(party)
+    rows: List[JsonDict] = []
+    for entry in bag or ():
+        if not isinstance(entry, dict):
+            continue
+        label = str(entry.get("item") or "")
+        taught = gamedata.tm_move(label)
+        if not taught:
+            continue
+        row: JsonDict = {
+            "item": label,
+            "teaches": taught,
+            "status": "",
+            "detail": "",
+            "mon": None,
+            "per_turn": 0,
+        }
+        record = gamedata.move(taught)
+        if record is None:
+            row["status"] = "unknown_move"
+            row["detail"] = f"{taught} is not in moves.json"
+            rows.append(row)
+            continue
+        if not record.get("power"):
+            row["status"] = "no_power"
+            row["detail"] = f"{taught} deals no damage; this line only ranks attacks"
+            rows.append(row)
+            continue
+        learners = [
+            mon
+            for mon in able
+            if label in ((gamedata.species(str(mon.get("species") or "")) or {}).get("tm_hm") or ())
+        ]
+        if not learners:
+            row["status"] = "nobody_can_learn"
+            row["detail"] = "no party member with HP has it in its tm_hm list"
+            rows.append(row)
+            continue
+        if all(taught in move_names(mon) for mon in learners):
+            row["status"] = "already_known"
+            row["detail"] = f"every learner already carries {taught}"
+            rows.append(row)
+            continue
+        # Ranked by what the move is worth *on the learner*, not by how much it
+        # beats what the learner has. The old rule was the difference, which is
+        # largest on the weakest Pokemon in the party: it handed Dig,
+        # Thunderbolt and Bubble Beam to a level 3 Rattata on 222 of the 292
+        # frames it ever printed, while the L46 Charizard that fought every
+        # battle of the run was named on 70 and the Pikachu that gets STAB off
+        # Thunderbolt on 12. Ties go to the higher level, because between two
+        # Pokemon a move is worth the same on, the one that fights is the one
+        # carrying the levels.
+        candidates = []
+        for mon in learners:
+            if taught in move_names(mon):
+                continue
+            gained = power_per_turn(mon, taught)
+            best = best_attack(mon)
+            new_type = str(record.get("type")) not in attack_types(mon)
+            if gained > (best[1] if best else 0) or new_type:
+                candidates.append((gained, int(mon.get("level") or 0), mon))
+        if not candidates:
+            row["status"] = "no_gain"
+            row["detail"] = (
+                f"{taught} is weaker per turn than what every learner already has, "
+                "and adds no type they cannot already hit with"
+            )
+            rows.append(row)
+            continue
+        gained, level, mon = max(candidates, key=lambda c: (c[0], c[1]))
+        row["status"] = "named"
+        row["mon"] = str(mon.get("species") or "it")
+        row["per_turn"] = gained
+        row["level"] = level
+        row["detail"] = _machine_row(label, taught, record, mon, gained)
+        rows.append(row)
+    return rows
 
 
 def teachable_tms(party: Sequence[JsonDict], bag: Sequence[JsonDict]) -> Optional[str]:
-    """Machines in the bag that teach a party member a *stronger* attack than it has.
+    """Machines in the bag worth teaching, priced per turn, on the mon that fights.
 
     The third fact of this file's kind, and the one that cost the most. The run
     this was written for picked up TM28 in Mt. Moon, carried it for roughly
@@ -243,66 +529,87 @@ def teachable_tms(party: Sequence[JsonDict], bag: Sequence[JsonDict]) -> Optiona
     never taught it. Nothing it read could have told it to: the bag says
     ``TM28 x1``, ``species.json`` says Charmeleon can learn ``TM28``, and until
     ``tms.json`` existed there was nothing anywhere in the harness that said
-    TM28 is Dig. The two halves of the sentence were both in the payload and the
-    join between them did not exist.
+    TM28 is Dig.
 
-    Deliberately narrow, because a field on every overworld frame is expensive:
+    That join exists now, and the line built on it was still wrong, measurably:
+    across a 70-hour run it was printed 292 times, was acted on **zero** times,
+    and on 222 of those frames it named a level 3 Rattata. Three things were
+    wrong with it and all three are fixed here:
 
-    * only machines actually in the bag, and only party members that can learn
-      them, both read from pokered rather than assumed;
-    * only a *strict* upgrade -- the taught move's power must beat the best
-      damaging move that member already has -- so a mon holding its best moveset
-      says nothing;
-    * a move already known is not an upgrade, whatever its power.
+    * it ranked by *base power minus the learner's best*, a difference that is
+      always largest on the worst Pokemon in the party. It now ranks by what the
+      move is worth on the learner (``power_per_turn``), tie-broken by level;
+    * it compared base power, so Dig's 100 read as an upgrade over Slash's 70
+      when Dig lands 50 a turn and Slash 70, and Thunderbolt read the same on a
+      Pikachu as on a Rattata when STAB makes it 142 against 95;
+    * it never priced the cost. Teaching a mon with four moves deletes one, a
+      Gen 1 TM is spent doing it, and an HM move can never be deleted at all.
+      The slot it would cost is now on the same line as the gain.
 
-    The type is printed beside the power because power is not the whole reason
-    to teach one: Ground on an Electric gym is the reason Dig mattered here, and
-    that is the agent's inference to make, not this line's.
+    Still deliberately narrow, because a field on every overworld frame is
+    expensive: only machines in the bag, only members with HP that pokered says
+    can learn them, and only when the move either out-damages what that member
+    has per turn or adds a type it cannot hit anything with -- the second is why
+    Dig survives the cut on a Charmeleon whose Ember already beats it per turn,
+    and Ground on an Electric gym is the reason that matters.
+
+    ``tm_audit`` carries a row for every machine either way, so the machines
+    this line drops are droppable-with-a-reason rather than invisible.
     """
-    able = _able(party)
-    if not able or not bag:
+    if not _teachable(party) or not bag:
         return None
-    machines = []
-    for entry in bag or ():
-        if not isinstance(entry, dict):
-            continue
-        label = str(entry.get("item") or "")
-        taught = gamedata.tm_move(label)
-        record = gamedata.move(taught) if taught else None
-        if not record or not record.get("power"):
-            continue
-        machines.append((label, str(taught), int(record["power"]), str(record["type"])))
-
-    rows: List[Tuple[int, str]] = []
-    for label, taught, power, kind in machines:
-        best: Optional[Tuple[int, JsonDict, int]] = None
-        for mon in able:
-            entry = gamedata.species(str(mon.get("species") or "")) or {}
-            if label not in (entry.get("tm_hm") or ()):
-                continue
-            if taught in move_names(mon):
-                continue
-            strongest = max((power for _, power in damaging_moves(mon)), default=0)
-            if power <= strongest:
-                continue
-            if best is None or power - strongest > best[0]:
-                best = (power - strongest, mon, strongest)
-        if best is None:
-            continue
-        gain, mon, strongest = best
-        species = str(mon.get("species") or "it")
-        held = ", ".join(f"{name} {value}" for name, value in damaging_moves(mon)) or "nothing"
-        rows.append(
-            (
-                gain,
-                f"{label} teaches {taught} ({kind} {power}) and {species} can learn it; "
-                f"it attacks with {held}",
-            )
-        )
+    rows = [row for row in tm_audit(party, bag) if row["status"] == "named"]
     if not rows:
         return None
-    rows.sort(key=lambda row: -row[0])
-    return "bag " + " | ".join(line for _, line in rows[:TEACHABLE_LIMIT])
+    rows.sort(key=lambda row: (-int(row.get("level") or 0), -int(row["per_turn"])))
+    return "bag " + " | ".join(str(row["detail"]) for row in rows[:TEACHABLE_LIMIT])
+
+
+def moveset_gaps(party: Sequence[JsonDict]) -> Optional[str]:
+    """The slot the Pokemon that fights is wasting, and the move that would take it.
+
+    ``learn_cost`` speaks only while a replacement prompt is on screen, and
+    ``teachable_tms`` only when a machine in the bag happens to fit. Between
+    them sits the state this run actually spent its time in: a Charizard
+    carrying Leer -- a Defense drop it used 74 times out of 1,436 attacks and
+    never once followed up on -- with Ember at 60 a turn beside Slash at 70,
+    for tens of thousands of presses, while nothing in any payload said the
+    fourth slot was empty of damage.
+
+    Only the highest-level member with HP, because that is the one that fights
+    and the only reading of "which one" the state carries; only when it holds a
+    slot worth nothing per turn, so a full moveset says nothing at all. Nothing
+    here is an instruction: it is the per-turn table, the dead slot, and the
+    level-up move that would take it. The bag half of the same decision is
+    ``teachable_tms``, which the payload already carries beside this.
+    """
+    able = _teachable(party)
+    if not able:
+        return None
+    mon = max(able, key=lambda member: int(member.get("level") or 0))
+    attacks = ranked_attacks(mon)
+    dead = [name for name in move_names(mon) if power_per_turn(mon, name) == 0]
+    if not dead or not attacks:
+        return None
+    species = str(mon.get("species") or "it")
+    table = ", ".join(f"{name} {value}" for name, value in attacks)
+    plural = "slot" if len(dead) == 1 else "slots"
+    line = (
+        f"{species} L{mon.get('level')} attacks with {table} a turn and spends "
+        f"{len(dead)} {plural} on {', '.join(dead)}, worth nothing"
+    )
+    upcoming = level_up_move(mon)
+    if upcoming:
+        level, name, due = upcoming
+        record = gamedata.move(name) or {}
+        gain = power_per_turn(mon, name)
+        when = (
+            "is its level-up move at this level and it does not know it"
+            if due
+            else f"comes at L{level}"
+        )
+        line += f". {name} ({record.get('type')} {record.get('power')}, {gain} a turn) {when}"
+    return line
 
 
 def is_learn_prompt(screen_text: str) -> bool:
@@ -356,6 +663,8 @@ def learn_cost(prompt: Optional[JsonDict], party: Sequence[JsonDict]) -> Optiona
     incoming_power = (gamedata.move(str(incoming)) or {}).get("power") if incoming else None
     new_move = f"{incoming} ({incoming_power or 0})" if incoming else "the new move"
 
+    hms = hm_moves()
+    slot = cheapest_slot(mon)
     cursor = prompt.get("cursor")
     on_list = FORGET_LIST_PHRASE in str(prompt.get("screen_text") or "")
     if on_list and isinstance(cursor, int) and 0 <= cursor < len(known):
@@ -365,18 +674,62 @@ def learn_cost(prompt: Optional[JsonDict], party: Sequence[JsonDict]) -> Optiona
         if incoming and incoming_power:
             kept.append((str(incoming), int(incoming_power)))
         left = ", ".join(f"{name} {power}" for name, power in kept) or "NOTHING that damages"
-        return (
+        line = (
             f"learn A here deletes {losing} ({losing_power}) for {new_move}. "
             f"{species} would be left attacking with {left}"
         )
+        # What the button actually does when the cursor is on an HM move: nothing.
+        # The frame reads "HM techniques can't be deleted" and the list comes
+        # back. Measured: an agent read "A here deletes Cut", believed it, and
+        # spent two episodes trying to press past a refusal it had been told was
+        # a deletion. The cursor starts on slot 0, which is where Cut usually sits.
+        if losing in hms:
+            line += (
+                f". {losing} is {hms[losing]} and Gen 1 refuses to delete an HM move, "
+                "so A here will not take"
+            )
+        if slot is not None:
+            name, per_turn, index = slot
+            worth = "does no damage" if per_turn == 0 else f"is worth {per_turn} a turn"
+            if index == cursor:
+                line += f". {name} is the cheapest slot {species} has"
+            else:
+                steps = (index - cursor) % max(1, len(known))
+                line += f". The cheapest slot is {name}, which {worth}: {steps} down from here"
+        return line
     attacking = damaging_moves(mon)
     attacks = ", ".join(f"{name} {power}" for name, power in attacking)
     verb = "does" if len(attacking) == 1 else "do"
     tail = f"only {attacks} {verb} damage" if attacking else "none of them does damage"
-    return (
+    line = (
         f"learn {new_move} replaces one of {species}'s {len(known)} moves "
         f"({', '.join(known)}): {tail}"
     )
+    # The name of the slot to spend, rather than two lists to subtract. The
+    # payload used to stop at the line above; on the frames it was read, the
+    # model twice worked out "replace Leer" from it and twice failed to and
+    # abandoned the learn, and once deleted Slash by pressing A on the way past.
+    if slot is not None and len(known) >= 4:
+        name, per_turn, _ = slot
+        worth = "does no damage" if per_turn == 0 else f"is worth {per_turn} a turn"
+        line += f"; the cheapest slot is {name}, which {worth}"
+    held_hms = [name for name in known if name in hms]
+    if held_hms:
+        labels = ", ".join(f"{name} is {hms[name]}" for name in held_hms)
+        line += f"; {labels}, and Gen 1 deletes no HM move"
+    # Same type as something already carried is the other half of the decision:
+    # Flamethrower over Ember is not a fifth move, it is the same move harder.
+    if incoming:
+        kind = (gamedata.move(str(incoming)) or {}).get("type")
+        gain = power_per_turn(mon, str(incoming))
+        beaten = [
+            f"{name} {value}"
+            for name, value in ranked_attacks(mon)
+            if (gamedata.move(name) or {}).get("type") == kind and value < gain
+        ]
+        if beaten:
+            line += f"; {incoming} is {kind} at {gain} a turn and outclasses {', '.join(beaten)}"
+    return line
 
 
 class SayOnce:
