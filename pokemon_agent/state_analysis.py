@@ -452,9 +452,21 @@ def classify_ui_state(state: JsonDict) -> JsonDict:
     text = ""
     source = "vision"
     if dialog_active:
+        # The words, when the reader got them. `state["screen"]` is wTileMap
+        # decoded through the Gen 1 font table -- the same text the repeat guard
+        # uses to tell an advancing conversation from a fixed point -- and this
+        # function used to throw it away and announce "Dialog box visible"
+        # instead. The payload then dropped that as content-free, correctly, so
+        # a model with a box open was told a box was open and nothing else.
+        #
+        # Measured live: a run stood at the Celadon Gym sign reading "POKeMON GYM
+        # / LEADER ERIKA", pressed A sixteen times, escalated to hold_a_30
+        # sixteen more, and then tried to load its way out -- never once shown
+        # what it was looking at.
+        words = " ".join(str(state.get("screen") or "").split())
         waiting = "waiting for input" if dialog.get("waiting_for_input") else "printing"
-        text = f"Dialog box visible ({waiting})."
-        source = "dialog_state"
+        text = words or f"Dialog box visible ({waiting})."
+        source = "wtilemap" if words else "dialog_state"
     return {
         "text": text,
         "source": source,

@@ -130,7 +130,11 @@ DIALOG_PLACEHOLDER_PREFIX = "Dialog box visible"
 #: `moved: 0, blocked_after: 1` -- the harness reporting walkable ground as a
 #: wall. Saying which of the two it is costs one line and cannot be misread.
 NO_WALK_IN_BATTLE = "no walking in a battle: the d-pad drives the battle menu"
-NO_WALK_IN_BOX = "no walking while a box is open: the d-pad works the box, not the player"
+NO_WALK_IN_BOX = (
+    "no walking while a box is open: the d-pad works the box, not the "
+    "player. `poke act b:2` closes it -- the first B finishes printing "
+    "the line, the second dismisses it"
+)
 
 #: Why a battle frame reports coordinates but no facing.
 #:

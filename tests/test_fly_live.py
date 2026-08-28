@@ -62,16 +62,55 @@ def _open_town_map(emulator, record):
     emulator.tick(60)
 
 
+def _flyable_save(emulator, tmp_path):
+    """A save outdoors, on foot, holding the badge Fly needs.
+
+    Chosen by property rather than by name. This test used to name
+    `pre_cut_restart.state`, which is the file the live run rewrites on every
+    restart: the day it was banked in Celadon Gym -- indoors, where the town map
+    behaves differently -- all three tests here failed, and none of them had
+    anything to do with Fly. A corpus that the run keeps editing cannot be
+    addressed by filename.
+    """
+    import glob
+    import shutil
+
+    from pokemon_agent.memory.red import ADDR_WALK_BIKE_SURF, ON_FOOT, RedBlueMemoryReader
+
+    reader = RedBlueMemoryReader(emulator)
+    for path in sorted(glob.glob(str(SAVES_DIR / "*.state")), reverse=True):
+        copy = tmp_path / "flyable.state"
+        shutil.copy(path, copy)
+        try:
+            emulator.load_state(str(copy))
+            emulator.settle()
+            flags = reader.read_flags()
+            tileset = reader.read_tileset()
+        except Exception:  # noqa: BLE001 — a save that will not load proves nothing
+            continue
+        if (
+            tileset == "OVERWORLD"
+            and "Thunder" in flags["badges"]
+            and emulator.read_u8(ADDR_WALK_BIKE_SURF) == ON_FOOT
+        ):
+            return path
+    pytest.skip("no save in the corpus is outdoors, on foot, with the Thunder Badge")
+
+
 def _doctored(tmp_path):
     import hm_fixtures as hm
 
-    return hm.open_doctored(
-        SAVES_DIR / "PokemonRed.gb",
-        SAVES_DIR / "pre_cut_restart.state",
-        "FLY",
-        tmp_path,
-        move_slot=3,
-    )
+    from pokemon_agent.emulator import PyBoyEmulator
+
+    emulator = PyBoyEmulator()
+    emulator.load(str(SAVES_DIR / "PokemonRed.gb"))
+    try:
+        save = _flyable_save(emulator, tmp_path)
+        record = hm.give_field_move(emulator, save, "FLY", tmp_path, move_slot=3)
+    except BaseException:
+        emulator.close()
+        raise
+    return emulator, record
 
 
 @needs_rom
@@ -148,12 +187,16 @@ def test_the_destination_reader_parses_the_caption(tmp_path):
     emulator, record = _doctored(tmp_path)
     try:
         _open_town_map(emulator, record)
-        original = server._reader
+        # Both globals: the reader for the caption, and the emulator because the
+        # function ticks before reading it -- the caption is a frame behind the
+        # press that moved the cursor.
+        original_reader, original_emulator = server._reader, server._emulator
         server._reader = RedBlueMemoryReader(emulator)
+        server._emulator = emulator
         try:
             town = server._fly_destination_sync()
         finally:
-            server._reader = original
+            server._reader, server._emulator = original_reader, original_emulator
         assert town and town == town.title(), town
         assert "To" not in town.split()
     finally:
