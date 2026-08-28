@@ -22,6 +22,7 @@ from pokemon_agent.critic import (
     HANDOFF_FILENAME,
     HANDOFF_HEADING,
     HANDOFF_PREVIOUS_FILENAME,
+    HANDOFF_STALE_FILENAME,
     MAX_HANDOFF_WORDS,
     SALVAGED_REASONING_NOTICE,
     handoff_body,
@@ -2021,7 +2022,7 @@ async def test_the_critic_can_be_disabled(tmp_path: Path):
     ],
     ids=["non-zero-exit", "empty-output", "timeout"],
 )
-async def test_a_failing_critic_keeps_the_old_handoff_and_still_ends_the_run(
+async def test_a_failing_critic_retires_the_old_handoff_and_still_ends_the_run(
     tmp_path: Path,
     critique_kwargs: dict,
 ):
@@ -2039,7 +2040,14 @@ async def test_a_failing_critic_keeps_the_old_handoff_and_still_ends_the_run(
     assert snapshot["status_reason"] == "Pi completed one turn."
     assert snapshot["critique"]["text"] is None
     assert snapshot["critique"]["error"]
-    assert read_handoff(workspace_dir) == "the previous critique"
+    # Retired, not re-served. Keeping it meant the next session was told about
+    # the session before last in the present tense, with its goal line silently
+    # reverting to the generic run objective. Measured over one 112-session run:
+    # 20 of 99 retrospectives were byte-identical repeats of the one before, and
+    # those sessions earned 4 milestones against a run rate of 12 in 112. A
+    # session told nothing still reads the deterministic facts block beside it.
+    assert read_handoff(workspace_dir) == ""
+    assert (workspace_dir / HANDOFF_STALE_FILENAME).is_file(), "the post-mortem survives"
     assert not (workspace_dir / HANDOFF_PREVIOUS_FILENAME).exists()
     assert "critique failed" in system_labels(supervisor)
 
@@ -2212,7 +2220,9 @@ async def test_a_critic_that_hits_its_output_ceiling_says_so_in_the_snapshot(tmp
     # The artefact that makes the next one a two-minute diagnosis.
     raw = Path(critique["raw_path"]).read_text(encoding="utf-8")
     assert '"stopReason": "length"' in raw
-    assert read_handoff(workspace_dir) == "the previous critique"
+    # Hitting the output ceiling is a failed pass like any other: the stale
+    # handoff goes aside rather than to the next session.
+    assert read_handoff(workspace_dir) == ""
     assert "critique failed" in system_labels(supervisor)
 
 

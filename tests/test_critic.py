@@ -1497,9 +1497,15 @@ def test_a_direction_the_model_wrote_is_checked_against_the_graph():
     wrong = direction_claims("head south on Route 3 to Cerulean City", "Mt Moon B1F")
     right = direction_claims("walk east from Route 4 into Cerulean City", "Route 4")
 
+    # Reported as a disagreement to check, not as a verdict against the agent.
+    # The graph holds which maps touch and models no tree, guard, badge lock or
+    # boulder, so "the agent is wrong" is a claim it cannot support — and eight
+    # retrospectives in one run made it about a tree that was really there.
     assert wrong == [
-        '- "south ... Cerulean City": WRONG. The map data says warp (27,3) to '
-        "Route 4, then walk east to Cerulean City."
+        '- "south ... Cerulean City": the map graph instead says warp (27,3) to '
+        "Route 4, then walk east to Cerulean City. The graph knows which maps "
+        "touch, not whether the way is walkable, so a disagreement is a thing "
+        "to check rather than a thing the agent got wrong."
     ]
     assert right == [
         '- "east ... Cerulean City": agrees with the map data (walk east to Cerulean City).'
@@ -1780,14 +1786,16 @@ def test_the_digest_puts_the_measurements_above_the_models_account(tmp_path: Pat
         DigestInput(goal="Cross Route 3.", calls=sample_calls(), facts=facts, intel=intel)
     )
 
-    assert "Where it is, from the game's own map data (authoritative)" in digest
+    assert (
+        "Where it is, from the map graph -- which maps touch, never whether the way is open"
+    ) in digest
     assert "walk north -> Route 4" in digest
     assert (
         "Route to Cerulean City: walk north to Route 4, then walk east to Cerulean City"
     ) in digest
     assert CLAIMS_HEADING in digest
     assert "(99,99) is outside Route 3, which is 70x18." in digest
-    assert '"west ... Cerulean City": WRONG.' in digest
+    assert '"west ... Cerulean City": the map graph instead says' in digest
     assert digest.index(FACTS_DIGEST_HEADING) < digest.index(CLAIMS_HEADING)
     assert digest.index(CLAIMS_HEADING) < digest.index(NARRATION_HEADING)
 

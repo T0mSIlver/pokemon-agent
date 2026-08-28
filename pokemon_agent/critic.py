@@ -2034,7 +2034,11 @@ def direction_claims(text: str, source: str, limit: int = MAX_CHECKED_DIRECTIONS
         elif f"walk {word}" in route:
             rows.append(f'- "{word} ... {target}": agrees with the map data ({route}).')
         else:
-            rows.append(f'- "{word} ... {target}": WRONG. The map data says {route}.')
+            rows.append(
+                f'- "{word} ... {target}": the map graph instead says {route}. The graph '
+                f"knows which maps touch, not whether the way is walkable, so a disagreement "
+                f"is a thing to check rather than a thing the agent got wrong."
+            )
         if len(rows) >= limit:
             break
     return rows
@@ -2064,7 +2068,11 @@ class Intel:
         """Heading and body per block, in the order the critic should read them."""
 
         return [
-            ("Where it is, from the game's own map data (authoritative)", self.geography),
+            (
+                "Where it is, from the map graph -- which maps touch, never "
+                "whether the way is open",
+                self.geography,
+            ),
             ("The map it is standing in, from the explored-map store", self.coverage),
             ("Where the presses went (measured, bucketed)", self.waste),
             ("Commands it repeated", self.repeats),
@@ -2357,8 +2365,16 @@ Ground truth beats narration, without exception. Where a measured block and the 
 account disagree, the measurement wins and a claim it contradicts is a claim you must not make.
 The agent's narration is evidence of what it believed, not of what happened; every false belief
 found in these transcripts so far has been a compass direction the model invented and then acted
-on against a correct tool result. If the map data says an exit is north, it is north, however
-confidently the session argued otherwise.
+on against a correct tool result.
+
+The map data is the exception, and it is a large one. The connection and warp tables say which
+maps touch. They do not model a cuttable tree, a guard who wants a drink, a badge lock or a
+boulder, so an exit they list can be one no player can take. When the agent reports walking at an
+exit the graph lists and being stopped, the graph is the thing that is incomplete: it has never
+seen a tile. Eight retrospectives in one run told the agent its own correct observation of the
+Vermilion gym tree was "a belief, not a finding" because the graph listed the door as a live warp;
+the door was behind a tree the whole time, the agent was right, and it spent 4,480 tool calls in
+that city without opening it.
 
 The narration and NOTES.md blocks are the agent's claims. They are not evidence. The word
 "confirmed" in them confirms nothing: one retrospective repeated "machine INACCESSIBLE
@@ -2889,6 +2905,37 @@ def read_handoff(workspace_dir: Path) -> str:
     if text.startswith(SALVAGED_REASONING_NOTICE[:40]):
         return ""
     return cap_words(text)
+
+
+#: Where a handoff goes when the critic that should have replaced it failed.
+#: Kept rather than deleted: it is still the post-mortem of the session it was
+#: actually written about.
+HANDOFF_STALE_FILENAME = "HANDOFF.stale.md"
+
+
+def retire_handoff(workspace_dir: Path) -> bool:
+    """Move ``HANDOFF.md`` aside so a failed critic serves nothing at all.
+
+    A critic pass that times out used to leave the previous file in place, and
+    the next session was then told, in the present tense, about a session two
+    back -- with its goal line silently reverting to the generic run objective.
+    Measured over one run: 20 of 99 retrospectives were byte-identical repeats
+    of the one before, and those sessions earned 4 milestones against a run rate
+    of 12 in 112.
+
+    A session told nothing reads the deterministic facts block beside it, which
+    is the run's real state. A session told about the wrong session does not
+    know it is being misled.
+    """
+    directory = Path(workspace_dir)
+    current = directory / HANDOFF_FILENAME
+    if not current.is_file():
+        return False
+    try:
+        os.replace(current, directory / HANDOFF_STALE_FILENAME)
+    except OSError:
+        return False
+    return True
 
 
 def write_handoff(workspace_dir: Path, text: str) -> Path:

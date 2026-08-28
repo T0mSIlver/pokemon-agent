@@ -2355,7 +2355,16 @@ class PiSupervisor:
             await self._emit_major("pi_critique_failed", {"summary": self.last_critique_error})
             await self._push_stream_system(
                 "critique failed",
-                text=f"{self.last_critique_error} Keeping the previous handoff.",
+                text=(
+                    f"{self.last_critique_error} "
+                    + (
+                        "The previous handoff has been retired rather than re-served: a "
+                        "session told about the session before last does not know it is "
+                        "reading the wrong one."
+                        if critic.retire_handoff(self.workspace_dir)
+                        else "There was no handoff to retire."
+                    )
+                ),
                 level="warn",
             )
             return
@@ -2399,7 +2408,16 @@ class PiSupervisor:
             )
             await self._push_stream_system(
                 "critique failed",
-                text=f"{self.last_critique_error} Keeping the previous handoff.",
+                text=(
+                    f"{self.last_critique_error} "
+                    + (
+                        "The previous handoff has been retired rather than re-served: a "
+                        "session told about the session before last does not know it is "
+                        "reading the wrong one."
+                        if critic.retire_handoff(self.workspace_dir)
+                        else "There was no handoff to retire."
+                    )
+                ),
                 level="warn",
             )
             return
