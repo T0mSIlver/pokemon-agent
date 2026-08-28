@@ -630,6 +630,85 @@ def _fake_proc(tmp_path: Path, workspace: Path, data_dir: Path) -> Path:
     return proc
 
 
+def _fake_proc_two_servers(tmp_path: Path, live: Path, probe: Path) -> Path:
+    """Two live servers: the run on 8765 and a throwaway probe on 8791."""
+    proc = tmp_path / "proc"
+
+    def _write(pid: str, data_dir: Path, port: str) -> None:
+        (proc / pid).mkdir(parents=True)
+        argv = [
+            ".venv/bin/python",
+            "-m",
+            "pokemon_agent.cli",
+            "serve",
+            "--port",
+            port,
+            "--data-dir",
+            str(data_dir),
+            "--agent-workspace-dir",
+            str(data_dir / "ws"),
+        ]
+        (proc / pid / "cmdline").write_bytes("\0".join(argv).encode() + b"\0")
+
+    # The probe first, because /proc yields numerically and the bug was taking
+    # whichever came first.
+    _write("100", probe, "8791")
+    _write("999", live, "8765")
+    return proc
+
+
+def test_discovery_prefers_the_run_over_a_probe_on_another_port(tmp_path: Path) -> None:
+    """A second server used to redirect every scope tool at its scratch dir.
+
+    Measured: a probe on 8791 with a data dir under /tmp turned 27 tests that
+    read the real run store into skips saying "no run store on this disk", with
+    a live 43-hour run sitting right there and nothing reporting that a choice
+    had been made.
+    """
+    live = tmp_path / "live"
+    probe = tmp_path / "probe"
+    for root in (live, probe):
+        (root / "runs").mkdir(parents=True)
+        (root / "ws" / "pi-session").mkdir(parents=True)
+
+    paths = discover(cwd=tmp_path, env={}, proc_dir=_fake_proc_two_servers(tmp_path, live, probe))
+
+    assert paths.data_dir == live
+    assert paths.workspace == live / "ws"
+
+
+def test_a_lone_server_on_another_port_is_still_used(tmp_path: Path) -> None:
+    """Preferring 8765 must not mean ignoring everything else.
+
+    A run driven on a different port is unusual but legitimate, and answering
+    "no server" for one that is plainly running would be a worse failure than
+    the one being fixed.
+    """
+    probe = tmp_path / "probe"
+    (probe / "runs").mkdir(parents=True)
+    (probe / "ws" / "pi-session").mkdir(parents=True)
+
+    proc = tmp_path / "proc"
+    (proc / "100").mkdir(parents=True)
+    argv = [
+        "python",
+        "-m",
+        "pokemon_agent.cli",
+        "serve",
+        "--port",
+        "8791",
+        "--data-dir",
+        str(probe),
+        "--agent-workspace-dir",
+        str(probe / "ws"),
+    ]
+    (proc / "100" / "cmdline").write_bytes("\0".join(argv).encode() + b"\0")
+
+    paths = discover(cwd=tmp_path, env={}, proc_dir=proc)
+
+    assert paths.data_dir == probe
+
+
 def test_discovery_reads_the_live_server_argv(tmp_path: Path) -> None:
     workspace = tmp_path / "ws"
     (workspace / "pi-session").mkdir(parents=True)

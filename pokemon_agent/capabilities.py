@@ -1746,7 +1746,17 @@ def catch_payload(battle: dict, bag: Sequence[dict], catch_rate: int) -> dict:
     enemy = battle.get("enemy") or {}
     max_hp = int(enemy.get("max_hp") or 0)
     hp = int(enemy.get("hp") or 0)
-    if not max_hp:
+    if not max_hp or hp <= 0:
+        # Both halves matter and only the first was checked. On a battle-entry
+        # frame the enemy's max HP is already written and its current HP is
+        # still zero, so the odds came out "0% now / 100% worn down" — an
+        # arithmetically correct answer to a question the frame cannot answer
+        # yet, printed at exactly the moment the model is deciding whether to
+        # throw. Measured on four battle-entry saves in the corpus, all Diglett
+        # at 0/36 with a correctly-read catch rate of 255.
+        #
+        # A wild Pokemon at 0 HP mid-battle has fainted, and there is nothing to
+        # catch there either, so the same refusal is right in both cases.
         raise Conflict("The enemy Pokemon is not readable yet — the battle is still starting.")
     carried = {str(entry.get("item")): int(entry.get("quantity") or 0) for entry in bag}
     rows = []

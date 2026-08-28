@@ -106,18 +106,37 @@ def _flag_value(argv: list[str], flag: str) -> Optional[str]:
     return None
 
 
-def live_server_paths(proc_dir: Path = Path("/proc")) -> tuple[Optional[Path], Optional[Path]]:
-    """``(workspace, data_dir)`` as the running server was told them, if it runs."""
+#: The port the playthrough runs on. When several servers are up, this is the
+#: one that means "the run"; the others are probes with scratch data dirs.
+LIVE_PORT = "8765"
+_PORT_FLAG = "--port"
 
+
+def live_server_paths(proc_dir: Path = Path("/proc")) -> tuple[Optional[Path], Optional[Path]]:
+    """``(workspace, data_dir)`` as the running server was told them, if it runs.
+
+    When more than one server is up, the one on :data:`LIVE_PORT` wins. Taking
+    whichever ``/proc`` listed first meant a throwaway probe on another port
+    silently redirected every scope tool at its empty scratch directory: 27
+    tests that read the real run store turned into skips reading "no run store
+    on this disk", with a live 43-hour run sitting right there. Nothing said a
+    choice had been made, which is the shape of bug this repo keeps finding.
+    """
+    fallback: Optional[tuple[Optional[Path], Optional[Path]]] = None
     for argv in iter_server_argv(proc_dir):
         workspace = _flag_value(argv, _WORKSPACE_FLAG)
         data_dir = _flag_value(argv, _DATA_DIR_FLAG)
-        if workspace or data_dir:
-            return (
-                Path(workspace).expanduser() if workspace else None,
-                Path(data_dir).expanduser() if data_dir else None,
-            )
-    return None, None
+        if not (workspace or data_dir):
+            continue
+        found = (
+            Path(workspace).expanduser() if workspace else None,
+            Path(data_dir).expanduser() if data_dir else None,
+        )
+        if _flag_value(argv, _PORT_FLAG) == LIVE_PORT:
+            return found
+        if fallback is None:
+            fallback = found
+    return fallback if fallback is not None else (None, None)
 
 
 def _walk_up(start: Path) -> Iterator[Path]:
