@@ -75,6 +75,10 @@ from pokemon_agent.milestones import (
     MilestoneTracker,
     counted_shortfall,
 )
+from pokemon_agent.milestones import (
+    frontier as milestone_frontier,
+)
+from pokemon_agent.objectives import MILESTONE_MAPS
 from pokemon_agent.pathfinding import DIRECTIONS
 from pokemon_agent.pi_supervisor import NoLiveSessionError, PiSupervisor
 from pokemon_agent.pockets import PocketGraph
@@ -2265,6 +2269,63 @@ def _circling_refusal(tiles: Sequence[tuple[int, int]], presses: int, exits: str
     )
 
 
+#: How many open rungs a refusal names a first hop toward. Three, because the
+#: point is a menu the model still chooses from -- naming one would be the
+#: harness picking the goal, which is not its job.
+ONWARD_ROUTES_SHOWN = 3
+
+
+async def _onward_sentence() -> str:
+    """The first hop toward each of the nearest open rungs, from where we stand.
+
+    The frontier menu already says where a rung is earned and how many hops away
+    it is -- `Celadon Gym, 6 hops`. What it cannot say is which door out of
+    *this* room starts that route, and that is exactly what a run lost in a
+    three-floor maze needs: Mt Moon cost this run 42,000 presses at the start
+    and another 7,100 today, and the way out of it has been in the map graph the
+    whole time.
+
+    Plural on purpose. Three routes is information; one would be an instruction.
+    """
+    try:
+        world = _ensure_world()
+        here = await _run_emulator_sync(_current_map_name_sync)
+        at = await _run_emulator_sync(_player_coord_sync)
+        if not here or at is None:
+            return ""
+        held = frozenset(await _run_emulator_sync(_milestone_ids_sync))
+        pockets = _pocket_graph()
+    except Exception:  # noqa: BLE001 — a refusal must never fail on its own advice
+        return ""
+
+    seen: set[str] = set()
+    lines: list[str] = []
+    for rung in milestone_frontier(held):
+        where = MILESTONE_MAPS.get(rung.id)
+        if not where or where in seen or where == here:
+            continue
+        seen.add(where)
+        try:
+            route = capabilities.route_payload(world, here, where, pockets=pockets, at=at)
+        except Exception:  # noqa: BLE001 — an unroutable rung is not an error
+            continue
+        hops = route.get("hops") or []
+        if not hops:
+            continue
+        first = hops[0]
+        step = (
+            f"the {first.get('kind')} to {first.get('to')} at {first.get('at')}"
+            if first.get("at")
+            else f"off the {first.get('edge')} edge into {first.get('to')}"
+        )
+        lines.append(f"{rung.label} ({where}, {len(hops)} hops) starts with {step}")
+        if len(lines) >= ONWARD_ROUTES_SHOWN:
+            break
+    if not lines:
+        return ""
+    return " Open rungs and the first hop toward each, from this tile: " + "; ".join(lines) + "."
+
+
 def _wandering_refusal(maps: Sequence[str], presses: int, exits: str) -> str:
     """What the agent reads when its last sixteen stays were four rooms.
 
@@ -2289,7 +2350,9 @@ async def _check_wandering() -> None:
     try:
         _wander_guard.check(lambda maps, presses: _wandering_refusal(maps, presses, ""))
     except Wandering as exc:
-        detail = _wandering_refusal(exc.maps, exc.presses, await _exits_sentence())
+        detail = _wandering_refusal(
+            exc.maps, exc.presses, await _exits_sentence() + await _onward_sentence()
+        )
         await _write_receipt(
             tool="action",
             presses=0,
@@ -2314,7 +2377,9 @@ async def _check_circling() -> None:
     try:
         _cycle_guard.check(lambda tiles, presses: _circling_refusal(tiles, presses, ""))
     except WalkingInCircles as exc:
-        detail = _circling_refusal(exc.tiles, exc.presses, await _exits_sentence())
+        detail = _circling_refusal(
+            exc.tiles, exc.presses, await _exits_sentence() + await _onward_sentence()
+        )
         await _write_receipt(
             tool="action",
             presses=0,
@@ -5990,6 +6055,63 @@ async def get_route(to: Optional[str] = None):
         raise _capability_error(exc) from exc
 
 
+#: Maps whose name differs from a sibling's only by a floor. `goto x y` walks a
+#: tile on the map the player is *on*, and on these the same coordinate exists
+#: on two or three floors, so the request and the answer can be about different
+#: rooms while both are correct.
+def _floor_siblings(map_name: str) -> list[str]:
+    """Other maps sharing this one's name up to its floor suffix."""
+    if not map_name:
+        return []
+    parts = map_name.rsplit(" ", 1)
+    if len(parts) != 2 or not _looks_like_floor(parts[1]):
+        return []
+    stem = parts[0]
+    try:
+        from pokemon_agent import gamedata
+
+        names = gamedata.world().keys()
+    except Exception:  # noqa: BLE001 — an annotation must never fail a request
+        return []
+    return sorted(
+        name
+        for name in names
+        if name != map_name
+        and name.startswith(stem + " ")
+        and _looks_like_floor(name[len(stem) + 1 :])
+    )
+
+
+def _looks_like_floor(suffix: str) -> bool:
+    """`1F`, `B1F`, `2F`, `B4F` and nothing else."""
+    body = suffix[1:] if suffix.startswith("B") else suffix
+    return bool(body) and body[:-1].isdigit() and body.endswith("F")
+
+
+def _floor_note(map_name: str) -> str:
+    """Which floor a tile walk happened on, when that is ambiguous.
+
+    `goto x y` has no map argument and walks the current floor. Mt Moon's three
+    floors share a coordinate space, and one run asked for the same tile sixteen
+    times from the wrong one: the answer was honest each time and about a
+    different room than the question. Naming the floor costs a few bytes on the
+    handful of maps where it can be confused.
+    """
+    siblings = _floor_siblings(map_name)
+    if not siblings:
+        return ""
+    # Silph Co has ten floors and naming them all would be forty bytes of noise
+    # on every tile walk in the building.
+    shown = ", ".join(siblings[:3])
+    if len(siblings) > 3:
+        shown += f" and {len(siblings) - 3} more"
+    return (
+        f"tiles are per floor: this is {map_name}, and {shown} "
+        f'have their own (x, y). `poke goto "<map>"` crosses floors; `poke goto x y` '
+        f"does not."
+    )
+
+
 @app.post("/goto")
 async def goto(req: GotoRequest):
     """Walk toward a map or a tile, re-planning on live collision each map.
@@ -6082,6 +6204,11 @@ async def goto(req: GotoRequest):
         "arrived": result["arrived"],
         "stopped_because": result["stopped_because"],
     }
+    # Only when a tile was asked for, and only on a map with floor siblings.
+    if target_xy is not None:
+        note = _floor_note(str(summary.get("map") or ""))
+        if note:
+            payload["floors"] = note
     # What to do instead, when there is something: whether the goal is walled off
     # or merely unseen, and which exits *are* reachable from here. The run spent
     # twelve hours in a sealed pocket of Route 4 whose only ways out led back

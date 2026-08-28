@@ -265,11 +265,20 @@ def test_the_bag_menu_is_told_apart_and_its_cursor_is_an_absolute_slot(emulator,
         except Exception:  # noqa: BLE001 — a save that will not load is not a failure here
             continue
         slot = next((i for i, item in enumerate(bag) if item.get("item") == "Bicycle"), None)
-        if slot is not None and emulator.read_u8(ADDR_WALK_BIKE_SURF) == ON_FOOT:
+        # Three conditions, and the third is the one this test originally
+        # assumed. Gen 1 refuses the bike indoors and in caves, so on a save in
+        # Rock Tunnel the menu drive is perfect and the travel state stays 0 —
+        # which is the game being right and the test being wrong. The corpus
+        # moved into caves as the run advanced and the assumption surfaced.
+        if (
+            slot is not None
+            and emulator.read_u8(ADDR_WALK_BIKE_SURF) == ON_FOOT
+            and reader.read_tileset() == "OVERWORLD"
+        ):
             found = (str(copy), slot, len(bag))
             break
     if found is None:
-        pytest.skip("no save in the corpus carries a Bicycle while on foot")
+        pytest.skip("no save in the corpus carries a Bicycle on foot out of doors")
     state, slot, size = found
     emulator.load_state(state)
     emulator.settle()
