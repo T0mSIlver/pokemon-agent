@@ -1,5 +1,111 @@
 {
  "generated_from": "0cd19d3b877b7dc66d12c7050bed9a7f38154d4b",
+ "Cerulean Bike Shop": [
+  {
+   "service": "gift",
+   "text": "TEXT_BIKESHOP_CLERK",
+   "at": [
+    6,
+    2
+   ],
+   "item": "Bicycle"
+  }
+ ],
+ "Bill's House": [
+  {
+   "service": "gift",
+   "text": "TEXT_BILLSHOUSE_BILL_SS_TICKET",
+   "at": [
+    4,
+    4
+   ],
+   "item": "S.S. Ticket"
+  }
+ ],
+ "Blue's House": [
+  {
+   "service": "gift",
+   "text": "TEXT_BLUESHOUSE_DAISY_SITTING",
+   "at": [
+    2,
+    3
+   ],
+   "item": "Town Map"
+  }
+ ],
+ "Celadon City": [
+  {
+   "service": "gift",
+   "text": "TEXT_CELADONCITY_GRAMPS3",
+   "at": [
+    22,
+    16
+   ],
+   "item": "TM41"
+  }
+ ],
+ "Celadon Diner": [
+  {
+   "service": "gift",
+   "text": "TEXT_CELADONDINER_GYM_GUIDE",
+   "at": [
+    0,
+    1
+   ],
+   "item": "Coin Case"
+  }
+ ],
+ "Celadon Gym": [
+  {
+   "service": "gift",
+   "text": "TEXT_CELADONGYM_ERIKA",
+   "at": [
+    4,
+    3
+   ],
+   "item": "TM21"
+  }
+ ],
+ "Celadon Dept Store 3F": [
+  {
+   "service": "gift",
+   "text": "TEXT_CELADONMART3F_CLERK",
+   "at": [
+    16,
+    5
+   ],
+   "item": "TM18"
+  }
+ ],
+ "Celadon Dept Store Roof": [
+  {
+   "service": "gift",
+   "text": "TEXT_CELADONMARTROOF_LITTLE_GIRL",
+   "at": [
+    5,
+    5
+   ],
+   "item": "TM49"
+  },
+  {
+   "service": "gift",
+   "text": "TEXT_CELADONMARTROOF_LITTLE_GIRL",
+   "at": [
+    5,
+    5
+   ],
+   "item": "TM48"
+  },
+  {
+   "service": "gift",
+   "text": "TEXT_CELADONMARTROOF_LITTLE_GIRL",
+   "at": [
+    5,
+    5
+   ],
+   "item": "TM13"
+  }
+ ],
  "Celadon Pokecenter": [
   {
    "service": "heal",
@@ -8,6 +114,28 @@
     3,
     1
    ]
+  }
+ ],
+ "Cerulean City": [
+  {
+   "service": "gift",
+   "text": "TEXT_CERULEANCITY_ROCKET",
+   "at": [
+    30,
+    8
+   ],
+   "item": "TM28"
+  }
+ ],
+ "Cerulean Gym": [
+  {
+   "service": "gift",
+   "text": "TEXT_CERULEANGYM_MISTY",
+   "at": [
+    4,
+    2
+   ],
+   "item": "TM11"
   }
  ],
  "Cerulean Pokecenter": [
@@ -20,6 +148,28 @@
    ]
   }
  ],
+ "Cinnabar Gym": [
+  {
+   "service": "gift",
+   "text": "TEXT_CINNABARGYM_BLAINE",
+   "at": [
+    3,
+    3
+   ],
+   "item": "TM38"
+  }
+ ],
+ "Cinnabar Lab Metronome Room": [
+  {
+   "service": "gift",
+   "text": "TEXT_CINNABARLABMETRONOMEROOM_SCIENTIST1",
+   "at": [
+    7,
+    2
+   ],
+   "item": "TM35"
+  }
+ ],
  "Cinnabar Pokecenter": [
   {
    "service": "heal",
@@ -28,6 +178,39 @@
     3,
     1
    ]
+  }
+ ],
+ "Copycat's House 2F": [
+  {
+   "service": "gift",
+   "text": "TEXT_COPYCATSHOUSE2F_COPYCAT",
+   "at": [
+    4,
+    3
+   ],
+   "item": "TM31"
+  }
+ ],
+ "Fuchsia Good Rod House": [
+  {
+   "service": "gift",
+   "text": "TEXT_FUCHSIAGOODRODHOUSE_FISHING_GURU",
+   "at": [
+    5,
+    3
+   ],
+   "item": "Good Rod"
+  }
+ ],
+ "Fuchsia Gym": [
+  {
+   "service": "gift",
+   "text": "TEXT_FUCHSIAGYM_KOGA",
+   "at": [
+    4,
+    10
+   ],
+   "item": "TM06"
   }
  ],
  "Fuchsia Pokecenter": [
@@ -60,6 +243,48 @@
    ]
   }
  ],
+ "Mr Fuji's House": [
+  {
+   "service": "gift",
+   "text": "TEXT_MRFUJISHOUSE_MR_FUJI",
+   "at": [
+    3,
+    1
+   ],
+   "item": "Poke Flute"
+  }
+ ],
+ "Mr Psychic's House": [
+  {
+   "service": "gift",
+   "text": "TEXT_MRPSYCHICSHOUSE_MR_PSYCHIC",
+   "at": [
+    5,
+    3
+   ],
+   "item": "TM29"
+  }
+ ],
+ "Mt Moon B2F": [
+  {
+   "service": "gift",
+   "text": "TEXT_MTMOONB2F_DOME_FOSSIL",
+   "at": [
+    12,
+    6
+   ],
+   "item": "Dome Fossil"
+  },
+  {
+   "service": "gift",
+   "text": "TEXT_MTMOONB2F_HELIX_FOSSIL",
+   "at": [
+    13,
+    6
+   ],
+   "item": "Helix Fossil"
+  }
+ ],
  "Mt Moon Pokecenter": [
   {
    "service": "heal",
@@ -70,6 +295,39 @@
    ]
   }
  ],
+ "Pewter Museum 1F": [
+  {
+   "service": "gift",
+   "text": "TEXT_MUSEUM1F_SCIENTIST2",
+   "at": [
+    15,
+    2
+   ],
+   "item": "Old Amber"
+  }
+ ],
+ "Oak's Lab": [
+  {
+   "service": "gift",
+   "text": "TEXT_OAKSLAB_OAK1",
+   "at": [
+    5,
+    2
+   ],
+   "item": "Poke Ball"
+  }
+ ],
+ "Pewter Gym": [
+  {
+   "service": "gift",
+   "text": "TEXT_PEWTERGYM_BROCK",
+   "at": [
+    4,
+    1
+   ],
+   "item": "TM34"
+  }
+ ],
  "Pewter Pokecenter": [
   {
    "service": "heal",
@@ -77,6 +335,27 @@
    "at": [
     3,
     1
+   ]
+  }
+ ],
+ "Pokemon Fan Club": [
+  {
+   "service": "gift",
+   "text": "TEXT_POKEMONFANCLUB_CHAIRMAN",
+   "at": [
+    3,
+    1
+   ],
+   "item": "Bike Voucher"
+  }
+ ],
+ "Red's House 1F": [
+  {
+   "service": "heal",
+   "text": "TEXT_REDSHOUSE1F_MOM",
+   "at": [
+    5,
+    4
    ]
   }
  ],
@@ -90,6 +369,127 @@
    ]
   }
  ],
+ "Route 1": [
+  {
+   "service": "gift",
+   "text": "TEXT_ROUTE1_YOUNGSTER1",
+   "at": [
+    5,
+    24
+   ],
+   "item": "Potion"
+  }
+ ],
+ "Route 11 Gate 2F": [
+  {
+   "service": "gift",
+   "text": "TEXT_ROUTE11GATE2F_OAKS_AIDE",
+   "at": [
+    2,
+    6
+   ],
+   "item": "Itemfinder"
+  }
+ ],
+ "Route 12 Gate 2F": [
+  {
+   "service": "gift",
+   "text": "TEXT_ROUTE12GATE2F_BRUNETTE_GIRL",
+   "at": [
+    3,
+    4
+   ],
+   "item": "TM39"
+  }
+ ],
+ "Route 12 Super Rod House": [
+  {
+   "service": "gift",
+   "text": "TEXT_ROUTE12SUPERRODHOUSE_FISHING_GURU",
+   "at": [
+    2,
+    4
+   ],
+   "item": "Super Rod"
+  }
+ ],
+ "Route 15 Gate 2F": [
+  {
+   "service": "gift",
+   "text": "TEXT_ROUTE15GATE2F_OAKS_AIDE",
+   "at": [
+    4,
+    2
+   ],
+   "item": "Exp. All"
+  }
+ ],
+ "Route 16 Fly House": [
+  {
+   "service": "gift",
+   "text": "TEXT_ROUTE16FLYHOUSE_BRUNETTE_GIRL",
+   "at": [
+    2,
+    3
+   ],
+   "item": "HM02"
+  }
+ ],
+ "Route 24": [
+  {
+   "service": "gift",
+   "text": "TEXT_ROUTE24_COOLTRAINER_M1",
+   "at": [
+    11,
+    15
+   ],
+   "item": "Nugget"
+  }
+ ],
+ "Route 2 Gate": [
+  {
+   "service": "gift",
+   "text": "TEXT_ROUTE2GATE_OAKS_AIDE",
+   "at": [
+    1,
+    4
+   ],
+   "item": "HM05"
+  }
+ ],
+ "S.S. Anne Captain's Room": [
+  {
+   "service": "gift",
+   "text": "TEXT_SSANNECAPTAINSROOM_CAPTAIN",
+   "at": [
+    4,
+    2
+   ],
+   "item": "HM01"
+  }
+ ],
+ "Safari Zone Secret House": [
+  {
+   "service": "gift",
+   "text": "TEXT_SAFARIZONESECRETHOUSE_FISHING_GURU",
+   "at": [
+    3,
+    3
+   ],
+   "item": "HM03"
+  }
+ ],
+ "Saffron Gym": [
+  {
+   "service": "gift",
+   "text": "TEXT_SAFFRONGYM_SABRINA",
+   "at": [
+    9,
+    8
+   ],
+   "item": "TM46"
+  }
+ ],
  "Saffron Pokecenter": [
   {
    "service": "heal",
@@ -98,6 +498,28 @@
     3,
     1
    ]
+  }
+ ],
+ "Silph Co 11F": [
+  {
+   "service": "gift",
+   "text": "TEXT_SILPHCO11F_SILPH_PRESIDENT",
+   "at": [
+    7,
+    5
+   ],
+   "item": "Master Ball"
+  }
+ ],
+ "Silph Co 2F": [
+  {
+   "service": "gift",
+   "text": "TEXT_SILPHCO2F_SILPH_WORKER_F",
+   "at": [
+    10,
+    1
+   ],
+   "item": "TM36"
   }
  ],
  "Silph Co 9F": [
@@ -110,6 +532,28 @@
    ]
   }
  ],
+ "Vermilion Gym": [
+  {
+   "service": "gift",
+   "text": "TEXT_VERMILIONGYM_LT_SURGE",
+   "at": [
+    5,
+    1
+   ],
+   "item": "TM24"
+  }
+ ],
+ "Vermilion Old Rod House": [
+  {
+   "service": "gift",
+   "text": "TEXT_VERMILIONOLDRODHOUSE_FISHING_GURU",
+   "at": [
+    2,
+    4
+   ],
+   "item": "Old Rod"
+  }
+ ],
  "Vermilion Pokecenter": [
   {
    "service": "heal",
@@ -120,6 +564,28 @@
    ]
   }
  ],
+ "Viridian City": [
+  {
+   "service": "gift",
+   "text": "TEXT_VIRIDIANCITY_FISHER",
+   "at": [
+    6,
+    23
+   ],
+   "item": "TM42"
+  }
+ ],
+ "Viridian Gym": [
+  {
+   "service": "gift",
+   "text": "TEXT_VIRIDIANGYM_GIOVANNI",
+   "at": [
+    2,
+    1
+   ],
+   "item": "TM27"
+  }
+ ],
  "Viridian Pokecenter": [
   {
    "service": "heal",
@@ -128,6 +594,17 @@
     3,
     1
    ]
+  }
+ ],
+ "Warden's House": [
+  {
+   "service": "gift",
+   "text": "TEXT_WARDENSHOUSE_WARDEN",
+   "at": [
+    2,
+    3
+   ],
+   "item": "HM04"
   }
  ]
 }

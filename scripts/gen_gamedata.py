@@ -1008,33 +1008,138 @@ def build_shops(
 #: A text body that is nothing but one of these macros is that service.
 SERVICE_MACROS = {"script_pokecenter_nurse": "heal"}
 
-#: A `text_asm` body that calls one of these is that service too. Silph Co 9F's
+#: A body that reaches one of these calls provides that service. Silph Co 9F's
 #: nurse is hand-written rather than the macro -- she calls `predef HealParty`
 #: inside a conditional -- and she heals exactly like the other twelve.
 SERVICE_CALLS = {"predef HealParty": "heal"}
 
+#: How a script hands an item over, and where the item's name is written. Both
+#: forms are (the instruction that does it, the pattern that names the item on
+#: the nearest line above it). This is what makes "somebody in this room hands
+#: you something" answerable at all: the Warden's HM04, Mr Fuji's Poke Flute, the
+#: Silph president's Master Ball and Oak's aide's HM05 each gate main-line
+#: progress and none of them was in this file.
+GIFT_FORMS = (
+    # The general case: `lb bc, HM_STRENGTH, 1` sits directly above the
+    # `call GiveItem` it feeds, at all forty-one of its sites.
+    ("call GiveItem", re.compile(r"lb bc, (\w+), \d+$")),
+    # Oak's three aides never call it. They load the reward into a hardware
+    # register and hand off to a shared routine that lives in another file, so
+    # following calls within the file cannot reach the give. HM05 Flash -- the
+    # move Rock Tunnel needs -- is one of the three.
+    ("ldh [hOaksAideRewardItem], a", re.compile(r"ld a, (\w+)$")),
+)
+
+# `call GivePokemon` is deliberately NOT in that table. Three of its six sites --
+# the Fighting Dojo's two prize balls and the Cinnabar Lab fossil revival -- name
+# no species at all: they load `wCurPartySpecies`, decided at run time by which
+# ball the player walked up to or which fossil is in the bag. Emitting the three
+# that do use the literal form (Eevee, Lapras, the Magikarp salesman's Magikarp)
+# and silently dropping the other three would be a table that is right where it
+# is easy and absent where it is not, which is the failure mode this file exists
+# to avoid. A gift Pokemon is also not an item, so it has nowhere to go in the
+# schema below without a second one.
+
+#: A text body is not the whole script it runs. Erika's text reaches TM21 through
+#: `call z, CeladonGymReceiveTM21` and Mom's heal sits behind
+#: `call RedsHouse1FMomHealScript`; both targets are labels at column 0, which the
+#: body split below treats as the *end* of the calling body. Reading only a body's
+#: own lines therefore missed all eight gym leaders' TMs, the Celadon roof girl's
+#: drink trade and Mom's free heal. Calls are followed into other bodies of the
+#: same file -- one source file is as far as a label can be resolved here, and
+#: everything a service does is written next to it.
+LOCAL_CALL = re.compile(r"^(?:call|jp|jr)\s+(?:[a-z]{1,2},\s*)?([A-Z]\w*)$")
+
+#: One hop finds every service in the game -- measured: depth 1 and depth 6 both
+#: yield the same fifty-seven entries, and depth 0 yields forty-five. The bound is
+#: a guard rather than a threshold, so a future script that chains further is
+#: still reached without any depth walking a whole map script in.
+MAX_CALL_DEPTH = 3
+
 #: What the whole game holds, checked rather than assumed: eleven Poke Center
-#: nurses, the Indigo Plateau lobby nurse and the Silph Co 9F nurse. If a
-#: regeneration finds a different number the classifier has drifted and the
-#: agent would be pointed at the wrong tile, so it fails instead.
-EXPECTED_SERVICES = {"heal": 13}
+#: nurses, the Indigo Plateau lobby nurse, the Silph Co 9F nurse and Mom in Red's
+#: House; forty-one people who hand an item over, forty-three items between them
+#: (the Celadon roof girl gives one of three). If a regeneration finds a different
+#: number the classifier has drifted and the agent would be pointed at the wrong
+#: tile, so it fails instead.
+EXPECTED_SERVICES = {"gift": 43, "heal": 14}
+
+# Three things this file finds and deliberately does not emit. Every entry here
+# is a person you walk to and press A at, and none of these is one:
+#
+# * Pokemon Tower 5F's purified zone. `PokemonTower5FDefaultScript` runs
+#   `predef HealParty` when the player stands on one of the four tiles in
+#   `PokemonTower5FPurifiedZoneCoords`. It is a floor trigger -- no object_event,
+#   no TEXT_ constant, nobody to talk to -- so an entry for it would point
+#   `poke heal` at a tile where an A press does nothing, which is worse than no
+#   entry. It is a real free heal and it is the one thing here worth revisiting
+#   if the schema ever grows a "stand here" kind.
+# * Viridian Mart's Oak's Parcel. `ViridianMartOaksParcelScript` hangs off the
+#   map's SCRIPT_ pointer table and fires on entry, not off any text. The parcel
+#   arrives during a forced cutscene; there is nothing to walk to.
+# * Oak's Lab's `predef HealParty` is the automatic heal after the rival battle,
+#   inside a cutscene body no text pointer reaches. Correctly not a service.
+#
+# The Game Corner's three prize vendors (`script_prize_vendor`) and the Celadon
+# roof's three vending machines (`script_vending_machine`) are the same one-macro
+# shape as a nurse and would classify in one line each -- but every one of the six
+# is a `bg_event`, a piece of scenery, not an `object_event`. parse_objects only
+# reads object_events, and the "counter is a talk-over tile, stand two out" rule
+# every reader of this file applies is wrong for scenery you face directly. They
+# need a bg_event join and a stand-tile rule of their own.
+#
+# Still unclassified for want of a reader each, none of them on the main line:
+# the eight `predef DoInGameTradeDialogue` in-game trades, the Name Rater, the
+# Day Care and the Safari Zone gate.
 
 
-def parse_map_scripts(fetcher: Fetcher) -> Dict[str, Dict[str, str]]:
-    """Per map label, the service each of its text bodies provides.
+def reachable_body(bodies: Dict[str, List[str]], start: str) -> List[str]:
+    """Every instruction a text body can run, following calls within the file.
 
-    ``{"CeruleanPokecenter": {"TEXT_CERULEANPOKECENTER_NURSE": "heal"}}``.
+    See LOCAL_CALL: the body split closes a body at the next column-0 label, so a
+    script that hands its work to a helper label looks empty from the body alone.
+    """
+    seen: set = set()
+    queue: List[Tuple[str, int]] = [(start, 0)]
+    flat: List[str] = []
+    while queue:
+        label, depth = queue.pop(0)
+        if label in seen or label not in bodies or depth > MAX_CALL_DEPTH:
+            continue
+        seen.add(label)
+        for entry in bodies[label]:
+            if not entry:
+                continue
+            flat.append(entry)
+            call = LOCAL_CALL.match(entry)
+            if call and call.group(1) in bodies:
+                queue.append((call.group(1), depth + 1))
+    return flat
+
+
+def parse_map_scripts(fetcher: Fetcher) -> Dict[str, Dict[str, List[Dict[str, str]]]]:
+    """Per map label, the services each of its text bodies provides.
+
+    ``{"CeruleanPokecenter": {"TEXT_CERULEANPOKECENTER_NURSE": [{"service": "heal"}]}}``.
     Bodies that are plain dialogue -- ``text_far`` -- and bodies whose asm does
     nothing we have a name for are left out entirely.
+
+    A list per constant because one person can hand over more than one thing: the
+    Celadon Mart roof girl gives TM49, TM48 or TM13 depending on which drink she
+    is offered, and naming only the first would be a wrong answer about the other
+    two.
     """
     names = [n for n in fetcher.listdir("scripts") if n.endswith(".asm")]
     texts = fetcher.many([f"scripts/{n}" for n in names])
     pointer = re.compile(r"dw_const\s+(\w+),\s*(TEXT_\w+)")
-    out: Dict[str, Dict[str, str]] = {}
+    out: Dict[str, Dict[str, List[Dict[str, str]]]] = {}
     for path, text in texts.items():
         label = Path(path).stem
         lines = joined_lines(text)
-        consts = {m.group(1): m.group(2) for line in lines for m in [pointer.search(line)] if m}
+        # Pairs, not a dict: one body can back several text ids. The Game Corner's
+        # three prize vendors and the Celadon roof's three vending machines each
+        # share one body, and keying by label would keep only the last of them.
+        consts = [(m.group(1), m.group(2)) for line in lines for m in [pointer.search(line)] if m]
         if not consts:
             continue
         # Bodies, in source order: a label at column 0 opens one and the next
@@ -1048,9 +1153,9 @@ def parse_map_scripts(fetcher: Fetcher) -> Dict[str, Dict[str, str]]:
                 bodies[current] = []
             elif current is not None:
                 bodies[current].append(line.strip())
-        found: Dict[str, str] = {}
-        for body_label, const in consts.items():
-            body = [entry for entry in bodies.get(body_label, ()) if entry]
+        found: Dict[str, List[Dict[str, str]]] = {}
+        for body_label, const in consts:
+            body = reachable_body(bodies, body_label)
             if not body:
                 continue
             service = SERVICE_MACROS.get(body[0].split()[0])
@@ -1060,16 +1165,48 @@ def parse_map_scripts(fetcher: Fetcher) -> Dict[str, Dict[str, str]]:
                     (name for call, name in SERVICE_CALLS.items() if call in joined), None
                 )
             if service:
-                found[const] = service
+                found[const] = [{"service": service}]
+                continue
+            # One entry per item the body can hand over, in source order: the
+            # Celadon roof girl gives TM49, TM48 or TM13 depending on the drink.
+            items = gift_items(body)
+            if items:
+                found[const] = [{"service": "gift", "item": item} for item in items]
         if found:
             out[label] = found
     return out
+
+
+def gift_items(body: List[str]) -> List[str]:
+    """The item constants a body can hand over, in source order. See GIFT_FORMS.
+
+    Empty when the body gives nothing, which is almost every body in the game.
+    """
+    items: List[str] = []
+    for index, entry in enumerate(body):
+        for marker, names_it in GIFT_FORMS:
+            if entry != marker:
+                continue
+            const = next(
+                (
+                    match.group(1)
+                    for above in reversed(body[:index])
+                    for match in [names_it.match(above)]
+                    if match
+                ),
+                None,
+            )
+            if const is None:
+                raise GenError(f"{marker!r} with nothing above it naming the item: {body}")
+            items.append(const)
+    return items
 
 
 def build_services(
     fetcher: Fetcher,
     maps: MapNames,
     objects: Dict[str, Dict[str, Any]],
+    names: NameTables,
     report: List[str],
 ) -> Dict[str, List[Dict[str, Any]]]:
     """Every map's service NPCs, with the tile each one stands on.
@@ -1087,7 +1224,7 @@ def build_services(
         if label not in maps.label_to_const:
             continue  # a script for a map with no header of its own
         entries = []
-        for const, service in sorted(by_const.items()):
+        for const, services in sorted(by_const.items()):
             at = [
                 [obj["x"], obj["y"]]
                 for obj in objects.get(label, {}).get("objects", ())
@@ -1097,8 +1234,12 @@ def build_services(
                 raise GenError(
                     f"{const} on {maps.label(label)}: matched {len(at)} objects, expected 1"
                 )
-            entries.append({"service": service, "text": const, "at": at[0]})
-            counts[service] = counts.get(service, 0) + 1
+            for service in services:
+                entry = {"service": service["service"], "text": const, "at": at[0]}
+                if "item" in service:
+                    entry["item"] = names.item(service["item"])
+                entries.append(entry)
+                counts[entry["service"]] = counts.get(entry["service"], 0) + 1
         out[maps.label(label)] = entries
     if counts != EXPECTED_SERVICES:
         raise GenError(f"services found {counts}, expected {EXPECTED_SERVICES}")
@@ -1379,7 +1520,7 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
     encounters = build_encounters(fetcher, names, parse_slot_chances(fetcher))
     items = build_items(fetcher, objects, maps, names)
     shops = build_shops(fetcher, maps, names, objects, report)
-    services = build_services(fetcher, maps, objects, report)
+    services = build_services(fetcher, maps, objects, names, report)
     species = build_species(fetcher, names)
     moves = build_moves(fetcher, names)
     tms = build_tms(names)

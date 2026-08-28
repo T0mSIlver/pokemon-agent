@@ -2056,21 +2056,38 @@ def services_at(map_name: Optional[str]) -> list[dict]:
 
     Empty on most maps. The overlay is merged here rather than in gamedata so
     that services.json stays exactly what the generator wrote.
+
+    Merged by tile, not appended. The generator learned to read `call GiveItem`
+    and independently derived the Cerulean Bike Shop clerk — the same person the
+    overlay describes, at the same [6, 2] — as a `gift`. That agreement is worth
+    having, since the overlay's tile was measured by walking to it and the
+    generator's comes from the map's own object table. Appending both would name
+    one NPC twice on `poke map`, so the overlay wins the fields it measured
+    (`stand`, `face`, `presses`, which nothing in the data can supply) and keeps
+    whatever the generated entry knows that it does not.
     """
     if not map_name:
         return []
-    services = list(gamedata.services(str(map_name)))
+    services = [dict(entry) for entry in gamedata.services(str(map_name))]
     counter = counter_at(map_name)
-    if counter is not None:
-        services.append(dict(counter))
+    if counter is None:
+        return services
+    where = list(counter.get("at") or ())
+    for entry in services:
+        if list(entry.get("at") or ()) == where:
+            entry.update(counter)
+            return services
+    services.append(dict(counter))
     return services
 
 
 def healer_at(map_name: Optional[str]) -> Optional[dict]:
     """The nurse on this map, or None.
 
-    Thirteen maps in the game have one and 210 do not, so this is None almost
-    everywhere and the frame pays nothing for it.
+    Fourteen maps in the game have one and 209 do not, so this is None almost
+    everywhere and the frame pays nothing for it. The fourteenth is Red's House
+    1F: Pallet has no Poke Center, and before Viridian, Mom is the only heal in
+    the game.
     """
     return next((s for s in services_at(map_name) if s.get("service") == "heal"), None)
 

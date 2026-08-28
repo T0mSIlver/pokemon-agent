@@ -724,6 +724,17 @@ def cmd_bike(args: argparse.Namespace, url: str) -> int:
     return EXIT_OK
 
 
+def cmd_strength(args: argparse.Namespace, url: str) -> int:
+    """Switch Strength on so boulders move."""
+    answer = fetch_json(url, "/field/strength", method="POST", payload={})
+    if args.json:
+        print(compact(answer))
+        return EXIT_OK
+    print("strength is on — walk into a boulder to push it")
+    print(action_lines(answer))
+    return EXIT_OK
+
+
 def cmd_surf(args: argparse.Namespace, url: str) -> int:
     """Ride onto the water in front of you."""
     answer = fetch_json(url, "/field/surf", method="POST", payload={})
@@ -1205,6 +1216,23 @@ def build_parser() -> argparse.ArgumentParser:
     bike.add_argument("state", nargs="?", choices=("on", "off"), default="on")
     bike.add_argument("--json", action="store_true", help="the whole payload instead of a summary")
     bike.set_defaults(func=cmd_bike)
+
+    strength = subparsers.add_parser(
+        "strength",
+        parents=[common],
+        help="switch Strength on so boulders move, e.g. poke strength",
+        description=(
+            "Turn Strength on. Needs HM04 on a party Pokemon and the Rainbow Badge.\n"
+            "It is a state rather than a push: turn it on once, then walk into the "
+            "boulder. Confirmed against the game's own flag before this reports "
+            "success."
+        ),
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+    )
+    strength.add_argument(
+        "--json", action="store_true", help="the whole payload instead of a summary"
+    )
+    strength.set_defaults(func=cmd_strength)
 
     surf = subparsers.add_parser(
         "surf",

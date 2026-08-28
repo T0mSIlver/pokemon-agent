@@ -38,6 +38,11 @@ ADDR_FACING = 0xC109  # live sprite facing direction
 #: sprite change is four pixels on a 160x144 screen.
 ADDR_WALK_BIKE_SURF = 0xD700
 ON_FOOT, ON_BIKE, SURFING = 0, 1, 2
+#: Bit 0 goes high when Strength has been used and boulders can be pushed.
+#: Found by diffing WRAM either side of the move on a doctored save rather than
+#: from memory: it is the only byte in 0xD700-0xD7FF that moves, 0 -> 1.
+ADDR_STRENGTH_ACTIVE = 0xD728
+STRENGTH_ACTIVE_BIT = 0x01
 # 0xC109 is the live sprite state that updates as the player moves.
 
 # -- Party --
@@ -1951,6 +1956,10 @@ class RedBlueMemoryReader(GameMemoryReader):
     def read_travel_state(self) -> int:
         """Whether the player is on foot, on the Bicycle, or surfing."""
         return self.emu.read_u8(ADDR_WALK_BIKE_SURF)
+
+    def strength_active(self) -> bool:
+        """Whether Strength has been used, so boulders will move."""
+        return bool(self.emu.read_u8(ADDR_STRENGTH_ACTIVE) & STRENGTH_ACTIVE_BIT)
 
     def read_tileset(self) -> str:
         """Read the current map's tileset."""

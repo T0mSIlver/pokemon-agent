@@ -115,6 +115,29 @@ def test_the_counter_shows_up_as_a_service_so_poke_map_names_it():
     assert services[0]["at"] == [6, 2]
 
 
+def test_the_overlay_and_the_generated_entry_are_one_npc_not_two():
+    """Both halves of the harness found this clerk, and they agree on the tile.
+
+    The overlay's [6, 2] was measured by walking to it and pressing A until the
+    Bicycle landed in the bag. The generator's came later and independently,
+    from `BikeShop.asm`'s own object table, once it learned to read
+    `call GiveItem`. Two sources agreeing is worth keeping; naming the same
+    person twice on `poke map` is not.
+
+    The overlay wins because it carries what no map table can: which tile to
+    stand on, which way to face, and how many presses the conversation takes.
+    """
+    generated = [entry for entry in gamedata.services(BIKE_SHOP) if entry.get("at") == [6, 2]]
+    assert generated, "the generator finds the clerk too, or this test is vacuous"
+    assert generated[0]["service"] == "gift"
+
+    merged = capabilities.services_at(BIKE_SHOP)
+    assert len(merged) == 1, "one clerk, one entry"
+    assert merged[0]["service"] == "trade"
+    assert merged[0]["stand"] == [4, 2], "the measured fields survive the merge"
+    assert merged[0]["presses"] == 6
+
+
 def test_the_stand_tile_agrees_with_the_harness_own_counter_convention():
     """A talk-over counter is two tiles out, which is what `poke heal` assumes.
 
@@ -126,9 +149,13 @@ def test_the_stand_tile_agrees_with_the_harness_own_counter_convention():
 
 
 def test_the_overlay_does_not_disturb_the_generated_nurses():
-    """Thirteen healers before, thirteen after, and none of them on this map."""
+    """Fourteen healers before, fourteen after, and none of them on this map.
+
+    Thirteen until the generator learned to follow a script into the helper it
+    calls, which is what had hidden Mom's free heal in Red's House.
+    """
     healers = [name for name in gamedata.map_names() if capabilities.healer_at(name) is not None]
-    assert len(healers) == 13
+    assert len(healers) == 14
     assert capabilities.healer_at(BIKE_SHOP) is None
     assert capabilities.counter_at("Cerulean Pokecenter") is None
     assert capabilities.counter_at("Route 4") is None

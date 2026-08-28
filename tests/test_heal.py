@@ -30,10 +30,17 @@ from pokemon_agent.server import _counter_stand_tiles, _heal_line
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 
-#: Every map in the game with a nurse on it. Eleven Poke Centers plus the two
+#: Every map in the game with a nurse on it. Eleven Poke Centers plus the three
 #: that are not Centers at all, which is why the generator classifies by what a
 #: script *does* rather than by which room it is in.
+#:
+#: Red's House 1F joined the list when the generator learned to follow a script
+#: into the helper label it calls: Mom's text hands off to
+#: `RedsHouse1FMomHealScript`, so her `predef HealParty` was invisible while
+#: each body was read as its own lines only. Pallet has no Center, which makes
+#: her the only heal in the game before Viridian.
 HEALER_MAPS = (
+    "Red's House 1F",
     "Viridian Pokecenter",
     "Pewter Pokecenter",
     "Cerulean Pokecenter",

@@ -1537,6 +1537,15 @@ class Client:
 
         return Result.from_payload(self._act_json("/field/surf", {}))
 
+    def strength(self) -> Result:
+        """Switch Strength on, so boulders move when you walk into them.
+
+        Needs HM04 on a party Pokemon and the Rainbow Badge. It is a state, not
+        a push: turn it on once, then walk into the boulder.
+        """
+
+        return Result.from_payload(self._act_json("/field/strength", {}))
+
     def buy(self, item: str, count: int = 1) -> Result:
         """Buy from the mart on this map, walking to the counter first if need be."""
 
@@ -1763,6 +1772,10 @@ def surf() -> Result:
     return client().surf()
 
 
+def strength() -> Result:
+    return client().strength()
+
+
 def buy(item: str, count: int = 1) -> Result:
     return client().buy(item, count)
 
@@ -1889,6 +1902,7 @@ __all__ = [
     "screenshot",
     "sim",
     "state",
+    "strength",
     "surf",
     "walk",
 ]

@@ -2202,18 +2202,37 @@ def _record_repeat(key: tuple, state_before: Optional[dict], state_after: Option
     )
 
 
-def _record_walk(state: Optional[dict], presses: int) -> None:
+def _record_walk(actions: Sequence[str], state: Optional[dict], presses: int) -> None:
     """File where one walk ended, for the lap detector.
 
-    Only walking calls: a battle, a heal or a purchase ends where it started by
-    design, and feeding those in would make standing at a nurse's counter look
-    like a lap round a route.
+    Three things had to be true before this counts, and only the first was
+    checked when it shipped. Proved against a running server: twenty-four
+    batches of `press_b`, with no walking action anywhere in them, earned a
+    refusal reading "24 walks in a row have ended on the same 1 tile" followed
+    by a list of doors. The guard was really watching "the last two dozen
+    /action calls", and its docstring said otherwise.
+
+    * The batch has to contain a walk. A-spam at a nurse's counter ends where it
+      started by design; that is the repeat guard's case, not this one.
+    * The game has to be on the map. Directions sent into a battle menu do not
+      move anybody, and "walking is not what is missing" is a strange thing to
+      say to a frame where walking is not possible.
+    * `presses` has to be presses. This was handed `actions_executed`, so
+      `wait_60` scored 1 against a floor of 240 and the Cerulean episode's
+      `wait_60 a:38` scored 39 rather than the 12,317 buttons it really cost.
     """
-    player = (state or {}).get("player") or {}
+    if not any(str(action).strip().lower().startswith("walk_") for action in actions):
+        _cycle_guard.reset()
+        return
+    state = state or {}
+    if (state.get("battle") or {}).get("in_battle"):
+        _cycle_guard.reset()
+        return
+    player = state.get("player") or {}
     position = player.get("position") or {}
     x, y = position.get("x"), position.get("y")
     _cycle_guard.record(
-        str(((state or {}).get("map") or {}).get("map_name") or ""),
+        str((state.get("map") or {}).get("map_name") or ""),
         (int(x), int(y)) if x is not None and y is not None else None,
         presses,
     )
@@ -3354,6 +3373,33 @@ def _field_surf_sync() -> dict:
         detail=(
             f"Surf was chosen from {who['mon'].get('species')}'s menu and the game still "
             "has you on land. Surf only starts from a tile facing water."
+        ),
+    )
+
+
+def _field_strength_sync() -> dict:
+    """Use Strength, and check the game agrees boulders will now move.
+
+    Unlike Cut and Surf this needs nothing in front of the player: it is a state
+    that stays on until the map changes. Verified against ``wd728`` bit 0, found
+    by diffing WRAM either side of the move on a doctored save -- it is the only
+    byte in the whole flag block that moves.
+    """
+    _require_field_badge_sync("strength")
+    if _reader.strength_active():
+        raise HTTPException(
+            status_code=409,
+            detail="Strength is already in use here — boulders will move if you walk into them.",
+        )
+    spent, who = _use_field_move_sync("strength")
+    if _reader.strength_active():
+        return {"strength": True, "used": who["mon"].get("species"), "presses": spent}
+    _escape_menus_sync()
+    raise HTTPException(
+        status_code=409,
+        detail=(
+            f"Strength was chosen from {who['mon'].get('species')}'s menu and the game "
+            "did not switch it on. Nothing about the boulders changed."
         ),
     )
 
@@ -4748,7 +4794,9 @@ async def execute_actions(req: ActionRequest):
     try:
         result = await _run_actions(req.actions, source="action", reason="actions_executed")
         _record_repeat(key, result["state_before"], result["state_after"])
-        _record_walk(result["state_after"], result["actions_executed"])
+        _record_walk(
+            req.actions, result["state_after"], (result["outcome"] or {}).get("presses") or 0
+        )
         _repeat_context.update(
             state=result["state_after"],
             blocked_walk=all_walks_blocked(req.actions, result.get("outcome")),
@@ -4915,6 +4963,29 @@ async def field_bike(req: FieldBikeRequest):
         outcome=None,
         milestone_ids=await _run_emulator_sync(_milestone_ids_sync),
         extra={"riding": outcome.get("riding")},
+    )
+    return {**outcome, **_observation_summary(bundle)}
+
+
+@app.post("/field/strength")
+async def field_strength():
+    """Switch Strength on, so boulders move when you walk into them."""
+    _ensure_emulator()
+    if await _run_emulator_sync(_in_battle_sync):
+        raise HTTPException(
+            status_code=409,
+            detail="In a battle, so there are no boulders. Finish the fight first.",
+        )
+    _check_action_rate()
+    outcome = await _run_emulator_sync(_field_strength_sync)
+    bundle = await _refresh_and_broadcast(reason="strength", source="strength")
+    await _write_receipt(
+        tool="strength",
+        presses=outcome.pop("presses", 0),
+        bundle=bundle,
+        outcome=None,
+        milestone_ids=await _run_emulator_sync(_milestone_ids_sync),
+        extra={"strength": outcome.get("strength")},
     )
     return {**outcome, **_observation_summary(bundle)}
 
@@ -5930,7 +6001,9 @@ async def goto(req: GotoRequest):
         bundle = await _refresh_and_broadcast(reason="goto", source="goto")
     if walk_states:
         _record_repeat(goto_key, walk_states[0][0], walk_states[-1][1])
-        _record_walk(walk_states[-1][1], result["actions_executed"])
+        # A goto is walking by definition, so it names one to satisfy the check
+        # above; `walked` is the tiles it actually covered.
+        _record_walk(["walk_"], walk_states[-1][1], result["actions_executed"])
     else:
         # A walk that never pressed anything moved nothing by definition, and
         # asking for it again will not move anything either.
