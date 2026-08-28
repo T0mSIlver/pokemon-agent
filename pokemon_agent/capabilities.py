@@ -27,6 +27,7 @@ from pokemon_agent.coordinator import (
     frames_for_action,
 )
 from pokemon_agent.milestones import MILESTONE_DAG, MILESTONES_BY_ID
+from pokemon_agent.navigation import CUT_TREE_TILES
 from pokemon_agent.pathfinding import DIRECTIONS
 
 Coord = tuple[int, int]
@@ -235,6 +236,9 @@ def collision_from(snapshot: dict, explored: Optional[dict] = None) -> dict:
         # truth is a fact and "unreachable" from a mosaic of screens is a guess.
         "ground_truth": bool(ground_truth),
         "tile_ids": world_mod.tile_id_map(truth.get("tile_ids")),
+        # Which tileset the ids belong to. A bare id means nothing without it:
+        # 0x3D is a cuttable tree on the overworld and something else in a gate.
+        "tileset": truth.get("tileset") or snapshot.get("tileset"),
     }
 
 
@@ -735,6 +739,103 @@ class _Stop:
         self.onward = onward
 
 
+def cut_trees_on_the_seam(
+    collision: dict, region: world_mod.Region, *, limit: int = 4
+) -> list[Coord]:
+    """Small trees on the edge of the ground we can reach.
+
+    A tree reads as solid to the blockset, so a flood stops at one exactly as it
+    stops at rock, and every "sealed" answer built on that flood is wrong about
+    the one thing that matters: rock stays and a tree does not. This looks along
+    the boundary of the reachable region and returns the tiles Cut would open.
+
+    Only the boundary, not the whole map: a tree on the far side of a wall is
+    not what is keeping us here, and naming it would send the walk at ground it
+    still cannot reach.
+    """
+    trees = CUT_TREE_TILES.get(str(collision.get("tileset") or ""), frozenset())
+    if not trees:
+        return []
+    tile_ids = collision.get("tile_ids") or {}
+    reachable = region.distance  # a mapping, so the membership test below is O(1)
+    found: set[Coord] = set()
+    for x, y in region.order:
+        for neighbour in ((x + 1, y), (x - 1, y), (x, y + 1), (x, y - 1)):
+            if neighbour not in reachable and tile_ids.get(neighbour) in trees:
+                found.add(neighbour)
+    return sorted(found)[:limit]
+
+
+#: Gen 1 moves that do something outside a battle, in the order the party
+#: submenu lists them: the mon's own move slots, filtered to these.
+FIELD_MOVES = frozenset(
+    {"cut", "fly", "surf", "strength", "flash", "dig", "teleport", "softboiled"}
+)
+
+
+def field_move_row(moves: Sequence[Mapping[str, Any]], move: str) -> Optional[int]:
+    """Which row of the party submenu holds `move`, or None if it is not there.
+
+    The submenu lists a mon's field moves in move-slot order and then STATS,
+    SWITCH, CANCEL, so the row is the count of field moves in earlier slots.
+    """
+    wanted = move.strip().lower()
+    row = 0
+    for slot in moves:
+        name = str(slot.get("name") or "").strip().lower()
+        if name not in FIELD_MOVES:
+            continue
+        if name == wanted:
+            return row
+        row += 1
+    return None
+
+
+def cut_plan(collision: dict, region: world_mod.Region, *, at: Optional[Coord] = None) -> dict:
+    """The nearest tree Cut can open, and the tile to stand on to reach it.
+
+    `at` names one, for a caller that has a tree in mind. Without it this takes
+    the nearest tree on the edge of the ground the player can reach, which is
+    the only kind worth walking to: a tree behind a wall is not what is keeping
+    us here.
+    """
+    trees = cut_trees_on_the_seam(collision, region, limit=64)
+    if at is not None:
+        if at not in trees:
+            ids = collision.get("tile_ids") or {}
+            known = CUT_TREE_TILES.get(str(collision.get("tileset") or ""), frozenset())
+            if ids.get(at) not in known:
+                raise CapabilityError(
+                    f"The tile at {list(at)} is not a small tree — nothing there to cut."
+                )
+            raise CapabilityError(
+                f"There is a tree at {list(at)}, but no tile beside it can be reached from "
+                f"here, so there is nowhere to stand and cut from."
+            )
+        trees = [at]
+    if not trees:
+        raise CapabilityError(
+            "No small tree borders the ground you can reach on this map, so there is "
+            "nothing here for Cut to open."
+        )
+
+    best: Optional[dict] = None
+    for tree in trees:
+        for name, (dx, dy) in DIRECTIONS.items():
+            stand = (tree[0] - dx, tree[1] - dy)
+            steps = region.steps_to(stand)
+            if steps is None:
+                continue
+            if best is None or steps < best["steps"]:
+                best = {"tree": tree, "stand": stand, "facing": name, "steps": steps}
+    if best is None:
+        raise CapabilityError(
+            f"There is a tree at {list(trees[0])}, but no tile beside it can be reached "
+            f"from here, so there is nowhere to stand and cut from."
+        )
+    return best
+
+
 def _walled_off(
     world: world_mod.World,
     goal: str,
@@ -752,6 +853,7 @@ def _walled_off(
     """
     here = observation["map_name"]
     exits = _reachable_exits(world, here, collision, observation["snapshot"], region)
+    trees = cut_trees_on_the_seam(collision, region)
     onward = {
         "kind": "walled-off",
         "goal": goal,
@@ -760,12 +862,25 @@ def _walled_off(
         "sealed": region.sealed,
         "exits": exits,
     }
-    sealed = (
-        "Every tile bordering the ground you can reach has been looked at and is solid, "
-        "so this is a wall and not a gap in the map"
-        if region.sealed
-        else "No unseen ground lies that way either, so there is nothing to walk at and find out"
-    )
+    if trees:
+        # This region is not sealed by rock, and saying that it is has been the
+        # most expensive sentence this harness ever wrote: one run spent 77,000
+        # presses circling a city whose gym stood seven steps behind one tree.
+        onward["kind"] = "behind-a-tree"
+        onward["cut_trees"] = [list(tree) for tree in trees]
+        where = ", ".join(str(list(tree)) for tree in trees)
+        sealed = (
+            f"The ground you can reach ends at a small tree at {where}, which Cut opens — "
+            f"`poke cut` walks to it and cuts it. That is not rock, so this is not a wall"
+        )
+    else:
+        sealed = (
+            "Every tile bordering the ground you can reach has been looked at and is solid, "
+            "so this is a wall and not a gap in the map"
+            if region.sealed
+            else "No unseen ground lies that way either, so there is nothing to walk at "
+            "and find out"
+        )
     onward_note = (
         f" What is reachable from here: {_describe_exits(exits)}."
         if exits

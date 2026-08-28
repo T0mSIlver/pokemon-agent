@@ -81,6 +81,22 @@ WARP_CARPET_TILES: dict[str, set[int]] = {
     "right": {tile + TILE_ID_OFFSET for tile in (0x0F, 0x4E)},
 }
 
+#: pokered ``engine/overworld/cut.asm``. A tile named here is a small tree: the
+#: collision map calls it solid, and it stays solid until Cut is used on it from
+#: the party menu. Every other refusal this harness writes about solid ground is
+#: permanent, and these are the tiles that are not — which is why they are named
+#: separately rather than folded into the blockset.
+#:
+#: OVERWORLD/0x3D was measured against the cartridge (see
+#: ``tests/test_field_moves_live.py``). GYM/0x50 is Erika's gym and comes from
+#: the same pokered table; nothing here has stood in front of one, so `poke cut`
+#: checks the tile afterwards rather than trusting the entry.
+CUT_TREE_TILES: dict[str, set[int]] = {
+    "OVERWORLD": {0x3D + TILE_ID_OFFSET},
+    "GYM": {0x50 + TILE_ID_OFFSET},
+}
+
+
 #: Tilesets whose warps are checked with ``IsWarpTileInFrontOfPlayer`` rather
 #: than ``IsPlayerFacingEdgeOfMap`` (pokered ``ExtraWarpCheck``).
 WARP_FRONT_TILE_TILESETS = frozenset({"OVERWORLD", "SHIP", "SHIP_PORT", "PLATEAU"})

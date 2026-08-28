@@ -712,6 +712,23 @@ def cmd_heal(args: argparse.Namespace, url: str) -> int:
     return EXIT_OK
 
 
+def cmd_cut(args: argparse.Namespace, url: str) -> int:
+    """Cut down a small tree. Walks to it first."""
+    payload: dict = {}
+    if args.x is not None and args.y is not None:
+        payload["x"], payload["y"] = int(args.x), int(args.y)
+    answer = fetch_json(url, "/field/cut", method="POST", payload=payload)
+    if args.json:
+        print(compact(answer))
+        return EXIT_OK
+    print(
+        f"cut the tree at {answer.get('cut')} with {answer.get('used')}"
+        f"  (walked {answer.get('walked')})"
+    )
+    print(action_lines(answer))
+    return EXIT_OK
+
+
 def cmd_state(args: argparse.Namespace, url: str) -> int:
     state = fetch_json(url, "/state")
     print(compact(state) if args.json else "\n".join(state_lines(state)))
@@ -1142,6 +1159,27 @@ def build_parser() -> argparse.ArgumentParser:
     buy.add_argument("item", nargs="+", metavar="ITEM [COUNT]")
     buy.add_argument("--json", action="store_true", help="the whole payload instead of a summary")
     buy.set_defaults(func=cmd_buy)
+
+    cut = subparsers.add_parser(
+        "cut",
+        parents=[common],
+        help="cut down a small tree, e.g. poke cut",
+        description=(
+            "Cut a small tree with a party Pokemon that knows Cut.\n"
+            "No tile named takes the nearest tree on the edge of the ground you can "
+            "reach; walking to it and turning to face it are part of the call.\n"
+            "A tree is solid until it is cut, so `map`, `route`, `sim` and `goto` all "
+            "call it a wall — the Vermilion gym door, the Route 2 shortcut and most of "
+            "southern Cerulean sit behind one.\n"
+            "It refuses without the Cascade Badge, without a Pokemon that knows Cut, "
+            "and when no tree borders the ground you are on."
+        ),
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+    )
+    cut.add_argument("x", nargs="?", type=int, help="the tree's x, if you have one in mind")
+    cut.add_argument("y", nargs="?", type=int, help="the tree's y")
+    cut.add_argument("--json", action="store_true", help="the whole payload instead of a summary")
+    cut.set_defaults(func=cmd_cut)
 
     heal = subparsers.add_parser(
         "heal",

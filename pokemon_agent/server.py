@@ -53,6 +53,9 @@ from pokemon_agent.intervention_loop import (
     pi_thinker,
 )
 from pokemon_agent.memory.red import (
+    ADDR_CURRENT_MENU_ITEM,
+    ADDR_MAX_MENU_ITEM,
+    ADDR_TOP_MENU_ITEM_Y,
     BAG_ITEM_CAPACITY,
     BALL_ITEM_IDS,
     ITEM_NAMES,
@@ -60,6 +63,7 @@ from pokemon_agent.memory.red import (
     MOVE_NAMES,
 )
 from pokemon_agent.milestones import MILESTONES_BY_ID, MilestoneTracker
+from pokemon_agent.pathfinding import DIRECTIONS
 from pokemon_agent.pi_supervisor import NoLiveSessionError, PiSupervisor
 from pokemon_agent.pockets import PocketGraph
 from pokemon_agent.progress import AUTO_SAVE_PREFIX
@@ -237,6 +241,13 @@ class GotoRequest(BaseModel):
     """Body for POST /goto — a map to reach, or a tile on the current map."""
 
     target: Optional[str] = None
+    x: Optional[int] = None
+    y: Optional[int] = None
+
+
+class FieldCutRequest(BaseModel):
+    """Body for POST /field/cut. No tile named means the nearest tree."""
+
     x: Optional[int] = None
     y: Optional[int] = None
 
@@ -2432,7 +2443,21 @@ def _execute_action_sync(action_str: str) -> bool:
         _emulator.tick(frames)
         return True
 
-    raise ValueError(f"Unknown action format: {action_str}")
+    # Naming what does exist, because a bare parse error ends the search. The run
+    # that reached for HM01 sent `use_cut` and then `hm_cut`, got this message
+    # twice with nothing in it, and never tried to use Cut again in 19,000
+    # further calls.
+    hint = ""
+    if any(move in action_str for move in capabilities.FIELD_MOVES):
+        hint = (
+            " A field move is not a button and not a battle action: `poke cut` cuts a "
+            "small tree, walking to it first."
+        )
+    raise ValueError(
+        f"Unknown action format: {action_str}. Actions are walk_up/down/left/right, "
+        f"press_a/b/start/select, hold_<button>_<frames>, wait_<frames>, and "
+        f"a_until_dialog_end.{hint}"
+    )
 
 
 #: Walking is the only action whose success or failure is invisible on screen.
@@ -2735,6 +2760,164 @@ def _battle_fight_sync(name: str) -> dict:
         )
     _settle_battle_sync()
     return {"used": move["name"], "actions": keys, "retried": retried}
+
+
+#: Row of POKEMON in the start menu, measured against the cartridge: with the
+#: Pokedex in hand the entries are POKEDEX, POKEMON, ITEM, <name>, SAVE, OPTION,
+#: EXIT. The cursor is remembered between openings and it wraps, so the row is
+#: reached by reading wCurrentMenuItem and stepping, never by counting presses
+#: from an assumed start.
+START_MENU_POKEMON_ROW = 1
+#: wTopMenuItemY, which is what tells these three screens apart. All three
+#: measured against the cartridge in `tests/test_field_moves_live.py`.
+START_MENU_TOP_Y = 2
+PARTY_MENU_TOP_Y = 1
+FIELD_MOVE_MENU_TOP_Y = 10
+#: Enough B presses to back out of the deepest menu this drives.
+MENU_ESCAPE_PRESSES = 4
+
+
+def _menu_row_sync() -> int:
+    return _emulator.read_u8(ADDR_CURRENT_MENU_ITEM)
+
+
+def _menu_top_y_sync() -> int:
+    return _emulator.read_u8(ADDR_TOP_MENU_ITEM_Y)
+
+
+def _walk_cursor_to_sync(row: int, *, what: str) -> None:
+    """Step the menu cursor onto `row`, checking after every press.
+
+    The cursor wraps, so a fixed number of presses lands somewhere different
+    depending on where it started. The run that motivated this endpoint drove
+    this menu blind and reached the save screen twice and the options screen
+    once before giving up.
+    """
+    for _ in range(12):
+        at = _menu_row_sync()
+        if at == row:
+            return
+        _execute_action_sync("press_up" if at > row else "press_down")
+    raise HTTPException(
+        status_code=409,
+        detail=(
+            f"Could not put the cursor on {what}: it is sitting on row "
+            f"{_menu_row_sync()}. Nothing was confirmed."
+        ),
+    )
+
+
+def _escape_menus_sync() -> None:
+    for _ in range(MENU_ESCAPE_PRESSES):
+        _execute_action_sync("press_b")
+
+
+def _front_tile_sync() -> tuple[Optional[tuple[int, int]], Optional[int], Optional[str]]:
+    """The tile the player is facing, its id, and the tileset name."""
+    terrain = _emulator._read_map_terrain()
+    position = _reader.read_coordinates()
+    facing = str(_reader.read_facing() or "").lower()
+    delta = DIRECTIONS.get(facing)
+    if position is None or delta is None:
+        return None, None, terrain.get("tileset")
+    front = (position[0] + delta[0], position[1] + delta[1])
+    return front, terrain["tile_ids"].get(front), terrain.get("tileset")
+
+
+def _field_cut_sync(tree: tuple[int, int], facing: str) -> dict:
+    """Face the tree, use Cut from the party menu, and check the tree is gone.
+
+    Every step is read back off the cartridge rather than assumed, because the
+    failure this replaces was not a wrong button — it was a model reading the
+    160x144 screen, misreading `CUT STATS SWITCH CANCEL` as `FIGHT STATUS SWITCH
+    CANCEL`, and concluding from that that Gen 1 has no field moves at all.
+    """
+    party = _reader.read_party() or []
+    slot = next(
+        (
+            index
+            for index, mon in enumerate(party)
+            if capabilities.field_move_row(mon.get("moves") or [], "cut") is not None
+        ),
+        None,
+    )
+    if slot is None:
+        carried = ", ".join(str(mon.get("species")) for mon in party) or "nothing"
+        raise HTTPException(
+            status_code=409,
+            detail=(
+                f"No Pokemon in the party knows Cut, so there is nothing to cut with. "
+                f"Carrying: {carried}. HM01 teaches it."
+            ),
+        )
+    row = capabilities.field_move_row(party[slot].get("moves") or [], "cut")
+
+    # Turn to face it. The tree is solid, so this press turns and does not walk.
+    _execute_action_sync(f"walk_{facing}")
+    landed = str(_reader.read_facing() or "").lower()
+    if landed != facing:
+        raise HTTPException(
+            status_code=409,
+            detail=f"Asked to face {facing} to cut {list(tree)} but ended up facing {landed}.",
+        )
+
+    _execute_action_sync("press_start")
+    if _menu_top_y_sync() != START_MENU_TOP_Y:
+        _escape_menus_sync()
+        raise HTTPException(
+            status_code=409,
+            detail="Pressing START did not open the main menu. Nothing was confirmed.",
+        )
+    _walk_cursor_to_sync(START_MENU_POKEMON_ROW, what="POKEMON")
+    _execute_action_sync("press_a")
+    if _menu_top_y_sync() != PARTY_MENU_TOP_Y:
+        _escape_menus_sync()
+        raise HTTPException(
+            status_code=409, detail="The party list did not open. Nothing was confirmed."
+        )
+    _walk_cursor_to_sync(slot, what=str(party[slot].get("species")))
+    _execute_action_sync("press_a")
+    if _menu_top_y_sync() != FIELD_MOVE_MENU_TOP_Y:
+        _escape_menus_sync()
+        raise HTTPException(
+            status_code=409,
+            detail=(f"{party[slot].get('species')}'s menu did not open. Nothing was confirmed."),
+        )
+    # The submenu is the mon's field moves and then STATS, SWITCH, CANCEL, so
+    # this many rows is what a moveset with `row` field moves before Cut looks
+    # like. A mismatch means the row worked out from the moveset is not the row
+    # the game drew, and confirming it would use the wrong move.
+    field_moves = sum(
+        1
+        for slot_move in party[slot].get("moves") or []
+        if str(slot_move.get("name") or "").lower() in capabilities.FIELD_MOVES
+    )
+    if _emulator.read_u8(ADDR_MAX_MENU_ITEM) != field_moves + 2:
+        _escape_menus_sync()
+        raise HTTPException(
+            status_code=409,
+            detail=(
+                f"{party[slot].get('species')}'s menu has "
+                f"{_emulator.read_u8(ADDR_MAX_MENU_ITEM) + 1} rows, not the "
+                f"{field_moves + 3} its moves say it should. Nothing was confirmed."
+            ),
+        )
+    _walk_cursor_to_sync(row, what="CUT")
+    _execute_action_sync("press_a")
+    _execute_action_sync("a_until_dialog_end")
+
+    terrain = _emulator._read_map_terrain()
+    if tree in terrain["walkable"]:
+        return {"cut": list(tree), "used": party[slot].get("species"), "slot": slot + 1}
+    _escape_menus_sync()
+    raise HTTPException(
+        status_code=409,
+        detail=(
+            f"The tree at {list(tree)} is still standing after Cut was chosen from "
+            f"{party[slot].get('species')}'s menu. Nothing about the map changed. "
+            "Read the frame before trying again."
+        ),
+    )
 
 
 def _battle_run_sync() -> dict:
@@ -4272,6 +4455,81 @@ async def battle_item(req: BattleItemRequest):
         raise HTTPException(status_code=500, detail=f"Battle error: {e}")
 
 
+@app.post("/field/cut")
+async def field_cut(req: FieldCutRequest):
+    """Walk to a small tree and cut it down.
+
+    Cut is the field move this run needed and could not reach. It is not a
+    battle action and it is not a button: it is four menu screens deep, and the
+    only feedback the overworld gives while they are open is that the d-pad no
+    longer walks. So the whole thing is one verb, and it ends by looking at the
+    tree.
+    """
+    _ensure_emulator()
+    if await _run_emulator_sync(_in_battle_sync):
+        raise HTTPException(
+            status_code=409,
+            detail="In a battle, so there is no tree in front of you. Finish the fight first.",
+        )
+    _check_action_rate()
+
+    badges = ((await _run_emulator_sync(_get_state_dict)).get("player") or {}).get("badges") or []
+    if "Cascade" not in badges:
+        raise HTTPException(
+            status_code=409,
+            detail=(
+                "Cut outside battle needs the Cascade Badge, and this run does not have it. "
+                "Misty in Cerulean Gym gives it."
+            ),
+        )
+
+    async def observe() -> dict:
+        return capabilities.observation_from_bundle(await _run_emulator_sync(_observation_sync))
+
+    observation = await observe()
+    collision = capabilities.collision_from(
+        observation["snapshot"], _explored_grid(observation["map_id"])
+    )
+    region = reachable_region(collision, observation["position"])
+    target = (int(req.x), int(req.y)) if req.x is not None and req.y is not None else None
+    try:
+        plan = capabilities.cut_plan(collision, region, at=target)
+    except capabilities.CapabilityError as exc:
+        raise _capability_error(exc) from exc
+
+    walked = 0
+    if plan["steps"]:
+        try:
+            walk = await capabilities.walk_to(
+                observe=observe,
+                act=lambda actions: _run_actions(
+                    actions, source="cut", reason="cut", rate_check=False
+                ),
+                world=World({}),
+                explored_grid=_explored_grid,
+                target_map=None,
+                target_xy=plan["stand"],
+                frame_budget=MAX_FRAMES_PER_BATCH,
+            )
+        except capabilities.CapabilityError as exc:
+            raise _capability_error(exc) from exc
+        walked = walk["walked"]
+        if not walk["arrived"]:
+            raise HTTPException(
+                status_code=409,
+                detail=(
+                    f"Could not reach {list(plan['stand'])}, the tile to cut the tree at "
+                    f"{list(plan['tree'])} from: {walk['stopped_because']}"
+                ),
+            )
+
+    outcome = await _run_emulator_sync(_field_cut_sync, plan["tree"], plan["facing"])
+    bundle = await _refresh_and_broadcast(reason="cut", source="cut")
+    summary = _observation_summary(bundle)
+    _annotate_explored_map(summary, bundle)
+    return {**outcome, "walked": walked, **summary}
+
+
 @app.post("/mart/buy")
 async def mart_buy(req: MartBuyRequest):
     """Buy from the counter on this map, walking to the till first if need be."""
@@ -4433,6 +4691,23 @@ def _milestone_labels(ids: Sequence[str]) -> list[str]:
     return [rung.label for rung in sorted(known, key=lambda rung: rung.ladder_index)] + unknown
 
 
+def _party_regression_refusal(lost: Sequence[str]) -> str:
+    """What the agent reads when a load would throw away Pokemon it caught.
+
+    Catching is not a milestone, so the rung-based guard could not see this at
+    all, and every Pokemon this run lost in 43 hours was lost here: it went to
+    three on Route 4, loaded, and came back with one. Four times, never once to
+    a whiteout.
+    """
+    names = ", ".join(lost)
+    it = "it" if len(lost) == 1 else "them"
+    return (
+        f"Refusing: that save is from before you caught {names}. You would lose {it} — "
+        "a load does not put a Pokemon back in the box, it un-catches it. "
+        "Load it anyway with --force."
+    )
+
+
 def _regression_refusal(lost: Sequence[str]) -> str:
     """What the agent reads when a load would cost it milestones it already has.
 
@@ -4454,6 +4729,32 @@ def _regression_refusal(lost: Sequence[str]) -> str:
         "To try a route, `poke sim` walks a plan without touching the game; "
         "a reload rewinds it. Load it anyway with --force."
     )
+
+
+def _party_species_sync() -> list[str]:
+    """What the party is, right now. Empty if it cannot be read."""
+
+    try:
+        party = (_get_state_dict().get("party")) or []
+    except Exception:  # noqa: BLE001 — a measurement must never cost a load
+        return []
+    return [str(mon.get("species")) for mon in party if isinstance(mon, Mapping)]
+
+
+def _party_losses(before: Sequence[str], after: Sequence[str]) -> list[str]:
+    """Pokemon in the party before a load and not in it after.
+
+    By multiset, not by set: a load that rewinds past catching the second Pidgey
+    costs a Pidgey, and comparing sets would call that no loss at all.
+    """
+    remaining = list(after)
+    lost = []
+    for species in before:
+        if species in remaining:
+            remaining.remove(species)
+        else:
+            lost.append(species)
+    return lost
 
 
 def _party_resources_sync() -> tuple[int, int]:
@@ -4582,21 +4883,30 @@ async def _refuse_if_regressive(
     *,
     name: str,
     held_before: frozenset,
+    party_before: Sequence[str],
     loaded: dict,
     snapshot: Path,
 ) -> Optional[HTTPException]:
-    """Undo the load that just happened if it cost milestones, and name them.
+    """Undo the load that just happened if it cost progress, and name what.
 
+    Two kinds of loss, because measuring only the first is how this run lost
+    every Pokemon it ever caught: rungs of the ladder, and members of the party.
     Returns the refusal for the caller to raise, or ``None`` when the save is
     level with the live game or ahead of it — the ordinary case, which gets here
-    having spent one extra RAM read and nothing else.
+    having spent two extra RAM reads and nothing else.
     """
     held_after = frozenset(await _run_emulator_sync(_milestone_ids_sync))
     lost = held_before - held_after
-    if not lost:
+    party_lost = _party_losses(party_before, await _run_emulator_sync(_party_species_sync))
+    if not lost and not party_lost:
         return None
 
-    detail = _regression_refusal(sorted(lost))
+    if lost:
+        detail = _regression_refusal(sorted(lost))
+        if party_lost:
+            detail += f" It also loses {', '.join(party_lost)}."
+    else:
+        detail = _party_regression_refusal(party_lost)
     try:
         restored = await _coordinator.load_settle_and_observe(
             path=str(snapshot),
@@ -4622,6 +4932,7 @@ async def _refuse_if_regressive(
                 "error": stuck[:200],
                 "save": name,
                 "load_refused": sorted(lost)[:8],
+                "party_refused": party_lost[:6],
                 "undo_failed": True,
             },
         )
@@ -4638,7 +4949,12 @@ async def _refuse_if_regressive(
         outcome=None,
         milestone_ids=sorted(await _run_emulator_sync(_milestone_ids_sync)),
         exit_code=1,
-        extra={"error": detail[:200], "save": name, "load_refused": sorted(lost)[:8]},
+        extra={
+            "error": detail[:200],
+            "save": name,
+            "load_refused": sorted(lost)[:8],
+            "party_refused": party_lost[:6],
+        },
     )
     return HTTPException(status_code=409, detail=detail)
 
@@ -4665,6 +4981,7 @@ async def load_state(req: SaveRequest):
         raise HTTPException(status_code=404, detail=f"Save not found: {req.name}")
 
     held_before = frozenset(await _run_emulator_sync(_milestone_ids_sync))
+    party_before = await _run_emulator_sync(_party_species_sync)
 
     # Reloading one save over and over is not recovery, it is a search that
     # never terminates. This costs nothing to check and needs no snapshot: the
@@ -4716,6 +5033,7 @@ async def load_state(req: SaveRequest):
             refusal = await _refuse_if_regressive(
                 name=req.name,
                 held_before=held_before,
+                party_before=party_before,
                 loaded=result,
                 snapshot=snapshot,
             )

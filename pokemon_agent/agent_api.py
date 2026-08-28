@@ -1504,6 +1504,20 @@ class Client:
             body["on"] = int(on)
         return Result.from_payload(self._act_json("/battle/item", body))
 
+    def cut(self, x: Optional[int] = None, y: Optional[int] = None) -> Result:
+        """Cut down a small tree, walking to it first.
+
+        No tile named takes the nearest tree on the edge of the ground you can
+        reach. A tree is not rock: it reads as solid to every map answer here
+        until it is cut, and behind them are the Vermilion gym door, the Route 2
+        shortcut and most of southern Cerulean.
+        """
+
+        body: dict = {}
+        if x is not None and y is not None:
+            body["x"], body["y"] = int(x), int(y)
+        return Result.from_payload(self._act_json("/field/cut", body))
+
     def buy(self, item: str, count: int = 1) -> Result:
         """Buy from the mart on this map, walking to the counter first if need be."""
 
@@ -1718,6 +1732,10 @@ def item(name: Optional[str] = None, on: Optional[int] = None) -> Result:
     return client().item(name, on)
 
 
+def cut(x: Optional[int] = None, y: Optional[int] = None) -> Result:
+    return client().cut(x, y)
+
+
 def buy(item: str, count: int = 1) -> Result:
     return client().buy(item, count)
 
@@ -1821,6 +1839,7 @@ __all__ = [
     "chunks",
     "client",
     "connect",
+    "cut",
     "expand",
     "fight",
     "flee",
