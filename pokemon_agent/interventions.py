@@ -201,6 +201,91 @@ class Circling:
         )
 
 
+#: The furthest `run` can ever say a direction goes. The live collision window is
+#: 10 tiles wide and 9 tall with the player at its centre, and the server counts
+#: the runway inside that window only -- it stops at the edge of the camera as
+#: readily as at a wall. So the number the payload prints is 4, or 5 to the
+#: right, on any open ground, and a model that walks what `run` printed and asks
+#: again is walking the screen rather than the map. Measured over the leg from
+#: Route 1 to the Old Amber: 7,326 runway numbers, none above 5, half of them
+#: exactly 4; and 1,124 of the 1,459 one-direction `act` calls in that leg sent
+#: precisely the number the previous answer had printed.
+LIVE_WINDOW_RUNWAY = 5
+
+
+@dataclass
+class HandWalking:
+    """Crossing the map a screenful at a time with the pathfinder untouched.
+
+    `goto` walks against the whole decoded map and re-plans on every hop; an
+    `act` batch walks against whatever the last answer happened to show. Two
+    models ran the same leg -- Route 1 to the Old Amber in the Pewter Museum --
+    off the same save and called `goto` almost exactly as often, 352 and 344
+    times. The one that also sent 1,913 hand-walked `act` batches on top spent
+    18,326 presses against 2,278, bumped walls 3,004 times against 235, and
+    fought 254 wild battles against 17. The `goto` calls were not the
+    difference; the batches in between them were.
+
+    So this does not fire on hand-walking as such. A long batch across a room
+    already crossed is fine, and so is a short one at a doorway. It fires on the
+    signature the measurement actually has: a window of walking batches
+    averaging no further than the player could see, with `goto` not called once
+    in it. That is the shape of reading `run` and sending it back, and it is the
+    shape that cannot be explained by having seen the ground first.
+
+    ``min_batches`` is what separates it from crossing a room. Swept over the
+    two runs' receipts in 120-receipt windows, the same window the policy uses:
+    at 12 the hand-walked run fires in 39.4% of its windows and the other in
+    0.4%, at 20 the second number is 0. Twenty walking batches with the
+    pathfinder untouched is not a room.
+    """
+
+    #: Batches that actually moved. A window full of menu presses is not walking.
+    min_batches: int = 20
+    #: The average batch length, in tiles, at or under which the whole window
+    #: is explained by what the player could see without moving.
+    window_tiles: int = LIVE_WINDOW_RUNWAY
+    name: str = "hand_walking"
+
+    def check(self, window: Sequence[Receipt], state: Mapping[str, Any]) -> Optional[Trigger]:
+        # One `goto` anywhere in the window and there is nothing to say: the
+        # player knows the verb and is choosing when to use it, which is its
+        # own call to make.
+        if any(receipt.tool == "goto" for receipt in window):
+            return None
+        walked = [r for r in window if r.tool == "action" and (r.moved or 0) > 0]
+        if len(walked) < self.min_batches:
+            return None
+        tiles = sum(r.moved or 0 for r in walked)
+        if tiles > self.window_tiles * len(walked):
+            return None
+        presses = sum(r.presses for r in walked)
+        here = next((r.map_name for r in reversed(walked) if r.map_name), "")
+        return Trigger(
+            name=self.name,
+            priority=PRIORITY_STUCK,
+            reason=(
+                f"{len(walked)} walking batches moved {tiles} tiles for {presses} "
+                f"presses, an average of {tiles / len(walked):.1f} tiles a batch, "
+                f"which is inside the {self.window_tiles}-tile window the player "
+                f"can see. `poke goto` was not called once in this window. Last "
+                f"on {here or 'an unknown map'}."
+            ),
+            question=(
+                "The player is crossing the map one screen at a time and has "
+                "not used the pathfinder. Name the destination it should be "
+                "walking to and say to reach it with `poke goto`."
+            ),
+            payload={
+                "batches": len(walked),
+                "tiles": tiles,
+                "presses": presses,
+                "tiles_per_batch": round(tiles / len(walked), 2),
+                "map": here,
+            },
+        )
+
+
 @dataclass
 class LowHP:
     """Party leader has been hurt for a while and nothing was done about it.
@@ -427,6 +512,11 @@ def default_detectors() -> tuple[Detector, ...]:
         RepeatedFailure(),
         StalledMilestones(),
         Circling(),
+        # After `Circling` and at the same priority, so a tie goes to the older
+        # detector: `evaluate` takes the first maximum and the two overlap. A
+        # run can be walking in circles by hand, and "you are re-treading" is
+        # the more specific of the two answers when both are true.
+        HandWalking(),
         EnteringSegment(maps=DEFAULT_HARD_SEGMENTS),
     )
 

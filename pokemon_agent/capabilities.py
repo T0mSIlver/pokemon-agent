@@ -1937,6 +1937,286 @@ def heal_item_line(
 
 
 # ---------------------------------------------------------------------------
+# Not fighting: Repels, and what running costs
+# ---------------------------------------------------------------------------
+
+#: The three Repels, by item id and the number of steps each one buys.
+#:
+#: Straight out of ``engine/items/item_effects.asm``: ``ItemUseRepel`` loads
+#: ``b, 100``, ``ItemUseSuperRepel`` loads 200 and ``ItemUseMaxRepel`` 250, and
+#: all three fall into ``ItemUseRepelCommon``, which writes ``b`` into
+#: ``wRepelRemainingSteps``. Ids match ITEM_NAMES in ``memory/red.py`` so a bag
+#: entry can be matched by either, the same rule :data:`HEALING_ITEMS` follows.
+#: Ordered weakest first, which is the order to spend them in.
+REPELS: dict[str, dict[str, int]] = {
+    "Repel": {"id": 30, "steps": 100},
+    "Super Repel": {"id": 56, "steps": 200},
+    "Max Repel": {"id": 57, "steps": 250},
+}
+
+
+@functools.lru_cache(maxsize=1)
+def cheapest_repel() -> tuple[str, int, int]:
+    """The cheapest Repel on sale anywhere, as ``(name, price, steps)``.
+
+    Read out of the shop table for the same reason :func:`cheapest_heal` is:
+    350 is a number someone would have to keep true by hand. Cached because it
+    is a scan of every map and it is asked on every step of every route.
+    """
+    priced = [
+        (price, item)
+        for name in gamedata.map_names()
+        for item, price in ((gamedata.shops(name) or {}).get("prices") or {}).items()
+        if item in REPELS and price
+    ]
+    if not priced:  # pragma: no cover - only if shops.json is regenerated empty
+        return ("Repel", 350, 100)
+    price, item = min(priced)
+    return (item, int(price), REPELS[item]["steps"])
+
+
+def repel_payload(
+    map_name: Optional[str],
+    lead_level: Optional[int],
+    bag: Sequence[Mapping] = (),
+) -> dict:
+    """What a Repel would do to this map's wild table, given the party's slot 1.
+
+    The Gen 1 rule is not the one people remember. ``TryDoWildEncounter`` rolls
+    the encounter slot *first*, then::
+
+        ld a, [wPartyMon1Level]
+        ld b, a
+        ld a, [wCurEnemyLevel]
+        cp b
+        jr c, .CantEncounter2
+
+    so a Repel suppresses exactly those slots whose level is **strictly below**
+    the level of **party slot 1** — not the active battler, not the party's
+    best. A slot at or above it still appears with the Repel burning. That is
+    why this takes ``lead_level`` and not a party: getting the wrong Pokemon's
+    level in here would make every number below a confident lie.
+
+    The table read is the ``grass`` one, which is also the table every cave and
+    dungeon uses: the same routine falls through to ``wGrassRate`` on any indoor
+    map that is not the Forest or the Safari Zone. ``rate`` is out of 256 and is
+    rolled once per step on a tile that spawns, so ``expected`` is a ceiling —
+    reached in Mt. Moon, where every tile spawns, and well under it on a route
+    where only the tall grass does. Measured against run 20260825T224823Z-983b's
+    receipts, whose log is append-only and still growing, so every count quoted
+    in this module is a floor: Mt. Moon 1F rolled 559 battles over 10,998 tiles,
+    13/256, against a table that says 10; Diglett's Cave 21/256 against 20; and
+    Route 3, where only the grass spawns, 2.8/256 against the same 20.
+
+    Raises :class:`NotFound` where there is nothing to suppress, which is most
+    of the game's 223 maps.
+    """
+    enc = gamedata.encounters(str(map_name)) if map_name else None
+    grass = (enc or {}).get("grass") if enc else None
+    slots = (grass or {}).get("slots") or []
+    if not slots:
+        raise NotFound(f"{map_name} has no wild encounter table, so a Repel has nothing to stop.")
+    total = sum(float(slot.get("chance") or 0.0) for slot in slots) or 1.0
+    level = int(lead_level or 0)
+    blocked = sum(float(s.get("chance") or 0.0) for s in slots if int(s.get("level") or 0) < level)
+    levels = sorted({int(s.get("level") or 0) for s in slots})
+    through = sorted({int(s["level"]) for s in slots if int(s.get("level") or 0) >= level})
+    carried = [
+        {
+            "item": name,
+            "held": int(entry.get("quantity") or 0),
+            "steps": spec["steps"],
+        }
+        for name, spec in REPELS.items()
+        for entry in bag
+        if (entry.get("item") == name or entry.get("id") == spec["id"])
+        and int(entry.get("quantity") or 0) > 0
+    ]
+    return {
+        "map": map_name,
+        "lead_level": level,
+        "rate": int((grass or {}).get("rate") or 0),
+        "share": blocked / total,
+        "levels": [levels[0], levels[-1]],
+        "through": through,
+        "held": carried,
+    }
+
+
+def repel_line(
+    map_name: Optional[str],
+    lead_level: Optional[int],
+    bag: Sequence[Mapping] = (),
+    money: Optional[int] = None,
+) -> Optional[str]:
+    """One line about not having the fight at all. Or ``None``.
+
+    The third sibling of :func:`catch_payload`'s line and :func:`heal_item_line`,
+    written for the same measured failure. Across 43,000-odd receipts of one run
+    the agent spent over 2,500 battle commands and 25,900 presses, over 2,300 of
+    those commands on maps that have a wild encounter table and over 1,000 of
+    them inside Mt. Moon, whose whole table is Lv6-11 against a lead that grew
+    from 62 to 157 max HP over the run and was never once below it. It
+    never used a Repel and no payload it ever read said the word: `shop` prints
+    "Repel 350" beside the Potions on the twelve mart maps and nothing anywhere
+    else in the harness mentions the item, what it costs, what it does, or that
+    the bag has one in it.
+
+    Silent where a Repel would be a lie: off the wild maps, and on a map whose
+    table is entirely at or above the lead's level, where the item burns 100
+    steps and stops nothing. Silent too when there is neither one in the bag nor
+    the money for one — "buy a Repel" with $60 is a line about someone else's
+    game.
+
+    ``up to`` is not hedging. See :func:`repel_payload`: the rate is rolled per
+    step on a spawning tile, so the count is exact in a cave where every tile
+    spawns and generous on a route where only the grass does, and a ceiling is
+    the number that is never wrong in the direction that costs something.
+
+    The tail names the press path rather than a verb because there is no verb.
+    ``/battle/item`` is the *battle* bag and refuses outside a fight, which is
+    the one place ``ItemUseRepel`` also refuses; the only overworld item use in
+    the whole harness is the hard-coded Bicycle. The start-menu route is the one
+    SKILL.md already gives for the Town Map, so this points at a path the agent
+    has been told how to walk.
+    """
+    try:
+        payload = repel_payload(map_name, lead_level, bag)
+    except CapabilityError:
+        return None
+    if not payload["share"]:
+        return None  # every slot is at or above the lead: the item would do nothing
+    share = payload["share"]
+    lead = payload["lead_level"]
+    lo, hi = payload["levels"]
+    if share >= 0.999:
+        what = "every wild here"
+        why = f"table L{lo}-{hi}, under your L{lead} lead"
+    else:
+        what = f"{share:.0%} of the wild table here"
+        why = f"L{payload['through'][0]}+ still comes at your L{lead} lead"
+    if payload["held"]:
+        row = payload["held"][0]
+        steps = row["steps"]
+        return (
+            f"{row['item']} x{row['held']} stops {what} for {steps} steps ({why}) — "
+            f"{_expected_encounters(steps, payload)}; no verb: "
+            f"poke act start, ITEM, {row['item']}"
+        )
+    item, price, steps = cheapest_repel()
+    if int(money or 0) < price:
+        return None  # nothing carried and nothing affordable: no move to name
+    return (
+        f"no {item}: ${price} at a Poke Mart stops {what} for {steps} steps ({why}) — "
+        f"{_expected_encounters(steps, payload)}"
+    )
+
+
+def _expected_encounters(steps: int, payload: Mapping) -> str:
+    """The battles those steps would otherwise have rolled, as a ceiling.
+
+    "up to", because the rate is rolled per step on a tile that spawns: exact in
+    a cave where every tile does, generous on a route where only the grass does.
+    """
+    count = max(1, round(steps * (int(payload["rate"]) / 256) * float(payload["share"])))
+    return f"up to {count} battle" + ("" if count == 1 else "s")
+
+
+#: What one more failed escape adds to the escape roll, out of 256.
+#:
+#: ``TryRunningFromBattle`` adds 30 to the quotient once per attempt *after* the
+#: first — ``ld c, [wNumRunAttempts]`` then a loop that decrements c and stops
+#: when it hits zero, so attempt one adds nothing — and escapes outright if that
+#: addition carries past 255.
+RUN_ATTEMPT_BONUS = 30
+
+
+def escape_chance(
+    player_speed: Optional[int],
+    enemy_speed: Optional[int],
+    attempts: int = 1,
+) -> Optional[float]:
+    """The exact probability that one RUN escapes a wild battle, 0.0 to 1.0.
+
+    ``TryRunningFromBattle`` from pokered transcribed, not the folk formula, for
+    the same reason :func:`catch_chance` is: the number is the whole decision.
+    Fleeing is not free — a wild escape that fails sets
+    ``wActionResultOrTookBattleTurn``, so the turn is spent and the enemy still
+    moves — and nothing in this harness has ever priced it. One run spent over
+    1,000 battle commands and 7,100 presses on RUN, and over 370 of those
+    commands did not end the battle they were sent into.
+
+    The engine:
+
+    * escapes outright when the player's Speed is at or above the enemy's. The
+      decomp comment says "greater than"; the code is ``StringCmp`` then
+      ``jr nc``, which is *not less than*, so a tie escapes.
+    * otherwise divides ``player_speed * 32`` by ``(enemy_speed >> 2) & 0xFF``,
+      escaping outright if that divisor is zero or the quotient exceeds 255,
+    * adds 30 per attempt after the first, escaping if that carries past 255,
+    * and escapes when a 0-255 roll comes out at or below the result — so the
+      chance is ``(q + 1) / 256``.
+
+    Both speeds are the *battle* stats (``wBattleMonSpeed``, ``wEnemyMonSpeed``),
+    which carry badge boosts and every stat stage of the fight. ``None`` when a
+    speed could not be read, so the caller says nothing rather than a number
+    that came from a zero.
+    """
+    if not player_speed or not enemy_speed or player_speed < 0 or enemy_speed < 0:
+        return None
+    if player_speed >= enemy_speed:
+        return 1.0
+    divisor = (enemy_speed >> 2) & 0xFF
+    if divisor == 0:
+        return 1.0
+    quotient = ((player_speed * 32) & 0xFFFF) // divisor
+    if quotient > 255:
+        return 1.0
+    quotient += RUN_ATTEMPT_BONUS * max(0, int(attempts) - 1)
+    if quotient > 255:
+        return 1.0
+    return (quotient + 1) / 256
+
+
+def flee_line(battle: Mapping, active: Optional[Mapping]) -> Optional[str]:
+    """What sending RUN would actually buy, on a frame that is in a battle.
+
+    Two different facts, because Gen 1 has two different answers and the payload
+    said neither.
+
+    A trainer battle cannot be fled at all. ``TryRunningFromBattle`` branches to
+    ``NoRunningText`` before it touches ``wNumRunAttempts``, prints, and returns
+    with carry clear: no roll, no counter, and — unlike the wild refusal — no
+    turn spent either, so the fight does not even advance. This run sent RUN 331
+    times into one battle on Route 6 at a standing 61/92 HP that never moved,
+    2,337 presses, and then won it with one Rage.
+
+    A wild battle can be fled, at a price: the odds off the two Speeds, and a
+    failure that costs the turn. See :func:`escape_chance`.
+    """
+    if not battle or not battle.get("in_battle"):
+        return None
+    if battle.get("type") == "trainer":
+        return "run is refused in a trainer battle, every time and forever — fight it or switch"
+    if battle.get("type") != "wild":
+        return None  # unknown battle type: say nothing rather than the wrong thing
+    enemy = battle.get("enemy") or {}
+    mine = ((active or {}).get("stats") or {}).get("speed")
+    theirs = (enemy.get("stats") or {}).get("speed")
+    chance = escape_chance(mine, theirs)
+    if chance is None:
+        return None
+    who = enemy.get("species") or "it"
+    if chance >= 1.0:
+        return f"run always works here: Speed {mine} against {who}'s {theirs}"
+    later = escape_chance(mine, theirs, 2)
+    return (
+        f"run {chance:.0%} this try, {later:.0%} the next — a failed one spends the turn "
+        f"and {who} still attacks"
+    )
+
+
+# ---------------------------------------------------------------------------
 # Marts
 # ---------------------------------------------------------------------------
 
@@ -2589,13 +2869,20 @@ __all__ = [
     "MAX_GOTO_ROUNDS",
     "MAX_HEAL_ROWS",
     "NotFound",
+    "REPELS",
+    "RUN_ATTEMPT_BONUS",
     "calc_payload",
     "catch_chance",
     "cheapest_ball_price",
     "cheapest_heal",
+    "cheapest_repel",
     "catch_payload",
+    "escape_chance",
+    "flee_line",
     "heal_item_line",
     "heal_item_payload",
+    "repel_line",
+    "repel_payload",
     "SPECIAL_COUNTERS",
     "shop_at",
     "shop_payload",

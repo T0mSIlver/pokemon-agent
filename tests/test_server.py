@@ -473,7 +473,7 @@ def test_action_returns_a_tiny_payload(server_app):
         "y": 5,
         "facing": "left",
         "moves": ["up", "left"],
-        "run": {"up": 4, "left": 4},
+        "run": {"up": "4+", "left": "4+"},
         "mode": "overworld",
         "dialog": False,
         "battle": False,
@@ -3135,7 +3135,7 @@ OPEN_ROW = [[1, 1, 1, 1, 1, 1, 1]]
 def test_run_counts_open_ground_in_each_direction():
     terrain = [[1] * 7 for _ in range(5)]
     runway = server._runway(_snapshot(terrain, player=(3, 2)))
-    assert runway == {"up": 2, "down": 2, "left": 3, "right": 3}
+    assert runway == {"up": "2+", "down": "2+", "left": "3+", "right": "3+"}
 
 
 def test_run_stops_at_a_wall():
@@ -3159,7 +3159,8 @@ def test_run_stops_at_a_sprite_because_npcs_block():
 def test_run_respects_the_window_origin():
     terrain = [[1, 1, 1]]
     runway = server._runway(_snapshot(terrain, player=(21, 40), origin=(20, 40)))
-    assert runway["right"] == 1
+    # The terrain ends because the window does, not because of a wall.
+    assert runway["right"] == "1+"
 
 
 def test_run_never_counts_past_the_window():
@@ -3182,7 +3183,7 @@ def test_run_only_reports_directions_moves_already_calls_legal():
     terrain = [[1] * 7 for _ in range(5)]
     snapshot = _snapshot(terrain, player=(3, 2))
     snapshot["valid_moves"] = ["up", "left"]
-    assert server._runway(snapshot) == {"up": 2, "left": 3}
+    assert server._runway(snapshot) == {"up": "2+", "left": "3+"}
 
 
 # ---------------------------------------------------------------------------

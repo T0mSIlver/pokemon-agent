@@ -1766,10 +1766,18 @@ def test_reading_the_real_run_log_is_fast() -> None:
 
     from pokemon_agent.scope.runs import read_action_contexts
 
+    megabytes = REAL.run_log.stat().st_size / 1_000_000
     start = time.perf_counter()
     contexts = read_action_contexts(REAL.run_log)
     elapsed = time.perf_counter() - start
-    assert elapsed < 2.0, f"reading the run log took {elapsed:.2f}s"
+    # Throughput, not a stopwatch. A flat 2 seconds against a log that grows for
+    # as long as the run plays passed at 6 MB and failed at 12, while saying
+    # nothing about the substring filter it exists to protect. 4 MB/s is well
+    # under what that filter manages and well over parsing every line, which is
+    # the regression this catches.
+    assert elapsed < max(2.0, megabytes / 4.0), (
+        f"reading {megabytes:.1f} MB of run log took {elapsed:.2f}s"
+    )
     assert isinstance(contexts, list)
 
 
@@ -1860,7 +1868,13 @@ def test_reading_claims_out_of_every_real_transcript_is_fast() -> None:
     start = time.perf_counter()
     report = beliefs.claims_report(sessions)
     elapsed = time.perf_counter() - start
-    assert elapsed < 3.0, f"checking the claims took {elapsed:.2f}s"
+    # Per transcript, for the same reason as the run-log budget above: the
+    # session directory gains a file every half hour for as long as the
+    # playthrough runs, so a flat budget becomes a clock that fails on run
+    # length rather than on speed. It failed at 119 files, having passed at 90.
+    assert elapsed < max(3.0, 0.05 * len(sessions)), (
+        f"checking the claims in {len(sessions)} transcripts took {elapsed:.2f}s"
+    )
     assert report.total_calls > 0
     for claim in report.worst:
         assert claim.verdict == beliefs.FALSE

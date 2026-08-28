@@ -81,6 +81,18 @@ REPEAT_LIMIT = 16
 #: same conversation forever after the heal had already happened.
 WORDS_REMEMBERED = 32
 
+#: The same command against the same unchanged world, however novel the screen.
+#: `count` above can be reset forever by a screen that never repeats: once
+#: `words` is full a new one is not remembered but still sets `count = 1`, so a
+#: frame with a ticking number on it defeats the guard completely. Measured: one
+#: run sent `poke run` 331 consecutive times into a trainer battle -- which Gen 1
+#: refuses every time and forever, without even spending the turn -- for 2,337
+#: presses, and the guard never fired once.
+#:
+#: 60 because the longest legitimate no-progress run measured is a 13-page Poke
+#: Center conversation, and this has to sit far above that and far below 331.
+CALLS_LIMIT = 60
+
 #: A command is keyed by exactly what was asked for, so a refusal never blocks
 #: anything but the one call it was proved against.
 Key = tuple[str, ...]
@@ -160,9 +172,12 @@ class Streak:
     words: set[str] = field(default_factory=set)
     #: Consecutive calls that changed nothing durable *and* showed nothing new.
     count: int = 0
+    #: Consecutive calls that changed nothing durable, new words or not. The
+    #: backstop for a screen this streak can never run out of. See CALLS_LIMIT.
+    calls: int = 0
 
     def blocked(self) -> bool:
-        return self.count >= REPEAT_LIMIT
+        return self.count >= REPEAT_LIMIT or self.calls >= CALLS_LIMIT
 
 
 class RepeatGuard:
@@ -217,6 +232,7 @@ class RepeatGuard:
         streak = self._streak
         unchanged = before == after
         if streak is not None and streak.key == key and unchanged and streak.world == after:
+            streak.calls += 1
             if words in streak.words:
                 streak.count += 1
             else:
@@ -224,7 +240,13 @@ class RepeatGuard:
                     streak.words.add(words)
                 streak.count = 1
             return
-        self._streak = Streak(key=key, world=after, words={words}, count=1 if unchanged else 0)
+        self._streak = Streak(
+            key=key,
+            world=after,
+            words={words},
+            count=1 if unchanged else 0,
+            calls=1 if unchanged else 0,
+        )
 
 
 #: The short names the agent actually types. Quoting a batch back at it as
@@ -583,6 +605,7 @@ __all__ = [
     "WANDER_PRESSES",
     "WANDER_WINDOW",
     "Key",
+    "CALLS_LIMIT",
     "REPEAT_LIMIT",
     "RepeatGuard",
     "RepeatedNoProgress",

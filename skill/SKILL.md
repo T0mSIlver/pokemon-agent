@@ -88,7 +88,7 @@ stood here 9 times before
 ```
 
 - The first line is where you ended up and what the batch achieved. `moved 0` with `blocked after 1` means only the first action did anything.
-- `run` is how many tiles each direction goes before something stops you. `left:7` there means `poke act left:7` arrives in one call. Walking one tile and asking again is the slowest way to play and it costs you a turn of context for every tile.
+- `run` is how far each direction goes **inside the 10x9 window you can see**, and it stops at the edge of that window as readily as at a wall. That is why it never prints more than 4, or 5 to the right: those are the distances from you to the edge of the screen. `left:1` is a wall one tile west. `left:4` is "at least four", and on open ground it usually keeps going well past the camera. Walking one tile and asking again is the slowest way to play; walking `run` and asking again is the second slowest, and it crosses a map at one call per four tiles. Use it for the next few steps, not to cross anything. Crossing is `poke goto`, which plans on the whole map rather than the window and costs one call however far it is.
 - `exits` is every map this one leads to and how to get there: a tile to walk onto, or an edge to walk off. A map whose only exit is the way you came is a dead end. Which one serves your goal is your call.
 - Extra lines appear only when they are true: facing something worth a button, standing on a warp, treading old ground, a dialog, a battle with what you can hit it with.
 - On a frame no step can be taken from — a battle, or any open box — there is no `run` line. In its place is one saying why, such as `no walking while a box is open: the d-pad works the box, not the player`. That is not "you are walled in": close the box or finish the fight and the ground is where it was.
@@ -112,7 +112,9 @@ That is usually enough to act again immediately. Read a frame when the answer su
 
 Start every bash call with a one-line `#` comment saying what you are trying to do and why, like `# Blocked north, try the east path` or `# Battle: attack with Ember`. It is the only narration an operator watching the run can see, and it costs you almost nothing.
 
-Send several buttons at once. Walking one tile per call and reasoning about the result is the slowest way to play and it teaches you almost nothing. The game only reveals itself when you move through it. A clear stretch of ground is worth 4 to 8 moves in a single call. Keep batches short only where the next screen genuinely changes what you would do: a doorway, a menu, a battle turn.
+Send several buttons at once. Walking one tile per call and reasoning about the result is the slowest way to play and it teaches you almost nothing. The game only reveals itself when you move through it. A batch is for ground you can see the whole of, and the screen is ten tiles wide, so ten is about as long as one gets: a batch aimed further than the screen is guessing at tiles nothing has shown you. Ground you have already crossed is the exception, because you have seen it. Keep batches short only where the next screen genuinely changes what you would do: a doorway, a menu, a battle turn.
+
+Any trip longer than the screen belongs to `poke goto`, not to a chain of batches. Two runs made the same journey, Route 1 to the Old Amber in the Pewter Museum, and called `goto` about equally often. The one that also sent 1,913 hand-walked batches on top spent 18,326 presses against 2,278, crossed 45 maps for a trip that needs 10, and fought 254 wild battles against 17.
 
 Probe instead of deducing. If you cannot tell whether a tile is walkable, walking into it costs one action and answers the question exactly; a bump is free and moves nothing. Reasoning your way to the same answer costs more and can be wrong. When two routes look plausible, take one and look.
 
@@ -318,6 +320,13 @@ and it walks there on this map: `poke goto 12,8`.
 walk between them. Route 4 is one map whose two halves are separated by Mt. Moon, so "you are on
 Route 4" does not say which side of the mountain you are standing on. `goto` stops and tells you why
 when it cannot get further; believe it and look at the frame rather than sending the same walk again.
+
+**A wild encounter stops it, and that is not a failure.** `walked 14, did not arrive` followed by
+`a wild Pokemon appeared` means the plan was good and the grass interrupted it: `goto` does not fight
+and does not resume itself. Finish the fight and send the same `goto` again — it re-plans from
+wherever the encounter left you. Over one leg of this run 78 of the 113 `goto` calls that did not
+arrive had stopped for exactly that, so most of the calls that did not arrive were a route through
+grass working as it should. A text box interrupts it the same way and says so.
 
 ## When you are lost
 

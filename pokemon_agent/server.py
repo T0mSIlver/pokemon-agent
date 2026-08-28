@@ -1056,6 +1056,20 @@ def _runway(snapshot: dict) -> dict:
 
     Counted over the live 10x9 collision window only, so the number is small,
     always true, and never a guess about ground the game has not shown us.
+
+    Which is why a bare number was a metronome. The player sits at the centre of
+    that window, so this can never print more than 4 -- 5 to the right -- and it
+    said nothing about which edge it hit. Measured over one leg: 7,326 runway
+    numbers printed, none above 5, 3,683 of them exactly 4, and **1,124 of the
+    1,459 one-direction `act` calls that followed one sent back precisely the
+    number it had just read**. The field meant to stop the model walking a tile
+    at a time had it walking four at a time instead, forever, across maps ninety
+    tiles wide.
+
+    So a count that ran out of camera says so: `4+` is "at least four, the window
+    ended", a bare `4` is a wall. At a true map boundary the window edge is the
+    map edge and this over-states -- harmless, because walking into a map edge is
+    how a player crosses one.
     """
     terrain = snapshot.get("terrain")
     if not terrain:
@@ -1077,22 +1091,26 @@ def _runway(snapshot: dict) -> dict:
     # "right goes 5" is two answers to one question.
     legal = set(snapshot.get("valid_moves") or _RUNWAY_STEPS)
 
-    runway: dict[str, int] = {}
+    runway: dict[str, Any] = {}
     for direction, (dx, dy) in _RUNWAY_STEPS.items():
         if direction not in legal:
             continue
         steps = 0
+        clipped = False
         x, y = px, py
         while True:
             x, y = x + dx, y + dy
             col, row = x - ox, y - oy
             if not (0 <= row < height and 0 <= col < width):
-                break  # past the window: unknown, not blocked, so stop counting
+                # Past the window: unknown, not blocked. Until this was said out
+                # loud the two were the same number. See the docstring.
+                clipped = True
+                break
             if not terrain[row][col] or (x, y) in blocked:
                 break
             steps += 1
         if steps:
-            runway[direction] = steps
+            runway[direction] = f"{steps}+" if clipped else steps
     return runway
 
 
@@ -1470,6 +1488,38 @@ def _shop_line(state: dict) -> Optional[str]:
     return f"${payload['money']}: " + ", ".join(rows) + " — poke buy <item> <n>"
 
 
+#: One per process, like `_ahead_said`. Keyed on the map and on the line, so
+#: walking onto a route says it once and spending a Repel changes the count in
+#: the line and says the new one once more.
+_repel_said = party_facts.SayOnce()
+
+
+def _repel_line(state: dict) -> Optional[str]:
+    """What a Repel would stop on this map, if one is carried or affordable.
+
+    See `capabilities.repel_line`. Absent on the 200-odd maps with no wild table
+    and on any map whose table is entirely at or above the lead, so it costs
+    nothing where it would be wallpaper or a lie.
+
+    The level is party slot 1 and not the strongest member: pokered's encounter
+    check reads `wPartyMon1Level`, so that is the number that decides.
+    """
+    party = state.get("party") or []
+    if not party:
+        return None
+    map_name = (state.get("map") or {}).get("map_name")
+    try:
+        line = capabilities.repel_line(
+            map_name,
+            (party[0] or {}).get("level"),
+            state.get("bag") or [],
+            money=(state.get("player") or {}).get("money"),
+        )
+    except Exception:  # noqa: BLE001 — perception must never fail a state read
+        return None
+    return line if line and _repel_said.fresh((map_name, line)) else None
+
+
 def _heal_line(state: dict) -> Optional[str]:
     """Where the nurse is and whether she is needed, on every frame in her room.
 
@@ -1710,6 +1760,19 @@ def _observation_summary(bundle: Optional[dict]) -> dict:
         catch = _catch_line(state)
         if catch:
             summary["catch"] = catch
+
+        # What RUN would actually buy against this one. A trainer refuses it
+        # forever without even spending the turn, and a wild failure spends it
+        # and is attacked; 331 run commands went into one trainer battle because
+        # nothing had ever said either. `battle_mon` and not `active`: the escape
+        # roll reads wBattleMonSpeed, and `active` falls back to the party
+        # struct's unboosted numbers.
+        try:
+            flee = capabilities.flee_line(battle, state.get("battle_mon") or {})
+        except Exception:  # noqa: BLE001 — perception must never fail a state read
+            flee = None
+        if flee:
+            summary["flee"] = flee
         # The third thing the turn can be spent on. See capabilities.heal_item_line:
         # None at full HP, which is nearly every frame, so it costs nothing there.
         items = capabilities.heal_item_line(
@@ -1738,6 +1801,13 @@ def _observation_summary(bundle: Optional[dict]) -> dict:
     # them, and no advice afterwards undoes a move that is gone: the run this
     # was written for taught Cut over an attack, and Gen 1 will not delete an HM
     # move, so that slot stayed spent for the next 33 hours.
+    # The wild encounters this map is about to hand you, and the item that stops
+    # them. Overworld frames only: ItemUseRepel refuses outright in a battle.
+    if not (summary["battle"] or summary["dialog"]):
+        repel = _repel_line(state)
+        if repel:
+            summary["repel"] = repel
+
     learn_line = party_facts.learn_cost(state.get("move_learn"), party)
     if learn_line:
         summary["learn"] = learn_line
