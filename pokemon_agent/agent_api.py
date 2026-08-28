@@ -1518,6 +1518,15 @@ class Client:
             body["x"], body["y"] = int(x), int(y)
         return Result.from_payload(self._act_json("/field/cut", body))
 
+    def bike(self, on: bool = True) -> Result:
+        """Get on the Bicycle, or off it with ``bike(False)``.
+
+        Twice walking speed for the same number of presses. Refused indoors and
+        in caves, which is the game's rule and not this harness's.
+        """
+
+        return Result.from_payload(self._act_json("/field/bike", {"on": bool(on)}))
+
     def buy(self, item: str, count: int = 1) -> Result:
         """Buy from the mart on this map, walking to the counter first if need be."""
 
@@ -1732,6 +1741,10 @@ def item(name: Optional[str] = None, on: Optional[int] = None) -> Result:
     return client().item(name, on)
 
 
+def bike(on: bool = True) -> Result:
+    return client().bike(on)
+
+
 def cut(x: Optional[int] = None, y: Optional[int] = None) -> Result:
     return client().cut(x, y)
 
@@ -1832,6 +1845,7 @@ __all__ = [
     "Unreachable",
     "Walk",
     "act",
+    "bike",
     "buy",
     "heal",
     "calc",

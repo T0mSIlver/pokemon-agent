@@ -39,7 +39,13 @@ from pokemon_agent.objectives import FRONTIER_PACK_ID
 #: Priorities. A higher number wins when two detectors fire on the same batch.
 #: Ordered by how badly the run is doing, not by how interesting the answer
 #: would be: losing the party ends the run, being lost merely wastes it.
-PRIORITY_COMMIT = 40
+#:
+#: There was a fourth tier above these, ``PRIORITY_COMMIT``, held by a detector
+#: that gated irreversible actions on ``state["pending_commit"]``. Nothing in
+#: the package ever set that key: its only two references outside the detector
+#: were in a test. It gated release, sell and evolve, and this harness has a
+#: verb for none of them. Removed rather than left standing, because a tier
+#: nothing can reach makes everything later put in it look like it works.
 PRIORITY_DANGER = 30
 PRIORITY_STUCK = 20
 PRIORITY_REHEARSAL = 10
@@ -390,36 +396,6 @@ class EnteringSegment:
         )
 
 
-@dataclass
-class CommitGate:
-    """About to do something that cannot be undone.
-
-    The receipt carries the intent in ``extra`` because only the caller knows
-    an action was irreversible; this detector just notices the flag.
-    """
-
-    kinds: frozenset[str] = frozenset({"release", "sell", "use_rare_item", "evolve"})
-    name: str = "commit_gate"
-
-    def check(self, window: Sequence[Receipt], state: Mapping[str, Any]) -> Optional[Trigger]:
-        pending = state.get("pending_commit")
-        if not isinstance(pending, Mapping):
-            return None
-        kind = pending.get("kind")
-        if kind not in self.kinds:
-            return None
-        return Trigger(
-            name=self.name,
-            priority=PRIORITY_COMMIT,
-            reason=f"About to {kind}: {pending.get('detail') or 'no detail given'}.",
-            question=(
-                "This cannot be undone. Say whether to go through with it, and "
-                "if not, what to do instead."
-            ),
-            payload=dict(pending),
-        )
-
-
 DEFAULT_HARD_SEGMENTS = frozenset(
     {
         "Viridian Forest",
@@ -446,7 +422,6 @@ DEFAULT_HARD_SEGMENTS = frozenset(
 
 def default_detectors() -> tuple[Detector, ...]:
     return (
-        CommitGate(),
         LowHP(),
         Toothless(),
         RepeatedFailure(),
@@ -2211,7 +2186,6 @@ __all__ = [
     "Toothless",
     "RepeatedFailure",
     "EnteringSegment",
-    "CommitGate",
     "InterventionPolicy",
     "DEFAULT_HARD_SEGMENTS",
     "default_detectors",
@@ -2237,7 +2211,6 @@ __all__ = [
     "FACTS_HEADER",
     "FACTS_KNOWN_HEADER",
     "FACTS_INFERRED_HEADER",
-    "PRIORITY_COMMIT",
     "PRIORITY_DANGER",
     "PRIORITY_STUCK",
     "PRIORITY_REHEARSAL",

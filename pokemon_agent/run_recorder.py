@@ -158,6 +158,27 @@ class RunHandle:
     total_presses: int
 
 
+def load_repeats_from(receipts: Sequence[Receipt]) -> dict[str, int]:
+    """How many times each save has been loaded since the last rung was earned.
+
+    Rebuilt from the run's own receipts rather than held only in memory. The
+    repeat-load guard is a per-save counter that lives for exactly as long as a
+    run goes without progress — which is the stretch during which a stuck run
+    gets redeployed — so a process-global dict was cleared by every restart, and
+    the guard never fired once across 165 loads in 43 hours.
+    """
+    counts: dict[str, int] = {}
+    for receipt in receipts:
+        if receipt.milestones_new:
+            counts.clear()
+        if receipt.tool != "load" or not receipt.reloaded:
+            continue
+        name = receipt.extra.get("save")
+        if isinstance(name, str) and name:
+            counts[name] = counts.get(name, 0) + 1
+    return counts
+
+
 class RunRecorder:
     """One open run, its receipts, and the totals ``/progress`` reports.
 
@@ -193,6 +214,10 @@ class RunRecorder:
         #: is right not to notice while nothing else is looking.
         self.milestones_held: Optional[int] = None
         self.receipts_written: int = 0
+        #: Loads of each save since the last rung, recovered from the receipts
+        #: when a run is adopted so a redeploy does not hand every save a fresh
+        #: three trips. Empty on a run this process started.
+        self.load_repeats: dict[str, int] = {}
         self.last_error: Optional[str] = None
         self.recent: deque[Receipt] = deque(maxlen=RECENT_RECEIPT_WINDOW)
 
@@ -269,6 +294,7 @@ class RunRecorder:
         self.receipts_written = metrics.receipts
         self._first_t = metrics.first_t
         self._known = set(self.presses_to)
+        self.load_repeats = load_repeats_from(record.receipts)
         self.recent.clear()
         self.recent.extend(record.receipts[-RECENT_RECEIPT_WINDOW:])
         if record.corrupt_lines:
@@ -302,6 +328,7 @@ class RunRecorder:
             self.receipts_written = 0
             self._known = set()
             self._first_t = None
+            self.load_repeats = {}
             self.recent.clear()
         else:
             self._recover_totals(run_id)

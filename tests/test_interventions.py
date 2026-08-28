@@ -11,7 +11,6 @@ from pokemon_agent.interventions import (
     PRIORITY_DANGER,
     PRIORITY_STUCK,
     Circling,
-    CommitGate,
     EnteringSegment,
     Fact,
     InterventionPolicy,
@@ -146,21 +145,6 @@ class TestEnteringSegment:
     def test_an_ordinary_map_is_ignored(self):
         window = walk(3, map_name="Route 3")
         assert EnteringSegment(maps=frozenset({"Mt Moon 1F"})).check(window, {}) is None
-
-
-class TestCommitGate:
-    def test_fires_on_a_pending_irreversible_action(self):
-        state = {"pending_commit": {"kind": "release", "detail": "Pidgey"}}
-        trigger = CommitGate().check([receipt()], state)
-        assert trigger is not None
-        assert "release" in trigger.reason
-
-    def test_nothing_pending_means_nothing_to_gate(self):
-        assert CommitGate().check([receipt()], {}) is None
-
-    def test_an_unlisted_kind_passes_through(self):
-        state = {"pending_commit": {"kind": "walk"}}
-        assert CommitGate().check([receipt()], state) is None
 
 
 class TestPolicy:

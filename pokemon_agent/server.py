@@ -54,13 +54,18 @@ from pokemon_agent.intervention_loop import (
 )
 from pokemon_agent.memory.red import (
     ADDR_CURRENT_MENU_ITEM,
+    ADDR_LIST_MENU_ID,
+    ADDR_LIST_SCROLL_OFFSET,
     ADDR_MAX_MENU_ITEM,
     ADDR_TOP_MENU_ITEM_Y,
     BAG_ITEM_CAPACITY,
     BALL_ITEM_IDS,
+    ITEM_LIST_MENU,
     ITEM_NAMES,
     MAP_NAMES,
     MOVE_NAMES,
+    ON_BIKE,
+    ON_FOOT,
 )
 from pokemon_agent.milestones import MILESTONES_BY_ID, MilestoneTracker
 from pokemon_agent.pathfinding import DIRECTIONS
@@ -68,8 +73,11 @@ from pokemon_agent.pi_supervisor import NoLiveSessionError, PiSupervisor
 from pokemon_agent.pockets import PocketGraph
 from pokemon_agent.progress import AUTO_SAVE_PREFIX
 from pokemon_agent.repeats import (
+    CYCLE_WINDOW,
+    CycleGuard,
     RepeatedNoProgress,
     RepeatGuard,
+    WalkingInCircles,
     action_refusal,
     all_walks_blocked,
     battle_refusal,
@@ -245,6 +253,12 @@ class GotoRequest(BaseModel):
     y: Optional[int] = None
 
 
+class FieldBikeRequest(BaseModel):
+    """Body for POST /field/bike. ``on`` false gets off it again."""
+
+    on: bool = True
+
+
 class FieldCutRequest(BaseModel):
     """Body for POST /field/cut. No tile named means the nearest tree."""
 
@@ -373,6 +387,11 @@ _whiteout_watch = WhiteoutWatch()
 #: `pokemon_agent/repeats.py`.
 _repeat_guard = RepeatGuard()
 
+#: Where the last two dozen walks ended. `RepeatGuard` keys on the command and
+#: so cannot see a lap walked with a slightly different plan each time; this
+#: watches outcomes only. See `repeats.CycleGuard`.
+_cycle_guard = CycleGuard()
+
 #: What the last batch looked like, so the refusal can name the *reason* this
 #: particular command is inert rather than only the fact. Three of the four
 #: measured episodes had three different causes -- a dialog toggling, a step
@@ -407,8 +426,12 @@ _loads_since_milestone: dict[str, int] = {}
 #: next receipt something else was already writing.
 _sims_since_receipt: int = 0
 
-#: The distinct plans behind that count, for the cap. Cleared on every receipt,
-#: because a receipt means something was actually pressed.
+#: The distinct plans behind that count, for the cap. Cleared by a receipt that
+#: spent buttons — not by every receipt, which is what it used to say and do.
+#: Every refusal in this file writes a receipt with ``presses=0`` on purpose, so
+#: clearing on all of them meant a model that simmed six plans and then sent one
+#: command the repeat guard refused had its planning count wiped by the refusal.
+#: The cap counts plans "since the last button was pressed"; so must the reset.
 _sim_plans_since_press: set[tuple] = set()
 
 #: The milestone set the last receipt saw, so the counter above can tell a rung
@@ -1075,6 +1098,31 @@ def _reachable_tiles(snapshot: dict, start: tuple[int, int]) -> Optional[dict]:
         return None
 
 
+def _tiles_behind_trees(snapshot: dict, start: tuple[int, int]) -> tuple[set, list]:
+    """Ground one cut would open, and the trees that are shutting it.
+
+    `_exits` drops every warp the player cannot walk to, which is right for a
+    door in another pocket of the map and wrong for a door behind a tree — and
+    the difference is one `poke cut` call. Vermilion Gym never appeared in a
+    single one of the 4,480 payloads written while the agent stood in Vermilion
+    City, because the tree at (15,18) put it in the other pocket.
+    """
+    if not (snapshot.get("map_terrain") or {}).get("walkable"):
+        return set(), []
+    try:
+        collision = capabilities.collision_from(snapshot, None)
+        region = reachable_region(collision, start)
+        trees = capabilities.cut_trees_on_the_seam(collision, region)
+        if not trees:
+            return set(), []
+        opened = dict(collision)
+        opened["walkable"] = set(collision["walkable"]) | set(trees)
+        after = reachable_region(opened, start)
+        return set(after.distance) - set(region.distance), trees
+    except Exception:  # noqa: BLE001 — an exit list must never fail a request
+        return set(), []
+
+
 def _exits(snapshot: dict) -> dict:
     """Where this map's warps go, nearest tile per destination.
 
@@ -1161,6 +1209,45 @@ def _exits(snapshot: dict) -> dict:
             break
         exits = candidate
     return exits
+
+
+def _cut_opens(snapshot: dict) -> str:
+    """What one `poke cut` would put in reach, if anything.
+
+    Its own line rather than another entry in `exits`, which is capped at
+    ``MAX_EXITS_BYTES`` = 120 and is already full on a town map: added there,
+    the Vermilion gym door lost its slot to the trade house. A door one call
+    away is not competing with the doors that are already open.
+
+    The measured case is the whole reason for it. Across 4,480 payloads written
+    while the agent stood in Vermilion City, `exits` never once mentioned the
+    gym: the tree at (15,18) put it in the other pocket, and every answer here
+    drops what cannot be walked to.
+    """
+    position = snapshot.get("player_position") or {}
+    px, py = position.get("x"), position.get("y")
+    if px is None or py is None:
+        return ""
+    opened, trees = _tiles_behind_trees(snapshot, (px, py))
+    if not opened or not trees:
+        return ""
+    try:
+        from pokemon_agent import gamedata
+
+        warps = (gamedata.world().get(snapshot.get("map_name")) or {}).get("warps") or []
+    except Exception:  # noqa: BLE001 — an annotation must never fail a request
+        warps = []
+    doors = sorted(
+        {
+            str(warp.get("to_map"))
+            for warp in warps
+            if (warp.get("x"), warp.get("y")) in opened and warp.get("to_map")
+        }
+    )
+    where = f"a small tree at {list(trees[0])}"
+    if doors:
+        return f"{where} shuts the way to {', '.join(doors[:3])} — `poke cut` opens it"
+    return f"{where} shuts off {len(opened)} tiles of this map — `poke cut` opens it"
 
 
 def _warp_exit_hint(snapshot: dict, coord: dict) -> dict:
@@ -1446,6 +1533,11 @@ def _observation_summary(bundle: Optional[dict]) -> dict:
     exits = _exits(snapshot)
     if exits:
         summary["exits"] = exits
+
+    # And the door that is one call rather than one walk away. See _cut_opens.
+    cut = _cut_opens(snapshot)
+    if cut:
+        summary["cut"] = cut
 
     # What is for sale here, if anything is. See _shop_line.
     shop = _shop_line(state)
@@ -2060,6 +2152,87 @@ def _record_repeat(key: tuple, state_before: Optional[dict], state_after: Option
     )
 
 
+def _record_walk(state: Optional[dict], presses: int) -> None:
+    """File where one walk ended, for the lap detector.
+
+    Only walking calls: a battle, a heal or a purchase ends where it started by
+    design, and feeding those in would make standing at a nurse's counter look
+    like a lap round a route.
+    """
+    player = (state or {}).get("player") or {}
+    position = player.get("position") or {}
+    x, y = position.get("x"), position.get("y")
+    _cycle_guard.record(
+        str(((state or {}).get("map") or {}).get("map_name") or ""),
+        (int(x), int(y)) if x is not None and y is not None else None,
+        presses,
+    )
+
+
+def _circling_refusal(tiles: Sequence[tuple[int, int]], presses: int, exits: str) -> str:
+    """What the agent reads when its last two dozen walks all came back.
+
+    Names the arithmetic, because the number is the argument: the run this was
+    built from spent 8,225 presses on 72 laps of the same three tiles and was
+    told nothing at all. Then names the doors, because "stop" is not an
+    instruction and the tile it is standing on already refused everything else.
+    """
+    where = ", ".join(str(list(tile)) for tile in tiles)
+    ground = "tile" if len(tiles) == 1 else "tiles"
+    return (
+        f"{CYCLE_WINDOW} walks in a row have ended on the same {len(tiles)} {ground} "
+        f"— {where} — and cost {presses} presses getting there. Walking is not what is "
+        f"missing. {exits} If every door is one you have already been through, the way "
+        f"on is a tool and not a direction: `poke cut` opens a small tree, `poke guide` "
+        f"says what this part of the game wants, `poke progress` lists what is open."
+    )
+
+
+async def _check_circling() -> None:
+    """Refuse one walk when the last two dozen went nowhere, then forget it.
+
+    Fires at most once per window by construction, so it can never wedge: the
+    call after this one is allowed through whatever it is.
+    """
+    try:
+        _cycle_guard.check(lambda tiles, presses: _circling_refusal(tiles, presses, ""))
+    except WalkingInCircles as exc:
+        detail = _circling_refusal(exc.tiles, exc.presses, await _exits_sentence())
+        await _write_receipt(
+            tool="action",
+            presses=0,
+            bundle=None,
+            outcome=None,
+            exit_code=1,
+            extra={
+                "error": detail[:200],
+                "circling": [list(tile) for tile in exc.tiles],
+                "circling_presses": exc.presses,
+            },
+        )
+        raise HTTPException(status_code=400, detail=detail) from exc
+
+
+async def _exits_sentence() -> str:
+    """The ways off this map that can actually be walked to, as one sentence."""
+    try:
+        observation = capabilities.observation_from_bundle(
+            await _run_emulator_sync(_observation_sync)
+        )
+        collision = capabilities.collision_from(
+            observation["snapshot"], _explored_grid(observation["map_id"])
+        )
+        region = reachable_region(collision, observation["position"])
+        exits = capabilities.reachable_exits(
+            _ensure_world(), observation["map_name"], collision, observation["snapshot"], region
+        )
+    except Exception:  # noqa: BLE001 — a refusal must not fail on its own advice
+        return ""
+    if not exits:
+        return "Nothing on this map leads anywhere from here."
+    return f"What is reachable from here: {capabilities.describe_exits(exits)}."
+
+
 def _check_action_limits(actions: list[str]) -> None:
     """Refuse a batch that would monopolise the emulator, before it starts.
 
@@ -2100,7 +2273,24 @@ def _note_milestones_for_load_guard(milestone_ids: Optional[Sequence[str]]) -> N
     # held would otherwise look like it had just been earned.
     if _last_milestone_ids is not None and seen - _last_milestone_ids:
         _loads_since_milestone.clear()
+        if _run_recorder is not None:
+            _run_recorder.load_repeats.clear()
     _last_milestone_ids = seen
+
+
+def _load_repeats_for(name: str) -> int:
+    """Loads of *name* since the last rung, across restarts as well as calls."""
+    recorder = _run_recorder
+    if recorder is not None and recorder.run_id is not None:
+        return recorder.load_repeats.get(name, 0)
+    return _loads_since_milestone.get(name, 0)
+
+
+def _note_load(name: str) -> None:
+    _loads_since_milestone[name] = _loads_since_milestone.get(name, 0) + 1
+    recorder = _run_recorder
+    if recorder is not None:
+        recorder.load_repeats[name] = recorder.load_repeats.get(name, 0) + 1
 
 
 async def _write_receipt(
@@ -2135,7 +2325,8 @@ async def _write_receipt(
         # distinguishable from one this counter never watched.
         extra = {**(extra or {}), "sims": _sims_since_receipt}
         _sims_since_receipt = 0
-    _sim_plans_since_press.clear()
+    if presses:
+        _sim_plans_since_press.clear()
     recorder = _run_recorder
     if recorder is not None and recorder.run_id is not None:
         try:
@@ -2241,10 +2432,15 @@ async def _run_intervention_check(bundle: Optional[dict]) -> None:
         # recently" was true almost always and the detector fired on 9 of the
         # last 12 interventions without distinguishing anything. A detector that
         # is always true carries as much as one that never fires.
-        if recorder.attainments:
-            state["presses_since_milestone"] = max(
-                0, recorder.total_presses - int(recorder.attainments[-1].get("presses") or 0)
-            )
+        #
+        # Set on every batch, including before the run has earned anything.
+        # `attainments` is deliberately empty until a run reaches a rung it did
+        # not start with, so gating on it meant a session resumed from a 20-rung
+        # save ran the condemned 400-press rule for its whole first milestone
+        # gap — and the last run's was 23.8 hours long. With nothing earned yet,
+        # presses since the last rung is just the presses.
+        earned = int(recorder.attainments[-1].get("presses") or 0) if recorder.attainments else 0
+        state["presses_since_milestone"] = max(0, recorder.total_presses - earned)
         await runner.after_batch(
             recorder.recent_receipts(),
             state=state,
@@ -2916,6 +3112,85 @@ def _field_cut_sync(tree: tuple[int, int], facing: str) -> dict:
             f"The tree at {list(tree)} is still standing after Cut was chosen from "
             f"{party[slot].get('species')}'s menu. Nothing about the map changed. "
             "Read the frame before trying again."
+        ),
+    )
+
+
+#: The bag list, by wTopMenuItemY. Its cursor is a row *within the visible
+#: window*, so the item under it is ``wCurrentMenuItem + wListScrollOffset``.
+#: Measured against the cartridge in `tests/test_field_moves_live.py`.
+BAG_MENU_TOP_Y = 4
+#: Row of ITEM in the start menu, below POKEDEX and POKEMON.
+START_MENU_ITEM_ROW = 2
+
+
+def _field_bike_sync(want: int) -> dict:
+    """Use the Bicycle from the bag, and check the game agrees you are on it.
+
+    Same four screens as Cut and the same rule: read the menu rather than count
+    presses. The bag list adds a scroll offset, because its cursor is a row on
+    screen and the bag is longer than the screen.
+
+    Riding is roughly twice walking speed, and the last run never once got on
+    it. Every attempt went to `poke item`, which is the *battle* bag, and came
+    back "Not in a battle. Nothing to attack and nothing to run from."
+    """
+    here = _reader.read_travel_state()
+    if here == want:
+        state = "on the Bicycle" if want == ON_BIKE else "on foot"
+        raise HTTPException(status_code=409, detail=f"Already {state}.")
+
+    bag = _reader.read_bag() or []
+    slot = next((i for i, item in enumerate(bag) if item.get("item") == "Bicycle"), None)
+    if slot is None:
+        raise HTTPException(
+            status_code=409,
+            detail="No Bicycle in the bag. The Bike Voucher from the Vermilion Fan Club buys one.",
+        )
+
+    _execute_action_sync("press_start")
+    if _menu_top_y_sync() != START_MENU_TOP_Y:
+        _escape_menus_sync()
+        raise HTTPException(
+            status_code=409,
+            detail="Pressing START did not open the main menu. Nothing was confirmed.",
+        )
+    _walk_cursor_to_sync(START_MENU_ITEM_ROW, what="ITEM")
+    _execute_action_sync("press_a")
+    if (
+        _menu_top_y_sync() != BAG_MENU_TOP_Y
+        or _emulator.read_u8(ADDR_LIST_MENU_ID) != ITEM_LIST_MENU
+    ):
+        _escape_menus_sync()
+        raise HTTPException(status_code=409, detail="The bag did not open. Nothing was confirmed.")
+
+    for _ in range(2 * len(bag) + 4):
+        at = _menu_row_sync() + _emulator.read_u8(ADDR_LIST_SCROLL_OFFSET)
+        if at == slot:
+            break
+        _execute_action_sync("press_down" if at < slot else "press_up")
+    else:
+        _escape_menus_sync()
+        raise HTTPException(
+            status_code=409,
+            detail=f"Could not put the bag cursor on the Bicycle (slot {slot + 1}).",
+        )
+
+    _execute_action_sync("press_a")  # USE / TOSS
+    _execute_action_sync("press_a")  # USE
+    _execute_action_sync("a_until_dialog_end")
+
+    landed = _reader.read_travel_state()
+    if landed == want:
+        return {"riding": landed == ON_BIKE}
+    _escape_menus_sync()
+    where = "indoors and in caves" if want == ON_BIKE else "here"
+    raise HTTPException(
+        status_code=409,
+        detail=(
+            f"The Bicycle was used and the game still has you "
+            f"{'on foot' if landed == ON_FOOT else 'travelling some other way'}. "
+            f"It cannot be ridden {where}."
         ),
     )
 
@@ -3835,6 +4110,7 @@ async def _startup():
     _emulator_lock = asyncio.Lock()
     # Nothing this process has not seen has been proved inert yet.
     _repeat_guard.reset()
+    _cycle_guard.reset()
     _repeat_context.clear()
     # A startup that gives up must not leave the previous run's emulator visible
     # to /health and /action.
@@ -4305,9 +4581,11 @@ async def execute_actions(req: ActionRequest):
             blocked_walk=bool(_repeat_context.get("blocked_walk")),
         ),
     )
+    await _check_circling()
     try:
         result = await _run_actions(req.actions, source="action", reason="actions_executed")
         _record_repeat(key, result["state_before"], result["state_after"])
+        _record_walk(result["state_after"], result["actions_executed"])
         _repeat_context.update(
             state=result["state_after"],
             blocked_walk=all_walks_blocked(req.actions, result.get("outcome")),
@@ -4453,6 +4731,21 @@ async def battle_item(req: BattleItemRequest):
         raise HTTPException(status_code=400, detail=str(e))
     except Exception as e:  # noqa: BLE001
         raise HTTPException(status_code=500, detail=f"Battle error: {e}")
+
+
+@app.post("/field/bike")
+async def field_bike(req: FieldBikeRequest):
+    """Get on the Bicycle, or off it. Twice walking speed for the same presses."""
+    _ensure_emulator()
+    if await _run_emulator_sync(_in_battle_sync):
+        raise HTTPException(
+            status_code=409,
+            detail="In a battle, so the bag is the battle bag. Finish the fight first.",
+        )
+    _check_action_rate()
+    outcome = await _run_emulator_sync(_field_bike_sync, ON_BIKE if req.on else ON_FOOT)
+    bundle = await _refresh_and_broadcast(reason="bike", source="bike")
+    return {**outcome, **_observation_summary(bundle)}
 
 
 @app.post("/field/cut")
@@ -4918,6 +5211,7 @@ async def _refuse_if_regressive(
         # asked for: reset the guard the way any load does, and say plainly
         # that the undo did not hold rather than report a clean refusal.
         _repeat_guard.reset()
+        _cycle_guard.reset()
         _repeat_context.clear()
         stuck = f"{detail} The undo failed ({exc}): the game is on that save now."
         await _write_receipt(
@@ -4986,7 +5280,7 @@ async def load_state(req: SaveRequest):
     # Reloading one save over and over is not recovery, it is a search that
     # never terminates. This costs nothing to check and needs no snapshot: the
     # world has not moved yet.
-    loaded_already = _loads_since_milestone.get(req.name, 0)
+    loaded_already = _load_repeats_for(req.name)
     if not req.force and loaded_already >= MAX_LOADS_PER_SAVE:
         detail = _repeat_load_refusal(req.name, loaded_already)
         await _write_receipt(
@@ -5050,13 +5344,19 @@ async def load_state(req: SaveRequest):
     # inert may not be any more. Forget it rather than refuse a command the
     # restored frame has never been asked.
     _repeat_guard.reset()
+    _cycle_guard.reset()
     _repeat_context.clear()
     if result.get("settled", True):
         await _broadcast_runtime_refresh(result)
     await _record_and_broadcast("load", {"name": req.name, "path": str(save_path)})
     await broadcast({"type": "state_update", "reason": "load", "state": result["state_after"]})
-    _loads_since_milestone[req.name] = _loads_since_milestone.get(req.name, 0) + 1
-    load_extra: dict = {"save": req.name, "load_repeats": _loads_since_milestone[req.name]}
+    # Counted here, but only banked *after* the receipt below. Writing the
+    # receipt runs `_note_milestones_for_load_guard`, which clears this dict on
+    # any rung the run did not already hold — so incrementing first meant a load
+    # onto a save that is ahead of the live game wiped the very increment it had
+    # just made, and handed that save a fourth trip every time.
+    repeats = _load_repeats_for(req.name) + 1
+    load_extra: dict = {"save": req.name, "load_repeats": repeats}
     if req.force:
         # Whether a load was forced is the only thing that separates recovering
         # a lost branch from overriding the guard, and the record could not tell
@@ -5090,6 +5390,7 @@ async def load_state(req: SaveRequest):
         reloaded=True,
         extra=load_extra,
     )
+    _note_load(req.name)
     payload = {
         "success": True,
         "save": {"name": req.name, "path": str(save_path)},
@@ -5388,6 +5689,7 @@ async def goto(req: GotoRequest):
         raise HTTPException(status_code=400, detail="Nothing to walk to: send target, or x and y.")
     goto_key = ("goto", str(req.target or "").strip().lower(), str(req.x), str(req.y))
     await _check_repeat(goto_key, tool="goto")
+    await _check_circling()
     # Walking to a tile on the current map needs no map graph at all.
     world = _ensure_world() if req.target else World({})
 
@@ -5426,6 +5728,7 @@ async def goto(req: GotoRequest):
         bundle = await _refresh_and_broadcast(reason="goto", source="goto")
     if walk_states:
         _record_repeat(goto_key, walk_states[0][0], walk_states[-1][1])
+        _record_walk(walk_states[-1][1], result["actions_executed"])
     else:
         # A walk that never pressed anything moved nothing by definition, and
         # asking for it again will not move anything either.
@@ -5518,15 +5821,26 @@ async def sim(req: SimRequest):
     key = ("sim", *(str(action).strip().lower() for action in req.actions))
     fresh_plan = key not in _sim_plans_since_press
     if fresh_plan and len(_sim_plans_since_press) >= MAX_SIMS_BETWEEN_PRESSES:
-        raise HTTPException(
-            status_code=400,
-            detail=(
-                f"{len(_sim_plans_since_press)} different plans walked on paper since the last "
-                "button was pressed, and none of them moved anything. Another plan answers a "
-                "question you have already asked six ways. Press the first step of the best one "
-                "so far and read what actually happened."
-            ),
+        detail = (
+            f"{len(_sim_plans_since_press)} different plans walked on paper since the last "
+            "button was pressed, and none of them moved anything. Another plan answers a "
+            "question you have already asked six ways. Press the first step of the best one "
+            "so far and read what actually happened."
         )
+        # This was the one refusal in this file that wrote nothing down, on the
+        # reasoning that a sim spends no buttons. But the record is of what the
+        # run was stopped from doing as much as what it did, and the last run
+        # made 124 sim calls of which every single one was refused — a fact that
+        # existed only because the *other* refusal on this path writes receipts.
+        await _write_receipt(
+            tool="sim",
+            presses=0,
+            bundle=None,
+            outcome=None,
+            exit_code=1,
+            extra={"error": detail[:200], "sim_plans": len(_sim_plans_since_press)},
+        )
+        raise HTTPException(status_code=400, detail=detail)
     await _check_repeat(key, tool="sim", describe=sim_refusal)
     snapshot = await _require_snapshot()
     try:

@@ -33,6 +33,11 @@ ADDR_MAP_TILESET = 0xD367  # current map tileset (wCurMapTileset)
 ADDR_MAP_HEIGHT = 0xD368  # current map height in blocks
 ADDR_MAP_WIDTH = 0xD369  # current map width in blocks
 ADDR_FACING = 0xC109  # live sprite facing direction
+#: wWalkBikeSurfState: 0 on foot, 1 on the Bicycle, 2 surfing. The only way to
+#: tell whether using the Bicycle worked — nothing else in RAM moves, and the
+#: sprite change is four pixels on a 160x144 screen.
+ADDR_WALK_BIKE_SURF = 0xD700
+ON_FOOT, ON_BIKE, SURFING = 0, 1, 2
 # 0xC109 is the live sprite state that updates as the player moves.
 
 # -- Party --
@@ -1923,6 +1928,10 @@ class RedBlueMemoryReader(GameMemoryReader):
         """Read the player's live facing direction."""
         facing_byte = self.emu.read_u8(ADDR_FACING)
         return FACING_NAMES.get(facing_byte, f"unknown(0x{facing_byte:02X})")
+
+    def read_travel_state(self) -> int:
+        """Whether the player is on foot, on the Bicycle, or surfing."""
+        return self.emu.read_u8(ADDR_WALK_BIKE_SURF)
 
     def read_tileset(self) -> str:
         """Read the current map's tileset."""

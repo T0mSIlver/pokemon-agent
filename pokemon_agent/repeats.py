@@ -67,6 +67,7 @@ no legal move.
 
 from __future__ import annotations
 
+from collections import deque
 from dataclasses import dataclass, field
 from typing import Any, Callable, Mapping, Optional, Sequence
 
@@ -382,6 +383,101 @@ def looks_like_dialog(state: Optional[Mapping[str, Any]]) -> bool:
     return bool((state or {}).get("dialog_active") or dialog.get("active"))
 
 
+#: Walks looked at before the circuit breaker below decides they went nowhere.
+CYCLE_WINDOW = 24
+#: Distinct tiles those walks may end on and still count as going nowhere. Three
+#: rather than one because the shape being caught is a lap, not a stuck tile.
+CYCLE_TILES = 3
+#: And the presses they must have cost. Twenty-four walks ending on three tiles
+#: is only damning if buttons were spent doing it; the same window at 1 press a
+#: call is a model reading the frame, which is cheap and often right.
+CYCLE_PRESSES = 240
+
+
+class WalkingInCircles(Exception):
+    """A stretch of walking that keeps arriving where it started."""
+
+    def __init__(self, detail: str, tiles: Sequence[tuple[int, int]], presses: int) -> None:
+        super().__init__(detail)
+        self.detail = detail
+        self.tiles = tuple(tiles)
+        self.presses = presses
+
+
+class CycleGuard:
+    """Notices a lap, which :class:`RepeatGuard` structurally cannot.
+
+    ``RepeatGuard`` keys on the command, and a lap is not one command. The
+    measured case is Route 11 (55,0): 218 consecutive calls, **8,225 presses in
+    22 minutes**, every one ending on the same tile, and the streak reset on
+    every call because the model kept varying the plan — ``right:5 up:4``,
+    ``right:4 up:4``, ``right:3 up:4`` — while walking the identical lap. By
+    command it is 6 distinct plans; by outcome it is one, 72 times. 10.6% of
+    everything that run spent after its last milestone went through that block,
+    and nothing in the harness said a word.
+
+    So this one ignores the command entirely and watches only where walks end.
+
+    It fires **once per window and then forgets**, which is what makes it safe
+    to raise rather than annotate. The agent is never left without a legal move:
+    the very next call is allowed through whatever it is. The run being fixed
+    here already had ``stood here N times before`` appended to 2,023 payloads
+    and walked past every one of them, so an annotation is not the instrument.
+    """
+
+    def __init__(
+        self,
+        *,
+        window: int = CYCLE_WINDOW,
+        tiles: int = CYCLE_TILES,
+        presses: int = CYCLE_PRESSES,
+    ) -> None:
+        self._window = window
+        self._tiles = tiles
+        self._presses = presses
+        self._steps: deque[tuple[str, tuple[int, int], int]] = deque(maxlen=window)
+
+    def reset(self) -> None:
+        """Forget the window. For a load, a whiteout, or a new map."""
+        self._steps.clear()
+
+    def record(self, map_name: str, position: Optional[tuple[int, int]], presses: int) -> None:
+        """File where one walk ended. Only walking calls belong here.
+
+        A battle, a heal or a purchase ends where it started by design, and
+        feeding those in would make standing still at a counter look like a lap.
+        """
+        if not map_name or position is None:
+            self.reset()
+            return
+        if self._steps and self._steps[-1][0] != map_name:
+            # A different map is progress by itself: whatever the lap was, it
+            # ended. Nothing here is trying to catch a two-map bounce.
+            self.reset()
+        self._steps.append((map_name, tuple(position), max(0, int(presses))))
+
+    def lap(self) -> Optional[tuple[list[tuple[int, int]], int]]:
+        """The tiles and the presses, if the window is a lap. ``None`` if not."""
+        if len(self._steps) < self._window:
+            return None
+        tiles = {step[1] for step in self._steps}
+        if len(tiles) > self._tiles:
+            return None
+        spent = sum(step[2] for step in self._steps)
+        if spent < self._presses:
+            return None
+        return sorted(tiles), spent
+
+    def check(self, describe: Callable[[list[tuple[int, int]], int], str]) -> None:
+        """Raise once if the window is a lap, then forget it."""
+        found = self.lap()
+        if found is None:
+            return
+        tiles, spent = found
+        self.reset()
+        raise WalkingInCircles(describe(tiles, spent), tiles, spent)
+
+
 def all_walks_blocked(actions: Sequence[str], outcome: Optional[Mapping[str, Any]]) -> bool:
     """Whether the batch was walking and moved nothing."""
     if not any(str(action).strip().lower().startswith("walk_") for action in actions):
@@ -390,6 +486,10 @@ def all_walks_blocked(actions: Sequence[str], outcome: Optional[Mapping[str, Any
 
 
 __all__ = [
+    "CYCLE_PRESSES",
+    "CYCLE_TILES",
+    "CYCLE_WINDOW",
+    "CycleGuard",
     "Key",
     "REPEAT_LIMIT",
     "RepeatGuard",
@@ -404,5 +504,6 @@ __all__ = [
     "looks_like_dialog",
     "screen_words",
     "sim_refusal",
+    "WalkingInCircles",
     "world_fingerprint",
 ]

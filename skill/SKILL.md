@@ -428,7 +428,8 @@ If the same action fails three times, stop repeating it. Something in your model
 - `poke fight <move>`: attack with a named move. `poke run` flees. Both under Battles above.
 - `poke catch [ball]`: throw a ball at a wild Pokemon. Under Catching above.
 - `poke item [name]`: use a healing item without leaving a battle. Under Staying alive above.
-- `poke cut`: cut down a small tree, walking to it and facing it first. A tree is solid to `map`, `route`, `sim` and `goto` until it is cut, so a route that stops at one reads as a wall — the refusal names the tile when that is what happened. Needs the Cascade Badge and a party Pokemon that knows Cut.
+- `poke cut`: cut down a small tree, walking to it and facing it first. A tree is solid to `map`, `route`, `sim` and `goto` until it is cut, so a route that stops at one reads as a wall — the refusal names the tile when that is what happened, and so does the `cut` line in the location payload. Needs the Cascade Badge and a party Pokemon that knows Cut.
+- `poke bike`: get on the Bicycle, `poke bike off` to get down. Two tiles per press instead of one, so a long route is half the buttons. Refused indoors and in caves. Not `poke item`, which is the bag inside a battle.
 - `poke buy <item> [count]`: buy from the mart you are standing in. Under Buying above.
 - `poke heal`: heal at the nurse on this map. Under Staying alive above.
 - `poke calc`: the same move table the battle payload already carries, on demand. Under Battles.

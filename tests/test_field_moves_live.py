@@ -46,6 +46,9 @@ PARTY_MENU_TOP_Y = 1
 FIELD_MOVE_MENU_TOP_Y = 10
 #: Row of POKEMON in the start menu, with the Pokedex in hand.
 START_MENU_POKEMON_ROW = 1
+#: And of ITEM, one below it. The bag list it opens has its own anchor.
+BAG_MENU_ITEM_ROW = 2
+BAG_MENU_TOP_Y = 4
 
 
 @pytest.fixture(scope="module")
@@ -225,3 +228,73 @@ def _face(emulator, tree: tuple[int, int]) -> None:
     )
     emulator.press_and_settle(direction)
     assert reader.read_facing().lower() == direction
+
+
+@needs_rom
+def test_the_bag_menu_is_told_apart_and_its_cursor_is_an_absolute_slot(emulator, tmp_path):
+    """The bag scrolls, so its cursor is a row on screen plus a scroll offset.
+
+    Counting presses down the list would work only while the bag is shorter than
+    the window. The Bicycle is usually the last of a dozen items, which is
+    exactly where that assumption breaks.
+    """
+    import glob
+    import shutil
+
+    from pokemon_agent.memory.red import (
+        ADDR_CURRENT_MENU_ITEM,
+        ADDR_LIST_MENU_ID,
+        ADDR_LIST_SCROLL_OFFSET,
+        ADDR_TOP_MENU_ITEM_Y,
+        ADDR_WALK_BIKE_SURF,
+        ITEM_LIST_MENU,
+        ON_BIKE,
+        ON_FOOT,
+        RedBlueMemoryReader,
+    )
+
+    reader = RedBlueMemoryReader(emulator)
+    found = None
+    for path in sorted(glob.glob(str(SAVES_DIR / "*.state")), reverse=True):
+        copy = tmp_path / "bike.state"
+        shutil.copy(path, copy)
+        try:
+            emulator.load_state(str(copy))
+            emulator.settle()
+            bag = reader.read_bag() or []
+        except Exception:  # noqa: BLE001 — a save that will not load is not a failure here
+            continue
+        slot = next((i for i, item in enumerate(bag) if item.get("item") == "Bicycle"), None)
+        if slot is not None and emulator.read_u8(ADDR_WALK_BIKE_SURF) == ON_FOOT:
+            found = (str(copy), slot, len(bag))
+            break
+    if found is None:
+        pytest.skip("no save in the corpus carries a Bicycle while on foot")
+    state, slot, size = found
+    emulator.load_state(state)
+    emulator.settle()
+
+    emulator.press_and_settle("start")
+    assert emulator.read_u8(ADDR_TOP_MENU_ITEM_Y) == START_MENU_TOP_Y
+    for _ in range(12):
+        at = emulator.read_u8(ADDR_CURRENT_MENU_ITEM)
+        if at == BAG_MENU_ITEM_ROW:
+            break
+        emulator.press_and_settle("up" if at > BAG_MENU_ITEM_ROW else "down")
+    emulator.press_and_settle("a")
+    assert emulator.read_u8(ADDR_TOP_MENU_ITEM_Y) == BAG_MENU_TOP_Y
+    assert emulator.read_u8(ADDR_LIST_MENU_ID) == ITEM_LIST_MENU
+
+    for _ in range(2 * size + 4):
+        at = emulator.read_u8(ADDR_CURRENT_MENU_ITEM) + emulator.read_u8(ADDR_LIST_SCROLL_OFFSET)
+        if at == slot:
+            break
+        emulator.press_and_settle("down" if at < slot else "up")
+    absolute = emulator.read_u8(ADDR_CURRENT_MENU_ITEM) + emulator.read_u8(ADDR_LIST_SCROLL_OFFSET)
+    assert absolute == slot
+
+    emulator.press_and_settle("a")  # USE / TOSS
+    emulator.press_and_settle("a")  # USE
+    for _ in range(6):
+        emulator.press_and_settle("a")
+    assert emulator.read_u8(ADDR_WALK_BIKE_SURF) == ON_BIKE

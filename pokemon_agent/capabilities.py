@@ -658,7 +658,7 @@ def _toward_the_unseen(
     return best
 
 
-def _reachable_exits(
+def reachable_exits(
     world: world_mod.World,
     here: str,
     collision: dict,
@@ -716,7 +716,7 @@ def _reachable_exits(
     return exits[:limit]
 
 
-def _describe_exits(exits: Sequence[dict]) -> str:
+def describe_exits(exits: Sequence[dict]) -> str:
     parts = []
     for item in exits:
         where = f"at {item['at']}"
@@ -852,7 +852,7 @@ def _walled_off(
     left after everything that can walk off on its own has been ruled out.
     """
     here = observation["map_name"]
-    exits = _reachable_exits(world, here, collision, observation["snapshot"], region)
+    exits = reachable_exits(world, here, collision, observation["snapshot"], region)
     trees = cut_trees_on_the_seam(collision, region)
     onward = {
         "kind": "walled-off",
@@ -882,7 +882,7 @@ def _walled_off(
             "and find out"
         )
     onward_note = (
-        f" What is reachable from here: {_describe_exits(exits)}."
+        f" What is reachable from here: {describe_exits(exits)}."
         if exits
         else " Nothing on this map leads anywhere from here."
     )
@@ -945,7 +945,7 @@ def _standing_in_the_way(
         and any((tile[0] + dx, tile[1] + dy) in region for dx, dy in DIRECTIONS.values())
     )
     here = observation["map_name"]
-    exits = _reachable_exits(world, here, collision, observation["snapshot"], region)
+    exits = reachable_exits(world, here, collision, observation["snapshot"], region)
     onward = {
         "kind": "blocked-by-a-body",
         "goal": goal,
@@ -956,7 +956,7 @@ def _standing_in_the_way(
     }
     named = ", ".join(str(tile) for tile in onward["blocked_at"])
     onward_note = (
-        f" What is reachable from here: {_describe_exits(exits)}."
+        f" What is reachable from here: {describe_exits(exits)}."
         if exits
         else " Nothing else on this map leads anywhere from here."
     )

@@ -712,6 +712,18 @@ def cmd_heal(args: argparse.Namespace, url: str) -> int:
     return EXIT_OK
 
 
+def cmd_bike(args: argparse.Namespace, url: str) -> int:
+    """Get on the Bicycle, or off it."""
+    on = args.state != "off"
+    answer = fetch_json(url, "/field/bike", method="POST", payload={"on": on})
+    if args.json:
+        print(compact(answer))
+        return EXIT_OK
+    print("on the Bicycle" if answer.get("riding") else "on foot")
+    print(action_lines(answer))
+    return EXIT_OK
+
+
 def cmd_cut(args: argparse.Namespace, url: str) -> int:
     """Cut down a small tree. Walks to it first."""
     payload: dict = {}
@@ -1159,6 +1171,24 @@ def build_parser() -> argparse.ArgumentParser:
     buy.add_argument("item", nargs="+", metavar="ITEM [COUNT]")
     buy.add_argument("--json", action="store_true", help="the whole payload instead of a summary")
     buy.set_defaults(func=cmd_buy)
+
+    bike = subparsers.add_parser(
+        "bike",
+        parents=[common],
+        help="get on the Bicycle, e.g. poke bike (poke bike off to get down)",
+        description=(
+            "Ride the Bicycle. It moves two tiles for every one on foot and costs "
+            "the same presses, so a long route is half the buttons.\n"
+            "The game refuses it indoors and in caves; so does this, by looking at "
+            "the travel state afterwards rather than assuming the menu worked.\n"
+            "Not `poke item`, which is the bag *inside a battle* and answers "
+            "'Not in a battle' out on the map."
+        ),
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+    )
+    bike.add_argument("state", nargs="?", choices=("on", "off"), default="on")
+    bike.add_argument("--json", action="store_true", help="the whole payload instead of a summary")
+    bike.set_defaults(func=cmd_bike)
 
     cut = subparsers.add_parser(
         "cut",
