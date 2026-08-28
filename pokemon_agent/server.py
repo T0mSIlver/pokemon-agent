@@ -267,6 +267,12 @@ class GotoRequest(BaseModel):
     y: Optional[int] = None
 
 
+class FieldFlyRequest(BaseModel):
+    """Body for POST /field/fly."""
+
+    to: str
+
+
 class FieldBikeRequest(BaseModel):
     """Body for POST /field/bike. ``on`` false gets off it again."""
 
@@ -3187,7 +3193,22 @@ START_MENU_POKEMON_ROW = 1
 #: measured against the cartridge in `tests/test_field_moves_live.py`.
 START_MENU_TOP_Y = 2
 PARTY_MENU_TOP_Y = 1
-FIELD_MOVE_MENU_TOP_Y = 10
+#: The field-move submenu is bottom-anchored: pokered draws STATS, SWITCH and
+#: CANCEL and then grows the box upwards by one row per field move, so
+#: ``wTopMenuItemY`` is ``12 - 2n``. The constant here used to be a flat 10,
+#: which is the n=1 case and the only one every test happened to exercise. The
+#: first Pokemon to know two field moves -- a Charizard with Cut and Fly, which
+#: is exactly what the live run is one TM away from -- made every field-move
+#: verb answer "the menu did not open" and refuse.
+FIELD_MOVE_MENU_BASE_TOP_Y = 12
+FIELD_MOVE_MENU_ROWS_PER_MOVE = 2
+
+
+def _field_move_menu_top_y(field_moves: int) -> int:
+    """Where the submenu anchors for a mon that knows `field_moves` of them."""
+    return FIELD_MOVE_MENU_BASE_TOP_Y - FIELD_MOVE_MENU_ROWS_PER_MOVE * field_moves
+
+
 #: Enough B presses to back out of the deepest menu this drives.
 MENU_ESCAPE_PRESSES = 4
 
@@ -3212,6 +3233,11 @@ def _walk_cursor_to_sync(row: int, *, what: str) -> int:
     for _ in range(12):
         at = _menu_row_sync()
         if at == row:
+            # Let the cursor's last move finish drawing. The caller's next act
+            # is a confirming A, and one sent into a half-drawn menu is eaten:
+            # a `poke fly` immediately after another menu call answered "the
+            # party list did not open" and worked on the retry.
+            _emulator.tick(FLY_CAPTION_FRAMES)
             return spent
         _execute_action_sync("press_up" if at > row else "press_down")
         spent += 1
@@ -3225,8 +3251,19 @@ def _walk_cursor_to_sync(row: int, *, what: str) -> int:
 
 
 def _escape_menus_sync() -> None:
+    """Back out of whatever is open, and wait for the map to come back.
+
+    The town map is several screens deep and does not close as fast as a text
+    box: without the settle, the next call opened onto a half-closed menu and
+    refused with "the party list did not open", which is true and useless.
+    """
     for _ in range(MENU_ESCAPE_PRESSES):
         _execute_action_sync("press_b")
+        # A beat between presses. Sent back to back they are eaten, and the town
+        # map -- the deepest screen any of these verbs opens -- stayed open
+        # behind a refusal, so the next call found a dialog and refused too.
+        _emulator.tick(FLY_CAPTION_FRAMES)
+    _emulator.settle()
 
 
 def _front_tile_sync() -> tuple[Optional[tuple[int, int]], Optional[int], Optional[str]]:
@@ -3287,6 +3324,35 @@ BAG_MENU_TOP_Y = 4
 START_MENU_ITEM_ROW = 2
 
 
+def _open_start_menu_sync() -> int:
+    """Press START until the main menu is really open, or refuse. Returns presses.
+
+    Bounded retry rather than a longer wait, because "how long does the game
+    need" has no fixed answer: a press sent while the previous action is still
+    finishing is eaten, and the previous action here can be a Fly animation, a
+    cut, a warp or nothing at all. Three attempts covered every sequence tried
+    against the cartridge, including fly-then-fly, which failed reliably on one.
+
+    A refusal after three is honest -- nothing was confirmed and no menu is open
+    -- and is what a genuinely stuck frame should get.
+    """
+    spent = 0
+    for attempt in range(3):
+        _settle_for_menu_sync()
+        spent += _menu_presses_sync(["press_start"])
+        _emulator.tick(FLY_CAPTION_FRAMES)
+        if _menu_top_y_sync() == START_MENU_TOP_Y:
+            return spent
+        # Whatever opened instead, close it before trying again.
+        if attempt < 2:
+            _escape_menus_sync()
+    _escape_menus_sync()
+    raise HTTPException(
+        status_code=409,
+        detail="Pressing START did not open the main menu. Nothing was confirmed.",
+    )
+
+
 def _field_bike_sync(want: int) -> dict:
     """Use the Bicycle from the bag, and check the game agrees you are on it.
 
@@ -3311,14 +3377,7 @@ def _field_bike_sync(want: int) -> dict:
             detail="No Bicycle in the bag. The Bike Voucher from the Vermilion Fan Club buys one.",
         )
 
-    _settle_for_menu_sync()
-    spent = _menu_presses_sync(["press_start"])
-    if _menu_top_y_sync() != START_MENU_TOP_Y:
-        _escape_menus_sync()
-        raise HTTPException(
-            status_code=409,
-            detail="Pressing START did not open the main menu. Nothing was confirmed.",
-        )
+    spent = _open_start_menu_sync()
     spent += _walk_cursor_to_sync(START_MENU_ITEM_ROW, what="ITEM")
     spent += _menu_presses_sync(["press_a"])
     if (
@@ -3411,7 +3470,7 @@ def _require_field_badge_sync(move: str) -> None:
         )
 
 
-def _use_field_move_sync(move: str) -> tuple[int, dict]:
+def _use_field_move_sync(move: str, *, clear_dialog: bool = True) -> tuple[int, dict]:
     """Drive START -> POKEMON -> the mon -> the move, reading every screen.
 
     The presses are returned so the caller can bill them; the caller also owns
@@ -3426,14 +3485,7 @@ def _use_field_move_sync(move: str) -> tuple[int, dict]:
     slot, row, party = _field_move_slot_sync(move)
     mon = party[slot]
 
-    _settle_for_menu_sync()
-    spent = _menu_presses_sync(["press_start"])
-    if _menu_top_y_sync() != START_MENU_TOP_Y:
-        _escape_menus_sync()
-        raise HTTPException(
-            status_code=409,
-            detail="Pressing START did not open the main menu. Nothing was confirmed.",
-        )
+    spent = _open_start_menu_sync()
     spent += _walk_cursor_to_sync(START_MENU_POKEMON_ROW, what="POKEMON")
     spent += _menu_presses_sync(["press_a"])
     if _menu_top_y_sync() != PARTY_MENU_TOP_Y:
@@ -3443,21 +3495,25 @@ def _use_field_move_sync(move: str) -> tuple[int, dict]:
         )
     spent += _walk_cursor_to_sync(slot, what=str(mon.get("species")))
     spent += _menu_presses_sync(["press_a"])
-    if _menu_top_y_sync() != FIELD_MOVE_MENU_TOP_Y:
-        _escape_menus_sync()
-        raise HTTPException(
-            status_code=409,
-            detail=f"{mon.get('species')}'s menu did not open. Nothing was confirmed.",
-        )
-    # The submenu is the mon's field moves and then STATS, SWITCH, CANCEL, so
-    # this many rows is what its moveset says it should have. A mismatch means
-    # the row worked out here is not the row the game drew, and confirming it
-    # would use the wrong move.
+    # The submenu is the mon's field moves and then STATS, SWITCH, CANCEL. Both
+    # its anchor and its row count follow from how many field moves it knows, so
+    # a mismatch in either means the row worked out here is not the row the game
+    # drew, and confirming it would use the wrong move.
     known = sum(
         1
         for entry in mon.get("moves") or []
         if str(entry.get("name") or "").lower() in capabilities.FIELD_MOVES
     )
+    anchor = _field_move_menu_top_y(known)
+    if _menu_top_y_sync() != anchor:
+        _escape_menus_sync()
+        raise HTTPException(
+            status_code=409,
+            detail=(
+                f"{mon.get('species')}'s menu did not open where a mon knowing {known} "
+                f"field move(s) draws it. Nothing was confirmed."
+            ),
+        )
     drawn = _emulator.read_u8(ADDR_MAX_MENU_ITEM)
     if drawn != known + 2:
         _escape_menus_sync()
@@ -3469,8 +3525,96 @@ def _use_field_move_sync(move: str) -> tuple[int, dict]:
             ),
         )
     spent += _walk_cursor_to_sync(row, what=move.upper())
-    spent += _menu_presses_sync(["press_a", "a_until_dialog_end"])
+    # Fly answers with the town map rather than a message, and mashing A at that
+    # screen picks whichever town the cursor was left on. Every other field move
+    # ends in text that has to be cleared.
+    spent += _menu_presses_sync(["press_a", "a_until_dialog_end"] if clear_dialog else ["press_a"])
     return spent, {"slot": slot, "mon": mon}
+
+
+#: Presses allowed while hunting the town map for a destination. The cursor
+#: cycles the towns already visited and wraps, so twice the map's town count is
+#: a full lap with room to spare.
+MAX_FLY_CURSOR_PRESSES = 24
+
+#: Frames to let the town-map caption redraw before reading it.
+FLY_CAPTION_FRAMES = 20
+
+#: A presses allowed to carry the flight through. Measured against the
+#: cartridge: seven, and `dialog_active` reads False for every one of them, so
+#: `a_until_dialog_end` stops after the first and the map read that follows
+#: answers with the map being left. The flight is a run of screens, not a text
+#: box, and the only honest signal is the map itself.
+MAX_FLY_CONFIRM_PRESSES = 12
+
+
+def _fly_destination_sync() -> str:
+    """The town the map's cursor is on, from the words on screen.
+
+    `wCurrentMenuItem` does not move on this screen -- measured, it sits at 1
+    however far the cursor travels -- so the readable thing is the caption, which
+    says "To PALLET TOWN" and changes with every press.
+
+    The tick matters. Read straight after the press, the caption is still the
+    previous town, and the cursor walk below then sees the same name twice and
+    concludes it has been all the way round: the first version of this refused
+    every town but the one it started on, having offered exactly one.
+    """
+    _emulator.tick(FLY_CAPTION_FRAMES)
+    text = (_reader.read_screen_text() or "").strip()
+    _, _, town = text.partition("To ")
+    return " ".join(town.split()).title()
+
+
+def _field_fly_sync(target: str) -> dict:
+    """Fly to a town, choosing it by reading the caption rather than counting.
+
+    The cursor only visits towns already reached, which is why a refusal here
+    names the ones on offer: "nowhere called that" and "you have not been there
+    yet" are different problems and only the second has an answer.
+    """
+    _require_field_badge_sync("fly")
+    wanted = " ".join(str(target).split()).title()
+    here = _current_map_name_sync()
+    if wanted == (here or "").title():
+        raise HTTPException(status_code=409, detail=f"Already on {here}.")
+
+    spent, who = _use_field_move_sync("fly", clear_dialog=False)
+    seen: list[str] = []
+    for _ in range(MAX_FLY_CURSOR_PRESSES):
+        town = _fly_destination_sync()
+        if not town:
+            break
+        if town == wanted:
+            landed = None
+            for _ in range(MAX_FLY_CONFIRM_PRESSES):
+                spent += _menu_presses_sync(["press_a"])
+                landed = _current_map_name_sync()
+                if (landed or "").title() == wanted:
+                    break
+            _emulator.settle()
+            landed = _current_map_name_sync()
+            if (landed or "").title() == wanted:
+                return {"flew_to": landed, "used": who["mon"].get("species"), "presses": spent}
+            _escape_menus_sync()
+            raise HTTPException(
+                status_code=409,
+                detail=(f"Chose {wanted} on the town map and the game left you on {landed}."),
+            )
+        if town in seen:
+            break  # a full lap: it is not on the map
+        seen.append(town)
+        spent += _menu_presses_sync(["press_up"])
+
+    _escape_menus_sync()
+    reachable = ", ".join(seen) or "none the screen would name"
+    raise HTTPException(
+        status_code=409,
+        detail=(
+            f"{wanted} is not on the town map. Fly only reaches towns already visited, "
+            f"and the cursor offers: {reachable}."
+        ),
+    )
 
 
 def _field_cut_sync(tree: tuple[int, int], facing: str) -> dict:
@@ -5126,6 +5270,26 @@ async def field_bike(req: FieldBikeRequest):
         outcome=None,
         milestone_ids=await _run_emulator_sync(_milestone_ids_sync),
         extra={"riding": outcome.get("riding")},
+    )
+    return {**outcome, **_observation_summary(bundle)}
+
+
+@app.post("/field/fly")
+async def field_fly(req: FieldFlyRequest):
+    """Fly to a town already visited. One call instead of a journey."""
+    _ensure_emulator()
+    if await _run_emulator_sync(_in_battle_sync):
+        raise HTTPException(status_code=409, detail="In a battle. Finish the fight before flying.")
+    _check_action_rate()
+    outcome = await _run_emulator_sync(_field_fly_sync, req.to)
+    bundle = await _refresh_and_broadcast(reason="fly", source="fly")
+    await _write_receipt(
+        tool="fly",
+        presses=outcome.pop("presses", 0),
+        bundle=bundle,
+        outcome=None,
+        milestone_ids=await _run_emulator_sync(_milestone_ids_sync),
+        extra={"flew_to": outcome.get("flew_to")},
     )
     return {**outcome, **_observation_summary(bundle)}
 

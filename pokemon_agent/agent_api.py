@@ -1527,6 +1527,16 @@ class Client:
 
         return Result.from_payload(self._act_json("/field/bike", {"on": bool(on)}))
 
+    def fly(self, to: str) -> Result:
+        """Fly to a town you have already visited.
+
+        Needs HM02 on a party Pokemon and the Thunder Badge. One call instead of
+        a journey: the town map only offers towns already reached, and a refusal
+        names the ones it is offering.
+        """
+
+        return Result.from_payload(self._act_json("/field/fly", {"to": str(to)}))
+
     def surf(self) -> Result:
         """Ride onto the water you are facing.
 
@@ -1768,6 +1778,10 @@ def cut(x: Optional[int] = None, y: Optional[int] = None) -> Result:
     return client().cut(x, y)
 
 
+def fly(to: str) -> Result:
+    return client().fly(to)
+
+
 def surf() -> Result:
     return client().surf()
 
@@ -1884,6 +1898,7 @@ __all__ = [
     "expand",
     "fight",
     "flee",
+    "fly",
     "frames",
     "frontier",
     "game",

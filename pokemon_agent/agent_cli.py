@@ -735,6 +735,17 @@ def cmd_strength(args: argparse.Namespace, url: str) -> int:
     return EXIT_OK
 
 
+def cmd_fly(args: argparse.Namespace, url: str) -> int:
+    """Fly to a town already visited."""
+    answer = fetch_json(url, "/field/fly", method="POST", payload={"to": " ".join(args.town)})
+    if args.json:
+        print(compact(answer))
+        return EXIT_OK
+    print(f"flew to {answer.get('flew_to')}")
+    print(action_lines(answer))
+    return EXIT_OK
+
+
 def cmd_surf(args: argparse.Namespace, url: str) -> int:
     """Ride onto the water in front of you."""
     answer = fetch_json(url, "/field/surf", method="POST", payload={})
@@ -1233,6 +1244,25 @@ def build_parser() -> argparse.ArgumentParser:
         "--json", action="store_true", help="the whole payload instead of a summary"
     )
     strength.set_defaults(func=cmd_strength)
+
+    fly = subparsers.add_parser(
+        "fly",
+        parents=[common],
+        help="fly to a town you have visited, e.g. poke fly cerulean city",
+        description=(
+            "Fly to a town already reached. Needs HM02 on a party Pokemon and the "
+            "Thunder Badge.\n"
+            "The town map only offers towns you have been to; asking for one you have "
+            "not reached is refused with the list of the ones it does offer.\n"
+            "The destination is chosen by reading the caption the game draws, not by "
+            "counting presses, and the map you land on is checked before this reports "
+            "success."
+        ),
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+    )
+    fly.add_argument("town", nargs="+", metavar="TOWN")
+    fly.add_argument("--json", action="store_true", help="the whole payload instead of a summary")
+    fly.set_defaults(func=cmd_fly)
 
     surf = subparsers.add_parser(
         "surf",
