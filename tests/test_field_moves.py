@@ -183,3 +183,44 @@ def test_field_move_row_counts_only_field_moves():
 def test_field_move_row_is_none_when_the_move_is_not_known():
     assert capabilities.field_move_row(_moves("Slash", "Ember"), "cut") is None
     assert capabilities.field_move_row([], "cut") is None
+
+
+# ---------------------------------------------------------------------------
+# What a field move costs, and where that cost is written down
+# ---------------------------------------------------------------------------
+
+
+def test_the_cursor_walker_reports_what_it_spent():
+    """Menu presses are buttons. The first version of `poke cut` billed none.
+
+    The walk to the tree is billed by `_run_actions`; the four menu screens
+    after it were driven straight through the emulator and appeared on no
+    receipt at all — the first four live cuts recorded 20, 4, 40 and 5 presses
+    and every one of them was the walk only.
+    """
+    from pokemon_agent import server
+
+    rows = iter([4, 3, 2, 1])
+    pressed: list[str] = []
+    original_row, original_press = server._menu_row_sync, server._execute_action_sync
+    server._menu_row_sync = lambda: next(rows)
+    server._execute_action_sync = lambda action: pressed.append(action)
+    try:
+        spent = server._walk_cursor_to_sync(1, what="POKEMON")
+    finally:
+        server._menu_row_sync, server._execute_action_sync = original_row, original_press
+
+    assert pressed == ["press_up"] * 3
+    assert spent == 3, "three presses, three billed"
+
+
+def test_a_cursor_already_on_the_row_costs_nothing():
+    from pokemon_agent import server
+
+    original_row, original_press = server._menu_row_sync, server._execute_action_sync
+    server._menu_row_sync = lambda: 1
+    server._execute_action_sync = lambda action: pytest.fail("pressed a button for nothing")
+    try:
+        assert server._walk_cursor_to_sync(1, what="POKEMON") == 0
+    finally:
+        server._menu_row_sync, server._execute_action_sync = original_row, original_press

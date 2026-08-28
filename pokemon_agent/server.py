@@ -2971,7 +2971,7 @@ def _menu_top_y_sync() -> int:
     return _emulator.read_u8(ADDR_TOP_MENU_ITEM_Y)
 
 
-def _walk_cursor_to_sync(row: int, *, what: str) -> None:
+def _walk_cursor_to_sync(row: int, *, what: str) -> int:
     """Step the menu cursor onto `row`, checking after every press.
 
     The cursor wraps, so a fixed number of presses lands somewhere different
@@ -2979,11 +2979,13 @@ def _walk_cursor_to_sync(row: int, *, what: str) -> None:
     this menu blind and reached the save screen twice and the options screen
     once before giving up.
     """
+    spent = 0
     for _ in range(12):
         at = _menu_row_sync()
         if at == row:
-            return
+            return spent
         _execute_action_sync("press_up" if at > row else "press_down")
+        spent += 1
     raise HTTPException(
         status_code=409,
         detail=(
@@ -3039,7 +3041,7 @@ def _field_cut_sync(tree: tuple[int, int], facing: str) -> dict:
     row = capabilities.field_move_row(party[slot].get("moves") or [], "cut")
 
     # Turn to face it. The tree is solid, so this press turns and does not walk.
-    _execute_action_sync(f"walk_{facing}")
+    spent = _menu_presses_sync([f"walk_{facing}"])
     landed = str(_reader.read_facing() or "").lower()
     if landed != facing:
         raise HTTPException(
@@ -3047,22 +3049,22 @@ def _field_cut_sync(tree: tuple[int, int], facing: str) -> dict:
             detail=f"Asked to face {facing} to cut {list(tree)} but ended up facing {landed}.",
         )
 
-    _execute_action_sync("press_start")
+    spent += _menu_presses_sync(["press_start"])
     if _menu_top_y_sync() != START_MENU_TOP_Y:
         _escape_menus_sync()
         raise HTTPException(
             status_code=409,
             detail="Pressing START did not open the main menu. Nothing was confirmed.",
         )
-    _walk_cursor_to_sync(START_MENU_POKEMON_ROW, what="POKEMON")
-    _execute_action_sync("press_a")
+    spent += _walk_cursor_to_sync(START_MENU_POKEMON_ROW, what="POKEMON")
+    spent += _menu_presses_sync(["press_a"])
     if _menu_top_y_sync() != PARTY_MENU_TOP_Y:
         _escape_menus_sync()
         raise HTTPException(
             status_code=409, detail="The party list did not open. Nothing was confirmed."
         )
-    _walk_cursor_to_sync(slot, what=str(party[slot].get("species")))
-    _execute_action_sync("press_a")
+    spent += _walk_cursor_to_sync(slot, what=str(party[slot].get("species")))
+    spent += _menu_presses_sync(["press_a"])
     if _menu_top_y_sync() != FIELD_MOVE_MENU_TOP_Y:
         _escape_menus_sync()
         raise HTTPException(
@@ -3088,13 +3090,17 @@ def _field_cut_sync(tree: tuple[int, int], facing: str) -> dict:
                 f"{field_moves + 3} its moves say it should. Nothing was confirmed."
             ),
         )
-    _walk_cursor_to_sync(row, what="CUT")
-    _execute_action_sync("press_a")
-    _execute_action_sync("a_until_dialog_end")
+    spent += _walk_cursor_to_sync(row, what="CUT")
+    spent += _menu_presses_sync(["press_a", "a_until_dialog_end"])
 
     terrain = _emulator._read_map_terrain()
     if tree in terrain["walkable"]:
-        return {"cut": list(tree), "used": party[slot].get("species"), "slot": slot + 1}
+        return {
+            "cut": list(tree),
+            "used": party[slot].get("species"),
+            "slot": slot + 1,
+            "presses": spent,
+        }
     _escape_menus_sync()
     raise HTTPException(
         status_code=409,
@@ -3112,6 +3118,22 @@ def _field_cut_sync(tree: tuple[int, int], facing: str) -> dict:
 BAG_MENU_TOP_Y = 4
 #: Row of ITEM in the start menu, below POKEDEX and POKEMON.
 START_MENU_ITEM_ROW = 2
+
+
+def _menu_presses_sync(actions: Sequence[str]) -> int:
+    """Run menu presses and return how many buttons they cost.
+
+    The walk to a tree is billed by `_run_actions`; the four menu screens after
+    it were not billed at all, because they are driven straight through
+    `_execute_action_sync`. Eight or nine presses a call is small, and an
+    unbilled press is exactly the accounting this project refuses elsewhere:
+    "a reload rewinds the game, never the bill".
+    """
+    spent = 0
+    for action in actions:
+        _execute_action_sync(action)
+        spent += presses_for_action(action)
+    return spent
 
 
 def _field_bike_sync(want: int) -> dict:
@@ -3138,15 +3160,15 @@ def _field_bike_sync(want: int) -> dict:
             detail="No Bicycle in the bag. The Bike Voucher from the Vermilion Fan Club buys one.",
         )
 
-    _execute_action_sync("press_start")
+    spent = _menu_presses_sync(["press_start"])
     if _menu_top_y_sync() != START_MENU_TOP_Y:
         _escape_menus_sync()
         raise HTTPException(
             status_code=409,
             detail="Pressing START did not open the main menu. Nothing was confirmed.",
         )
-    _walk_cursor_to_sync(START_MENU_ITEM_ROW, what="ITEM")
-    _execute_action_sync("press_a")
+    spent += _walk_cursor_to_sync(START_MENU_ITEM_ROW, what="ITEM")
+    spent += _menu_presses_sync(["press_a"])
     if (
         _menu_top_y_sync() != BAG_MENU_TOP_Y
         or _emulator.read_u8(ADDR_LIST_MENU_ID) != ITEM_LIST_MENU
@@ -3158,7 +3180,7 @@ def _field_bike_sync(want: int) -> dict:
         at = _menu_row_sync() + _emulator.read_u8(ADDR_LIST_SCROLL_OFFSET)
         if at == slot:
             break
-        _execute_action_sync("press_down" if at < slot else "press_up")
+        spent += _menu_presses_sync(["press_down" if at < slot else "press_up"])
     else:
         _escape_menus_sync()
         raise HTTPException(
@@ -3166,13 +3188,11 @@ def _field_bike_sync(want: int) -> dict:
             detail=f"Could not put the bag cursor on the Bicycle (slot {slot + 1}).",
         )
 
-    _execute_action_sync("press_a")  # USE / TOSS
-    _execute_action_sync("press_a")  # USE
-    _execute_action_sync("a_until_dialog_end")
+    spent += _menu_presses_sync(["press_a", "press_a", "a_until_dialog_end"])
 
     landed = _reader.read_travel_state()
     if landed == want:
-        return {"riding": landed == ON_BIKE}
+        return {"riding": landed == ON_BIKE, "presses": spent}
     _escape_menus_sync()
     where = "indoors and in caves" if want == ON_BIKE else "here"
     raise HTTPException(
@@ -4735,6 +4755,14 @@ async def field_bike(req: FieldBikeRequest):
     _check_action_rate()
     outcome = await _run_emulator_sync(_field_bike_sync, ON_BIKE if req.on else ON_FOOT)
     bundle = await _refresh_and_broadcast(reason="bike", source="bike")
+    await _write_receipt(
+        tool="bike",
+        presses=outcome.pop("presses", 0),
+        bundle=bundle,
+        outcome=None,
+        milestone_ids=await _run_emulator_sync(_milestone_ids_sync),
+        extra={"riding": outcome.get("riding")},
+    )
     return {**outcome, **_observation_summary(bundle)}
 
 
@@ -4808,6 +4836,14 @@ async def field_cut(req: FieldCutRequest):
 
     outcome = await _run_emulator_sync(_field_cut_sync, plan["tree"], plan["facing"])
     bundle = await _refresh_and_broadcast(reason="cut", source="cut")
+    await _write_receipt(
+        tool="cut",
+        presses=outcome.pop("presses", 0),
+        bundle=bundle,
+        outcome=None,
+        milestone_ids=await _run_emulator_sync(_milestone_ids_sync),
+        extra={"cut": outcome.get("cut")},
+    )
     summary = _observation_summary(bundle)
     _annotate_explored_map(summary, bundle)
     return {**outcome, "walked": walked, **summary}
