@@ -84,14 +84,39 @@ def frames_for_action(action: str) -> int:
         return _frame_count(text, parts[-1])
     if parts[0] == "wait" and len(parts) == 2:
         return _frame_count(text, parts[1])
-    raise UnknownActionError(f"Unknown action format: {text}")
+    raise UnknownActionError(unknown_action(text))
+
+
+#: Moves that do something outside a battle. Named here so an action that looks
+#: like one can be pointed at the verb that exists, rather than bounced with a
+#: bare parse error — the run that motivated this sent ``use_cut`` and then
+#: ``hm_cut``, was told only "Unknown action format" twice, and never tried to
+#: use Cut again in 19,000 further calls.
+FIELD_MOVE_WORDS = ("cut", "fly", "surf", "strength", "flash", "dig", "teleport")
+
+
+def unknown_action(text: str) -> str:
+    """The refusal for an action name that is not one, naming the ones that are."""
+    hint = ""
+    if any(word in text for word in FIELD_MOVE_WORDS):
+        hint = (
+            " A field move is not a button and not a battle action: `poke cut` cuts a "
+            "small tree, walking to it first."
+        )
+    elif "bike" in text or "bicycle" in text:
+        hint = " `poke bike` gets on the Bicycle."
+    return (
+        f"Unknown action format: {text}. Actions are walk_up/down/left/right, "
+        f"press_a/b/start/select, hold_<button>_<frames>, wait_<frames>, and "
+        f"a_until_dialog_end.{hint}"
+    )
 
 
 def _frame_count(action: str, raw: str) -> int:
     try:
         frames = int(raw)
     except ValueError:
-        raise UnknownActionError(f"Unknown action format: {action}") from None
+        raise UnknownActionError(unknown_action(action)) from None
     if frames <= 0:
         raise UnknownActionError(f"{action}: a frame count must be a positive integer")
     return frames

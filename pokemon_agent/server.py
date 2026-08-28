@@ -39,6 +39,7 @@ from pokemon_agent.coordinator import (
     EmulatorCoordinator,
     UnknownActionError,
     presses_for_action,
+    unknown_action,
     validate_action_batch,
 )
 from pokemon_agent.explored_map import ExploredMaps
@@ -2639,21 +2640,10 @@ def _execute_action_sync(action_str: str) -> bool:
         _emulator.tick(frames)
         return True
 
-    # Naming what does exist, because a bare parse error ends the search. The run
-    # that reached for HM01 sent `use_cut` and then `hm_cut`, got this message
-    # twice with nothing in it, and never tried to use Cut again in 19,000
-    # further calls.
-    hint = ""
-    if any(move in action_str for move in capabilities.FIELD_MOVES):
-        hint = (
-            " A field move is not a button and not a battle action: `poke cut` cuts a "
-            "small tree, walking to it first."
-        )
-    raise ValueError(
-        f"Unknown action format: {action_str}. Actions are walk_up/down/left/right, "
-        f"press_a/b/start/select, hold_<button>_<frames>, wait_<frames>, and "
-        f"a_until_dialog_end.{hint}"
-    )
+    # `coordinator.unknown_action`, because the coordinator validates the batch
+    # before this parser ever runs and its message is the one the model reads.
+    # Writing a better one here alone changed nothing at all.
+    raise ValueError(unknown_action(action_str))
 
 
 #: Walking is the only action whose success or failure is invisible on screen.
