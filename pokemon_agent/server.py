@@ -81,10 +81,13 @@ from pokemon_agent.pockets import PocketGraph
 from pokemon_agent.progress import AUTO_SAVE_PREFIX
 from pokemon_agent.repeats import (
     CYCLE_WINDOW,
+    WANDER_WINDOW,
     CycleGuard,
     RepeatedNoProgress,
     RepeatGuard,
     WalkingInCircles,
+    WanderGuard,
+    Wandering,
     action_refusal,
     all_walks_blocked,
     battle_refusal,
@@ -398,6 +401,11 @@ _repeat_guard = RepeatGuard()
 #: so cannot see a lap walked with a slightly different plan each time; this
 #: watches outcomes only. See `repeats.CycleGuard`.
 _cycle_guard = CycleGuard()
+
+#: Which maps the last sixteen stays were on. `CycleGuard` resets whenever the
+#: map changes, so a circuit round four rooms is invisible to it however long it
+#: runs. See `repeats.WanderGuard`.
+_wander_guard = WanderGuard()
 
 #: What the last batch looked like, so the refusal can name the *reason* this
 #: particular command is inert rather than only the fact. Three of the four
@@ -2257,6 +2265,46 @@ def _circling_refusal(tiles: Sequence[tuple[int, int]], presses: int, exits: str
     )
 
 
+def _wandering_refusal(maps: Sequence[str], presses: int, exits: str) -> str:
+    """What the agent reads when its last sixteen stays were four rooms.
+
+    Deliberately not the circling wording. That one says walking is not what is
+    missing, which is true of a lap round one tile; this is about a circuit that
+    covers real ground and still arrives nowhere, and the useful question is
+    what the run is actually blocked on.
+    """
+    where = ", ".join(maps)
+    return (
+        f"The last {WANDER_WINDOW} stays have been on {len(maps)} maps — {where} — and cost "
+        f"{presses} presses without reaching a milestone. That is a circuit, not a "
+        f"journey. {exits} Before walking it again: `poke progress` lists what is open "
+        f"and what each rung is waiting on, and `poke guide` says what this part of the "
+        f"game wants. If the way on needs something you do not have yet, more walking "
+        f"will not find it."
+    )
+
+
+async def _check_wandering() -> None:
+    """Refuse one call when the last sixteen stays were a circuit, then forget it."""
+    try:
+        _wander_guard.check(lambda maps, presses: _wandering_refusal(maps, presses, ""))
+    except Wandering as exc:
+        detail = _wandering_refusal(exc.maps, exc.presses, await _exits_sentence())
+        await _write_receipt(
+            tool="action",
+            presses=0,
+            bundle=None,
+            outcome=None,
+            exit_code=1,
+            extra={
+                "error": detail[:200],
+                "wandering": list(exc.maps),
+                "wandering_presses": exc.presses,
+            },
+        )
+        raise HTTPException(status_code=400, detail=detail) from exc
+
+
 async def _check_circling() -> None:
     """Refuse one walk when the last two dozen went nowhere, then forget it.
 
@@ -2342,6 +2390,9 @@ def _note_milestones_for_load_guard(milestone_ids: Optional[Sequence[str]]) -> N
     # held would otherwise look like it had just been earned.
     if _last_milestone_ids is not None and seen - _last_milestone_ids:
         _loads_since_milestone.clear()
+        # A rung is the evidence that whatever it was doing worked, so whatever
+        # circuit it looked like it was walking, it was not stuck.
+        _wander_guard.reset()
         if _run_recorder is not None:
             _run_recorder.load_repeats.clear()
     _last_milestone_ids = seen
@@ -2388,6 +2439,12 @@ async def _write_receipt(
     """
     global _sims_since_receipt
     _watch_for_whiteout(bundle, reloaded=reloaded)
+    # Every tool, not just the walking ones: a circuit is made of warps, cuts
+    # and doors as much as of steps, and the receipt is where all of them meet.
+    _wander_guard.record(
+        str((((bundle or {}).get("state") or {}).get("map") or {}).get("map_name") or ""),
+        presses,
+    )
     _note_milestones_for_load_guard(milestone_ids)
     if _sims_since_receipt:
         # Absent when nothing was simulated, so a batch that did no planning is
@@ -4320,6 +4377,7 @@ async def _startup():
     # Nothing this process has not seen has been proved inert yet.
     _repeat_guard.reset()
     _cycle_guard.reset()
+    _wander_guard.reset()
     _repeat_context.clear()
     # A startup that gives up must not leave the previous run's emulator visible
     # to /health and /action.
@@ -4791,6 +4849,7 @@ async def execute_actions(req: ActionRequest):
         ),
     )
     await _check_circling()
+    await _check_wandering()
     try:
         result = await _run_actions(req.actions, source="action", reason="actions_executed")
         _record_repeat(key, result["state_before"], result["state_after"])
@@ -5485,6 +5544,7 @@ async def _refuse_if_regressive(
         # that the undo did not hold rather than report a clean refusal.
         _repeat_guard.reset()
         _cycle_guard.reset()
+        _wander_guard.reset()
         _repeat_context.clear()
         stuck = f"{detail} The undo failed ({exc}): the game is on that save now."
         await _write_receipt(
@@ -5618,6 +5678,7 @@ async def load_state(req: SaveRequest):
     # restored frame has never been asked.
     _repeat_guard.reset()
     _cycle_guard.reset()
+    _wander_guard.reset()
     _repeat_context.clear()
     if result.get("settled", True):
         await _broadcast_runtime_refresh(result)
@@ -5963,6 +6024,7 @@ async def goto(req: GotoRequest):
     goto_key = ("goto", str(req.target or "").strip().lower(), str(req.x), str(req.y))
     await _check_repeat(goto_key, tool="goto")
     await _check_circling()
+    await _check_wandering()
     # Walking to a tile on the current map needs no map graph at all.
     world = _ensure_world() if req.target else World({})
 

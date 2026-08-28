@@ -394,6 +394,95 @@ CYCLE_TILES = 3
 CYCLE_PRESSES = 240
 
 
+#: Stays on a map looked at before the wander detector decides. A "stay" is one
+#: unbroken run on one map, however many calls it took.
+WANDER_WINDOW = 16
+#: How few different maps those stays may cover and still be a wander.
+WANDER_MAPS = 4
+#: And the buttons they must have cost. All three tuned against a 183,000-press
+#: run rather than chosen: at these values it fires 16 times in 36,000 calls,
+#: names 49,534 presses, and exactly one of the sixteen lands in a stretch that
+#: earned a rung soon after. Loosening any one of them roughly triples the fires
+#: and puts a third of them on productive ground.
+WANDER_PRESSES = 1600
+
+
+class Wandering(Exception):
+    """A handful of maps walked round and round."""
+
+    def __init__(self, detail: str, maps: Sequence[str], presses: int) -> None:
+        super().__init__(detail)
+        self.detail = detail
+        self.maps = tuple(maps)
+        self.presses = presses
+
+
+class WanderGuard:
+    """Notices a circuit, which :class:`CycleGuard` structurally cannot.
+
+    `CycleGuard` resets the moment the map changes, on the reasoning that a
+    different map is progress by itself. That is true of a journey and false of
+    a circuit, and the difference is not "changed map" but "changed map to
+    somewhere it has just been".
+
+    The run this was built from spent its first 23.8 hours and 42,000 presses
+    walking Mt Moon 1F, B1F, B2F and Route 4 in circles, and its last stall
+    doing the same across Pewter, Route 2 and Viridian Forest. Not one call of
+    either was a lap on a single map, so nothing in the harness could see them.
+
+    Fires once per window and then forgets, like `CycleGuard`, so the next call
+    is always allowed through. Cleared outright by a milestone: a rung is the
+    evidence that whatever it was doing worked.
+    """
+
+    def __init__(
+        self,
+        *,
+        window: int = WANDER_WINDOW,
+        maps: int = WANDER_MAPS,
+        presses: int = WANDER_PRESSES,
+    ) -> None:
+        self._window = window
+        self._maps = maps
+        self._presses = presses
+        self._stays: list[list] = []
+
+    def reset(self) -> None:
+        """Forget the window. For a milestone, a load, or a new run."""
+        self._stays.clear()
+
+    def record(self, map_name: str, presses: int) -> None:
+        """File one call's map and cost, extending the current stay or opening one."""
+        if not map_name:
+            return
+        if not self._stays or self._stays[-1][0] != map_name:
+            self._stays.append([map_name, 0])
+        self._stays[-1][1] += max(0, int(presses))
+        if len(self._stays) > self._window:
+            self._stays.pop(0)
+
+    def circuit(self) -> Optional[tuple[list[str], int]]:
+        """The maps and the presses, if the window is a circuit. ``None`` if not."""
+        if len(self._stays) < self._window:
+            return None
+        maps = {name for name, _ in self._stays}
+        if len(maps) > self._maps:
+            return None
+        spent = sum(presses for _, presses in self._stays)
+        if spent < self._presses:
+            return None
+        return sorted(maps), spent
+
+    def check(self, describe: Callable[[list[str], int], str]) -> None:
+        """Raise once if the window is a circuit, then forget it."""
+        found = self.circuit()
+        if found is None:
+            return
+        maps, spent = found
+        self.reset()
+        raise Wandering(describe(maps, spent), maps, spent)
+
+
 class WalkingInCircles(Exception):
     """A stretch of walking that keeps arriving where it started."""
 
@@ -490,6 +579,9 @@ __all__ = [
     "CYCLE_TILES",
     "CYCLE_WINDOW",
     "CycleGuard",
+    "WANDER_MAPS",
+    "WANDER_PRESSES",
+    "WANDER_WINDOW",
     "Key",
     "REPEAT_LIMIT",
     "RepeatGuard",
@@ -505,5 +597,7 @@ __all__ = [
     "screen_words",
     "sim_refusal",
     "WalkingInCircles",
+    "WanderGuard",
+    "Wandering",
     "world_fingerprint",
 ]
