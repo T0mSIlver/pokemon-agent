@@ -349,7 +349,10 @@ _PLAN: Dict[str, Tuple[Tuple[str, ...], Tuple[str, ...], Tuple[str, ...]]] = {
     "EVENT_GOT_BIKE_VOUCHER": (("EVENT_BEAT_BROCK",), (), ()),
     "EVENT_GOT_BICYCLE": (("EVENT_GOT_BIKE_VOUCHER",), ("the bicycle, and Cycling Road",), ()),
     # Oak's aide also wants ten species in the Pokedex, which is a count rather
-    # than a milestone and so cannot be an edge here.
+    # than a milestone and so cannot be an edge here. It is in
+    # COUNTED_REQUIREMENTS instead, because "cannot be an edge" was being read
+    # downstream as "has no prerequisite": the frontier advertised Flash as open
+    # to a run holding three species, and the run walked to Route 2 for it.
     "EVENT_GOT_HM05": (
         ("EVENT_GOT_POKEDEX",),
         ("dark caves, once the Boulder Badge allows it",),
@@ -431,6 +434,45 @@ MILESTONE_DAG: Mapping[str, MilestoneNode] = MappingProxyType(
         for milestone in MILESTONES
     }
 )
+
+#: Preconditions that are counts rather than rungs, so :data:`MILESTONE_DAG`
+#: cannot express them. Each is ``(state flag, how many, what it counts)``.
+#:
+#: The DAG holds milestone-to-milestone edges only, and a rung whose real gate
+#: is a number therefore looked unconditionally open. Oak's aide is the case
+#: that showed it: `poke progress` listed "Got HM05 Flash" on the frontier of a
+#: run with three species registered, and Flash is the difference between Rock
+#: Tunnel and a dark maze, so the run kept going back for it.
+#:
+#: Checked against live RAM where the frontier is built, and rendered as a
+#: shortfall rather than used to hide the rung — a rung the model cannot see is
+#: one it cannot plan towards.
+COUNTED_REQUIREMENTS: dict[str, tuple[str, int, str]] = {
+    "EVENT_GOT_HM05": ("pokedex_owned", 10, "species registered in the Pokedex"),
+}
+
+
+def counted_shortfall(milestone_id: str, flags: object) -> str:
+    """What a counted precondition is still short of, or "" if it is met.
+
+    Also "" when the count could not be read at all, which is not the same as
+    reading zero: a flags dict that is missing, empty or not a mapping says
+    nothing about the Pokedex, and answering "you have 0" from it would be a
+    made-up refusal on top of a failed read.
+    """
+    requirement = COUNTED_REQUIREMENTS.get(milestone_id)
+    if requirement is None or not isinstance(flags, Mapping):
+        return ""
+    flag, wanted, what = requirement
+    if flag not in flags:
+        return ""
+    try:
+        have = int(flags[flag])
+    except (TypeError, ValueError):
+        return ""
+    if have >= wanted:
+        return ""
+    return f"{wanted} {what}, and you have {have}"
 
 
 def frontier(reached: Collection[str]) -> Tuple[Milestone, ...]:

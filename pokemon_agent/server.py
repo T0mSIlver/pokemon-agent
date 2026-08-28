@@ -5965,7 +5965,8 @@ async def progress():
         summary, held = await _run_emulator_sync(_milestone_summary_and_ids_sync)
     except Exception as exc:  # noqa: BLE001
         raise HTTPException(status_code=503, detail=f"Milestones unreadable: {exc}") from exc
-    payload = capabilities.progress_payload(summary, _progress_presses())
+    flags = ((await _run_emulator_sync(_get_state_dict)) or {}).get("flags") or {}
+    payload = capabilities.progress_payload(summary, _progress_presses(), flags)
     if _run_recorder is not None:
         # Additive: `presses_to` and `attainments` are the names the dashboard
         # already prefers over the ledger it derives for itself, and `presses`

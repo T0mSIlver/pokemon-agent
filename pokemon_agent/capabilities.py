@@ -26,7 +26,7 @@ from pokemon_agent.coordinator import (
     batch_within_budget,
     frames_for_action,
 )
-from pokemon_agent.milestones import MILESTONE_DAG, MILESTONES_BY_ID
+from pokemon_agent.milestones import MILESTONE_DAG, MILESTONES_BY_ID, counted_shortfall
 from pokemon_agent.navigation import CUT_TREE_TILES
 from pokemon_agent.pathfinding import DIRECTIONS
 
@@ -2192,15 +2192,35 @@ def guide_section(ref: str) -> dict:
 # ---------------------------------------------------------------------------
 
 
-def progress_payload(summary: dict, presses: int) -> dict:
+def progress_payload(summary: dict, presses: int, flags: Optional[Mapping] = None) -> dict:
     """The milestone scoreboard, in the currency runs are compared in: buttons.
 
     ``frontier`` is the same table read forwards instead of backwards: of the
     58 rungs, the few the game will currently let the player attempt. It is a
     menu, not an instruction -- which one to take stays the model's call.
+
+    A rung whose real gate is a count carries ``needs``. The ladder cannot hold
+    such a gate as an edge, and "cannot be an edge" was reading downstream as
+    "has no prerequisite": this listed Flash as open to a run with three species
+    registered out of the ten Oak's aide asks for, and the run kept walking to
+    Route 2 for it. The rung stays on the menu -- it is still the thing to aim
+    at -- and now says what it is short of.
     """
     furthest = summary.get("furthest")
     milestone = MILESTONES_BY_ID.get(furthest) if furthest else None
+    frontier = []
+    for open_id in summary.get("frontier") or []:
+        if open_id not in MILESTONES_BY_ID:
+            continue
+        entry = {
+            "id": open_id,
+            "label": MILESTONES_BY_ID[open_id].label,
+            "gives": list(MILESTONE_DAG[open_id].effects),
+        }
+        short = counted_shortfall(open_id, flags)
+        if short:
+            entry["needs"] = short
+        frontier.append(entry)
     return {
         "count": summary.get("count", 0),
         "total": summary.get("total", 0),
@@ -2208,15 +2228,7 @@ def progress_payload(summary: dict, presses: int) -> dict:
         "furthest_label": milestone.label if milestone else None,
         "latest": list(summary.get("latest") or []),
         "presses": int(presses),
-        "frontier": [
-            {
-                "id": open_id,
-                "label": MILESTONES_BY_ID[open_id].label,
-                "gives": list(MILESTONE_DAG[open_id].effects),
-            }
-            for open_id in (summary.get("frontier") or [])
-            if open_id in MILESTONES_BY_ID
-        ],
+        "frontier": frontier,
     }
 
 

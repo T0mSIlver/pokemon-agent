@@ -821,3 +821,67 @@ def test_boulder_badge_state_reports_the_brock_milestones():
     assert "BADGE_CASCADE" not in snapshot
     assert summary["furthest"] == "BADGE_BOULDER"
     assert summary["total"] == len(MILESTONES)
+
+
+class TestCountedRequirements:
+    """Gates that are a number, which the milestone DAG cannot hold as an edge.
+
+    Oak's aide wants ten species registered before he hands over HM05 Flash.
+    That is a count, not a rung, so `MILESTONE_DAG` cannot express it — and
+    "cannot be an edge" was being read downstream as "has no prerequisite".
+    `poke progress` listed Flash as open to a live run holding three species,
+    and Flash is the difference between Rock Tunnel and a dark maze, so the run
+    kept walking back to Route 2 for it.
+    """
+
+    def test_flash_is_short_until_ten_species_are_registered(self):
+        from pokemon_agent.milestones import counted_shortfall
+
+        short = counted_shortfall("EVENT_GOT_HM05", {"pokedex_owned": 3})
+        assert "10 species registered in the Pokedex" in short
+        assert "you have 3" in short
+
+    def test_nothing_is_owed_once_the_count_is_met(self):
+        from pokemon_agent.milestones import counted_shortfall
+
+        assert counted_shortfall("EVENT_GOT_HM05", {"pokedex_owned": 10}) == ""
+        assert counted_shortfall("EVENT_GOT_HM05", {"pokedex_owned": 40}) == ""
+
+    def test_a_rung_with_no_counted_gate_says_nothing(self):
+        from pokemon_agent.milestones import counted_shortfall
+
+        assert counted_shortfall("EVENT_BEAT_LT_SURGE", {"pokedex_owned": 3}) == ""
+
+    def test_unreadable_flags_never_invent_a_requirement(self):
+        """A refusal built on a bad read is worse than no refusal."""
+        from pokemon_agent.milestones import counted_shortfall
+
+        assert counted_shortfall("EVENT_GOT_HM05", None) == ""
+        assert counted_shortfall("EVENT_GOT_HM05", "not a mapping") == ""
+
+    def test_every_counted_requirement_names_a_real_milestone(self):
+        from pokemon_agent.milestones import COUNTED_REQUIREMENTS, MILESTONES_BY_ID
+
+        for milestone_id in COUNTED_REQUIREMENTS:
+            assert milestone_id in MILESTONES_BY_ID
+
+    def test_the_frontier_carries_the_shortfall(self):
+        from pokemon_agent import capabilities
+
+        payload = capabilities.progress_payload(
+            {"count": 22, "total": 58, "frontier": ["EVENT_GOT_HM05", "EVENT_BEAT_ERIKA"]},
+            1000,
+            {"pokedex_owned": 3},
+        )
+        entries = {entry["id"]: entry for entry in payload["frontier"]}
+        assert "10 species" in entries["EVENT_GOT_HM05"]["needs"]
+        assert "needs" not in entries["EVENT_BEAT_ERIKA"], "only counted gates carry one"
+
+    def test_the_rung_stays_on_the_frontier(self):
+        """Hiding it would be worse: a rung it cannot see is one it cannot aim at."""
+        from pokemon_agent import capabilities
+
+        payload = capabilities.progress_payload(
+            {"count": 22, "total": 58, "frontier": ["EVENT_GOT_HM05"]}, 1000, {"pokedex_owned": 3}
+        )
+        assert [entry["id"] for entry in payload["frontier"]] == ["EVENT_GOT_HM05"]

@@ -956,7 +956,12 @@ def cmd_progress(args: argparse.Namespace, url: str) -> int:
         print(f"open now ({len(open_now)}), pick one:")
         for entry in open_now:
             gives = ", ".join(entry.get("gives") or [])
-            print(f"  {entry.get('label')}" + (f" -> {gives}" if gives else ""))
+            line = f"  {entry.get('label')}" + (f" -> {gives}" if gives else "")
+            # A rung the ladder calls open but the game still gates on a count.
+            # It stays on the list, because it is still the thing to aim at.
+            if entry.get("needs"):
+                line += f"  [wants {entry['needs']}]"
+            print(line)
     return EXIT_OK
 
 
